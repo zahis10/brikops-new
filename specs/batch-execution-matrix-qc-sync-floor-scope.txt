@@ -1,0 +1,433 @@
+================================================================================
+BATCH #503-FOLLOWUP — Remove floor-scope skip + Hebrew text in sync UI
+================================================================================
+Date:           2026-05-06
+Branch:         staging  (NOT main)
+Severity:       P1 — Without this, #503 is functionally near-useless.
+                Zahi staging smoke 2026-05-06: 4 of 5 sync tests FAILED
+                because most QC template stages default to scope="floor"
+                (e.g. stage_plaster "טיח בקומה", stage_plumbing,
+                stage_electrical, stage_acoustic). Only stage_tiling
+                ("ריצוף דירה") has explicit scope: "unit" and synced.
+
+Family:         Followup to #503 (already deployed to staging with flag
+                ON). PHASED ROLLOUT continues — flag stays ON in staging
+                throughout this followup. Same ROLLBACK options apply.
+
+Files changed:  3 frontend/backend files (~25 LOC total)
+                  Backend: qc_to_matrix_sync.py — remove 2-line skip
+                  Backend: tests — rewrite T6 + add T12 multi-cell
+                  Frontend: 2 small text strings (Hebrew, "מבקרת ביצוע"
+                            instead of "מ-QC")
+
+LOC estimate:   ~25 LOC total
+Risk:           LOW — removes a guard, exposes already-correct logic
+                (Replit's drift C multi-cell aggregation handles
+                floor-scope correctly without the skip).
+
+================================================================================
+PROBLEM (Zahi staging test 2026-05-06)
+================================================================================
+
+Test results from staging with MATRIX_QC_SYNC_ENABLED=true:
+
+  ✅ Test ב' (Override-approve on ריצוף דירה): worked
+  ❌ Test א' (item update): no sync
+  ❌ Test ג' (multi-cell floor-scope): no sync (expected per D5)
+  ❌ Test ד' (RED on first failed): no sync
+  ❌ Test ה' (manual override conflict): no sync (depends on tests א/ד)
+
+Root cause: helper has D5 enforcement:
+
+    # D5 — only unit-scope stages sync. Floor-scope stages deferred.
+    if stage_scope != "unit":
+        return None
+
+And the codebase consistently uses `tpl_stage.get("scope", "floor")`
+as DEFAULT — meaning ANY stage in qc_template that doesn't have
+explicit `"scope": "unit"` is treated as floor and skipped.
+
+Audit of seed templates — only ONE stage has explicit scope: "unit":
+  stage_ceiling_prep   (default → floor)  ❌ skipped
+  stage_blocks_row1    (default → floor)  ❌ skipped
+  stage_plumbing       (default → floor)  ❌ skipped
+  stage_electrical     (default → floor)  ❌ skipped
+  stage_plaster        (default → floor)  ❌ skipped
+  stage_waterproof     (default → floor)  ❌ skipped
+  stage_acoustic       (default → floor)  ❌ skipped
+  stage_tiling         scope: "unit"      ✅ syncs
+
+Result: 7 of 8 base stages don't sync. The matrix sync feature is
+~12% functional in production.
+
+================================================================================
+SOLUTION
+================================================================================
+
+Remove the 2-line skip in the helper. The existing logic already
+handles BOTH scopes correctly:
+
+  - Unit-scope: run.unit_id → sync ONE matrix cell
+  - Floor-scope: items have per-unit unit_ids → caller (qc_router)
+    aggregates distinct unit_ids and calls helper per-unit (this is
+    Replit's drift C multi-cell aggregation, ALREADY IMPLEMENTED).
+
+The skip was over-defensive. Removing it lets the existing aggregation
+work for both scopes uniformly.
+
+D5 update: NO LONGER deferred. Floor-scope stages sync correctly via
+the per-unit aggregation that's already in place.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify the skip line is exactly where expected:
+    grep -n "stage_scope != \"unit\"" \
+        backend/contractor_ops/qc_to_matrix_sync.py
+    Expected: 1 hit, with the comment block above it referencing D5.
+
+0.2 — 🚨 CRITICAL STOP-GATE — Verify drift C aggregation REALLY EXISTS
+       in approve_stage + override_approve_stage:
+
+    grep -n "distinct unit_ids\|set(\|for unit_id\|loop.*unit" \
+        backend/contractor_ops/qc_router.py | head -20
+
+    REQUIRED PATTERN (one of these must appear in approve_stage AND
+    override_approve_stage):
+      a) `distinct_unit_ids = set(item.get("unit_id") for item in items if ...)`
+      b) `for unit_id in {item["unit_id"] for item in items}:`
+      c) Equivalent loop that calls sync_qc_stage_to_matrix per
+         distinct unit.
+
+    🚨 IF NEITHER FOUND:
+       - drift C does NOT exist
+       - The skip removal alone does NOT fix the bug
+       - Caller still passes only ONE unit_id per QC update
+       - Multi-cell sync (Smoke ג) will FAIL even after this fix
+       - STOP IMMEDIATELY — re-spec required
+       - The bigger fix needs ~50-80 LOC to add aggregation logic
+         to approve_stage + override_approve_stage
+
+    Output the actual grep result (matching lines + line numbers)
+    at top of review.txt so Zahi can verify. DO NOT proceed past
+    this gate without explicit aggregation evidence.
+
+0.3 — 🚨 CRITICAL STOP-GATE — Verify update_qc_item per-item unit_id:
+
+    grep -B2 -A5 "unit_id_for_sync\|item.get.*unit_id" \
+        backend/contractor_ops/qc_router.py | head -20
+
+    REQUIRED PATTERN:
+      `unit_id_for_sync = item.get("unit_id") or run.get("unit_id")`
+      (or equivalent — the key is: per-item unit_id with fallback
+       to run.unit_id)
+
+    🚨 IF MISSING:
+       - update_qc_item won't sync floor-scope correctly
+       - Test א (item update) will continue to fail for floor stages
+       - STOP — needs additional fix to update_qc_item
+
+    Output the actual grep result at top of review.txt.
+
+0.4 — Locate text strings to fix:
+    grep -n "מ-QC\|מ QC" \
+        frontend/src/components/matrix/CellEditDialog.js \
+        frontend/src/components/matrix/MatrixCell.js
+    Expected: 2-3 hits showing "QC" in user-facing strings.
+
+0.5 — Output STEP 0 audit at top of review.txt.
+
+================================================================================
+PART 1 — Remove floor-scope skip in helper
+================================================================================
+
+FILE: backend/contractor_ops/qc_to_matrix_sync.py
+
+LOCATION 1.1 — Find the D5 skip block:
+
+  FIND (current code):
+      # D5 — only unit-scope stages sync. Floor-scope stages (e.g.
+      # "אישור סומסום בקומה") deferred to a follow-up batch — they need
+      # multi-cell update logic.
+      if stage_scope != "unit":
+          return None
+
+  REPLACE WITH:
+      # D5 — UPDATED 2026-05-06: floor-scope stages now sync via
+      # per-unit aggregation in approve/override hooks (drift C from
+      # original #503 plan) and per-item unit_id extraction in
+      # update_qc_item. The helper itself is scope-agnostic — it
+      # operates on the (unit_id, stage_id, items) tuple given to it.
+      # Caller is responsible for passing the right unit_id for the
+      # current update.
+      #
+      # The `stage_scope` parameter is retained for future logic that
+      # might need to behave differently per scope, but the skip
+      # branch is removed.
+
+Net change: -2 logic lines + comment block expansion. Behavior: helper
+now performs the upsert for all stage scopes, since the calling code
+already correctly identifies the right unit_id.
+
+================================================================================
+PART 2 — Test updates
+================================================================================
+
+FILE: backend/tests/test_qc_to_matrix_sync.py
+
+LOCATION 2.1 — REWRITE T6:
+
+  FIND (current T6):
+      def test_floor_scope_stage_skipped(...):
+          # Stage with scope="floor" → no matrix sync (D5)
+          ...
+
+  REPLACE WITH:
+      def test_floor_scope_single_unit_syncs():
+          """Floor-scope stages sync correctly when caller provides
+          unit_id (drift C aggregation in approve/override; per-item
+          unit_id in update_qc_item). Helper is scope-agnostic."""
+          # Setup: floor-scope stage, one unit (e.g. apartment 1)
+          # 3 items for this unit, all "pass"
+          # Call sync_qc_stage_to_matrix with stage_scope="floor",
+          #   unit_id=apt1, qc_items=[3 passed items], stage_closed=True
+          # Expect: matrix cell created with status="completed",
+          #   synced_from_qc=True
+          # Verify: the cell's stage_id matches the floor-scope stage_id
+
+LOCATION 2.2 — ADD T12:
+
+      def test_floor_scope_multi_cell_via_caller_aggregation():
+          """When approve/override fires on a floor-scope stage with
+          items spanning N units, caller calls helper N times (per
+          unit_id aggregation). Verify each call upserts the correct
+          cell and they're independent."""
+          # Setup: floor-scope stage, 3 units (apt1, apt2, apt3)
+          # 6 items total — 2 per unit, all passed
+          # Simulate caller: for each unit, call sync_qc_stage_to_matrix
+          #   with that unit's items + stage_closed=True
+          # Expect: 3 distinct matrix cells, all status="completed"
+          # Verify: each cell.unit_id matches its assigned apt
+          # Verify: audit entries are per-cell (not shared)
+
+LOCATION 2.3 — Update mapping comment in T1-T5 if they mention
+"unit-scope only" — replace with "any scope".
+
+Total tests now: 11 → 12 (T6 stays as 1 test, T12 added). Or 11 → 13
+if T6 split into "T6a single floor-unit syncs" + "T6b" was an internal
+refactor. Document final count in review.txt.
+
+================================================================================
+PART 3 — Hebrew text fixes (frontend)
+================================================================================
+
+FILE 1: frontend/src/components/matrix/CellEditDialog.js
+
+LOCATION 3.1 — Warning text under StatusButtonGrid:
+
+  FIND any occurrence containing "QC":
+      "שלב זה מתעדכן אוטומטית מבקרת ביצוע. עריכה ידנית עלולה להידרס
+       בעדכון QC הבא."
+
+  REPLACE WITH:
+      "שלב זה מתעדכן אוטומטית מבקרת הביצוע. עריכה ידנית עלולה להידחק
+       בעדכון בקרת הביצוע הבא."
+
+  (Also: "להידרס" is colloquial — "להידחק" is more formal Hebrew.
+   Optional: keep "להידרס" if Replit prefers; either is fine.)
+
+LOCATION 3.2 — Badge text near Dialog.Title:
+
+  Already says "🔗 מסונכרן מבקרת ביצוע" per spec. VERIFY no English "QC"
+  remained. If yes, remove.
+
+FILE 2: frontend/src/components/matrix/MatrixCell.js
+
+LOCATION 3.3 — Dot tooltip:
+
+  FIND:
+      "• מסונכרן מ-QC"
+
+  REPLACE WITH:
+      "• מסונכרן מבקרת ביצוע"
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — Backend tests pass with the skip removed:
+   cd backend && python -m pytest tests/test_qc_to_matrix_sync.py -q
+   → 12 (or 13) passed (T6 rewritten + T12 new)
+
+V2 — Existing regression tests:
+   cd backend && python -m pytest tests/test_qc_router.py \
+                                   tests/test_execution_matrix.py \
+                                   tests/test_execution_matrix_export.py \
+                                   tests/test_qc_override_close.py -q
+   → all green (no behavior change for QC, just sync now fires more often)
+
+V3 — Frontend build:
+   cd frontend && yarn build
+   → clean (text-only changes in 2 files).
+
+V4 — Diff scope:
+   git diff --stat
+   → 3 files:
+     backend/contractor_ops/qc_to_matrix_sync.py    (-2 lines)
+     backend/tests/test_qc_to_matrix_sync.py        (~+30 / -10)
+     frontend/src/components/matrix/CellEditDialog.js (1 string)
+     frontend/src/components/matrix/MatrixCell.js   (1 string)
+
+V5 — Sibling files untouched:
+   git diff --stat backend/contractor_ops/execution_matrix_router.py \
+                   backend/contractor_ops/qc_router.py \
+                   backend/contractor_ops/schemas.py
+   → 0 lines diff (no changes to qc_router, schema, or matrix endpoint)
+
+V6 — Feature flag default still "false":
+   grep "MATRIX_QC_SYNC_ENABLED" backend/contractor_ops/qc_to_matrix_sync.py
+   → default `"false"` UNCHANGED — followup doesn't touch the flag
+
+================================================================================
+SMOKE TEST (Zahi after deploy)
+================================================================================
+
+Staging flag is already ON. Just hard-refresh and re-run the 5 tests
+from yesterday:
+
+(א) Item update creates matrix cell — now should work for ALL stages
+    (טיח, יציקת תקרה, אינסטלציה, הצפה...). Mark a single item as
+    "תקין" → matrix cell becomes blue (in_progress).
+
+(ב) Override-approve — already worked, verify it still works on
+    floor-scope stages too (e.g. override-approve on טיח should now
+    sync ALL units in the floor to "completed", not just one).
+
+(ג) ⭐ Multi-cell floor-scope sync — THIS IS THE MOST IMPORTANT
+    SMOKE TEST. It proves drift C aggregation actually iterates.
+    1. Find a stage that's floor-scope (e.g. יציקת תקרה, טיח בקומה,
+       any שלב בקומה)
+    2. Make sure the floor has 2+ units (e.g. 6 apartments per floor)
+    3. Use override-approve to close the stage
+    4. Hard-refresh the matrix
+    5. ✅ EXPECTED: ALL units on that floor show "completed" (green
+       cell + blue dot indicator). Each cell should be synced from QC.
+    6. 🚨 BUG SIGNAL: only ONE unit shows synced status, others stay
+       empty. Means drift C aggregation is BROKEN even after the skip
+       removal.
+    7. 🚨 IF (ג) FAILS:
+       - Set MATRIX_QC_SYNC_ENABLED=false in staging env immediately
+         (kill switch — sync stops, no need to revert)
+       - Don't deploy to prod
+       - Re-spec to add explicit aggregation in approve/override
+         endpoints (~50-80 LOC bigger fix)
+
+(ד) RED on first failed — mark a single item as "לא תקין". Matrix
+    cell becomes red immediately (not_done) — works for any scope.
+
+(ה) Manual override conflict — set matrix cell manually, then update
+    QC item → matrix cell flipped to QC value.
+
+(ו) Hebrew text:
+    - Open CellEditDialog on a base stage → warning says
+      "בעדכון בקרת הביצוע הבא" (no English QC)
+    - Hover a synced cell with blue dot → tooltip says
+      "• מסונכרן מבקרת ביצוע" (no English QC)
+
+If all 6 are green → 24h staging watch → prod deploy.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit (5 sub-greps)
+  - Per-file diff
+  - V1-V6 outputs
+  - Smoke (א)-(ו) deferred to Zahi
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(matrix): #503 followup — sync all scopes + Hebrew tooltip text
+
+  Per Zahi staging smoke 2026-05-06: 4 of 5 sync tests failed because
+  most QC template stages default to scope="floor" (skipped per D5).
+  Only stage_tiling (ריצוף דירה) has explicit scope: "unit" — every
+  other base stage was bypassed. Sync feature was ~12% functional.
+
+  Removed the `if stage_scope != "unit": return None` skip in the
+  helper. The existing per-unit aggregation in approve/override
+  (Replit's drift C) and per-item unit_id extraction in update_qc_item
+  already handle floor-scope correctly. Helper is now scope-agnostic;
+  caller passes the right unit_id for each cell to upsert.
+
+  D5 updated: floor-scope NO LONGER deferred. Sync now works for all
+  scopes uniformly via the existing aggregation logic.
+
+  T6 rewritten: "floor-scope skipped" → "floor-scope single-unit syncs".
+  T12 added: floor-scope multi-cell via caller aggregation
+  (e.g. override-approve on טיח updates all 6 units on the floor).
+
+  Hebrew text:
+  - CellEditDialog warning: "בעדכון QC" → "בעדכון בקרת הביצוע"
+  - MatrixCell tooltip: "מ-QC" → "מבקרת ביצוע"
+
+  ~25 LOC across 4 files. No backend contract changes. No schema
+  changes. No qc_router changes. Aggregation logic unchanged.
+
+================================================================================
+STEPS
+================================================================================
+1. 🚨 STEP 0 pre-flight — STOP-GATE on 0.2 + 0.3.
+   - Run grep, output actual results in review.txt at top
+   - If 0.2 OR 0.3 fail → STOP. Don't write any code. Re-spec needed.
+2. PART 1 — remove skip in helper (~5 LOC)
+3. PART 2 — rewrite T6 + add T12 (~25 LOC test code)
+4. PART 3 — fix 2 Hebrew strings (~3 LOC)
+5. Run V1-V6 (must be green)
+6. Generate review.txt + .local/.commit_message
+7. STOP. Zahi reviews. Then he runs:
+     git checkout staging && git merge main && ./deploy.sh --stag
+   ⚠️ Flag MATRIX_QC_SYNC_ENABLED stays ON in staging — no env change.
+
+================================================================================
+🚨 PROCESS LESSON LEARNED — for future spec checklists
+================================================================================
+
+Original #503 spec assumed default field values matched the conceptual
+intent (i.e. unit-scope was common). Real production data showed only
+1 of 8 stages had explicit scope: "unit"; the rest defaulted to floor
+and were silently skipped.
+
+CHECKLIST ADDITION for future specs that gate on field values:
+  - Verify default field values match REAL production data, not just
+    the schema definition.
+  - Run a quick `grep` over the seed data / real DB sample to count
+    how many records have the value the spec assumes.
+  - If <50% match the assumed default → spec is high-risk → either
+    update the default or document the gap explicitly.
+
+This is added to the BrikOps standing rules cycle — see CLAUDE.md
+update queued for after #503 ships.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+3-file revert. Helper restores the floor-scope skip. Sync regresses to
+~12% functional state. Frontend strings revert to "QC" (English).
+
+OR (mild) — re-add the skip line manually + redeploy. ~30 seconds.
+
+NO impact on:
+  - QC functionality (still no behavior change in QC)
+  - Override-approve flow
+  - Item update flow
+  - Schema, audit chain, feature flag, BackgroundTasks pattern
+
+================================================================================
+END OF SPEC — #503 followup floor-scope + Hebrew
+================================================================================

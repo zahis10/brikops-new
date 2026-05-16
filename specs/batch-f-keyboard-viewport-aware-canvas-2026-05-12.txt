@@ -1,0 +1,505 @@
+================================================================================
+BATCH F-keyboard — PhotoAnnotation canvas resizes when mobile keyboard pops
+================================================================================
+Date:           2026-05-12
+Branch:         staging  (NOT main)
+Severity:       P3 — UX annoyance on iPhone reported by Zahi
+                2026-05-12 during F.1c testing. When the on-screen
+                keyboard appears (label create OR edit), the canvas
+                appears to "zoom in" / clip. Root cause: canvas
+                display dimensions are computed ONCE on image load
+                using `window.innerHeight - 120`, but the visual
+                viewport shrinks when keyboard pops. Canvas style
+                stays at original dimensions → bottom of image is
+                hidden behind keyboard → appears cropped.
+
+                This bug exists in F (since shipped 2026-05-12) but
+                wasn't noticed until F.1c testing because labels
+                are mostly created at the TOP of the image (visible
+                area when keyboard up) — only became prominent when
+                Zahi re-tapped labels for edit.
+
+                Independent of F.1c logic — pure viewport / sizing
+                concern. Ships AFTER F.1c to avoid merge conflicts
+                in PhotoAnnotation.js (or before, if F.1c is held).
+
+Approach:       Frontend-only. Listen to `window.visualViewport`
+                resize events (iOS Safari 13+ / Chromium). On
+                resize, recompute the display scale + canvas CSS
+                dimensions, then redraw to refresh bbox cache.
+
+                Falls back gracefully on browsers without
+                visualViewport API (older Android WebView, very old
+                Safari) — listens to `window.resize` instead.
+                On those, keyboard pop doesn't fire resize, but
+                neither did the original code work there. No
+                regression.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only:
+                  - frontend/src/components/PhotoAnnotation.js
+                    (~+35 LOC: extract sizing into useCallback +
+                    add useEffect with resize listener)
+                Total: 1 file. No backend, no DB, no env vars, no
+                new dependencies.
+
+Baseline:       origin/staging HEAD at time of spec writing was
+                a410b29 (F.1b-hotfix-1, 706 LOC). If F.1c ships
+                first, baseline shifts to F.1c head (~761 LOC).
+                Anchors below match by content, not exact line —
+                STEP 0 re-verifies.
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN this batch:
+  ✅ Extract the canvas display-dimension computation from the
+     image-load useEffect into a standalone `applyDisplayScale`
+     useCallback. It reads `canvasRef`, `imgRef`, sets
+     `scaleRef.current`, updates `canvas.style.width/height`, and
+     calls `redraw(strokesRef.current)`.
+  ✅ Image-load useEffect calls `applyDisplayScale` AFTER setting
+     `canvas.width/height` (intrinsic resolution).
+  ✅ NEW useEffect attaches `visualViewport.resize` listener (and
+     `window.resize` fallback) → calls `applyDisplayScale` on
+     resize. Cleanup on unmount.
+  ✅ Uses `window.visualViewport.height` when available (excludes
+     keyboard, system UI). Falls back to `window.innerHeight` for
+     compatibility.
+
+OUT of this batch:
+  ❌ Custom keyboard handling (Capacitor `@capacitor/keyboard`
+     plugin) — visualViewport API is already supported in
+     Capacitor WebView (iOS 13+ / Android Chromium).
+  ❌ Scroll-to-input-on-focus behavior — already handled by browser.
+  ❌ Re-layout of toolbar / action bar on keyboard pop — they're
+     in a flex column with shrink-0 / flex-1, so they reflow
+     automatically. Only canvas needs explicit dimension update.
+  ❌ Animations / transitions on resize — the resize is fast
+     enough (debounced by browser).
+
+================================================================================
+STEP 0 — PRE-FLIGHT (5 PASS) — RUN BEFORE EDITING
+================================================================================
+
+1. Confirm origin/staging HEAD includes F (and ideally F.1a/b/c if
+   they've shipped):
+   $ git log origin/staging --oneline -5
+   →  Expect: F text labels in history (commit c08e314 onwards).
+   ✓ If only F is shipped → baseline ~519 LOC; with F.1a/b/hf-1 →
+     ~706; with F.1c → ~743. Spec anchors by content.
+
+2. Confirm the image-load useEffect computes display dimensions:
+   $ grep -nA 3 "const containerW = window.innerWidth" \
+       frontend/src/components/PhotoAnnotation.js
+   →  Expect: 1 hit, inside the doLoad async function within the
+     `useEffect(() => { ... }, [imageFile])` block. The next lines
+     compute containerH and displayScale.
+
+3. Confirm canvas style is set with px dimensions:
+   $ grep -n "canvas.style.width\|canvas.style.height" \
+       frontend/src/components/PhotoAnnotation.js
+   →  Expect: 2 hits inside the same useEffect, set to
+     `Math.round(w * displayScale) + 'px'` and similar for height.
+
+4. Confirm `redraw` callback exists and is callable with strokes
+   array (matches the F+F.1a/b/hf-1 signature):
+   $ grep -n "const redraw = useCallback" \
+       frontend/src/components/PhotoAnnotation.js
+   →  Expect: 1 hit. The function takes `allStrokes` parameter.
+
+5. **Verify `redraw` callback stability** — critical for the resize
+   useEffect's listener attachment pattern:
+   $ grep -A 3 "const redraw = useCallback" \
+       frontend/src/components/PhotoAnnotation.js
+   →  Expect dependency array contains ONLY stable refs (such as
+     `getLineWidth`, which itself should be `useCallback(..., [])`).
+   $ grep -A 3 "const getLineWidth = useCallback" \
+       frontend/src/components/PhotoAnnotation.js
+   →  Expect: `}, []);` — empty deps = stable.
+
+   **Why this matters:** `applyDisplayScale` (LOCATION 1) depends on
+   `redraw`. The resize useEffect (LOCATION 3) depends on
+   `applyDisplayScale`. If `redraw` identity changes per render,
+   useEffect re-runs each render → listeners detach+reattach →
+   brief window where resize events could be missed during keyboard
+   animation.
+
+   **Expected outcome:** redraw is stable (only depends on stable
+   getLineWidth). Listeners attach ONCE on mount, stay attached.
+   No ref-stable wrapper needed.
+
+   **Contingency (if redraw is unstable — e.g. its deps include a
+   value that changes per render):** wrap `applyDisplayScale` in a
+   ref-stable handler to keep the listener stable. See LOCATION 3
+   FALLBACK section below.
+
+================================================================================
+LOCATION 1 — Extract applyDisplayScale callback
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: AFTER the `redraw` useCallback definition (currently around
+        L150 in F.1b-hotfix-1 state).
+
+ANCHOR (find the end of redraw callback):
+  const redraw = useCallback((allStrokes) => {
+    ...
+  }, [getLineWidth]);
+
+ADD AFTER:
+  // BATCH F-keyboard (2026-05-12) — recompute canvas display
+  // dimensions based on the current visual viewport. Called on
+  // image load AND on viewport resize (mobile keyboard pop). The
+  // intrinsic canvas resolution (canvas.width / canvas.height)
+  // stays fixed — we only update CSS display size + scaleRef.
+  // After resize, redraw refreshes the bbox cache for hit-testing.
+  const applyDisplayScale = useCallback(() => {
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    if (!canvas || !img) return;
+
+    const w = canvas.width;
+    const h = canvas.height;
+    if (!w || !h) return;
+
+    // Prefer visualViewport (iOS Safari 13+ / Chromium) — gives
+    // visible area excluding the on-screen keyboard. Fall back to
+    // window.inner* for environments without the API.
+    const vv = window.visualViewport;
+    const containerW = vv ? vv.width : window.innerWidth;
+    const containerH = (vv ? vv.height : window.innerHeight) - 120;
+
+    const displayScale = Math.min(containerW / w, containerH / h, 1);
+    scaleRef.current = displayScale;
+
+    canvas.style.width = Math.round(w * displayScale) + 'px';
+    canvas.style.height = Math.round(h * displayScale) + 'px';
+
+    // Redraw at the new scale — recomputes text fontSize, pill
+    // dimensions, and refreshes the _bbox cache on each text stroke.
+    redraw(strokesRef.current);
+  }, [redraw]);
+
+================================================================================
+LOCATION 2 — Image-load useEffect calls applyDisplayScale
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the existing `doLoad` async function inside the
+        `useEffect(() => { ... }, [imageFile])` block.
+
+ANCHOR (find this block):
+      imgRef.current = img;
+
+      const containerW = window.innerWidth;
+      const containerH = window.innerHeight - 120;
+      const displayScale = Math.min(containerW / w, containerH / h, 1);
+      scaleRef.current = displayScale;
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.width = w;
+      canvas.height = h;
+      canvas.style.width = Math.round(w * displayScale) + 'px';
+      canvas.style.height = Math.round(h * displayScale) + 'px';
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      setLoaded(true);
+
+REPLACE WITH:
+      imgRef.current = img;
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.width = w;
+      canvas.height = h;
+
+      // BATCH F-keyboard — apply initial scale via the same callback
+      // that listens to viewport resize. Keeps the math in one place.
+      applyDisplayScale();
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      setLoaded(true);
+
+Note: the inline `containerW/H/displayScale/scaleRef/canvas.style.*`
+lines are removed because `applyDisplayScale` does all of that.
+
+================================================================================
+LOCATION 3 — Listen to visualViewport.resize + window.resize
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: NEW useEffect, ideally near the existing viewport-lock useEffect
+        (the one that sets `viewport.content = 'width=device-width...'`).
+
+ANCHOR (find this useEffect — exists in F):
+  useEffect(() => {
+    const viewport = document.querySelector('meta[name="viewport"]');
+    const originalViewport = viewport?.content;
+    if (viewport) {
+      viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
+    }
+    return () => {
+      document.body.style.pointerEvents = '';
+      document.body.style.overflow = '';
+      if (viewport && originalViewport !== undefined) viewport.content = originalViewport;
+    };
+  }, []);
+
+ADD AFTER it (as a new sibling useEffect):
+  // BATCH F-keyboard (2026-05-12) — listen for viewport changes
+  // (mobile keyboard appearance is the primary use case) and
+  // recompute the canvas display scale. Without this, the canvas
+  // keeps its original dimensions and gets clipped behind the
+  // keyboard, appearing zoomed-in.
+  useEffect(() => {
+    if (!loaded) return; // wait until image loaded
+
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener('resize', applyDisplayScale);
+    }
+    window.addEventListener('resize', applyDisplayScale);
+
+    return () => {
+      if (vv) {
+        vv.removeEventListener('resize', applyDisplayScale);
+      }
+      window.removeEventListener('resize', applyDisplayScale);
+    };
+  }, [loaded, applyDisplayScale]);
+
+Notes:
+- `loaded` gate prevents firing before the canvas + image are ready.
+- `applyDisplayScale` reference comes from useCallback at LOCATION 1.
+- Both `visualViewport` and `window` listeners registered for
+  defense in depth — most browsers fire one or the other; some
+  fire both. The handler is idempotent (computes desired state,
+  not delta).
+- Per STEP 0.5, `redraw` is stable (deps = [getLineWidth], and
+  getLineWidth deps = []). So `applyDisplayScale` is stable, and
+  this useEffect's deps change only via `loaded` (false → true
+  once on mount, never again). Listener attaches ONCE on image
+  load, stays attached. No detach/reattach churn.
+
+================================================================================
+LOCATION 3 — FALLBACK (only if STEP 0.5 finds redraw UNSTABLE)
+================================================================================
+Skip this section if STEP 0.5 confirmed redraw is stable (expected).
+
+If `redraw` has unstable deps (e.g. depends on a prop that changes
+per render), the resize useEffect would churn — detaching and
+re-attaching listeners on every render. To prevent this, use a
+ref-stable wrapper:
+
+  // BATCH F-keyboard — ref-stable wrapper to avoid listener churn
+  // when applyDisplayScale identity changes between renders.
+  const applyDisplayScaleRef = useRef(applyDisplayScale);
+  useEffect(() => {
+    applyDisplayScaleRef.current = applyDisplayScale;
+  }, [applyDisplayScale]);
+
+  const stableResizeHandler = useCallback(() => {
+    applyDisplayScaleRef.current();
+  }, []);
+
+Then in the resize useEffect, register `stableResizeHandler` (which
+has empty deps = stable identity) instead of `applyDisplayScale`.
+Change the resize useEffect's deps array from
+`[loaded, applyDisplayScale]` to `[loaded, stableResizeHandler]`.
+
+================================================================================
+FUTURE NOTE — RAF throttling (DO NOT implement in v1)
+================================================================================
+visualViewport.resize can fire at high frequency:
+  - Keyboard slide animations: ~10-15 events over 200ms
+  - Desktop window resize drag: continuous
+  - iOS Safari address bar show/hide: frequent on scroll
+
+Each fires `applyDisplayScale` → `redraw` → O(n) over all strokes.
+For typical photo annotation (≤10 strokes): perf negligible.
+For dense annotation (50+ strokes): possible slight jank during
+keyboard animation on slow devices.
+
+**If jank is reported in field testing**, wrap applyDisplayScale
+in requestAnimationFrame coalescing — multiple resize events within
+one frame collapse into a single update:
+
+  const rafRef = useRef(null);
+  const applyDisplayScaleRaf = useCallback(() => {
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      applyDisplayScale();
+    });
+  }, [applyDisplayScale]);
+
+  // Use applyDisplayScaleRaf in the resize listener instead.
+
+Skip for v1 — almost certainly unnecessary for typical density.
+Document only.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ MAX_CANVAS_SIZE constant (1280) — image downscale threshold
+     before storage; unchanged.
+- ❌ Image scaling math (the ratio computation before
+     canvas.width = w).
+- ❌ scaleRef itself — same ref, just updated by the new callback.
+- ❌ redraw callback body — text branch + freehand branch unchanged.
+     Bbox cache logic (F.1b-hotfix-1) continues to populate _bbox
+     fresh on every redraw, including post-resize.
+- ❌ Touch / mouse handlers — they read scaleRef.current via getPos,
+     so they automatically use the new scale after resize.
+- ❌ pendingText overlay, size picker, color picker, T button,
+     Save/Undo buttons.
+- ❌ Viewport lock useEffect (the one that sets meta[name="viewport"]).
+- ❌ Drag state (draggingTextRef).
+- ❌ F + F.1a + F.1b + hotfix-1 + F.1c logic — all preserved.
+- ❌ Backend / parent contract / saved JPEGs.
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — File size sanity
+================================================================================
+$ wc -l frontend/src/components/PhotoAnnotation.js
+   →  Expect: +~35 LOC over baseline.
+     - If baseline = F.1b-hotfix-1 (706) → expect ~741.
+     - If baseline = F.1c (761) → expect ~796.
+   ✓ Flag if >830.
+
+================================================================================
+VERIFY 3 — grep sanity
+================================================================================
+$ grep -n "applyDisplayScale\|visualViewport" \
+    frontend/src/components/PhotoAnnotation.js
+   →  Expect ~6 hits: useCallback def + 1 call in doLoad + 2 in
+      resize useEffect (add+remove for vv) + 2 in resize useEffect
+      (add+remove for window).
+
+$ grep -c "window.innerHeight" frontend/src/components/PhotoAnnotation.js
+   →  Expect: 1 (inside applyDisplayScale fallback). The old
+     occurrence in doLoad is GONE.
+
+================================================================================
+VERIFY 4 — Manual smoke (DEFERRED TO ZAHI)
+================================================================================
+
+**A — Bug reproduction → fix (PRIMARY, iPhone):**
+  1. Take a photo with a tall aspect ratio (portrait), open PhotoAnnotation.
+  2. Tap T → tap canvas at upper area → keyboard pops up.
+  EXPECT before fix: canvas appears cropped/zoomed — bottom of
+  image hidden, only upper portion visible.
+  EXPECT after fix: canvas shrinks to fit the area ABOVE the
+  keyboard. Entire image visible (smaller). Labels at bottom of
+  image still reachable when keyboard closes.
+
+**B — Edit mode + keyboard (F.1c regression):**
+  1. Create label at center of image, אישור.
+  2. Tap label to edit. Keyboard pops.
+  EXPECT: canvas shrinks, label still visible at its position
+  relative to image. After typing → אישור → keyboard closes →
+  canvas reverts to full size.
+
+**C — Multiple keyboard show/hide cycles:**
+  1. Tap T → tap canvas → keyboard up → ביטול → keyboard down.
+  2. Tap canvas again → keyboard up → אישור → down.
+  EXPECT: canvas resizes smoothly each cycle. No jank, no drift.
+
+**D — Drag during keyboard (edge case):**
+  1. Keyboard up, label visible in shrunken canvas.
+  2. Try to drag the label.
+  EXPECT: drag works because hit-test uses updated scaleRef +
+  refreshed bbox cache (refreshed by the redraw inside applyDisplayScale).
+
+**E — Hit-test on labels created at different scales:**
+  1. Create label at FULL canvas (no keyboard) → אישור.
+  2. Tap T → tap canvas → keyboard up (canvas shrinks).
+  3. Tap on the existing label.
+  EXPECT: hit-test works. The label's stored x/y are in canvas
+  px (intrinsic resolution), and the bbox cache was refreshed by
+  resize-triggered redraw.
+
+**F — Desktop (no visualViewport behavior change):**
+  - Open on desktop browser.
+  EXPECT: no visible change. Canvas computed once at load,
+  redrawn if window is resized. Standard behavior.
+
+**G — Save after keyboard cycle:**
+  1. Create label with keyboard up. Save.
+  EXPECT: photo uploads at FULL intrinsic resolution (canvas.toBlob
+  reads canvas.width / canvas.height — NOT style). Label
+  rasterized at correct position.
+
+**H — Cross-platform:**
+  - Test A + B + C on iPhone (Capacitor) AND Android (Capacitor
+    or Chrome mobile viewport).
+  EXPECT: both platforms benefit. visualViewport supported in
+  both.
+
+================================================================================
+RISK
+================================================================================
+Low. Pure additive — extracted logic + new listener. No changes
+to drawing, drag, edit, or save logic.
+
+- ⚠ `applyDisplayScale` calls `redraw(strokesRef.current)` which
+  populates _bbox on each text stroke. This happens during
+  resize, which could be frequent on keyboard show/hide. Redraw
+  is O(n) over strokes. For typical photo annotations (≤10
+  strokes), perf is negligible.
+- ⚠ visualViewport.resize on Android sometimes fires twice
+  (once for outer viewport, once for keyboard inset). Both calls
+  are idempotent — second is a no-op.
+- ⚠ If user has zoomed the page manually (pinch zoom — though
+  user-scalable=no prevents it), visualViewport.height could be
+  smaller than expected. Acceptable: canvas just gets smaller.
+- ⚠ The intrinsic canvas resolution (canvas.width / canvas.height)
+  is NOT changed by resize — that's set once on image load.
+  Only CSS display dimensions change. So saved JPEGs are still
+  at full resolution.
+- ⚠ Existing label coords (x/y in canvas px) don't shift on
+  resize. The bbox cache recomputes with new scale → consistent
+  for hit-test.
+- ⚠ Some browsers (very old) may not fire `window.resize` for
+  keyboard appearance. Those would lack visualViewport too →
+  fallback path is also a no-op there. No regression vs current.
+
+Bundle size: zero.
+Performance: 1 extra redraw per keyboard show/hide. Negligible.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+- Reverts ONLY this batch. F + F.1 series remain shipped.
+- Canvas reverts to fixed-on-load dimensions; keyboard zoom
+  annoyance returns (no functional regression, just UX).
+
+================================================================================
+DEPLOY ORDERING
+================================================================================
+If F.1c hasn't shipped yet:
+  - Ship F.1c first (it's already with Replit).
+  - Then ship this batch on top — STEP 0 re-runs and confirms
+    baseline matches F.1c head.
+
+If F.1c hits issues:
+  - Ship this batch FIRST (it's independent of F.1c logic).
+  - Then re-spec F.1c against new baseline.
+
+Either ordering works — no merge conflicts because the locations
+touched here (image-load useEffect, viewport-lock useEffect) don't
+overlap with F.1c (endStroke, commitPendingText, cancel button).
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

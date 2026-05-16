@@ -1,0 +1,207 @@
+================================================================================
+BATCH 5K — BuildingQCPage smart back when arriving from /qc
+================================================================================
+Date:           2026-04-29
+Branch:         staging  (NOT main)
+Severity:       P2 UX — found post-5J. Same family as 5H (smart back via
+                ?from= URL param convention).
+Files changed:  2 frontend files / 2 logical sub-edits
+                  Frontend: QCFloorSelectionPage.js (1 navigate call)
+                            BuildingQCPage.js       (1 handleBack update)
+Mobile:         N/A — Capacitor WebView, Capgo OTA. Same as 5H/5I/5J.
+
+CONTEXT
+-------
+On /projects/X/qc (QC home), user clicks a building card → navigates to
+/projects/X/buildings/Y/qc (building's QC view). Then clicks the in-app
+back arrow on the building's QC page → returns to /buildings/Y (the
+building detail page) instead of /qc (where they came from).
+
+3 entry paths to /buildings/:id/qc exist:
+  1. /qc home → click building card  (this batch's fix)
+     QCFloorSelectionPage.js:326
+  2. /buildings/:id → click "QC" button → /buildings/:id/qc
+     InnerBuildingPage.js:162
+  3. /floors/:id → back arrow → /buildings/:id/qc
+     FloorDetailPage.js:222
+
+Only path (1) is broken — back goes to building instead of QC home.
+Paths (2) and (3) currently work correctly (back to building IS the
+right destination from those entry points).
+
+Mirror the existing ?from=X URL-param convention proven in BATCH 5H
+(dashboard → KPI) and ProjectTasksPage:82. Append ?from=qc to the
+navigate from QCFloorSelectionPage; BuildingQCPage's handleBack checks
+the param and routes back to /qc when present.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify the 3 entry paths to /buildings/:id/qc:
+    grep -rn "buildings/\\\${[a-zA-Z_.]*}/qc\\\b\|buildings/\\\${[a-zA-Z_.]*}/qc'" \
+        frontend/src/ | grep -v node_modules | grep -v ".test."
+    # Expect 3 hits:
+    #   - QCFloorSelectionPage.js:326 (the one we're fixing)
+    #   - InnerBuildingPage.js:162    (preserved, no &from=)
+    #   - FloorDetailPage.js:222      (preserved, no &from=)
+    #
+    # Plus 1 in UnitQCSelectionPage.js:58 (state.returnTo, different mechanism — KEEP)
+
+0.2 — Verify BuildingQCPage handleBack location:
+    grep -n "handleBack\|navigate(\`/projects/\${projectId}/buildings" \
+        frontend/src/pages/BuildingQCPage.js | head -10
+    # Expect handleBack at line 79-81:
+    #   const handleBack = useCallback(() => {
+    #     navigate(`/projects/${projectId}/buildings/${buildingId}`);
+    #   }, [navigate, projectId, buildingId]);
+
+0.3 — Verify useSearchParams is available in BuildingQCPage:
+    grep -n "useSearchParams\|searchParams" frontend/src/pages/BuildingQCPage.js
+    # If already imported/destructured: no new imports needed.
+    # If NOT: add `import { useSearchParams } from 'react-router-dom'` at top
+    # (likely combined with existing useParams/useNavigate import).
+
+0.4 — Audit any OTHER navigate-from-/qc-to-building-qc that might also
+      need the same fix:
+    grep -rn "navigate(\`/projects/\${projectId}/qc\`)" frontend/src/
+    # Lists all back-to-/qc destinations. None should need editing for
+    # this batch — we're only adding to the FORWARD navigate from /qc.
+
+0.5 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — FRONTEND (2 files)
+================================================================================
+
+FILE 1 of 2: frontend/src/pages/QCFloorSelectionPage.js
+--------------------------------------------------------
+Append &from=qc to the navigate from /qc to /buildings/:id/qc.
+
+LOCATION 1.1 — line 326 (building card onClick):
+   CURRENT:
+       onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/qc`)}
+   REPLACE WITH:
+       onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/qc?from=qc`)}
+
+   No other changes — same destination, just adds the source hint.
+
+DO NOT TOUCH:
+- InnerBuildingPage.js:162 — entry from inside a building. Back to /buildings/:id is correct.
+- FloorDetailPage.js:222 — entry from a floor. Back to /buildings/:id/qc is correct (rebound).
+- UnitQCSelectionPage.js:58 — uses state.returnTo (different mechanism).
+- Any other navigate() in QCFloorSelectionPage.js.
+
+FILE 2 of 2: frontend/src/pages/BuildingQCPage.js
+--------------------------------------------------
+Update handleBack to check searchParams.get('from') and route accordingly.
+
+LOCATION 2.1 — Add useSearchParams import (if not already present per STEP 0.3).
+   At the top of the file, find the existing react-router-dom import and
+   add `useSearchParams` to the destructure:
+       import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+
+   IF the file already destructures useSearchParams elsewhere — skip this
+   import edit; just add a destructure line in the component.
+
+LOCATION 2.2 — Destructure searchParams near the existing useParams/useNavigate
+   calls (typically lines 60-75 area):
+   ADD (after the existing useNavigate line):
+       const [searchParams] = useSearchParams();
+
+LOCATION 2.3 — line 79-81 (handleBack):
+   CURRENT:
+       const handleBack = useCallback(() => {
+         navigate(`/projects/${projectId}/buildings/${buildingId}`);
+       }, [navigate, projectId, buildingId]);
+
+   REPLACE WITH:
+       const handleBack = useCallback(() => {
+         if (searchParams.get('from') === 'qc') {
+           navigate(`/projects/${projectId}/qc`);
+         } else {
+           navigate(`/projects/${projectId}/buildings/${buildingId}`);
+         }
+       }, [navigate, projectId, buildingId, searchParams]);
+
+   Behavior:
+   - From /qc → /buildings/:id/qc?from=qc → back returns to /qc ✓
+   - From /buildings/:id → /buildings/:id/qc → back returns to /buildings/:id ✓
+   - From /floors/:id → /buildings/:id/qc → back returns to /buildings/:id ✓ (existing rebound)
+   - Any direct URL / refresh without `from` → back returns to /buildings/:id ✓ (default preserved)
+
+DO NOT TOUCH:
+- The 3 handleBack call sites (lines 208, 251, 276). They keep using
+  the same handler which is now smart.
+- Any other navigate() in this file.
+- The header/breadcrumb visual.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend build:
+   cd frontend && yarn build
+   → no new warnings.
+
+VERIFY 2 — Source navigate updated:
+   grep -c "buildings/\\\${building.id}/qc?from=qc" frontend/src/pages/QCFloorSelectionPage.js
+   → must return 1.
+
+   grep -c "buildings/\\\${building.id}/qc'" frontend/src/pages/QCFloorSelectionPage.js
+   → must return 0 (the old form is gone).
+
+VERIFY 3 — BuildingQCPage handleBack uses searchParams:
+   grep -c "searchParams.get('from')" frontend/src/pages/BuildingQCPage.js
+   → must return at least 1.
+
+   grep -A 5 "const handleBack = useCallback" frontend/src/pages/BuildingQCPage.js
+   → shows the new conditional with both navigate destinations.
+
+VERIFY 4 — Other entry paths preserved (regression):
+   grep -n "buildings/\\\${[a-zA-Z_.]*}/qc" frontend/src/ -r | grep -v node_modules
+   → InnerBuildingPage.js and FloorDetailPage.js should still navigate
+     WITHOUT `?from=qc` (preserves their existing back behavior).
+
+VERIFY 5 — Behavior smoke (Zahi runs visually on staging):
+   a. /qc → click building card → /buildings/:id/qc?from=qc → click back
+      arrow → returns to /qc ✓ (THE FIX)
+   b. /buildings/:id → click "QC" button → /buildings/:id/qc (no `from`)
+      → click back arrow → returns to /buildings/:id ✓ (preserved)
+   c. /floors/:id → click back arrow → /buildings/:id/qc (no `from`) →
+      click back arrow → returns to /buildings/:id ✓ (preserved rebound)
+   d. Direct URL /buildings/:id/qc (no `from`) → back returns to
+      /buildings/:id ✓ (preserved default)
+
+================================================================================
+DELIVERABLES
+================================================================================
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (2 files, 2 sub-edits in QCFloorSelectionPage + 3 in BuildingQCPage)
+  - VERIFY 1-4 outputs (skip 5 — Zahi runs visually)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(qc): BuildingQCPage back returns to /qc when arrived from there
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.4 greps, output at top of review.txt).
+2. QCFloorSelectionPage: append &from=qc to building card navigate.
+3. BuildingQCPage: import useSearchParams + destructure + smart handleBack.
+4. Run VERIFY 1-4.
+5. Generate review.txt + .local/.commit_message.
+6. STOP. Zahi runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+2 files, surgical 1-line edits + 1 import + 1 destructure. Trivially safe.
+
+================================================================================
+END OF SPEC
+================================================================================

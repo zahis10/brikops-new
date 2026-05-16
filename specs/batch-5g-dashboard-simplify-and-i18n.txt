@@ -1,0 +1,373 @@
+================================================================================
+BATCH 5G — Dashboard simplification (remove "בביצוע" KPI) + i18n unification
+================================================================================
+Date:           2026-04-28
+Branch:         staging  (NOT main)
+Severity:       P1 — fixes 2 user-visible bugs found post-5F deploy
+Files changed:  4 files total
+                  Backend: tasks_router.py (STATUS_BUCKET_EXPANSION['open'])
+                  Backend test: test_status_buckets.py (drift guard update)
+                  Frontend: ProjectDashboardPage.js (remove KPI card)
+                  i18n: frontend/src/i18n/he.json (label change)
+Mobile:         N/A — Capacitor WebView, Capgo OTA.
+
+CONTEXT
+-------
+After 5F shipped to staging, Zahi found 2 user-visible bugs:
+
+1. Dashboard "פתוחים" KPI shows 13, click shows 9. The KPI counter sums
+   6 statuses (open + assigned + in_progress + pending_contractor_proof +
+   reopened + waiting_verify), but STATUS_BUCKET_EXPANSION['open']
+   currently expands to only 3 statuses (open + assigned + reopened).
+   The 4 missing tasks are in `in_progress`, `pending_contractor_proof`,
+   `waiting_verify`. The 5F drift-guard test passed because Replit
+   defined the 'open' bucket as a SUBSET of dashboard open_statuses
+   (intentional in 5F design); but the user expected the click count
+   to match the KPI count exactly.
+
+2. The "אושר" Hebrew label still appears on TaskDetailPage and other
+   surfaces because they read from i18n (he.json), not from the per-page
+   STATUS map that 5F edited. 5F never touched i18n because Cowork
+   classified TaskDetailPage as "audit-trail surface — אושר is correct
+   context there." Zahi disagreed: "סגור הוא סגור" — no per-surface
+   distinction needed.
+
+ZAHI'S PRODUCT DECISION (made in chat after 5F deploy):
+- Dashboard shows 5 KPIs, NOT 6. Remove the standalone "בביצוע" card.
+- "פתוחים" KPI keeps its current count (sum of 6 non-terminal statuses).
+- "לאישורי" stays as a SUBSET of "פתוחים" — overlap is intentional
+  because pending_manager_approval is still "open" until the manager
+  approves and writes status='closed'.
+- One Hebrew label "סגור" everywhere user-facing — including i18n.
+  No more "אושר".
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify spec line numbers match HEAD:
+    grep -n "STATUS_BUCKET_EXPANSION = " backend/contractor_ops/tasks_router.py
+    # Expect 1 hit at module top (added in 5F).
+
+    grep -n "label=\"בביצוע\"\|label='בביצוע'" frontend/src/pages/ProjectDashboardPage.js
+    # Expect 1 hit at line ~303 (the KPI card to remove).
+
+    grep -n "\"approved\":" frontend/src/i18n/he.json
+    # Expect 1 hit at line ~49.
+
+    grep -n "approved.*matches_dashboard\|test_bucket_expansion_open" backend/tests/test_status_buckets.py
+    # Expect at least 1 hit (the test we're updating).
+
+0.2 — Find any other UI surface that uses the i18n 'approved' label:
+    grep -rn "tStatus\|t('status\.approved'\|t(\"status\.approved\")" frontend/src/
+    # Document each call site. After this batch, ALL these sites will
+    # display "סגור" instead of "אושר". Verify that's correct.
+
+0.3 — Find places that depend on the standalone "בביצוע" KPI card:
+    grep -rn "kpis\.in_progress\|kpis\?\.in_progress" frontend/src/
+    # If used elsewhere (other dashboards, badges, etc.), keep those —
+    # only the ProjectDashboardPage card is being removed. The backend
+    # field stays available.
+
+0.4 — Output STEP 0 audit at the TOP of review.txt before any diffs.
+
+================================================================================
+PART 1 — BACKEND (1 file)
+================================================================================
+
+FILE 1 of 4: backend/contractor_ops/tasks_router.py
+----------------------------------------------------
+The 5F-introduced STATUS_BUCKET_EXPANSION needs `'open'` to mirror the
+dashboard `open_statuses` aggregation at line 363.
+
+LOCATION 1.1 — STATUS_BUCKET_EXPANSION dict (added in 5F, around line 40):
+
+   CURRENT:
+       STATUS_BUCKET_EXPANSION = {
+           'open': ['open', 'assigned', 'reopened'],
+           'in_progress': ['in_progress', 'pending_contractor_proof',
+                           'pending_manager_approval', 'returned_to_contractor',
+                           'waiting_verify'],
+           'closed': ['closed', 'approved'],
+       }
+
+   REPLACE WITH:
+       STATUS_BUCKET_EXPANSION = {
+           'open': ['open', 'assigned', 'in_progress',
+                    'pending_contractor_proof', 'reopened', 'waiting_verify'],
+           'in_progress': ['in_progress', 'pending_contractor_proof',
+                           'pending_manager_approval', 'returned_to_contractor',
+                           'waiting_verify'],
+           'closed': ['closed', 'approved'],
+       }
+
+   NOTE: 'open' now mirrors `open_statuses` at line 363 (6 statuses).
+   The 'in_progress' bucket stays unchanged — it's still useful for any
+   caller that explicitly filters by `?status=in_progress` (e.g., a
+   future power-user filter). 'pending_manager_approval' is intentionally
+   NOT in the 'open' bucket because dashboard open_statuses doesn't
+   include it either (it's tracked separately as "לאישורי" in its own
+   chip). When user clicks "פתוחים" → 6 statuses returned. When user
+   clicks "לאישורי" → only pending_manager_approval (literal pass-through).
+
+DO NOT TOUCH:
+- The dashboard aggregation logic at lines 363-364 (`open_statuses` +
+  `handled_statuses`). This is the source of truth for the KPI counters
+  and we're aligning the bucket TO it.
+- The list_tasks branch logic at line 239-241 (added in 5F) — still
+  correctly checks `status in STATUS_BUCKET_EXPANSION` and falls through.
+
+================================================================================
+PART 2 — BACKEND TEST (1 file)
+================================================================================
+
+FILE 2 of 4: backend/tests/test_status_buckets.py
+--------------------------------------------------
+The 5F drift-guard test currently asserts the 'open' bucket equals
+`{open, assigned, reopened}`. After this batch, that assertion is wrong.
+Update the test to assert the bucket equals the full dashboard
+`open_statuses` set.
+
+LOCATION 2.1 — Find the test asserting the 'open' bucket members:
+   CURRENT (5F version):
+       assert set(STATUS_BUCKET_EXPANSION['open']) == {
+           'open', 'assigned', 'reopened',
+       }, "..."
+
+   REPLACE WITH:
+       assert set(STATUS_BUCKET_EXPANSION['open']) == {
+           'open', 'assigned', 'in_progress',
+           'pending_contractor_proof', 'reopened', 'waiting_verify',
+       }, "STATUS_BUCKET_EXPANSION['open'] must mirror dashboard open_statuses (6 statuses, no pending_manager_approval — that's tracked as לאישורי)"
+
+LOCATION 2.2 — The 4th drift-superset test (test_bucket_union_covers_all_dashboard_statuses):
+   This test allowed bucket_union to be a superset of the dashboard sets.
+   After this change, 'pending_manager_approval' is still in
+   `STATUS_BUCKET_EXPANSION['in_progress']` but NOT in any dashboard
+   open_statuses literal list (the dashboard tracks it separately via
+   "לאישורי" literal pass-through).
+
+   RUN THE TEST AFTER EDITING and report the result:
+       cd backend && python3 -m pytest tests/test_status_buckets.py::test_bucket_union_covers_all_dashboard_statuses -v
+
+   IF IT PASSES: no further action.
+
+   IF IT FAILS: the test must be updated. The new mental model is:
+     - Bucket union = ALL non-terminal statuses + closed + approved
+     - 'pending_manager_approval' lives in BOTH the 'in_progress' bucket
+       (for power-user filters) AND the dashboard's "לאישורי" literal chip
+     - The union should match the entire status enum minus 'done' and
+       'cancelled' (which are terminal but not user-facing in this app)
+   Update the assertion accordingly. Document the change in review.txt.
+
+DO NOT TOUCH the other 3 tests (in_progress + closed + superset
+structure). Only the 'open' assertion changes.
+
+================================================================================
+PART 3 — FRONTEND (1 file)
+================================================================================
+
+FILE 3 of 4: frontend/src/pages/ProjectDashboardPage.js
+--------------------------------------------------------
+Remove the standalone "בביצוע" KPI card. Adjust the grid to fit the
+remaining cards.
+
+LOCATION 3.1 — Remove KpiCard for "בביצוע" (around lines 301-309):
+   DELETE the entire KpiCard block:
+       <KpiCard
+         icon={TrendingUp}
+         label="בביצוע"
+         value={kpis.in_progress}
+         bg="bg-blue-50"
+         borderColor="#60a5fa"
+         numberColor="text-blue-600"
+         onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=in_progress`)}
+       />
+
+LOCATION 3.2 — Adjust the grid columns (around line 290):
+   CURRENT:
+       <div className="grid grid-cols-3 md:grid-cols-6 gap-2.5">
+   REPLACE WITH:
+       <div className="grid grid-cols-3 md:grid-cols-5 gap-2.5">
+
+   This makes the 5 remaining cards (פתוחים / נסגרו / לאישורי /
+   באיחור / צוות) fill the row evenly on desktop.
+
+   If `isPmOrOwner` is false, the "לאישורי" card is conditionally
+   skipped — that path renders 4 cards. The grid will simply distribute
+   them. Acceptable.
+
+LOCATION 3.3 — Add tooltip to "פתוחים" KPI card to prevent overlap confusion:
+   The KPI "פתוחים" includes pending_manager_approval tasks (which also
+   appear in the separate "לאישורי" KPI). Without a hint, a user adding
+   the two numbers will get a wrong total ("13 + 5 = 18 tasks?" — no,
+   it's 13 because the 5 pending-approval are a subset).
+
+   Add a `title` attribute (HTML tooltip) to the KpiCard for "פתוחים":
+
+   CURRENT:
+       <KpiCard
+         icon={AlertTriangle}
+         label="פתוחים"
+         value={kpis.open_total}
+         sub={kpis.open_last7 > 0 ? `+${kpis.open_last7} השבוע` : undefined}
+         bg="bg-red-50"
+         borderColor="#f87171"
+         numberColor={kpis.open_total > 0 ? 'text-red-600' : 'text-slate-800'}
+         onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=open`)}
+       />
+
+   REPLACE WITH (add title prop):
+       <KpiCard
+         icon={AlertTriangle}
+         label="פתוחים"
+         value={kpis.open_total}
+         sub={kpis.open_last7 > 0 ? `+${kpis.open_last7} השבוע` : undefined}
+         bg="bg-red-50"
+         borderColor="#f87171"
+         numberColor={kpis.open_total > 0 ? 'text-red-600' : 'text-slate-800'}
+         title="כולל משימות שממתינות לאישור מנהל"
+         onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=open`)}
+       />
+
+   IMPORTANT: confirm KpiCard component accepts a `title` prop and passes
+   it through to the root element as the HTML `title` attribute. If it
+   doesn't, add 1 line in the KpiCard component definition:
+       <div ... title={title}>...</div>
+   Find the KpiCard definition (likely in same file or in a shared
+   component) and add the prop pass-through if missing.
+
+LOCATION 3.3 — TrendingUp import:
+   If `TrendingUp` from `lucide-react` is no longer used elsewhere in
+   this file after the deletion, remove it from the import line. Run:
+       grep -c "TrendingUp" frontend/src/pages/ProjectDashboardPage.js
+   If the only remaining hit is the import line itself, remove from import.
+
+DO NOT TOUCH:
+- The KpiCard component definition (used by other cards).
+- Any other KPI card (פתוחים, נסגרו, לאישורי, באיחור, צוות).
+- The kpis backend response shape (`kpis.in_progress` field stays — we
+  just stop displaying it as a card).
+
+================================================================================
+PART 4 — i18n (1 file)
+================================================================================
+
+FILE 4 of 4: frontend/src/i18n/he.json
+---------------------------------------
+LOCATION 4.1 — Hebrew status label (line 49):
+   CURRENT:
+       "approved": "אושר",
+   REPLACE WITH:
+       "approved": "סגור",
+
+DO NOT TOUCH:
+- en.json, ar.json, zh.json — Zahi's explicit decision: Hebrew is the
+  only language the BrikOps users see today (Israeli construction
+  market). EN/AR/ZH labels are pre-staged for future market expansion
+  and intentionally stay as 'Approved'/'تمت الموافقة'/'已批准' for now.
+  Filed as future task: when EN/AR/ZH go live for real users, run a
+  parallel pass to align all 4 locale labels (currently TASK BACKLOG —
+  not blocking).
+- The DB value 'approved' — unchanged. Still distinct from 'closed' for
+  audit. Only the user-facing Hebrew label changes.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend syntax:
+   python3 -m compileall backend/contractor_ops/ -q
+
+VERIFY 2 — STATUS_BUCKET_EXPANSION mirrors open_statuses:
+   $ grep -A 10 "STATUS_BUCKET_EXPANSION = {" backend/contractor_ops/tasks_router.py
+   → 'open' bucket must list all 6 statuses (open, assigned, in_progress,
+     pending_contractor_proof, reopened, waiting_verify).
+
+VERIFY 3 — Drift-guard test passes:
+   cd backend && python3 -m pytest tests/test_status_buckets.py -v
+   → all 4 tests PASS.
+
+VERIFY 4 — Frontend build:
+   cd frontend && yarn build
+   → no new warnings (TrendingUp removal won't trigger an unused-import
+     warning if cleaned correctly).
+
+VERIFY 5 — i18n grep:
+   $ grep -c "אושר" frontend/src/i18n/he.json
+   → 0 hits (the only one was line 49, now changed to סגור).
+
+VERIFY 6 — KPI card removed from dashboard:
+   $ grep -c "label=\"בביצוע\"" frontend/src/pages/ProjectDashboardPage.js
+   → 0 hits.
+   $ grep -c "kpis\.in_progress" frontend/src/pages/ProjectDashboardPage.js
+   → 0 hits (no leftover usages on this page).
+
+VERIFY 7 — Behavior smoke (Zahi runs visually on staging):
+   a. Dashboard: 5 KPI cards (was 6). "בביצוע" gone.
+   b. "פתוחים" KPI shows N → click → list shows exactly N tasks (no
+      more 13/9 mismatch).
+   c. "פתוחים" KPI hover (desktop) → tooltip shows
+      "כולל משימות שממתינות לאישור מנהל".
+   d. "לאישורי" KPI: click → shows only pending_manager_approval tasks.
+      (Note: those tasks ALSO appear in the "פתוחים" list — overlap
+      is intentional per Zahi.)
+   e. Open any task whose backend status is 'approved' → all UI surfaces
+      (TaskDetailPage, list badges, filter dropdown) show "סגור".
+
+VERIFY 8 — Capgo OTA delivery to native app (Zahi runs on his phone):
+   The i18n file (he.json) is bundled into the React build under
+   `frontend/build/`. Capgo's CapacitorUpdater plugin (autoUpdate=true,
+   channel=production per capacitor.config.json) pushes the entire
+   build folder including i18n.
+
+   Acceptance:
+   a. Open the iOS or Android app from a previously-installed version.
+   b. Wait up to 5 minutes for Capgo OTA to fetch the new bundle, OR
+      force-quit and reopen the app to trigger refresh.
+   c. Open any task with backend status='approved'.
+   d. The Hebrew badge in the task detail must read "סגור" (not "אושר").
+   e. If still showing "אושר" after 5 min + restart: Capgo bundle didn't
+      reach the device — check Capgo dashboard / channel config.
+
+   This is the only verify that requires waiting for OTA propagation.
+   Web staging (https://staging.brikops-new.pages.dev) updates instantly
+   on Cloudflare Pages publish — no Capgo involved there.
+
+================================================================================
+DELIVERABLES
+================================================================================
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (4 files)
+  - VERIFY 1-6 outputs (skip 7 — Zahi runs visually)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(dashboard): merge בביצוע into פתוחים KPI; align bucket expansion to dashboard aggregation; unify i18n approved→סגור
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.4 greps, output at top of review.txt).
+2. Backend: expand STATUS_BUCKET_EXPANSION['open'] to 6 statuses.
+3. Backend test: update the 'open' assertion in test_status_buckets.py.
+4. Frontend: remove "בביצוע" KpiCard + adjust grid + clean unused import.
+5. i18n: change "approved" Hebrew label.
+6. Run VERIFY 1-6.
+7. Generate review.txt + .local/.commit_message.
+8. STOP. Zahi runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+./deploy.sh --prod
+All changes are additive/cosmetic; backend bucket expansion only widens
+the result set for status='open' callers (more inclusive, not less).
+Safe to revert.
+
+================================================================================
+END OF SPEC
+================================================================================

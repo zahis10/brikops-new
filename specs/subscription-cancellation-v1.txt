@@ -1,0 +1,742 @@
+================================================================================
+SUBSCRIPTION CANCELLATION v1 — pause auto-renewal, no PayPlus API
+================================================================================
+Date:           2026-04-27
+Branch:         staging  (NOT main, NOT s7-full)
+Severity:       FEATURE — Israeli consumer-law compliance (חוק הגנת הצרכן 14ג2)
+Estimated:      45-75 min Replit work + 1 architect review iteration
+================================================================================
+
+WHY
+---
+1. Israeli consumer law (חוק הגנת הצרכן 14ג2) requires online cancellation for
+   any recurring subscription, with confirmation in writing. Current state:
+   no online cancellation. Customer must contact Zahi manually. Legal exposure.
+2. Current OrgBillingPage shows "חידוש אוטומטי — בקרוב" placeholder UI which
+   is both misleading (we DO auto-renew) and dead weight. Removed in this batch.
+3. Two wins in one batch: legal compliance + dead UI removal.
+
+CRITICAL PRINCIPLE — ZERO PAYPLUS API CALLS IN THIS BATCH
+----------------------------------------------------------
+Cancellation is purely local DB state changes. The PayPlus token stays saved.
+The renewal cron skips charging if `auto_renew=false`. This protects the
+fragile billing stack from any new PayPlus integration risk.
+
+================================================================================
+WHY THIS SPEC IS SO SMALL — verified existing infrastructure
+================================================================================
+The codebase ALREADY supports the mechanics we need. We just wire them together.
+
+VERIFIED 2026-04-27:
+
+1. `auto_renew` field is ALREADY READ by the renewal cron.
+   File: backend/contractor_ops/billing_router.py:930
+       all_subs = await db.subscriptions.find(
+           {'status': {'$in': ['active', 'past_due']}, 'auto_renew': True},
+           ...
+       )
+   → Setting `auto_renew=False` automatically excludes the sub from the
+     daily renewal cron. NO CRON CHANGES NEEDED.
+
+2. Paywall ALREADY blocks expired subs based on `paid_until`.
+   File: backend/contractor_ops/billing.py:_resolve_access (line ~281)
+       if sub.get('status') == 'active' and sub.get('paid_until') and sub['paid_until'] >= now:
+           return (EffectiveAccess.FULL_ACCESS, None)
+       ...
+       if sub.get('status') == 'active':
+           return (EffectiveAccess.READ_ONLY, 'payment_expired')
+   → Once paid_until passes, _resolve_access returns READ_ONLY → paywall
+     middleware returns 402. NO PAYWALL CHANGES NEEDED.
+
+3. Email infrastructure ALREADY exists.
+   File: backend/contractor_ops/invoicing.py:send_invoice_email (line ~203)
+   File: backend/contractor_ops/email_templates.py:wrap_email
+   → SMTP config from config.SMTP_*; sender invoice@brikops.com;
+     Hebrew RTL template with branded footer. Reuse this exact pattern
+     for cancellation/reactivation emails. NO NEW EMAIL HELPER NEEDED.
+
+WHAT WE'RE ACTUALLY ADDING
+   - 2 endpoints (cancel, reactivate)
+   - 3 new fields (cancelled_at, cancelled_reason, expires_at)
+     [auto_renew already exists]
+   - 2 new email templates (cancel confirmation to user, alert to zahi)
+   - One mongosh migration (set auto_renew=true on subs missing the field)
+   - 3 frontend UI states + cancel modal + dead code removal
+
+NO WhatsApp. NO new cron logic. NO paywall changes. NO new helper modules.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT INVESTIGATION
+================================================================================
+Before writing any code, run these checks and report findings in review.txt.
+The spec is built on the verified facts above. If STEP 0 finds anything that
+contradicts those facts, FLAG IT — do NOT silently adjust.
+
+0.1 — Confirm auth model for billing actions
+   The spec uses billing_admin / super_admin (matching the existing /checkout
+   pattern). Verify by looking at how /api/billing/org/{org_id}/checkout
+   gates auth (billing_router.py:~163):
+     - check_org_billing_role(user_id, org_id) returns 'billing_admin' or
+       'org_admin' or None
+     - super_admin bypass via _is_super_admin
+   Decision: cancel + reactivate use the SAME helper. So billing_admin can
+   cancel; org_admin and others get 403; super_admin bypass.
+   DO NOT introduce a new "owner_id" check.
+
+0.2 — Locate the right collection and helper for org admin email
+   The cancellation email to ZAHI uses zahi@brikops.com (hardcoded — that's
+   his account). For the email to the customer, mirror exactly how
+   send_invoice_email picks its recipient:
+     - Look at backend/contractor_ops/invoicing.py:227-242 — it tries
+       org.manager_id user → fallback to org_id+role∈[owner, admin] user.
+       Reuse that exact resolution.
+
+0.3 — Verify the existing /checkout flow includes 'auto_renew: True'
+   Look at billing_router.py:1639 (the PayPlus webhook success handler).
+   It should already set auto_renew=True. Verify and document.
+
+0.4 — Check whether there are any subscriptions in prod missing auto_renew
+   This isn't a code check, but it's the migration question. Spec assumes
+   the migration mongosh command counts and updates them. Document in
+   review.txt that Zahi must run this BEFORE deploy.
+
+REPORT all 4 findings briefly in review.txt under "STEP 0 — Pre-flight
+findings". If anything unexpected, propose adjustments inline and ask Zahi
+before continuing.
+
+================================================================================
+SCOPE
+================================================================================
+
+IN SCOPE
+--------
+Backend (in billing_router.py and invoicing.py):
+  - POST /api/billing/org/{org_id}/cancel
+  - POST /api/billing/org/{org_id}/reactivate
+  - send_cancellation_email_user (new function in invoicing.py — mirrors
+    send_invoice_email exactly, just different subject/body)
+  - send_cancellation_email_zahi (new function in invoicing.py — sends
+    notification to zahi@brikops.com with org/user/reason details)
+  - send_reactivation_email_user (new function in invoicing.py)
+  - Audit events: subscription_cancelled, subscription_reactivated
+
+Frontend (in OrgBillingPage.js):
+  - 3-state UI replacing the dead "חידוש אוטומטי — בקרוב" block:
+       Active+auto_renew → green "חידוש אוטומטי פעיל" + cancel button
+       Cancelled, not yet expired → amber "המנוי בוטל" + reactivate button
+       Expired (paid_until passed) → rose "המנוי פג" + checkout link
+  - Cancel modal with optional reason textarea
+  - handleCancelSubscription / handleReactivate handlers
+  - REMOVE dead code:
+       * lines ~1419-1430 (standalone "אשר תשלום" button)
+       * handleMarkPaidAction function (lines ~457-479)
+       * markPaidLoading state (line ~111)
+  - KEEP "אשר תשלום" button at line ~1590 (different feature —
+    handleAdminApprove(pr) for payment_requests admin list)
+  - KEEP "צריך עזרה?" / WhatsApp / billing@brikops.com section
+
+Migration (Zahi runs in mongosh BEFORE deploy):
+  db.subscriptions.updateMany(
+    { auto_renew: { $exists: false } },
+    { $set: { auto_renew: true } }
+  )
+
+Tests:
+  - backend/tests/test_subscription_cancellation.py (8 tests)
+
+OUT OF SCOPE
+------------
+- Refund automation (manual via PayPlus dashboard).
+- Pro-rated refunds. (Israeli law: NOT required when service is provided
+  up to cancellation date — which is exactly our model.)
+- WhatsApp alerts. (Customer feedback: too much template work; email-only.)
+- Cron logic changes. (Existing query already filters auto_renew=True.)
+- Paywall middleware changes. (Existing _resolve_access already blocks
+  expired subs.)
+- "Mark expired" pass in cron. (Paywall handles it dynamically per request.)
+- Plan downgrade flow.
+- PayPlus token deletion (intentionally KEPT for re-checkout).
+- Win-back / reminder emails.
+
+================================================================================
+SCHEMA — 3 new fields on subscriptions
+================================================================================
+auto_renew already exists; we just add the 3 cancel-related fields.
+
+    {
+      // existing fields (auto_renew, status, paid_until, etc.)
+      "cancelled_at":     None,    // ISO datetime or None
+      "cancelled_reason": None,    // string (max 500 chars) or None
+      "expires_at":       None,    // ISO datetime or None
+                                   //   = snapshot of paid_until at cancel time
+                                   //   (we keep this even though paid_until
+                                   //    has the same value — explicit signal
+                                   //    that "this sub is in cancelled-but-
+                                   //    active state, expiring at this time")
+    }
+
+State derivation (all from existing+new fields, no new status value needed):
+
+    STATE             | auto_renew | cancelled_at | paid_until vs now
+    ------------------|------------|--------------|-------------------
+    Active            | True       | None         | future
+    Cancelled-active  | False      | <set>        | future
+    Expired           | (any)      | (any)        | past
+
+The paywall already blocks the "Expired" state via _resolve_access.
+
+================================================================================
+NEW ENDPOINTS
+================================================================================
+
+POST /api/billing/org/{org_id}/cancel
+--------------------------------------
+Request body (optional):
+    { "reason": "free-text from textarea, max 500 chars" }
+
+Authorization: same helper as /checkout.
+    - Reuse the check_org_billing_role + _is_super_admin pattern from
+      billing_router.py:~163.
+    - billing_admin OR super_admin → allowed.
+    - Anyone else → 403 "אין הרשאת ניהול חיוב".
+
+Logic:
+    1. Auth check (as above).
+    2. Find active sub:
+         sub = await db.subscriptions.find_one(
+             {'org_id': org_id, 'status': 'active'}, {'_id': 0}
+         )
+       If none → 404 "אין מנוי פעיל לביטול".
+    3. Idempotency: if sub.auto_renew is False → return 200 with
+         { "already_cancelled": True,
+           "cancelled_at": sub.cancelled_at,
+           "access_until": sub.expires_at }
+       (Idempotent operations are NOT errors.)
+    4. Get paid_until = sub.get('paid_until').
+       Edge case: if paid_until missing/null → 500 "שגיאה בנתוני המנוי,
+       צרו קשר עם התמיכה" + log error. Do NOT cancel without expires_at.
+    5. Atomic update:
+         await db.subscriptions.update_one(
+             {'id': sub['id']},
+             {'$set': {
+                 'auto_renew': False,
+                 'cancelled_at': now_iso,
+                 'cancelled_reason': (body.reason or '').strip()[:500] or None,
+                 'expires_at': sub['paid_until'],
+             }}
+         )
+    6. Audit event (try/except — log on failure, don't fail flow):
+         await db.audit_events.insert_one({
+             'id': str(uuid.uuid4()),
+             'event_type': 'subscription_cancelled',
+             'org_id': org_id,
+             'user_id': user['id'],
+             'created_at': now_iso,
+             'details': {
+                 'sub_id': sub['id'],
+                 'plan_id': sub.get('plan_id'),
+                 'expires_at': sub['paid_until'],
+                 'reason': body.reason or None,
+             },
+         })
+    7. Send confirmation email to user (try/except):
+         await send_cancellation_email_user(org_id, sub, user, body.reason)
+    8. Send notification email to Zahi (try/except):
+         await send_cancellation_email_zahi(org_id, sub, user, body.reason)
+    9. Return:
+         { "cancelled_at": now_iso,
+           "access_until": sub['paid_until'] }
+
+POST /api/billing/org/{org_id}/reactivate
+------------------------------------------
+Request body: empty.
+
+Authorization: same as cancel (billing_admin OR super_admin).
+
+Logic:
+    1. Auth check.
+    2. Find sub:
+         sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
+       If none → 404 "לא נמצא מנוי".
+    3. State checks:
+       - If sub.cancelled_at is None → 400 "המנוי כבר פעיל".
+       - Get expires_at = sub.expires_at (or fall back to sub.paid_until).
+       - If expires_at and now > expires_at → 410 "המנוי כבר פג, נדרשת
+         רכישה חדשה". (HTTP 410 Gone — frontend uses this to redirect
+         to checkout instead of showing an error.)
+    4. Atomic update:
+         await db.subscriptions.update_one(
+             {'id': sub['id']},
+             {'$set': {'auto_renew': True},
+              '$unset': {
+                  'cancelled_at': '',
+                  'cancelled_reason': '',
+                  'expires_at': '',
+              }}
+         )
+    5. Audit event: subscription_reactivated.
+    6. Send confirmation email to user (try/except):
+         await send_reactivation_email_user(org_id, sub, user)
+    7. Return:
+         { "reactivated_at": now_iso,
+           "next_charge_date": sub.get('paid_until') }
+
+================================================================================
+EMAIL FUNCTIONS — mirror send_invoice_email
+================================================================================
+Add 3 new functions to backend/contractor_ops/invoicing.py.
+
+All 3 follow the EXACT same pattern as send_invoice_email (line ~203):
+- Guard on SMTP_USER/SMTP_PASS missing → log warning, return.
+- Resolve recipient (manager_id user → owner/admin fallback).
+- Build subject + html_body (Hebrew RTL).
+- text_body fallback for plain text.
+- MIMEMultipart('alternative').
+- From: 'BrikOps <invoice@brikops.com>'.
+- Reply-To: 'zahi@brikops.com'.
+- wrap_email(html_body, 'invoice').
+- SMTP send with try/except — log warning on failure, don't raise.
+
+EMAIL 1: send_cancellation_email_user(org_id, sub, user, reason)
+-----------------------------------------------------------------
+To: org's billing recipient (resolved like send_invoice_email).
+
+Subject: "אישור ביטול מנוי — BrikOps"
+
+Body (HTML, Hebrew RTL):
+    <h2>BrikOps</h2>
+    <p>שלום {owner_name},</p>
+    <p>בוצע ביטול חידוש אוטומטי למנוי שלך ב-BrikOps.</p>
+    <div style="background:#f8f9fa;padding:16px;border-radius:8px;margin:16px 0;">
+      <p><strong>הגישה למערכת תישאר פעילה עד:</strong></p>
+      <p style="font-size:18px;color:#f57c00;">{formatted_expires_at}</p>
+    </div>
+    <p>אחרי תאריך זה לא יבוצעו חיובים נוספים.</p>
+    <p style="font-size:13px;color:#666;">
+      החיוב הזה לא יוחזר כי השירות סופק עד תום התקופה,
+      בהתאם לחוק הגנת הצרכן.
+    </p>
+    <p style="font-size:13px;color:#666;">
+      ניתן להפעיל מחדש את המנוי בכל עת לפני תאריך הפקיעה דרך
+      <a href="https://app.brikops.com/billing">דף החשבון שלך</a>.
+    </p>
+    <p style="font-size:12px;color:#999;margin-top:24px;">
+      אם הביטול בוצע בטעות או בלי אישורך, פנה אלינו מיד דרך billing@brikops.com
+    </p>
+
+EMAIL 2: send_cancellation_email_zahi(org_id, sub, user, reason)
+-----------------------------------------------------------------
+To: zahi@brikops.com (hardcoded — internal notification).
+
+Subject: "[BrikOps] ביטול מנוי — {org_name}"
+
+Body (HTML, Hebrew RTL):
+    <h2>BrikOps — התראת ביטול מנוי</h2>
+    <p>לקוח ביטל חידוש אוטומטי. הגישה תפוג בתאריך הסיום.</p>
+    <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+      <tr><td><strong>ארגון:</strong></td><td>{org_name}</td></tr>
+      <tr><td><strong>משתמש:</strong></td><td>{user_name} ({user_email})</td></tr>
+      <tr><td><strong>תוכנית:</strong></td><td>{plan_name}</td></tr>
+      <tr><td><strong>גישה תפוג:</strong></td><td>{formatted_expires_at}</td></tr>
+      <tr><td><strong>סיבה:</strong></td>
+          <td>{reason or 'לא צוינה'}</td></tr>
+    </table>
+    <p style="margin-top:24px;">
+      <a href="https://app.brikops.com/admin/orgs/{org_id}"
+         style="background:#f57c00;color:white;padding:12px 24px;
+                border-radius:6px;text-decoration:none;">
+        לארגון
+      </a>
+    </p>
+    <p style="font-size:13px;color:#666;margin-top:16px;">
+      פעולה אפשרית: הצעת save call לפני פקיעת הגישה.
+    </p>
+
+EMAIL 3: send_reactivation_email_user(org_id, sub, user)
+---------------------------------------------------------
+To: org's billing recipient.
+
+Subject: "המנוי שלך הופעל מחדש — BrikOps"
+
+Body (HTML, Hebrew RTL):
+    <h2>BrikOps</h2>
+    <p>שלום {owner_name},</p>
+    <p>המנוי שלך הופעל מחדש בהצלחה.</p>
+    <div style="background:#e8f5e9;padding:16px;border-radius:8px;margin:16px 0;">
+      <p><strong>החיוב הבא יבוצע ב:</strong></p>
+      <p style="font-size:18px;color:#2e7d32;">{formatted_paid_until}</p>
+    </div>
+    <p>חידוש אוטומטי שב לפעולה.</p>
+
+================================================================================
+FRONTEND — OrgBillingPage.js
+================================================================================
+The page already fetches subscription state. Add UI based on derived state.
+
+REPLACE the existing block at lines ~1385-1396 (the dead "חידוש אוטומטי
+— בקרוב" placeholder) with the state-machine described below.
+
+STATE 1 — Active + auto_renew (most common)
+-------------------------------------------
+Condition: sub.status === 'active' && sub.auto_renew !== false
+           && new Date(sub.paid_until) > new Date()
+
+    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <CheckCircle className="w-5 h-5 text-emerald-600" />
+        <span className="text-sm font-medium text-slate-700">חידוש אוטומטי פעיל</span>
+      </div>
+      <p className="text-xs text-slate-500">
+        המנוי יתחדש אוטומטית ב-{formatHebrewDate(sub.paid_until)}
+      </p>
+      <button
+        onClick={() => setShowCancelModal(true)}
+        className="text-xs text-rose-600 hover:text-rose-700 font-medium"
+      >
+        ביטול חידוש אוטומטי
+      </button>
+    </div>
+
+STATE 2 — Cancelled but access remaining
+-----------------------------------------
+Condition: sub.cancelled_at && new Date(sub.expires_at || sub.paid_until) > new Date()
+
+    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="w-5 h-5 text-amber-600" />
+        <span className="text-sm font-medium text-slate-700">המנוי בוטל</span>
+      </div>
+      <p className="text-xs text-slate-500">
+        הגישה תישאר עד {formatHebrewDate(sub.expires_at || sub.paid_until)}.
+        אחרי תאריך זה לא יבוצעו חיובים נוספים.
+      </p>
+      <button
+        onClick={handleReactivate}
+        className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-medium"
+      >
+        המשך מנוי
+      </button>
+    </div>
+
+STATE 3 — Expired (paid_until in past, regardless of auto_renew)
+-----------------------------------------------------------------
+Condition: new Date(sub.paid_until) <= new Date()
+
+    <div className="bg-rose-50 border border-rose-200 rounded-lg p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <XCircle className="w-5 h-5 text-rose-600" />
+        <span className="text-sm font-medium text-slate-700">המנוי פג</span>
+      </div>
+      <p className="text-xs text-slate-500">
+        פג ב-{formatHebrewDate(sub.paid_until)}.
+        להמשך עבודה, נדרשת רכישת מנוי חדש.
+      </p>
+      <button
+        onClick={() => navigate(`/billing/org/${orgId}/checkout`)}
+        className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-medium"
+      >
+        רכישת מנוי
+      </button>
+    </div>
+
+CANCEL MODAL
+------------
+Inline modal in OrgBillingPage. Hebrew RTL.
+
+    {showCancelModal && (
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4" dir="rtl">
+          <h2 className="text-lg font-bold text-slate-900">בטל חידוש אוטומטי?</h2>
+          <div className="space-y-2 text-sm text-slate-600">
+            <p>
+              המנוי שלך יישאר פעיל עד <strong>{formatHebrewDate(sub.paid_until)}</strong>.
+            </p>
+            <p>
+              אחרי תאריך זה, לא יבוצעו חיובים נוספים והמערכת תהיה לא נגישה.
+            </p>
+            <p className="text-xs text-slate-500">
+              החיוב הזה לא יוחזר כי השירות סופק עד תום התקופה.
+              ניתן להפעיל מחדש בכל עת לפני תאריך הסיום.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <label className="block text-xs font-medium text-slate-700">
+              סיבה לביטול (לא חובה):
+            </label>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              maxLength={500}
+              rows={3}
+              className="w-full border border-slate-300 rounded-lg p-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-slate-400"
+              placeholder="מה גרם לביטול? (יעזור לנו להשתפר)"
+            />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button
+              onClick={() => setShowCancelModal(false)}
+              className="flex-1 px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50"
+              disabled={cancelLoading}
+            >
+              חזרה
+            </button>
+            <button
+              onClick={handleCancelSubscription}
+              className="flex-1 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
+              disabled={cancelLoading}
+            >
+              {cancelLoading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : "אישור ביטול"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+HANDLERS
+--------
+    const [showCancelModal, setShowCancelModal] = useState(false);
+    const [cancelReason, setCancelReason] = useState("");
+    const [cancelLoading, setCancelLoading] = useState(false);
+
+    const handleCancelSubscription = async () => {
+      setCancelLoading(true);
+      try {
+        await axios.post(
+          `${BACKEND_URL}/api/billing/org/${orgId}/cancel`,
+          { reason: cancelReason },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        toast.success("המנוי בוטל. אישור נשלח לאימייל שלך.");
+        setShowCancelModal(false);
+        setCancelReason("");
+        await refetchSubscription();
+      } catch (e) {
+        toast.error(e.response?.data?.detail || "שגיאה בביטול המנוי");
+      } finally {
+        setCancelLoading(false);
+      }
+    };
+
+    const handleReactivate = async () => {
+      if (!window.confirm("להפעיל את המנוי מחדש?")) return;
+      try {
+        await axios.post(
+          `${BACKEND_URL}/api/billing/org/${orgId}/reactivate`,
+          {},
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        toast.success("המנוי הופעל מחדש");
+        await refetchSubscription();
+      } catch (e) {
+        if (e.response?.status === 410) {
+          toast.error("המנוי פג, נדרשת רכישה חדשה");
+          navigate(`/billing/org/${orgId}/checkout`);
+        } else {
+          toast.error(e.response?.data?.detail || "שגיאה בהפעלת המנוי");
+        }
+      }
+    };
+
+DEAD CODE TO REMOVE (folded in)
+-------------------------------
+1. Lines ~1385-1396 — "חידוש אוטומטי — בקרוב" placeholder block.
+   REPLACE with the state-machine UI above.
+2. Lines ~1419-1430 — standalone "אשר תשלום" button (super-admin only,
+   calls handleMarkPaidAction). DELETE.
+3. Lines ~457-479 — handleMarkPaidAction function. Now dead, DELETE.
+4. Line ~111 — markPaidLoading state. Now dead, DELETE.
+
+KEEP:
+- Line ~1590 "אשר תשלום" button (uses handleAdminApprove(pr) — different
+  feature for approving payment_requests).
+- "צריך עזרה?" / WhatsApp / billing@brikops.com block.
+
+================================================================================
+MIGRATION (Zahi runs in mongosh BEFORE deploy)
+================================================================================
+PRE-DEPLOY CHECK (run first to know expected count):
+    db.subscriptions.countDocuments({ auto_renew: { $exists: false } })
+    db.subscriptions.countDocuments({})
+
+MIGRATION:
+    db.subscriptions.updateMany(
+      { auto_renew: { $exists: false } },
+      { $set: { auto_renew: true } }
+    )
+
+Expected result:
+    matchedCount === modifiedCount === pre-deploy "doesn't have field" count
+
+If matched != modified → STOP, investigate, ask Zahi.
+
+This is a one-time fix. Going forward, the existing PayPlus webhook
+already sets auto_renew=true on every payment.
+
+================================================================================
+TESTS — backend/tests/test_subscription_cancellation.py (NEW FILE)
+================================================================================
+Use the existing pattern from test_billing_v1.py:
+- Sync test functions
+- asyncio.run(...) for async calls
+- set_billing_db(mdb) inside the async block (motor wiring)
+- Direct MongoClient for setup/teardown
+
+Required test cases (8):
+
+1. test_cancel_sets_auto_renew_to_false_and_expires_at
+   Setup: org with sub.status='active', auto_renew=True, paid_until=future
+   Action: POST /cancel
+   Assert: sub now has auto_renew=False, cancelled_at set, expires_at == paid_until
+
+2. test_cancel_does_NOT_call_payplus_api
+   Mock contractor_ops.payplus_service.* to fail loudly if called.
+   Action: POST /cancel
+   Assert: mocks not invoked, response 200.
+
+3. test_cancel_inserts_audit_event_with_reason
+   Action: POST /cancel with body {"reason": "too expensive"}
+   Assert: audit_events has 'subscription_cancelled' for this org with the
+           reason in details.
+
+4. test_cancel_idempotent_on_already_cancelled
+   Setup: sub already cancelled.
+   Action: POST /cancel again.
+   Assert: response 200 with already_cancelled=True.
+
+5. test_cancel_blocked_for_non_billing_admin
+   Setup: user is plain member (not billing_admin, not super_admin).
+   Action: POST /cancel.
+   Assert: 403.
+
+6. test_reactivate_before_expiry_works
+   Setup: sub cancelled, expires_at in future.
+   Action: POST /reactivate.
+   Assert: auto_renew=True, cancelled_at unset, expires_at unset.
+
+7. test_reactivate_after_expiry_returns_410
+   Setup: sub cancelled, expires_at in past.
+   Action: POST /reactivate.
+   Assert: 410 Gone.
+
+8. test_renewal_cron_skips_cancelled_subs
+   Setup: 2 subs — one with auto_renew=True, one with auto_renew=False.
+   Action: Run the existing renewal cron query directly:
+     all_subs = await db.subscriptions.find(
+       {'status': {'$in': ['active', 'past_due']}, 'auto_renew': True}
+     ).to_list(100)
+   Assert: only the auto_renew=True sub appears in the result.
+
+================================================================================
+VERIFY
+================================================================================
+
+1. Compile:
+   python3 -m compileall backend/contractor_ops/ -q
+
+2. Frontend build:
+   cd frontend && yarn build
+   Must succeed, no NEW warnings.
+
+3. Grep — new endpoints exist:
+   grep -n "@router.post.*cancel\|@router.post.*reactivate" \
+       backend/contractor_ops/billing_router.py
+   Expected: 2 hits (one per endpoint).
+
+4. Grep — new email functions exist:
+   grep -n "def send_cancellation_email_user\|def send_cancellation_email_zahi\|def send_reactivation_email_user" \
+       backend/contractor_ops/invoicing.py
+   Expected: 3 hits.
+
+5. Grep — frontend dead code removed:
+   grep -n "handleMarkPaidAction\|markPaidLoading" \
+       frontend/src/pages/OrgBillingPage.js
+   Expected: zero matches.
+
+   grep -n "אשר תשלום" frontend/src/pages/OrgBillingPage.js
+   Expected: exactly ONE match (the kept payment_requests button).
+
+   grep -n "בקרוב תוכל להפעיל" frontend/src/pages/OrgBillingPage.js
+   Expected: zero matches (placeholder removed).
+
+6. Existing pytest still passes (no regression):
+   cd backend && python -m pytest tests/test_billing.py tests/test_billing_v1.py -v
+   No NEW failures.
+
+7. New regression tests pass:
+   cd backend && python -m pytest tests/test_subscription_cancellation.py -v
+   Expected: 8/8 PASS.
+
+8. Boot check:
+   Restart Start application workflow. Confirm clean boot.
+   GET /api/health → 200 OK.
+
+9. Grep — verify NO accidental edits to cron or paywall:
+   git diff origin/staging -- backend/server.py | wc -l
+   Expected: 0 (paywall middleware unchanged).
+
+   git diff origin/staging -- backend/contractor_ops/billing_router.py \
+       | grep -E "^\+.*all_subs.*find\|^\+.*auto_renew" | head -5
+   Expected: zero "+" lines that change the existing renewals query
+   (the query at line ~930 must be byte-identical).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt — must include, in this order:
+  1. Header: branch, date, severity (FEATURE), files changed count,
+     rollback SHA from `git rev-parse HEAD`.
+  2. STEP 0 findings (4 items).
+  3. Full unified diffs of every modified/new file (verbatim git diff).
+  4. All 9 VERIFY outputs (especially #6 + #7 for tests, and #9 for
+     confirmation that paywall + cron are NOT touched).
+  5. Migration: pre-deploy count + the exact mongosh command.
+  6. Manual smoke test plan for staging (cancel UI flow, reactivate UI
+     flow, expired state via mongosh, authorization rejection).
+  7. Post-deploy checklist:
+     - Run mongosh migration BEFORE deploy
+     - Standard staging→prod flow (per CLAUDE.md)
+  8. Rollback plan:
+     git revert <commit-sha> && ./deploy.sh --prod
+  9. Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+   feat(billing): subscription cancellation v1 — pause auto-renewal, no PayPlus API
+
+================================================================================
+STEPS (sequential — do not skip)
+================================================================================
+1. Run STEP 0 (all 4 sub-steps). Document findings.
+2. If anything in STEP 0 contradicts the spec, ASK Zahi before proceeding.
+3. Implement backend:
+   a. Add cancel + reactivate endpoints in billing_router.py.
+   b. Add 3 email functions in invoicing.py (mirror send_invoice_email).
+4. Implement frontend:
+   a. Add 3-state UI in OrgBillingPage.js.
+   b. Add cancel modal + handlers.
+   c. Remove dead code (4 items).
+5. Add 8 tests in test_subscription_cancellation.py.
+6. Run all 9 VERIFY checks.
+7. Generate review.txt.
+8. Write .local/.commit_message.
+9. STOP. No commit, no push, no deploy script.
+   Zahi will:
+     a. Run the mongosh migration manually.
+     b. Run ./deploy.sh --stag.
+     c. Run manual smoke tests on staging.
+     d. If all green: ./deploy.sh --prod.
+
+================================================================================
+ROLLBACK
+================================================================================
+Any failure post-deploy:
+    git revert <commit-sha>
+    ./deploy.sh --prod
+
+The 3 new collection fields stay in DB but become unused — forward-
+compatible. The migration that set auto_renew=true is harmless — those
+subs continue to charge as before.
+
+================================================================================
+END OF SPEC
+================================================================================

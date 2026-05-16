@@ -1,0 +1,221 @@
+================================================================================
+BATCH C — StageDetailPage back nav respects returnToPath (#31)
+================================================================================
+Date:           2026-05-11
+Branch:         staging  (NOT main)
+Severity:       P2 — UX bug from real-device testing (#31).
+                User on StageDetailPage (per-unit QC of a specific stage)
+                clicks back arrow → expected to return to UnitQCSelectionPage
+                for the same stage. Actually goes to FloorDetailPage (general
+                floor view), losing the stage context.
+
+                Real-world impact: PM doing QC on "טיח דירתי" stage walks
+                through דירה 18 → finishes → expects to see דירה 19 in the
+                same "טיח דירתי" list. Instead lands on the floor's stage
+                index → has to re-click "טיח דירתי" → reload UnitQCSelectionPage.
+                Adds ~3 clicks per unit, kills the QC workflow rhythm.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only:
+                  - frontend/src/pages/StageDetailPage.js (~12 LOC changed
+                    at goBack function)
+                Total: 1 file. No backend.
+
+================================================================================
+USER FLOW — bug vs. fix
+================================================================================
+
+URL trail (Zahi's actual report):
+
+1. Start (UnitQCSelectionPage for stage "טיח דירתי"):
+   /projects/{proj}/buildings/{bldg}/floors/{floor}/qc/units?stage_id=stage_plaster&from=qc
+
+2. Click on דירה X → opens StageDetailPage:
+   /projects/{proj}/qc/floors/{floor}/run/{run}/stage/stage_plaster?from=qc
+
+3. Click back arrow:
+   ❌ CURRENT: goes to /projects/{proj}/floors/{floor}?from=qc
+       (FloorDetailPage — general floor stage index)
+   ✅ EXPECTED: goes to step 1's URL
+       (UnitQCSelectionPage — list of units for "טיח דירתי")
+
+================================================================================
+STEP 0 — PRE-FLIGHT (4 checks PASS)
+================================================================================
+
+1. Confirm goBack ignores returnToPath at StageDetailPage.js:1603-1607:
+   $ grep -nA 4 "const goBack = ()" frontend/src/pages/StageDetailPage.js
+   →  1603: const goBack = () => {
+   →  1604:   const url = `/projects/${projectId}/floors/${floorId}`;
+   →  1605:   const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+   →  1606:   navigate(withFrom);
+   →  1607: };
+   ✓ Confirmed — function ignores returnToPath entirely.
+
+2. Confirm returnToPath IS being read from state at L766:
+   $ grep -n "returnToPath\|navState.returnTo" \
+       frontend/src/pages/StageDetailPage.js
+   →  766: const returnToPath = navState.returnTo || '';
+   ✓ Variable exists but is never used. Pure dead read.
+
+3. Confirm UnitQCSelectionPage passes returnTo correctly at L60-67:
+   $ grep -nA 6 "navigate.*qc/floors.*run" \
+       frontend/src/pages/UnitQCSelectionPage.js
+   →  61-68: navigate(.../stage/${stageId}, { state: {
+   →   returnTo: `/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units`,
+   →   unitName: unit.unit_name || unit.unit_no,
+   →   scope: 'unit',
+   →  }});
+   ✓ Source already sends returnTo. The bug is purely in StageDetailPage.
+
+4. Confirm 3 call sites of goBack (one in header, two in error states):
+   $ grep -n "onClick={goBack}" frontend/src/pages/StageDetailPage.js
+   →  1622: button "חזרה לקומה" (error case — runData failed to load)
+   →  1633: button "חזרה לקומה" (error case — stage not found)
+   →  1666: back arrow in sticky header (NORMAL case — main bug)
+   ✓ All 3 call same goBack. Fix at function level applies to all.
+   ⚠ NOTE: Error cases (1622, 1633) may not have runData yet but DO have
+     location.state (set at navigation time, not after data load). So
+     returnToPath is available in error path too.
+
+================================================================================
+LOCATION 1 — Replace goBack to respect returnToPath
+================================================================================
+File: frontend/src/pages/StageDetailPage.js
+Lines: 1603-1607
+
+BEFORE:
+  const goBack = () => {
+    const url = `/projects/${projectId}/floors/${floorId}`;
+    const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+    navigate(withFrom);
+  };
+
+AFTER:
+  const goBack = () => {
+    // PRIMARY PATH: returnToPath was set by the source page (e.g.
+    // UnitQCSelectionPage) and survives react-router navigation. Append
+    // stage_id + from=qc so the destination page knows which stage to
+    // filter to. This is the normal flow — user pressed back from a
+    // unit-scope QC stage.
+    if (returnToPath) {
+      const sep = returnToPath.includes('?') ? '&' : '?';
+      const queryParts = [];
+      if (stageId) queryParts.push(`stage_id=${stageId}`);
+      if (fromParam === 'qc') queryParts.push('from=qc');
+      const url = queryParts.length > 0
+        ? `${returnToPath}${sep}${queryParts.join('&')}`
+        : returnToPath;
+      navigate(url);
+      return;
+    }
+    // FALLBACK PATH: returnToPath is empty (page refresh wiped
+    // location.state, OR user arrived via deep link). Original behavior —
+    // go to FloorDetailPage. For floor-scope stages this is correct.
+    // For unit-scope stages reached via deep link, this is a known
+    // limitation — see follow-up batch for runData.scope-based recovery.
+    const url = `/projects/${projectId}/floors/${floorId}`;
+    const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+    navigate(withFrom);
+  };
+
+Why this is safe:
+- The PRIMARY path triggers ONLY when location.state.returnTo is set,
+  which happens only via the existing navigate(...) call in
+  UnitQCSelectionPage L60-67. No other call site sends returnTo, so we
+  can't accidentally redirect floor-scope flows.
+- FALLBACK path preserves the exact current behavior bit-for-bit for
+  all cases where returnToPath is empty (refresh, deep link, error
+  state during initial nav, floor-scope QC).
+- stageId comes from useParams (always present in this route).
+- fromParam comes from useSearchParams (already handled in current code).
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ The navigate call in UnitQCSelectionPage.js L61-67 — source side is
+     already correct. Don't second-guess.
+- ❌ navState.scope / navState.unitName / isUnitMode usage at L764-765 —
+     unrelated, used for UI labels not navigation.
+- ❌ Error state UI / messages — only the navigate target changes.
+- ❌ Any other goBack-like functions in OTHER pages — out of scope.
+- ❌ Backend qc_router.py — no backend change needed.
+
+================================================================================
+KNOWN LIMITATION (document, don't fix in this batch)
+================================================================================
+If the user REFRESHES the StageDetailPage browser tab, location.state is
+wiped → returnToPath is empty → falls back to FloorDetailPage. This is the
+same behavior as today (bug unchanged for refresh case).
+
+A follow-up batch could:
+  1. Add `scope` + `building_id` to runData from backend (qc_router.py
+     /qc/run/{runId} response).
+  2. In StageDetailPage goBack, if runData.scope === 'unit' AND
+     runData.building_id is present, reconstruct the UnitQCSelectionPage
+     URL.
+
+This is documented but NOT in this batch — the user-reported scenario
+is the normal click-back flow which IS fixed by Location 1.
+
+================================================================================
+VERIFY 1 — Build
+================================================================================
+$ cd frontend && CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — Smoke (DEFERRED TO ZAHI on staging)
+================================================================================
+Repro from Zahi's URL trail above:
+
+A. On staging, log in → open project → בקרת ביצוע → walk into a building
+   → floor with units → click on a unit-scope stage like "טיח דירתי" →
+   you land on UnitQCSelectionPage with stage_id=stage_plaster in URL.
+   EXPECT URL: .../buildings/.../floors/.../qc/units?stage_id=stage_plaster&from=qc
+
+B. Click on דירה 18 → opens StageDetailPage for that unit.
+   EXPECT URL: .../qc/floors/.../run/.../stage/stage_plaster?from=qc
+
+C. Click the back arrow in the sticky header.
+   EXPECT: returns to step A's URL EXACTLY (stage_id preserved, from=qc
+   preserved). The unit list for "טיח דירתי" is visible again, and
+   scroll position naturally lands near דירה 18 or 19 (because the page
+   re-renders fresh and units come from the start of the list).
+
+D. From step C, click on דירה 19 → repeat B → click back → land on C.
+   Loop works for all units without round-tripping through FloorDetailPage.
+
+E. Regression: floor-scope stage (without ?from=qc):
+   Open a floor-scope stage from FloorDetailPage → click back →
+   EXPECT: returns to FloorDetailPage (current behavior, no regression).
+
+F. Regression: refresh-on-stage case:
+   Open StageDetailPage → press Cmd+R / Cmd+Shift+R to refresh → click back.
+   EXPECT: goes to FloorDetailPage (known limitation, same as today).
+   This is acceptable for now.
+
+G. Regression: deep link to stage from external URL (notification etc):
+   Paste StageDetailPage URL into a fresh tab → click back.
+   EXPECT: goes to FloorDetailPage (known limitation, same as today).
+
+================================================================================
+RISK
+================================================================================
+Very low. Single function modification. Original behavior fully preserved
+in fallback path. New behavior triggers ONLY when source page sent
+returnTo state — which today only UnitQCSelectionPage does.
+
+Bundle size impact: zero (no new imports, no new dependencies).
+Performance impact: zero.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+(Reverts to current "always go to floor" behavior. No data state changes.)
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

@@ -1,0 +1,434 @@
+================================================================================
+BATCH F.1a — Photo text labels: size picker (small/medium/large)
+================================================================================
+Date:           2026-05-12
+Branch:         staging  (NOT main)
+Severity:       P3 — feature follow-up. F shipped text labels at fixed
+                size 18px. Field testing showed PMs want sizing
+                flexibility for different annotation contexts (a small
+                "5/27" label vs a large floor callout).
+
+                F.1 (size+drag+edit) was attempted as a single batch
+                2026-05-12 and BROKE staging (286 LOC). Reverted at
+                origin/staging commit 89ac72f. This spec re-attempts
+                ONLY the size picker portion, as the first of three
+                micro-batches (F.1a = size, F.1b = drag, F.1c = edit).
+
+                Each micro-batch ships independently. If any breaks,
+                only that micro-batch is reverted — F state preserved.
+
+Approach:       Frontend-only. Mirror the existing COLOR pattern that
+                F already established:
+                  - Add textSize state + textSizeRef (like color +
+                    colorRef).
+                  - Add 3 size buttons inside the PENDING-TEXT
+                    OVERLAY (NOT the top toolbar — size is only
+                    relevant while composing text).
+                  - Capture size at COMMIT time (same pattern as
+                    color — final intent).
+                  - Render: multiply TEXT_FONT_SIZE by size
+                    multiplier in the text branch of redraw.
+
+                Default = 'medium' (current behavior preserved). Old
+                text strokes without `size` field default to 'medium'.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only:
+                  - frontend/src/components/PhotoAnnotation.js
+                    (~35 LOC: 1 constant + 2 state vars + 3 buttons
+                    + 1 multiplier read)
+                Total: 1 file. No backend, no DB, no env vars, no
+                new dependencies.
+
+Baseline:       origin/staging HEAD = 89ac72f (F.1 revert, 519 LOC).
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN F.1a:
+  ✅ SIZE_MULTIPLIERS constant: `{ small: 0.7, medium: 1.0, large: 1.4 }`.
+  ✅ textSize state + textSizeRef (default 'medium').
+  ✅ 3 size buttons inside pending-text overlay:
+       - "א" (small) — font-size 12px
+       - "א" (medium) — font-size 16px, active by default
+       - "א" (large) — font-size 20px
+     Each button is a 32×32 round button, similar styling to the
+     "T" button in the top toolbar. Active state: `bg-white
+     text-slate-900 scale-110`, inactive: `bg-slate-700
+     text-slate-300`.
+  ✅ Size captured at COMMIT time (same convention as color).
+  ✅ Text stroke storage extends to include `size: 'small' |
+     'medium' | 'large'`. Backward compat: missing field → 'medium'.
+  ✅ redraw text branch multiplies TEXT_FONT_SIZE by
+     SIZE_MULTIPLIERS[stroke.size || 'medium'].
+  ✅ textSize state RESETS to 'medium' when pendingText is cleared
+     (commit or cancel) — so each new label starts at default.
+
+OUT of F.1a (separate micro-batches):
+  ❌ F.1b — drag-to-move existing text labels.
+  ❌ F.1c — tap-to-edit existing text labels.
+  ❌ Color size picker (only text gets sizing — strokes keep their
+     constant VISUAL_LINE_WIDTH).
+  ❌ Continuous size slider (3 discrete sizes only — simpler UX).
+  ❌ Custom px input (3 presets only).
+  ❌ Resizing text AFTER commit (only at compose time).
+
+================================================================================
+STEP 0 — PRE-FLIGHT (5 PASS) — RUN THESE EXACT COMMANDS BEFORE EDITING
+================================================================================
+
+1. Confirm origin/staging HEAD matches baseline (F revert state):
+   $ git log origin/staging --oneline -3
+   →  Expect: 89ac72f Revert "Add ability to resize, move, and edit text labels on photos"
+   →           c553fef Add ability to resize, move, and edit text labels on photos
+   →           c08e314 Add ability to add text labels to photos
+   ✓ If HEAD is not 89ac72f → STOP, sync with origin/staging first.
+
+2. Confirm file is at 519 LOC:
+   $ wc -l frontend/src/components/PhotoAnnotation.js
+   →  Expect: 519
+   ✓ If different → STOP, F state has drifted since spec was written.
+
+3. Confirm `TEXT_FONT_SIZE` constant exists and equals 18:
+   $ grep -n "const TEXT_FONT_SIZE" frontend/src/components/PhotoAnnotation.js
+   →  Expect: one match, value `= 18;`
+   ✓ This is the base size that gets multiplied.
+
+4. Confirm `pendingText` state + commitPendingText callback exist:
+   $ grep -n "pendingText\|commitPendingText" frontend/src/components/PhotoAnnotation.js
+   →  Expect: state def, sync useEffect, commit callback, overlay JSX,
+              redraw text branch reads stroke.text (not pendingText).
+   ✓ F state intact.
+
+5. Confirm tool/textSize naming pattern can be added safely:
+   $ grep -n "const \[tool, setTool\]\|const toolRef" frontend/src/components/PhotoAnnotation.js
+   →  Expect: `const [tool, setTool] = useState('draw');`
+              `const toolRef = useRef('draw');`
+   ✓ Use same pattern for textSize / textSizeRef.
+
+================================================================================
+LOCATION 1 — Add SIZE_MULTIPLIERS constant
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: AFTER the existing `TEXT_PILL_RADIUS = 8;` line (top-of-file
+        constants block from BATCH F).
+
+ANCHOR (find this line):
+  const TEXT_PILL_RADIUS = 8;
+
+ADD AFTER:
+  // BATCH F.1a (2026-05-12) — text size multipliers. Applied to
+  // TEXT_FONT_SIZE in the redraw text branch. Pill padding scales
+  // with the same multiplier (already proportional to font size via
+  // padX/padY math).
+  const SIZE_MULTIPLIERS = { small: 0.7, medium: 1.0, large: 1.4 };
+
+================================================================================
+LOCATION 2 — Add textSize state + ref + sync
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: AFTER the existing `pendingText` state declaration (BATCH F).
+
+ANCHOR (find this block):
+  const [tool, setTool] = useState('draw');
+  const toolRef = useRef('draw');
+  const [pendingText, setPendingText] = useState(null);
+
+ADD AFTER `setPendingText` line:
+  // BATCH F.1a (2026-05-12) — text size state. Default 'medium'
+  // preserves F behavior. Captured at COMMIT time (same as color)
+  // so changing size while typing is reflected in the final render.
+  const [textSize, setTextSize] = useState('medium');
+  const textSizeRef = useRef('medium');
+
+Then find the existing sync useEffects (right after the state block):
+  useEffect(() => { colorRef.current = color; }, [color]);
+  useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+  useEffect(() => { strokesRef.current = strokes; }, [strokes]);
+  useEffect(() => { toolRef.current = tool; }, [tool]);
+
+ADD AFTER `toolRef.current = tool` useEffect:
+  useEffect(() => { textSizeRef.current = textSize; }, [textSize]);
+
+================================================================================
+LOCATION 3 — Update redraw text branch to apply size multiplier
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the text-rendering branch inside the `redraw` callback (BATCH F
+        added it). Find the `if (strokeType === 'text') { ... }` block.
+
+ANCHOR (find this line inside the text branch):
+  const fontSize = TEXT_FONT_SIZE / scale;
+
+REPLACE WITH:
+  // BATCH F.1a — apply size multiplier. Default 'medium' for old
+  // text strokes that pre-date this batch (backward compat).
+  const sizeMultiplier = SIZE_MULTIPLIERS[stroke.size || 'medium'] || 1.0;
+  const fontSize = (TEXT_FONT_SIZE * sizeMultiplier) / scale;
+
+(padX, padY, radius lines below it stay UNCHANGED — they're already
+proportional to the constants. The pill grows with the text because
+metrics.width grows with font size.)
+
+================================================================================
+LOCATION 4 — commitPendingText stores size on text stroke
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the `commitPendingText` useCallback (BATCH F added it).
+
+ANCHOR (find this block):
+  const textStroke = {
+    type: 'text',
+    color: colorRef.current,
+    x: curr.x,
+    y: curr.y,
+    text: curr.value.trim(),
+  };
+
+REPLACE WITH:
+  // BATCH F.1a — capture size at commit time (same pattern as color).
+  const textStroke = {
+    type: 'text',
+    color: colorRef.current,
+    size: textSizeRef.current,
+    x: curr.x,
+    y: curr.y,
+    text: curr.value.trim(),
+  };
+
+ALSO — after the commitPendingText sets pendingText to null, ADD a
+reset of textSize back to 'medium' so the next label starts at default.
+
+ANCHOR (find this line at the end of commitPendingText's setPendingText callback):
+      return null;
+    });
+  }, [redraw]);
+
+REPLACE WITH:
+      return null;
+    });
+    // BATCH F.1a — reset to default for next label.
+    setTextSize('medium');
+  }, [redraw]);
+
+================================================================================
+LOCATION 5 — Cancel button also resets textSize
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the cancel button (ביטול) in the pendingText overlay.
+
+ANCHOR (find this line):
+  <button onClick={(e) => { e.stopPropagation(); setPendingText(null); }}
+          className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm">
+    ביטול
+  </button>
+
+REPLACE WITH:
+  <button onClick={(e) => {
+            e.stopPropagation();
+            setPendingText(null);
+            // BATCH F.1a — reset size to default after cancel.
+            setTextSize('medium');
+          }}
+          className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm">
+    ביטול
+  </button>
+
+================================================================================
+LOCATION 6 — Add 3 size buttons to pendingText overlay
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: INSIDE the pendingText overlay div (BATCH F), AFTER the
+        `<input>` and BEFORE the "אישור" button.
+
+ANCHOR (find this block — the pendingText overlay):
+  {pendingText && (
+    <div className="flex items-center gap-2 px-4 py-2 bg-slate-800 border-t border-slate-700 shrink-0"
+         style={{ position: 'relative', zIndex: 20 }}>
+      <input
+        type="text"
+        ...
+      />
+      <button onClick={(e) => { e.stopPropagation(); commitPendingText(); }}
+              ...>
+        אישור
+      </button>
+      ...
+
+INSERT between `</input>` (close of input tag) and the "אישור" button:
+
+      {/* BATCH F.1a — text size picker. 3 discrete sizes; capture
+          at commit (same pattern as color). Each button shows "א"
+          at its actual relative size for visual preview. */}
+      <div className="flex items-center gap-1 shrink-0">
+        {[
+          { key: 'small',  fontPx: 12, label: 'קטן' },
+          { key: 'medium', fontPx: 16, label: 'בינוני' },
+          { key: 'large',  fontPx: 20, label: 'גדול' },
+        ].map(opt => (
+          <button
+            key={opt.key}
+            onClick={(e) => { e.stopPropagation(); setTextSize(opt.key); }}
+            aria-label={opt.label}
+            title={opt.label}
+            className={`w-8 h-8 rounded-full border-2 flex items-center justify-center font-bold transition-transform ${
+              textSize === opt.key
+                ? 'border-white bg-white text-slate-900 scale-110'
+                : 'border-slate-600 bg-slate-700 text-white'
+            }`}
+            style={{ fontSize: `${opt.fontPx}px`, lineHeight: 1 }}
+          >
+            א
+          </button>
+        ))}
+      </div>
+
+Visual: three round buttons in a row (RTL: small/medium/large from
+right to left in source order). "א" character at its actual relative
+size gives instant visual preview. Active button highlighted with
+white bg + scale-110 — same pattern as color circles and T button.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ TEXT_FONT_SIZE constant value (18) — multiplier applied at render.
+- ❌ TEXT_PADDING_X / TEXT_PADDING_Y / TEXT_PILL_RADIUS — pill scales
+     proportionally because metrics.width grows with font.
+- ❌ COLORS array, top toolbar T button, color circles.
+- ❌ Freehand stroke path (startStroke/moveStroke/endStroke).
+- ❌ Touch handlers, viewport lock, scaleRef math.
+- ❌ Save/Undo handlers — text strokes with `size` field undoable
+     same as before (LIFO).
+- ❌ Backend / parent component contract — same `onSave(file|null,
+     hasAnnotations: bool)`.
+- ❌ Existing saved JPEG blobs — already rasterized.
+- ❌ pendingText reposition-on-2nd-tap behavior (F decision).
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — File size sanity
+================================================================================
+$ wc -l frontend/src/components/PhotoAnnotation.js
+   →  Expect: ~555 lines (519 + ~36).
+   ✓ If >580 → spec exceeded scope, flag for review.
+
+================================================================================
+VERIFY 3 — grep sanity
+================================================================================
+$ grep -n "SIZE_MULTIPLIERS\|textSize\|textSizeRef" frontend/src/components/PhotoAnnotation.js
+   →  Expect ~10 hits across: const, state, ref, sync effect, redraw
+      multiplier, commit storage + reset, cancel reset, picker JSX.
+
+================================================================================
+VERIFY 4 — Manual smoke (DEFERRED TO ZAHI)
+================================================================================
+
+**A — F regression (existing behavior preserved):**
+  1. Open PhotoAnnotation on a defect photo.
+  2. Tap "T" → tap canvas → type "test" → אישור.
+  EXPECT: text renders at MEDIUM size (same as before F.1a) — picker
+  defaults to medium, multiplier = 1.0.
+
+**B — Small size:**
+  1. T → tap canvas → tap "א" small (smallest button) → type "5/27"
+     → אישור.
+  EXPECT: small pill with smaller text.
+
+**C — Large size:**
+  1. T → tap canvas → tap "א" large → type "דירה 8" → אישור.
+  EXPECT: large pill with bigger text.
+
+**D — Mix sizes in same image:**
+  1. Add a small label, then a medium label, then a large label.
+  EXPECT: 3 distinct pill sizes visible simultaneously.
+
+**E — Size resets between labels:**
+  1. T → tap → set "large" → type "a" → אישור.
+  2. T → tap → (DON'T touch size picker) → type "b" → אישור.
+  EXPECT: "b" renders at MEDIUM (size reset to default after "a"'s
+  commit).
+
+**F — Cancel resets size:**
+  1. T → tap → set "large" → type "x" → ביטול.
+  2. T → tap → (DON'T touch size picker) → type "y" → אישור.
+  EXPECT: "y" renders at MEDIUM.
+
+**G — Size captured at COMMIT (mirror of color):**
+  1. T → tap canvas → set size to "small" → start typing →
+     change size to "large" → tap אישור.
+  EXPECT: text renders at LARGE (size at commit, not at tap).
+
+**H — Color + size combine:**
+  1. Select red → T → tap canvas → set size "large" → type "X" → אישור.
+  EXPECT: large red "X" in white pill.
+
+**I — Undo over mixed sizes:**
+  1. Add small, medium, large labels.
+  2. Tap Undo 3 times.
+  EXPECT: large disappears → medium disappears → small disappears.
+
+**J — Cross-platform:**
+  - Run B + C + D on iPhone (Capacitor) AND Android (Capacitor or
+    Chrome). Visual sizes should look proportional on both.
+
+**K — Mobile keyboard popup:**
+  - On iPhone, T → tap canvas → keyboard pops. Size buttons should
+    remain visible (they're in the same overlay row as the input).
+  EXPECT: still accessible while typing.
+
+**L — Save/Undo regression:**
+  - Add 2 strokes + 2 text labels of different sizes → Save.
+  EXPECT: photo uploads with all annotations rasterized at the
+  correct sizes.
+
+================================================================================
+RISK
+================================================================================
+Very low. Pure additive feature; no changes to control flow or
+existing behavior. F path defaults to medium = current rendering.
+
+- ⚠ Old text strokes (pre-F.1a) lack `size` field — defaults to
+  'medium' via `stroke.size || 'medium'`. Verified.
+- ⚠ Pill padding grows with font size automatically — metrics.width
+  drives rectWidth, fontSize drives rectHeight + padY/padX. No
+  separate sizing needed.
+- ⚠ The reset-to-medium between labels is intentional. Confirmed by
+  smoke tests E, F. If Zahi prefers "sticky" size (last selected
+  size persists), that's a 1-line removal — flag for follow-up.
+- ⚠ Visual preview ("א" at fontPx) is a UX nicety. If it looks
+  ugly on Android WebView vs iOS, fall back to plain labels
+  ("ק", "ב", "ג"). Cosmetic only.
+
+Bundle size: zero (no new deps).
+Performance: negligible (1 multiplier read per text stroke in redraw).
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+- Reverts F.1a only. F (text labels at fixed 18px) remains shipped.
+- No data loss — text strokes in existing JPEG blobs already
+  rasterized at the time they were saved.
+- If a text stroke was saved WITH a `size` field but F.1a is
+  reverted, the field is ignored (no harm — just rendered at 18px).
+
+================================================================================
+NEXT MICRO-BATCHES (after F.1a ships green)
+================================================================================
+- F.1b — drag-to-move existing text labels. Higher risk: hit testing,
+  movement threshold (10px), drag state. Estimated ~80 LOC.
+- F.1c — tap-to-edit existing text labels. Reuses pendingText overlay
+  with prefilled value + replaces stroke on commit. Estimated ~50 LOC.
+
+Each ships ONLY after the prior is green on staging.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

@@ -1,0 +1,447 @@
+================================================================================
+HOTFIX FOLLOWUP TO #484 — Execution Matrix Phase 2A polish
+3 fixes: building count, unit sort, floor metadata
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — UX polish blocking prod deploy of #484. Functionality
+                works (matrix renders correctly), but 3 polish issues found
+                during Zahi's staging smoke 2026-05-04:
+                  (1) Header missing building count — shows only "30 דירות
+                      • 10 שלבים", should show "2 מבנים • 30 דירות • ...".
+                  (2) Unit sort is lexicographic ("1, 16, 17, 18, 19, 2,
+                      20, 3, ...") instead of numeric ("1, 2, 3, ..., 30").
+                  (3) Floor info shows "קומה ?" because backend doesn't
+                      return floor metadata; frontend fallback can't infer
+                      floor_number from units alone.
+
+Files changed:  2 files
+                  Backend: backend/contractor_ops/execution_matrix_router.py (~10 LOC)
+                  Frontend: frontend/src/pages/ExecutionMatrixPage.js (~10 LOC)
+
+Tests:          Update existing test_execution_matrix.py to assert new
+                response field (`floors`) — 1-2 LOC test edit.
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+DB migration:   NONE. The backend ALREADY fetches floors (used for sorting).
+                We just expose them in the response.
+
+Family:         Followup to #484 Phase 2A frontend.
+
+================================================================================
+ROOT CAUSE — verified 2026-05-04 staging smoke
+================================================================================
+
+Issue 1 — Header missing building count:
+  ExecutionMatrixPage.js renders "{units.length} דירות • {stages.length} שלבים".
+  No building count. Project actually has 2 buildings × 30 units; user expects
+  to see both numbers.
+
+Issue 2 — Unit sort is lexicographic (per #484 staging screenshot):
+  Visible order: דירה 1, 16, 17, 18, 19, 2, 20, 3, 4, 5 ...
+  Expected: 1, 2, 3, 4, 5, ..., 30
+  Root cause in backend (#483 execution_matrix_router.py):
+      def _unit_sort_key(u):
+          f = floors_by_id.get(u.get("floor_id"), {})
+          return (f.get("floor_number", 0), u.get("unit_no", ""))
+  unit_no is a STRING — sorted lexicographically. Need numeric sort
+  when unit_no is parseable as int.
+
+Issue 3 — "קומה ?" because backend doesn't return floor metadata:
+  Backend FETCHES floors (used internally for sorting at L451 per #483),
+  but does NOT include them in the JSON response. Frontend falls back
+  to `u.floor_number` which doesn't exist on Unit schema.
+  Per #484 spec PART 8, the floors fallback at the page was:
+      if (data?.floors) { for (const f of data.floors) map[f.id] = f; }
+      // fallback: synthesize from units' floor_id
+      if (data?.units) {
+          for (const u of data.units) {
+              if (u.floor_id && !map[u.floor_id]) {
+                  map[u.floor_id] = { id: u.floor_id, floor_number: u.floor_number || '?' };
+              }
+          }
+      }
+  The fallback shows '?' because units have no floor_number field.
+  The CORRECT fix is backend-side: expose floors in the response.
+
+================================================================================
+DESIGN DECISIONS
+================================================================================
+
+D1. Backend exposes `floors` in /matrix response.
+    Already fetched internally; just add to the return dict.
+    Single source of truth (DB), zero migration.
+
+D2. Numeric sort on unit_no when parseable.
+    Tiebreak with original string sort for non-numeric values.
+    Format: (floor_number, unit_no_num_or_9999, unit_no_string).
+
+D3. Frontend computes buildingCount from units' building_id.
+    No backend change needed for the count itself.
+    `new Set(units.map(u => u.building_id).filter(Boolean)).size`.
+
+D4. Header format: "{buildingCount} מבנים • {unitCount} דירות • {stageCount} שלבים".
+    Show building count ONLY if > 0 (defensive — single-building projects
+    or empty projects render gracefully).
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify the existing _unit_sort_key in execution_matrix_router.py:
+    grep -n "_unit_sort_key\|unit_sort_key\|unit_no" \
+        backend/contractor_ops/execution_matrix_router.py
+    # Expected: 1-2 hits on the sort logic. Document line numbers.
+    # The sort function lives inside `get_matrix` endpoint
+    # (around L420-460 per #483).
+
+0.2 — Verify the response shape currently returned by get_matrix:
+    grep -n "return {" backend/contractor_ops/execution_matrix_router.py | head -5
+    # Find the dict returned by GET /{project_id}.
+    # Expected: a return dict with project_id, stages, units, cells,
+    # permissions, matrix_config_id. We add `floors` to this dict.
+    # Document the EXACT line of the return dict.
+
+0.3 — Verify the floors fetch already happens internally:
+    grep -n "db.floors.find\|floors_by_id\|floors = await" \
+        backend/contractor_ops/execution_matrix_router.py
+    # Expected: 1+ hit showing floors are fetched via
+    # `floors = await db.floors.find(...).to_list(500)`
+    # If NOT present (e.g. spec drift) — STOP and report. We need
+    # to add the floors fetch.
+
+0.4 — Verify the existing test for get_matrix asserts response shape:
+    grep -n "stages\|units\|cells\|floors" \
+        backend/tests/test_execution_matrix.py | head -15
+    # Expected: at least one test asserts on response keys. We add an
+    # assertion that `floors` is also in the response.
+
+0.5 — Verify Frontend ExecutionMatrixPage.js header location:
+    grep -n "דירות •\|שלבים\|units.length" \
+        frontend/src/pages/ExecutionMatrixPage.js
+    # Expected: 1 hit on the header subtitle. Document line number.
+
+0.6 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — BACKEND: numeric unit sort + expose floors
+================================================================================
+
+FILE: backend/contractor_ops/execution_matrix_router.py
+-------------------------------------------------------
+
+LOCATION 1.1 — Update `_unit_sort_key` to use numeric unit_no:
+
+   FIND (per STEP 0.1):
+       def _unit_sort_key(u):
+           f = floors_by_id.get(u.get("floor_id"), {})
+           return (f.get("floor_number", 0), u.get("unit_no", ""))
+
+   REPLACE WITH:
+       def _unit_sort_key(u):
+           f = floors_by_id.get(u.get("floor_id"), {})
+           unit_no_str = u.get("unit_no", "") or ""
+           try:
+               unit_no_num = int(unit_no_str)
+           except (ValueError, TypeError):
+               unit_no_num = 9999  # non-numeric unit_no sorts to end
+           return (f.get("floor_number", 0), unit_no_num, unit_no_str)
+
+   IMPORTANT:
+   - 3-tuple sort key: (floor_number, numeric_unit_no, original_string).
+   - Non-numeric unit_no ("A1", "פנטהאוז") → sorted to end via 9999.
+   - Tiebreak by original string → stable order for equal numeric values
+     (e.g., if 2 units have unit_no "1" — unlikely but defensive).
+
+LOCATION 1.2 — Add `floors` to the response dict:
+
+   FIND (per STEP 0.2) the return dict at the end of `get_matrix`:
+       return {
+           "project_id": project_id,
+           "stages": stages,
+           "units": units,
+           "cells": cells_summary,
+           "permissions": {
+               "role": role,
+               "can_view": True,
+               "can_edit": can_edit,
+           },
+           "matrix_config_id": matrix_config["id"],
+       }
+
+   ADD `floors` field (existing `floors` variable already in scope from
+   the sort logic at L451 per #483):
+
+       return {
+           "project_id": project_id,
+           "stages": stages,
+           "units": units,
+           "cells": cells_summary,
+           "floors": floors,                            # ← NEW
+           "permissions": {
+               "role": role,
+               "can_view": True,
+               "can_edit": can_edit,
+           },
+           "matrix_config_id": matrix_config["id"],
+       }
+
+   IMPORTANT:
+   - `floors` is already a list of dicts {id, project_id, building_id,
+     name, floor_number, sort_index, ...} fetched via
+     `db.floors.find(...).to_list(500)` at L451.
+   - We just expose it. ZERO additional DB query.
+
+DO NOT TOUCH:
+- The 7 other endpoints (PATCH stages, PUT cell, GET history, view CRUD).
+- Authorization helpers.
+- Stage resolution logic.
+- Cell summary logic.
+
+================================================================================
+PART 2 — TEST: assert floors in response
+================================================================================
+
+FILE: backend/tests/test_execution_matrix.py
+---------------------------------------------
+
+LOCATION 2.1 — Update `test_get_matrix_returns_resolved_stages` (or
+   whichever test asserts on GET /matrix response shape) to include a
+   floors assertion.
+
+   ADD inside the existing test:
+       # New from #485 — backend exposes floors metadata for frontend
+       assert "floors" in result, "Response must include floors metadata"
+       assert isinstance(result["floors"], list)
+
+   The mock setup needs to include a floors fetch. If not already
+   mocked — add:
+       db.floors.find.return_value.to_list = AsyncMock(return_value=[
+           {"id": "floor-1", "project_id": project_id, "building_id": "b-1",
+            "name": "קומה 1", "floor_number": 1, "sort_index": 1},
+       ])
+
+   IMPORTANT — match the existing AsyncMock pattern (verify by reading
+   neighboring tests). Existing tests may already mock floors for the
+   sort logic; if so, just add the assertion on response.
+
+LOCATION 2.2 — Add ONE new dedicated test (optional but defensive):
+
+       def test_get_matrix_unit_sort_numeric():
+           """Units sorted numerically by unit_no, not lexicographically.
+           "1, 2, ..., 10" not "1, 10, 11, 2, 20, 3, ..."."""
+           # Mock units with unit_no = "1", "2", "10", "20", "11"
+           # Expected order: "1", "2", "10", "11", "20"
+
+   This test guards against regression of the lex-sort bug.
+
+================================================================================
+PART 3 — FRONTEND: building count in header
+================================================================================
+
+FILE: frontend/src/pages/ExecutionMatrixPage.js
+------------------------------------------------
+
+LOCATION 3.1 — Add buildingCount memo near the existing floorsById memo:
+
+   FIND (the existing useMemo for floorsById — should be near top of
+   the component body):
+
+       const floorsById = useMemo(() => {
+           const map = {};
+           if (data?.floors) {
+               for (const f of data.floors) map[f.id] = f;
+           }
+           // ... fallback ...
+           return map;
+       }, [data]);
+
+   ADD AFTER the floorsById memo:
+
+       const buildingCount = useMemo(() => {
+           if (!data?.units) return 0;
+           return new Set(
+               data.units.map(u => u.building_id).filter(Boolean)
+           ).size;
+       }, [data]);
+
+LOCATION 3.2 — Update the header subtitle (per STEP 0.5):
+
+   FIND (in the JSX around the page header):
+       <p className="text-xs text-slate-500 mt-0.5">
+         {units.length} דירות • {stages.length} שלבים
+       </p>
+
+   REPLACE WITH:
+       <p className="text-xs text-slate-500 mt-0.5">
+         {buildingCount > 0 && `${buildingCount} מבנים • `}
+         {units.length} דירות • {stages.length} שלבים
+       </p>
+
+   IMPORTANT:
+   - Conditional render: building count only shown when > 0
+   - String concatenation with `•` separator (RTL-safe — bullet is
+     bidirectional neutral)
+   - For projects with 0 units (edge case), still renders "0 דירות •
+     N שלבים" without crashing
+
+LOCATION 3.3 — Verify floorsById fallback still works after backend
+   exposes floors:
+
+   The existing fallback at PART 8 of #484 spec was:
+       if (data?.floors) {  // future: backend may return floors
+           for (const f of data.floors) map[f.id] = f;
+       }
+       if (data?.units) {
+           for (const u of data.units) {
+               if (u.floor_id && !map[u.floor_id]) {
+                   map[u.floor_id] = { id: u.floor_id, floor_number: u.floor_number || '?' };
+               }
+           }
+       }
+
+   With backend now returning `floors`, the FIRST branch fires and
+   populates floorsById fully. The fallback's '?' display goes away.
+
+   Verify by scanning the page after deploy: floor numbers should show
+   real values ("קומה 1", "קומה 2") not "קומה ?".
+
+   No code change needed in PART 3 — the fallback was already designed
+   for this scenario.
+
+DO NOT TOUCH:
+- MatrixListView, MatrixGridView, MatrixCell — they read floorsById
+  via prop, no source change.
+- StatusLegend, STATUS_CONFIG — unrelated.
+- matrixService, useMatrixData — unrelated.
+- Other pages or components.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend syntax + import:
+   cd backend && python -c "from contractor_ops.execution_matrix_router import router; print('OK')"
+   → prints OK
+
+VERIFY 2 — Backend test passes:
+   cd backend && python -m pytest tests/test_execution_matrix.py -v
+   → all tests pass (11 from #483 + the updated assertions)
+
+VERIFY 3 — Backend regression on QC:
+   cd backend && python -m pytest tests/test_qc_override_close.py \
+       tests/test_qc_units_status.py -v
+   → all pass (no QC code touched)
+
+VERIFY 4 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 5 — Frontend references buildingCount:
+   grep -c "buildingCount\|מבנים" frontend/src/pages/ExecutionMatrixPage.js
+   → ≥ 2 (1 useMemo + 1 JSX usage)
+
+VERIFY 6 — Backend response includes floors:
+   cd backend && python -c "
+   from contractor_ops.execution_matrix_router import router
+   # Inspect endpoint signature — manual review of return dict
+   "
+   AND/OR — visually verify in V2 test output that floors assertion passes.
+
+VERIFY 7 — Visual smoke (Zahi runs after deploy to staging):
+
+   Header check:
+   a) Login as super_admin → /projects/616c30e0.../execution-matrix
+   b) Header subtitle now shows: "**2 מבנים** • 30 דירות • 10 שלבים"
+      (was: "30 דירות • 10 שלבים")
+
+   Sort check (desktop grid):
+   c) First 10 unit rows in order:
+      דירה 1, דירה 2, דירה 3, דירה 4, דירה 5, דירה 6, דירה 7, דירה 8,
+      דירה 9, דירה 10
+      (was: 1, 16, 17, 18, 19, 2, 20, 3, 4, 5)
+   d) Last unit row: דירה 30 (was: דירה 9 in lex sort)
+
+   Floor metadata check:
+   e) Each unit row shows real floor: "קומה 1", "קומה 2", etc.
+      (was: "קומה ?" for all)
+   f) Mobile list view: same floor number visible in unit card header
+
+   Mobile (375px DevTools):
+   g) Header subtitle wraps properly on narrow viewport
+   h) Building count visible in mobile header
+
+   Edge cases:
+   i) Project with 1 building → "1 מבנים • N דירות • M שלבים"
+      (slight grammatical issue — "מבנים" is plural; fix in followup
+      polish if visible — for now, defer)
+   j) Project with 0 units → "0 דירות • M שלבים" (no buildings clause)
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (greps + line numbers)
+  - Per-file diff (2 files, ~20 LOC total)
+  - VERIFY 1-6 outputs
+  - VERIFY 7 deferred-to-Zahi note (10 scenarios a-j)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(matrix): Phase 2A polish — building count, unit sort, floor metadata
+
+  3 fixes discovered during #484 staging smoke (Zahi 2026-05-04):
+
+  1. Header now shows "{buildings} מבנים • {units} דירות • {stages}
+     שלבים" (was missing buildings count).
+
+  2. Unit sort is now numeric. "1, 2, 3, ..., 30" instead of
+     "1, 16, 17, ..., 2, 20, 3, ..." (lexicographic).
+
+  3. Backend now returns `floors` array in /matrix response. Frontend's
+     existing fallback at floorsById picks them up automatically; floor
+     numbers in unit cards now show real values instead of "?".
+
+  All 3 fixes complete the Phase 2A read-only experience for prod.
+  Backend: ~10 LOC (sort + response field). Frontend: ~10 LOC
+  (buildingCount memo + header). 1-2 LOC test update.
+
+  No backend collection / migration / new endpoint changes. The
+  `floors` data was already fetched internally for sorting; just
+  exposed in the response.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.5 greps)
+2. PART 1 — backend numeric sort + expose floors (~10 LOC)
+3. PART 2 — test update (~3 LOC)
+4. PART 3 — frontend buildingCount + header (~10 LOC)
+5. Run VERIFY 1-6
+6. Generate review.txt + .local/.commit_message
+7. STOP. Zahi reviews. Then he runs:
+     git checkout staging && ./deploy.sh --stag
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+2 files revert. The 3 fixes regress:
+- Header loses building count
+- Unit sort returns to lexicographic
+- Floor info shows "?" again
+
+NO impact on:
+- Cell rendering / status icons / RTL layout
+- MatrixListView / MatrixGridView / popovers
+- Phase 1 backend endpoints (functionally unchanged — just one
+  field removed from response, which is backward compatible since
+  frontend's fallback still works)
+- Other QC, handover, or project pages
+
+================================================================================
+END OF SPEC
+================================================================================

@@ -1,0 +1,266 @@
+================================================================================
+BATCH 6C — WhatsApp link forces contractor view (multi-role users)
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P1 — Live in prod 2026-05-04. Affects users with multiple roles
+                across projects (PM in project A, contractor in project B). When
+                they receive WhatsApp digest for project B (where they're a
+                contractor) and click the link, the new App.js logic from Batch 6B
+                v2 sees user.role='project_manager' (their global role) and
+                redirects to /projects/B/dashboard (PM view) instead of the
+                ContractorDashboard. The user sees no actionable defects.
+Files changed:  1 file
+                  Frontend: frontend/src/App.js
+Tests:          No automated frontend tests (codebase has no Jest/RTL setup
+                for routing). Manual smoke test on staging covers it.
+Mobile:         N/A — frontend OTA only via Capgo.
+
+================================================================================
+CONTEXT
+================================================================================
+
+Discovered 2026-05-04 by Zahi after Batch 6B v2 deployed to prod and the
+contractor digest flowed correctly to a real user. The user holds two
+different roles in two different projects:
+  - Project A: project_manager
+  - Project B: contractor (with assigned defects)
+
+When this user clicks the WhatsApp digest link for project B
+(URL: /projects/B?src=wa), the new App.js ProjectsHome wrapper checks
+`PM_OR_ADMIN_ROLES.includes(user?.role)` — and because user.role globally
+is "project_manager" (their highest-privilege role across all projects),
+the check passes and they redirect to /projects/B/dashboard (PM view).
+
+This is the same family as Task #32 (scope-aware paywall, deferred): the
+frontend uses a single global user.role field, but real role is per-project
+via project_memberships collection.
+
+The pragmatic fix uses the URL itself as a signal: WhatsApp digest links
+are sent ONLY to contractors (the recipient is the assignee_user of an open
+defect in that project). So when ?src=wa is present in the URL, we know
+the user landed there as a CONTRACTOR for that project, regardless of
+their global role.
+
+Future-proofing note: per-project membership lookup would be the proper
+fix (covers manual URL navigation too) but requires async fetch + loading
+state. Scope-aware paywall Batch 1 (Task #32) shares this concern. Defer.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify current App.js ProjectsHome state (after Batch 6B v2 deploy):
+    grep -n "ProjectsHome\|PM_OR_ADMIN_ROLES\|isPmOrAdmin" frontend/src/App.js | head -10
+    # Expected after Batch 6B v2:
+    #   const ProjectsHome = () => {... defined around line 143-160ish
+    #   PM_OR_ADMIN_ROLES const inside ProjectsHome
+    #   isPmOrAdmin variable inside ProjectsHome
+
+0.2 — Verify react-router-dom import does NOT yet include useSearchParams:
+    grep -n "from 'react-router-dom'" frontend/src/App.js | head -3
+    # Expected:
+    #   line 2: import { ..., useParams, ... } from 'react-router-dom';
+    #     (useParams was added in Stream A v2; useSearchParams is NOT yet there)
+
+0.3 — Verify useSearchParams pattern is established in codebase:
+    grep -rn "useSearchParams" frontend/src/pages/ | head -5
+    # Expected: at least 5 files use it (ProjectControlPage.js, etc.) —
+    # confirms the pattern is safe and well-trodden.
+
+0.4 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — FRONTEND (single file)
+================================================================================
+
+FILE 1 of 1: frontend/src/App.js
+----------------------------------
+
+LOCATION 1.1 — Add useSearchParams to the react-router-dom import (line 2):
+
+   CURRENT (line 2 — after Batch 6B v2):
+       import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
+
+   REPLACE WITH (add useSearchParams to the destructure):
+       import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
+
+   IMPORTANT: preserve all other named imports exactly. The destructure may be
+   in different order or formatted across multiple lines — adapt to the actual
+   file shape. The only requirement: useSearchParams must be in the imported
+   names list after the edit.
+
+LOCATION 1.2 — Update ProjectsHome wrapper to honor `?src=wa` (line ~143):
+
+   CURRENT (after Batch 6B v2 deploy — exact line numbers may drift):
+       const ProjectsHome = () => {
+         const { user } = useAuth();
+         const { projectId } = useParams();
+         // Bug B fix (Batch 6B v2 2026-05-03): default to ContractorDashboard for ANY
+         // non-PM/admin role. Previous version checked user?.role === 'contractor'
+         // (literal) which failed for sub-roles (execution_engineer etc.) and other
+         // contractor-equivalent roles in prod data.
+         const PM_OR_ADMIN_ROLES = ['project_manager', 'owner', 'management_team'];
+         const isPmOrAdmin = PM_OR_ADMIN_ROLES.includes(user?.role) ||
+                             user?.platform_role === 'super_admin';
+         if (isPmOrAdmin) {
+           if (projectId) {
+             return <Navigate to={`/projects/${projectId}/dashboard`} replace />;
+           }
+           return <MyProjectsPage />;
+         }
+         // Default: ContractorDashboard for everyone else (contractor, viewer,
+         // execution_engineer, site_manager, safety_assistant, etc.). The dashboard
+         // already filters by assignee_id at backend so each user sees only their
+         // own defects.
+         return <ContractorDashboard initialProjectId={projectId} />;
+       };
+
+   REPLACE WITH (add useSearchParams + ?src=wa override):
+       const ProjectsHome = () => {
+         const { user } = useAuth();
+         const { projectId } = useParams();
+         const [searchParams] = useSearchParams();
+         // Bug B v2 fix (Batch 6C 2026-05-04): WhatsApp contractor digest links
+         // arrive with ?src=wa. The recipient is — by definition — a contractor
+         // for THIS project (the WA was triggered by an assignee_id match). Force
+         // ContractorDashboard regardless of the user's global role, so users
+         // who are PM in some projects but contractor in others see the right
+         // view when clicking a contractor reminder link.
+         //
+         // Future: proper fix would fetch project_memberships and route by
+         // per-project role. Deferred (same family as Task #32 scope-aware
+         // paywall — single global user.role isn't enough to know per-project
+         // role). For now, ?src=wa is a reliable signal because contractor
+         // digest is the ONLY current sender of WA links to /projects/:id.
+         const fromContractorReminder = searchParams.get('src') === 'wa';
+
+         // Bug B fix (Batch 6B v2 2026-05-03): default to ContractorDashboard for ANY
+         // non-PM/admin role. Previous version checked user?.role === 'contractor'
+         // (literal) which failed for sub-roles (execution_engineer etc.) and other
+         // contractor-equivalent roles in prod data.
+         const PM_OR_ADMIN_ROLES = ['project_manager', 'owner', 'management_team'];
+         const isPmOrAdmin = PM_OR_ADMIN_ROLES.includes(user?.role) ||
+                             user?.platform_role === 'super_admin';
+
+         // PM/admin path — only when NOT arriving from a contractor WA reminder.
+         if (isPmOrAdmin && !fromContractorReminder) {
+           if (projectId) {
+             return <Navigate to={`/projects/${projectId}/dashboard`} replace />;
+           }
+           return <MyProjectsPage />;
+         }
+
+         // Default: ContractorDashboard for everyone else (contractor, viewer,
+         // execution_engineer, site_manager, safety_assistant, etc.) AND for
+         // PMs who arrived via a contractor WA reminder for THIS project. The
+         // dashboard already filters by assignee_id at backend so each user
+         // sees only their own defects.
+         return <ContractorDashboard initialProjectId={projectId} />;
+       };
+
+DO NOT TOUCH:
+- Any other code in App.js — Routes, ProtectedRoute, AppRoutes, etc.
+- The PM_OR_ADMIN_ROLES list — it stays the same.
+- useAuth, useParams behavior — unchanged.
+- ContractorDashboard component itself — unchanged.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+   (If yarn build times out at 120s in sandbox, fall back to a babel parse on
+   the modified file alone; staging deploy will run the real build.)
+
+VERIFY 2 — useSearchParams imported in App.js:
+   grep -c "useSearchParams" frontend/src/App.js
+   → at least 2 (1 in import, 1 use inside ProjectsHome)
+
+VERIFY 3 — ProjectsHome reads `src` query param:
+   grep -c "searchParams.get('src')" frontend/src/App.js
+   → at least 1
+
+VERIFY 4 — Conditional gate added to PM redirect:
+   grep -c "isPmOrAdmin && !fromContractorReminder" frontend/src/App.js
+   → at least 1
+
+VERIFY 5 — PM_OR_ADMIN_ROLES preserved (no regression of Batch 6B v2 fix):
+   grep -c "PM_OR_ADMIN_ROLES" frontend/src/App.js
+   → at least 2 (1 const, 1 use)
+
+VERIFY 6 — Visual smoke (Zahi runs after deploy to staging):
+   a) Login as the multi-role test user (PM in project A, contractor in
+      project B with assigned defects).
+   b) Manually visit /projects/B (no query) — expected: redirect to
+      /projects/B/dashboard (PM/admin behavior preserved when not from WA).
+   c) Manually visit /projects/B?src=wa (simulates WA link click) — expected:
+      ContractorDashboard for project B (NOT redirect to /dashboard).
+      Pill bar shows project B selected (same as Stream A v2 behavior).
+      Defects listed are the user's assignments in project B.
+   d) Login as a pure contractor (no PM role anywhere). Visit /projects/X?src=wa
+      — expected: ContractorDashboard (unchanged from Batch 6B v2 behavior).
+   e) Login as super_admin. Visit /projects/Y (no query) — expected: redirect
+      to /projects/Y/dashboard (super_admin behavior preserved).
+   f) Login as super_admin. Visit /projects/Y?src=wa — expected: ContractorDashboard
+      (super_admin treated as contractor when arriving from WA — acceptable
+      edge: super_admin viewing a contractor-targeted link).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (1 file: App.js, ~10 lines added)
+  - VERIFY 1-5 outputs
+  - VERIFY 6 deferred-to-Zahi note
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(routing): WhatsApp contractor links force ContractorDashboard (Batch 6C)
+
+  Multi-role users (PM in some projects, contractor in others) clicking a
+  contractor WA digest link were redirected to /projects/:id/dashboard
+  because the global user.role evaluated as PM. Now the URL ?src=wa
+  query param is treated as an explicit contractor-route signal: arriving
+  from a WA contractor reminder always shows ContractorDashboard,
+  regardless of global role. PM/admin behavior preserved for manual
+  navigation without ?src=wa.
+
+  Single-file frontend change (App.js). No backend, no tests (codebase
+  has no automated frontend routing tests).
+
+  Deferred (future): proper per-project membership lookup would also fix
+  manual URL navigation in the multi-role case. Same family as Task #32
+  scope-aware paywall.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.3 greps, paste output to top of review.txt)
+2. PART 1.1 — Add useSearchParams to react-router-dom import
+3. PART 1.2 — Update ProjectsHome ?src=wa override
+4. Run VERIFY 1-5
+5. Generate review.txt + .local/.commit_message
+6. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+1 file revert. The PM/admin redirect for /projects/:id (without ?src=wa)
+returns to immediate-redirect behavior. Contractors continue to work as
+they did under Batch 6B v2 (isPmOrAdmin returns false for them anyway).
+
+Multi-role users will go back to seeing /dashboard from WA links (the bug
+this batch fixes), but the system remains functional — they can use the
+back button or navigate manually.
+
+================================================================================
+END OF SPEC
+================================================================================

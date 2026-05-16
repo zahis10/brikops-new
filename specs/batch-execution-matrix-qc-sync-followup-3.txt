@@ -1,0 +1,600 @@
+================================================================================
+BATCH #503-FOLLOWUP-3 — Submit-for-review hook + item-level fix +
+                       NEW manual "ready_for_work" status
+================================================================================
+Date:           2026-05-07
+Branch:         staging  (NOT main)
+Severity:       P1 — followup-2 closed reject + floor-scope multi-cell, but
+                Zahi staging smoke 2026-05-07 found 2 more sync gaps + 1
+                feature request:
+                  Bug B: item-level activity not propagating in floor-scope
+                  Bug C: submit-for-review endpoint missing hook
+                  Feature D: new "ready_for_work" matrix status (manual-only)
+
+Family:         Continues #503 / followup-1 / followup-2.
+                  flag remains in phased rollout — staging ON, prod OFF.
+
+Files changed:  6 files
+                  Backend: 2 modified (qc_router.py +submit hook + item filter
+                                       fix; qc_to_matrix_sync.py docstring)
+                  Backend constants: 1 modified (schemas.py — new enum value)
+                  Backend export: 1 modified (execution_matrix_export.py —
+                                              new status label/fill)
+                  Frontend: 2 modified (STATUS_CONFIG.js — new entry;
+                                       NOT modifying StatusButtonGrid since
+                                       ready_for_work IS manually selectable)
+                  Tests: test_qc_to_matrix_sync.py (+5 LOC for 2 new tests)
+
+LOC estimate:   ~85 total
+Risk:           LOW — additive changes, same feature flag and BackgroundTasks
+                safety net. Rollback via env-var flag flip.
+
+================================================================================
+PROBLEM (Zahi staging smoke 2026-05-07)
+================================================================================
+
+After followup-2 deployed:
+
+✅ WORKING (no regressions):
+  - Senior reject on unit-scope → matrix red
+  - Override-approve → matrix green (perfect)
+  - Senior approve (real, not override) → matrix green
+  - Floor-scope reject → all units red
+  - Manual override conflict → QC wins (D3 from #503)
+
+❌ NEW BUGS DISCOVERED:
+
+Bug B: item-level activity DOES NOT propagate in floor-scope
+  Zahi: "נניח והתחלתי לסמן משהו אחד בתוך נושא מסוים (אינסטלציה
+        לדוגמא), אמור להתחלף לי במטריצה לבעבודה, זה לא קורה"
+
+  Translation: When site manager marks ONE item inside a floor-scope
+  stage (e.g. אינסטלציה), the matrix should turn blue (in_progress)
+  for ALL units on that floor. It doesn't.
+
+  Root cause analysis:
+    - update_qc_item hook fires for floor-scope item PATCH ✓
+    - _resolve_unit_ids_for_sync correctly returns all units on floor
+      (via fallback to db.units.find by floor_id) ✓
+    - For each unit, hook tries to filter items_all by unit_id
+    - BUT items in floor-scope DON'T have unit_id field
+    - Filter returns [] empty list per unit
+    - sync_qc_stage_to_matrix called with items=[] → returns None
+      (because `any(i.get("status") in ("pass", "fail") for i in [])`
+       is False, AND stage_status is None)
+    - No upsert → matrix stays empty
+
+  Fix: when items don't have unit_id (floor-scope template-level),
+  pass the COMPLETE items_all list to each unit's sync (not a
+  per-unit filtered subset). Items represent the floor's status —
+  shared across all units.
+
+Bug C: submit-for-review missing hook
+  Zahi: "מנהל שלח לאישור מנהל, אבל אני לא רואה את זה במטריצה"
+
+  Translation: Site manager submits stage for review (sets stage
+  status to "pending_review"). Matrix should turn ORANGE
+  "ממתין לאישור". It doesn't.
+
+  Root cause: Endpoint `POST /run/{run_id}/stage/{stage_id}/submit`
+  at qc_router.py:1695 sets `stage_statuses[stage_id] = "pending_review"`
+  at L1790. The original #503 spec missed this endpoint when wiring
+  hooks. We added hooks to:
+    - update_qc_item (#503)
+    - approve_stage (#503)
+    - override_approve_stage (#503)
+    - reject_stage (#503-followup-2)
+
+  Missing the 5th endpoint that changes stage state: submit_stage.
+
+  Fix: add hook to submit_stage with stage_status="pending_review".
+
+Feature D: NEW status "ready_for_work" (Zahi 2026-05-07)
+  Zahi: "אני רוצה להוסיף סטטוס נוסף רק למטריצה - 'מוכן לעבודה',
+        זה סטטוס שאומר שיש לי את כל החומר והכל מוכן מחכה לקבלן
+        להיכנס"
+
+  Translation: Manual matrix-only status indicating "all materials
+  on site, ready for contractor to start work". This is project-
+  manager-driven planning state, NOT a QC sync state.
+
+  Distinction from existing statuses:
+    - "in_progress" (blue) = work has started in QC
+    - "pending_review" (orange) = manager submitted for senior approval
+    - "ready_for_work" (NEW) = pre-work setup complete; PM signaling
+                                "contractor can come tomorrow"
+
+  Implementation:
+    - NEW MATRIX_STATUS_VALUES enum value "ready_for_work"
+    - STATUS_CONFIG entry — DIFFERENT from pending_review (no syncOnly
+      flag — IS manually selectable)
+    - Color: cyan (distinct from orange pending_review and blue in_progress)
+    - Icon: PackageCheck or Truck (lucide — represents prepared/ready)
+    - Excel export: label + fill
+    - QC sync NEVER overwrites this — D3 (QC wins) only applies to
+      stages QC tracks; this is a stage that QC doesn't have a concept
+      of, so PM-set "ready_for_work" stays until PM changes it manually
+
+Pre-existing display Bug A (NOT in scope):
+  "11/12 בביצוע" outside but "100% 2/2" inside. Pre-existing QC
+  progress calculation issue, unrelated to #503 sync. Tracked
+  separately for future batch.
+
+================================================================================
+DECISIONS LOCKED (Zahi 2026-05-07)
+================================================================================
+
+D1. Bug B fix: when items lack unit_id, pass items_all (not
+    per-unit filtered) to each unit's sync. Items represent the
+    floor — all units inherit the same in_progress signal.
+
+D2. Bug C fix: add submit_stage hook with stage_status="pending_review",
+    using existing _resolve_unit_ids_for_sync helper from followup-2.
+
+D3. Feature D: new "ready_for_work" status — MANUAL-ONLY (D2 sync-only
+    flag is FALSE). PM selects it from CellEditDialog. QC sync NEVER
+    sets it. If a QC stage starts syncing, the QC value wins per D3
+    from #503 (QC always wins).
+
+D4. Bug A (11/12) deferred to separate batch — pre-existing, not
+    related to sync.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify submit_stage endpoint exists and structure:
+    grep -B2 -A30 "@router.post.*stage.*submit\|def submit_stage" \
+        backend/contractor_ops/qc_router.py | head -40
+    Expected: at L1695 — POST `/run/{run_id}/stage/{stage_id}/submit`.
+    Sets `stage_statuses[stage_id] = "pending_review"` at ~L1790.
+    Returns 200 with run state. Hook goes AFTER the update,
+    BEFORE the return.
+
+0.2 — Verify update_qc_item hook current item-filter logic:
+    grep -B5 -A20 "items_all\|items_for_unit\|items_for_sync" \
+        backend/contractor_ops/qc_router.py | head -40
+    Expected: shows where items are filtered per unit. Document
+    the EXACT current logic so the fix targets the right lines.
+
+0.3 — Verify floor-scope items don't have unit_id at expansion time:
+    Inspect any existing qc_item document in staging via Atlas to
+    confirm. If they DO have unit_id, the bug analysis is wrong
+    and we need to dig deeper. Document finding in review.txt.
+
+0.4 — Audit StatusButtonGrid current behavior:
+    grep -B2 -A8 "MATRIX_STATUS_LIST\.filter\|syncOnly" \
+        frontend/src/components/matrix/StatusButtonGrid.js
+    Expected: filters by `!s.syncOnly`. ready_for_work has no
+    syncOnly flag → shows up in manual selection automatically.
+
+0.5 — Verify MATRIX_STATUS_VALUES + Pydantic Literal[] (re-check
+       since we're adding ANOTHER value):
+    grep -rn "MATRIX_STATUS_VALUES\|Literal\[.*completed" \
+        backend/contractor_ops/ | head -10
+    Same pattern as followup-2: only schemas.py L898 needs update.
+    No Literal[] consumers.
+
+0.6 — 🚨 CRITICAL STOP-GATE — comprehensive `stage_statuses` audit
+       (close the pattern of missed hooks):
+
+    grep -rn "stage_statuses\[\|f\"stage_statuses\.\|stage_statuses\.{" \
+        backend/contractor_ops/qc_router.py | head -30
+
+    Document ALL places that MODIFY stage_statuses (not just read).
+    Expected after this batch: 5 hooks total wired (update_qc_item +
+    approve + override + reject + submit). If found MORE places:
+      - Each needs a sync hook OR explicit justification
+      - Examples of legitimate skip: admin migration tool, batch
+        import, internal cleanup script (not user-facing)
+    Output in review.txt: "Found N places, hooked X of N, skipped Y
+    because Z (reason per place)."
+
+    🚨 IF a user-facing endpoint modifies stage_statuses without a
+    hook: this is followup-4 territory and we're back where we started.
+    Replit MUST verify exhaustively this time — 3rd time finding a
+    missed hook would be a process failure, not just a bug.
+
+0.7 — Output STEP 0 audit at top of review.txt — all 6 sub-greps with
+       actual outputs visible to Zahi.
+
+================================================================================
+PART 1 — Fix Bug B: items_all vs per-unit filter
+================================================================================
+
+FILE: backend/contractor_ops/qc_router.py
+
+LOCATION 1.1 — In the update_qc_item hook (and possibly approve/reject/
+override hooks if they have the same pattern), change the per-unit
+items filtering to fall back to items_all when items lack unit_id.
+
+Current pattern (estimated — verify in STEP 0.2):
+    for uid in unit_ids:
+        items_for_uid = [i for i in items_all if i.get("unit_id") == uid]
+        background_tasks.add_task(
+            sync_qc_stage_to_matrix, ...,
+            unit_id=uid, qc_items=items_for_uid, ...
+        )
+
+NEW pattern:
+    # Detect whether items carry unit_id (unit-scope) or are
+    # floor-shared (template-level, no unit_id).
+    items_have_unit_id = any(i.get("unit_id") for i in items_all)
+
+    for uid in unit_ids:
+        if items_have_unit_id:
+            # Per-unit items: filter to this unit's items
+            items_for_uid = [i for i in items_all if i.get("unit_id") == uid]
+        else:
+            # Floor-shared items: all units share the same items
+            items_for_uid = items_all
+
+        background_tasks.add_task(
+            sync_qc_stage_to_matrix, ...,
+            unit_id=uid, qc_items=items_for_uid, ...
+        )
+
+Apply this pattern in ALL 4 endpoints that use _resolve_unit_ids_for_sync:
+  - update_qc_item
+  - approve_stage
+  - override_approve_stage
+  - reject_stage
+
+If they currently use a single line `items_for_uid = items_all`
+already (because Replit caught this in followup-2), document and
+move on — Bug B might already be fixed via that path. Verify in
+STEP 0.2.
+
+================================================================================
+PART 2 — Fix Bug C: add hook to submit_stage endpoint
+================================================================================
+
+FILE: backend/contractor_ops/qc_router.py
+
+LOCATION 2.1 — At submit_stage (L1695), add:
+
+  - import BackgroundTasks (if not already at top)
+  - add `background_tasks: BackgroundTasks` to function signature
+  - AFTER the `stage_statuses[stage_id] = "pending_review"` set (L1790)
+    and BEFORE the return:
+
+        # #503-followup-3 — sync to matrix when stage submitted
+        async def _run_sync_submit():
+            try:
+                items_all = await db.qc_items.find(
+                    {"run_id": run_id, "stage_id": stage_id},
+                    {"_id": 0},
+                ).to_list(500)
+                stage_scope = tpl_stage.get("scope", "floor")
+                unit_ids = await _resolve_unit_ids_for_sync(
+                    db, run, items_all, stage_scope
+                )
+                items_have_unit_id = any(i.get("unit_id") for i in items_all)
+                for uid in unit_ids:
+                    items_for_uid = (
+                        [i for i in items_all if i.get("unit_id") == uid]
+                        if items_have_unit_id
+                        else items_all
+                    )
+                    await sync_qc_stage_to_matrix(
+                        db,
+                        project_id=run["project_id"],
+                        unit_id=uid,
+                        stage_id=stage_id,
+                        actor={"id": user["id"], "name": user.get("display_name") or user.get("name")},
+                        qc_items=items_for_uid,
+                        stage_status="pending_review",
+                        stage_scope=stage_scope,
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[#503] QC→matrix sync failed for stage_id={stage_id} (submit): {e}"
+                )
+
+        background_tasks.add_task(_run_sync_submit)
+
+================================================================================
+PART 3 — Add new "ready_for_work" status
+================================================================================
+
+FILE 1: backend/contractor_ops/schemas.py
+
+LOCATION 3.1 — Add to MATRIX_STATUS_VALUES tuple between "in_progress"
+and "pending_review":
+
+    MATRIX_STATUS_VALUES = (
+        "completed",
+        "partial",
+        "ready_for_work",   # NEW (#503-followup-3) — manual-only
+        "in_progress",
+        "pending_review",
+        "not_done",
+        "not_relevant",
+        "no_findings",
+    )
+
+FILE 2: backend/contractor_ops/execution_matrix_export.py
+
+LOCATION 3.2 — Add label and fill:
+
+    STATUS_LABELS["ready_for_work"] = "מוכן לעבודה"
+    STATUS_FILLS["ready_for_work"] = PatternFill(
+        "solid", fgColor="CFFAFE"   # cyan-100, distinct from orange/amber/blue
+    )
+
+FILE 3: frontend/src/components/matrix/STATUS_CONFIG.js
+
+LOCATION 3.3 — Import a new icon and add the entry:
+
+    import { ..., PackageCheck } from 'lucide-react';
+    // Or alternative: Truck, Boxes, Clipboard
+
+    ready_for_work: {
+        label: "מוכן לעבודה",
+        bg: "bg-cyan-50",
+        text: "text-cyan-700",
+        border: "border-cyan-200",
+        Icon: PackageCheck,
+        order: 1,                  // FIRST — workflow start (planning state)
+        // NO syncOnly flag → manually selectable in StatusButtonGrid
+    }
+
+    Suggested order revision (workflow progression, not numeric):
+      1. ready_for_work    (planning — PM signals contractor can start)
+      2. in_progress       (work happening — QC activity began)
+      3. pending_review    (PM/site manager submitted to senior)
+      4. completed         (senior approved)
+      5. not_done          (senior rejected)
+      6. partial           (manual nuance)
+      7. not_relevant      (manual — doesn't apply)
+      8. no_findings       (manual — inspected, nothing to fix)
+
+    Update other entries' `order` field accordingly. This makes the
+    StatusLegend + StatusButtonGrid render in workflow order.
+
+NOT CHANGING — StatusButtonGrid already filters by `!s.syncOnly`.
+ready_for_work has no syncOnly → shows up automatically. PM can
+select it manually.
+
+================================================================================
+PART 4 — Tests
+================================================================================
+
+FILE: backend/tests/test_qc_to_matrix_sync.py
+
+4.1 — UPDATE T16 (in_progress on item flip) to verify the fix:
+   New T16 setup:
+   - run_scope="floor", items_all has NO unit_id (template-level)
+   - _resolve_unit_ids_for_sync returns 3 units
+   - Helper called per unit with items_for_uid = items_all (the fix)
+   - All 3 units now have status="in_progress" when 1 item is "pass"
+
+4.2 — NEW T17 (submit_stage hook fires correctly):
+   - Mock submit_stage endpoint behavior
+   - Verify _run_sync_submit fires sync_qc_stage_to_matrix with
+     stage_status="pending_review"
+   - Verify resulting cells have status="pending_review"
+
+4.3 — NEW T18 (renamed: test_ready_for_work_overridden_by_qc_per_d3):
+   "ready_for_work is manual-only (sync doesn't SET it), but QC
+   activity overrides manual state per D3 (QC always wins)."
+   - Manual cell with status="ready_for_work", synced_from_qc=False
+   - Trigger QC item PATCH with item="pass"
+   - Expect: cell flips to in_progress (D3 — QC wins)
+   - Audit chain shows transition: ready_for_work → in_progress
+   - Subsequent re-set of "ready_for_work" by PM stays manual until
+     next QC activity
+
+4.4 — NEW T19 (ready_for_work appears in MATRIX_STATUS_VALUES + Excel
+       export builds correctly):
+   - Build a matrix with one cell status="ready_for_work"
+   - Verify xlsx has "מוכן לעבודה" label + cyan fill
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — Backend tests pass:
+   cd backend && python -m pytest tests/test_qc_to_matrix_sync.py \
+                                   tests/test_execution_matrix.py \
+                                   tests/test_execution_matrix_export.py \
+                                   tests/test_qc_override_close.py -q
+   → previous count + 3 new tests (T17, T18, T19)
+
+V2 — Frontend build:
+   cd frontend && yarn build
+   → clean
+
+V3 — Diff scope (6 files):
+   git diff --stat
+   → expected:
+     backend/contractor_ops/qc_router.py            (+~50 — submit hook
+                                                      + items_all fix in 4 hooks)
+     backend/contractor_ops/qc_to_matrix_sync.py    (+~3 — docstring update)
+     backend/contractor_ops/schemas.py              (+~1 — new enum value)
+     backend/contractor_ops/execution_matrix_export.py (+~3 — label + fill)
+     backend/tests/test_qc_to_matrix_sync.py        (+~50 — 3 new tests)
+     frontend/src/components/matrix/STATUS_CONFIG.js (+~10)
+
+V4 — Sibling files untouched:
+   git diff --stat -- frontend/src/components/matrix/MatrixCell.js \
+                      frontend/src/components/matrix/MatrixGridView.js \
+                      frontend/src/components/matrix/MatrixListView.js \
+                      frontend/src/components/matrix/CellEditDialog.js \
+                      frontend/src/components/matrix/MatrixFilterDrawer.js \
+                      frontend/src/components/matrix/StatusLegend.js \
+                      frontend/src/components/matrix/StatusButtonGrid.js \
+                      frontend/src/components/matrix/CellHistoryList.js
+   → 0 lines diff (all auto-handle the new status via dict lookup)
+
+V5 — Feature flag default still "false":
+   grep "MATRIX_QC_SYNC_ENABLED" backend/contractor_ops/qc_to_matrix_sync.py
+   → unchanged
+
+================================================================================
+SMOKE TEST (Zahi after deploy)
+================================================================================
+
+Staging flag stays ON. Hard-refresh and test:
+
+(א) Bug B fix — item-level on floor-scope:
+    1. Mark ONE item in stage_plumbing (floor 1) as "pass"
+    2. Matrix → ALL units on floor 1 show BLUE (in_progress)
+    3. Mark ONE more item as "fail" → matrix STAYS BLUE
+       (item-level fail doesn't paint red anymore — D1 from
+        followup-2 still applies; only senior reject = red)
+
+(ב) Bug C fix — submit-for-review:
+    1. Site manager submits stage_plaster on floor 1 for review
+    2. stage_status becomes "pending_review"
+    3. Matrix → ALL units on floor 1 show ORANGE "ממתין לאישור"
+       (NEW visible from this batch)
+
+(ג) Feature D — ready_for_work manually selectable:
+    1. Open CellEditDialog on any cell
+    2. ✅ NEW button "מוכן לעבודה" with PackageCheck icon (cyan)
+       appears in StatusButtonGrid alongside the 6 existing options
+    3. Select it + save → cell shows cyan
+    4. StatusLegend shows 8 statuses now (was 7)
+
+(ד) Feature D — sync overrides ready_for_work per D3:
+    1. Cell manually set to "מוכן לעבודה" (cyan)
+    2. Trigger any QC activity on the same stage (e.g. item "pass")
+    3. Matrix → cell flips to BLUE (in_progress) — QC wins
+    4. Audit shows transition: ready_for_work → in_progress
+
+(ה) Excel export — "מוכן לעבודה" appears with cyan fill in xlsx.
+
+(ו) MatrixFilterDrawer — "מוכן לעבודה" appears as new checkbox
+    in status filter section.
+
+(ז) No regressions — re-run followup-2 smoke (א)-(יב) — all should
+    still pass.
+
+================================================================================
+OPEN QUESTIONS (resolve before implementation)
+================================================================================
+
+Q1. ready_for_work persistence policy — DECIDED 2026-05-07.
+    Zahi: "נשאיר את א', בקרת ביצוע תדרוס אותו זה בסדר לדעתי".
+
+    DECISION: Option A — QC ALWAYS WINS over ready_for_work, same
+    as for any other matrix status. D3 from #503 applies uniformly.
+
+    Reasoning: ready_for_work is a planning signal. Once actual work
+    begins (any QC activity), the operational state of "in_progress"
+    is more relevant to the PM than the prior planning marker. PM
+    can re-set ready_for_work later if needed.
+
+    No additional helper logic required — current mapping handles
+    this correctly via the standard "QC wins" path.
+
+    T18 finalized: "test_ready_for_work_overridden_by_qc_per_d3"
+    (already updated in PART 4 above).
+
+Q2. Visual distinctness — cyan vs blue vs teal on mobile:
+    cyan (ready_for_work)  #CFFAFE
+    blue (in_progress)     #DBEAFE
+    teal (no_findings)     #CCFBF1
+
+    All very light, similar tones. On a 375px iPhone screen with
+    32×32 cell icons, these may be hard to differentiate without
+    relying on the icons (PackageCheck vs Clock vs Shield-Check).
+
+    Recommendation: ship as designed; gather PM feedback after 1
+    week of staging. If confused, simplify in v2 (e.g., consolidate
+    cyan + teal, or use stronger color saturation).
+
+================================================================================
+COMMUNICATION FOR PMs (BEHAVIOR ADDITION)
+================================================================================
+
+Suggested release note (Hebrew):
+
+  הוספנו סטטוס חדש למטריצה: 🚚 "מוכן לעבודה" (תכלת)
+
+  משמעות: כל החומר באתר, הקבלן יכול להיכנס לעבוד.
+
+  הסטטוס ניתן לסמן ידנית ב-popup של תא במטריצה. הוא לא משתנה
+  אוטומטית מבקרת ביצוע — זה מצב תכנון של מנהל הפרויקט. אם
+  הקבלן יתחיל לעבוד והפעילות תיכנס לבקרת הביצוע, הסטטוס יתחלף
+  אוטומטית ל"בעבודה" (כחול).
+
+  בנוסף תוקנו 2 באגים:
+  1. סימון פריט בודד בשלב פר-קומה — המטריצה תעבור לכחול מיידית
+     (היה לא מסונכרן עד עכשיו).
+  2. "ממתין לאישור" — כעת מופיע במטריצה ברגע שמנהל-עבודה שולח
+     את השלב לאישור (היה לא מסונכרן עד עכשיו).
+
+================================================================================
+PHASED ROLLOUT
+================================================================================
+
+1. Replit implements + V1-V5 green
+2. Zahi: ./deploy.sh --stag (flag stays ON in staging)
+3. Smoke (א)-(ז) on staging
+4. 24h watch
+5. ./deploy.sh --prod (flag still OFF in prod)
+6. Flip flag in prod during low-traffic window
+7. Send PM release note (Hebrew block above) at flag flip
+
+ROLLBACK (3 modes — same as #503):
+- MILD:   set MATRIX_QC_SYNC_ENABLED=false (env, no deploy)
+- MEDIUM: git revert
+- SEVERE: Atlas point-in-time + git revert
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt — STEP 0 audit (5 sub-greps) + diff + V1-V5 + smoke
+(א)-(ז) deferred + footer "AWAITING ZAHI APPROVAL — DO NOT DEPLOY"
+
+.local/.commit_message:
+  feat(matrix): #503-followup-3 — submit hook + item-level fix +
+                                  "ready_for_work" status
+
+  Three follow-ups to staging smoke 2026-05-07:
+
+  Bug B: item-level activity didn't propagate in floor-scope.
+    Items_all has NO unit_id (template-level for floor stages),
+    so per-unit filter `[i for i in items_all if i.get("unit_id") == uid]`
+    returned empty for every unit → sync received empty items →
+    no status change. Fixed by detecting whether items carry
+    unit_id; if not, pass items_all to each unit's sync.
+
+  Bug C: submit_stage endpoint at qc_router.py:1695 wasn't wired.
+    When site manager submits stage to senior, stage_statuses
+    becomes "pending_review" but matrix wasn't notified. Added
+    BackgroundTasks hook with stage_status="pending_review".
+
+  Feature D: NEW manual-only matrix status "ready_for_work"
+    (cyan, PackageCheck icon). PM signals "all materials ready,
+    contractor can start". Distinct from in_progress, not synced
+    from QC. If QC starts syncing a stage that's marked
+    ready_for_work, QC wins per D3.
+
+  Pre-existing display bug "11/12 vs 2/2" deferred to separate
+  batch — unrelated to sync.
+
+  ~85 LOC across 6 files. Same feature flag, same BackgroundTasks
+  pattern, same try/except safety from #503. 3 new tests.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (5 sub-greps)
+2. PART 3 — schemas.py MATRIX_STATUS_VALUES += "ready_for_work"
+   (CRITICAL FIRST — backend rejects sync writes otherwise)
+3. PART 1 — fix items_all vs per-unit filter in 4 hooks
+4. PART 2 — add submit_stage hook
+5. PART 3 (continued) — STATUS_CONFIG + Excel export + new icon
+6. PART 4 — 3 new tests
+7. RUN V1-V5 (must be green)
+8. Generate review.txt + .local/.commit_message
+9. STOP. Zahi reviews. Then he runs:
+     git checkout staging && git merge main && ./deploy.sh --stag
+
+================================================================================
+END OF SPEC — #503-followup-3
+================================================================================

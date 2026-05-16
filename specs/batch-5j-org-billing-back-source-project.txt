@@ -1,0 +1,192 @@
+================================================================================
+BATCH 5J — OrgBillingPage back buttons honor sourceProjectId
+================================================================================
+Date:           2026-04-29
+Branch:         staging  (NOT main)
+Severity:       P2 UX — found during 5I smoke test (post-fix). Same family
+                as 5I but a different surface on the same page.
+Files changed:  1 frontend file / 1 helper + 3 onClick replacements
+                  Frontend: OrgBillingPage.js
+Mobile:         N/A — Capacitor WebView, Capgo OTA. Same as 5I.
+
+CONTEXT
+-------
+On /billing/org/:orgId?project_id=:projectId (the org billing page reached
+from a project-scoped CTA), there are 4 back buttons total:
+  - Blue "חזרה לפרויקט" link inside the "הגעת מפרויקט" banner at line 894.
+    FIXED in 5I — correctly navigates to /projects/${sourceProjectId}/control
+    when present.
+  - 3 OTHER "חזרה" buttons at lines 795, 860, 880 (header breadcrumb +
+    2 error-state buttons). All hardcoded to:
+        navigate(isSA ? '/admin' : '/projects')
+    They IGNORE sourceProjectId.
+
+User flow that exposes the bug:
+  Project → CTA into org billing → /billing/org/X?project_id=Y → user
+  clicks the top-right "חזרה" breadcrumb → expected: return to project
+  context. Actual: jumps to /admin (or /projects for non-super-admin).
+
+Zahi 2026-04-29: "כשאני בתוך billing org עם project_id, יש לי חזרה
+לפרויקט בצבע כחול שעובד מעולה. אבל למעלה בצד ימין יש חזרה אחרת,
+היא זורקת אותי ל-/admin. מה קשור?"
+
+Fix: extract a small `handleBackNav()` helper that prefers sourceProjectId
+when present, falls back to existing isSA logic when not. Wire all 3
+buttons to use it.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify the 3 broken back buttons are at expected lines:
+    grep -n "navigate(isSA ? '/admin' : '/projects')" frontend/src/pages/OrgBillingPage.js
+    # Expect 3 hits at lines 795, 860, 880.
+
+0.2 — Verify sourceProjectId variable is in scope:
+    grep -n "sourceProjectId" frontend/src/pages/OrgBillingPage.js | head -5
+    # Expect at least one declaration (likely useSearchParams() destructure
+    # or const from URL parsing) and multiple usages.
+
+0.3 — Confirm the blue banner from 5I uses the right destination format
+      (so our helper mirrors it exactly):
+    grep -n "/control?workMode=structure" frontend/src/pages/OrgBillingPage.js
+    # Expect 1 hit at line ~897 (the 5I-fixed banner).
+
+0.4 — Audit any OTHER navigates in OrgBillingPage that might need the
+      same treatment:
+    grep -n "navigate(" frontend/src/pages/OrgBillingPage.js | grep -v "^//"
+    # Document each. The 3 lines at 795/860/880 are in scope.
+    # The line ~897 banner is already fixed in 5I.
+    # Any other navigates → classify.
+
+0.5 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — FRONTEND (1 file)
+================================================================================
+
+FILE 1 of 1: frontend/src/pages/OrgBillingPage.js
+--------------------------------------------------
+
+EDIT 1 — Add a back-navigation helper near the top of the component
+   (after the destructured props/state, before any useEffect or return
+   statement). Find a logical spot — likely after the `isSA` variable
+   declaration:
+
+   ADD:
+       // Back-navigation helper. If user came from a project context
+       // (sourceProjectId in URL), return to that project's structure
+       // view — same destination as the blue "הגעת מפרויקט" banner
+       // (line ~897). Otherwise fall back to the existing isSA-based
+       // logic: super admins go to /admin, regular users to /projects.
+       const handleBackNav = () => {
+         if (sourceProjectId) {
+           navigate(`/projects/${sourceProjectId}/control?workMode=structure`);
+         } else {
+           navigate(isSA ? '/admin' : '/projects');
+         }
+       };
+
+   IMPORTANT: place the helper AFTER both `sourceProjectId` and `isSA`
+   are declared. Confirm scope before adding (STEP 0.2).
+
+EDIT 2 — Replace 3 onClick handlers to use the helper.
+
+   2a) Line 795 (error retry state — "נסה שוב" button area):
+       CURRENT:
+           <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="text-slate-500 hover:text-slate-700 text-sm">חזרה</button>
+       REPLACE WITH:
+           <button onClick={handleBackNav} className="text-slate-500 hover:text-slate-700 text-sm">חזרה</button>
+
+   2b) Line 860 (fatal error state — 403/404 message):
+       CURRENT:
+           <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="text-slate-500 hover:text-slate-700 text-sm px-4 py-2">
+             חזרה
+           </button>
+       REPLACE WITH:
+           <button onClick={handleBackNav} className="text-slate-500 hover:text-slate-700 text-sm px-4 py-2">
+             חזרה
+           </button>
+
+   2c) Line 880 (header breadcrumb — the one Zahi reported):
+       CURRENT:
+           <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="hover:text-slate-700">חזרה</button>
+       REPLACE WITH:
+           <button onClick={handleBackNav} className="hover:text-slate-700">חזרה</button>
+
+   No className changes, no styling changes, no text changes. Pure
+   onClick replacement.
+
+DO NOT TOUCH:
+- Line 897 (the blue banner "חזרה לפרויקט" link) — already fixed in 5I,
+  uses the same destination format. handleBackNav mirrors it.
+- Any other navigate() in this file (settings, modal close, etc.).
+- Any other component or page.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend build:
+   cd frontend && yarn build
+   → no new warnings.
+
+VERIFY 2 — All 3 hardcoded back navigations replaced:
+   grep -c "navigate(isSA ? '/admin' : '/projects')" frontend/src/pages/OrgBillingPage.js
+   → must return 0 (was 3 before).
+
+VERIFY 3 — Helper present and 3 usages wired:
+   grep -c "handleBackNav" frontend/src/pages/OrgBillingPage.js
+   → must return at least 4 (1 declaration + 3 onClick usages).
+
+VERIFY 4 — Banner from 5I untouched:
+   grep -c "navigate(\`/projects/\${sourceProjectId}/control" frontend/src/pages/OrgBillingPage.js
+   → must return at least 1 (the 5I banner edit, plus 1 from inside
+     handleBackNav helper — so 2 hits if helper template-strings to
+     the same target, or 1 + helper uses variable assembly).
+
+VERIFY 5 — Behavior smoke (Zahi runs visually on staging):
+   a. Direct admin → org billing (no project_id query param) → top-right
+      "חזרה" breadcrumb → returns to /admin (super admin) or /projects
+      (regular). ✓ (preserved fallback)
+   b. Project → org-billing CTA → /billing/org/X?project_id=Y →
+      top-right "חזרה" breadcrumb → returns to the source project's
+      /control?workMode=structure ✓ (THE FIX)
+   c. Same source-project context → trigger an error state (e.g. wrong
+      org permissions) → "חזרה" buttons in the error UI also return to
+      the project. ✓ (consistent across all 3 buttons)
+   d. Blue "הגעת מפרויקט" banner link still works correctly (5I unchanged). ✓
+   e. Browser back button — uses history.back(), unaffected.
+
+================================================================================
+DELIVERABLES
+================================================================================
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (1 file, 1 helper add + 3 onClick replacements)
+  - VERIFY 1-4 outputs (skip 5 — Zahi runs visually)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(billing): org billing back buttons honor sourceProjectId when present
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.4 greps, output at top of review.txt).
+2. Add handleBackNav helper near the top of the component.
+3. Replace 3 onClick handlers (lines 795, 860, 880) to use the helper.
+4. Run VERIFY 1-4.
+5. Generate review.txt + .local/.commit_message.
+6. STOP. Zahi runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+1 file, 1 helper, 3 onClick swaps. Trivially safe.
+
+================================================================================
+END OF SPEC
+================================================================================

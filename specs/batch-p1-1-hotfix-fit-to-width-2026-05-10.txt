@@ -1,0 +1,401 @@
+================================================================================
+BATCH P1.1-HOTFIX — Fit-to-width default scale (P1)
+================================================================================
+Date:           2026-05-10
+Branch:         staging  (NOT main)
+Severity:       P1 — UX bug discovered in P1.1 staging smoke. Architectural
+                PDFs (A0/A1 size) render at scale=1.0 but their natural
+                width (~1700-2400 CSS px) exceeds desktop viewport
+                (~1800 px). With macOS hidden scrollbars, users can't see
+                they need to pan, and the right side of the plan (title
+                block, revision history, section drawings) appears cut
+                off. Same will happen on mobile (smaller viewport).
+Files changed:  1 frontend (no backend, no schema)
+                  Frontend: frontend/src/components/PlanViewer.js
+                  (~20 lines added: containerRef + fit-scale calculation
+                   in onLoadSuccess + initial scale state change)
+Pre-flight:     P1.1 review.txt confirmed shipped at SHA
+                97643d2c14df88108a87fef7f50e4c704d9670e2. PlanViewer.js
+                is currently 247 LOC with scale defaulting to 1.0.
+================================================================================
+CONTEXT
+=======
+
+Bug repro (Zahi staging smoke 2026-05-10):
+  1. Open project plans page, click any A1-size architectural PDF
+  2. Click "צפייה במסך מלא"
+  3. PDF loads, but renders at native size (scale=1.0)
+  4. PDF natural width ~2000px exceeds viewport ~1800px
+  5. Two-layer flex container centers the canvas, leaving 100px clipped
+     on each side
+  6. macOS hides scrollbar by default — user sees no affordance to scroll
+  7. User believes the right side of the plan (title block + sections)
+     is "missing" or "broken"
+
+Industry-standard fix: **default to fit-to-width**. Same as PDF.js viewer,
+PDF-XChange Editor, Adobe Reader, Apple Preview. User sees the whole plan
+edge-to-edge, then zooms in for details if needed.
+
+Algorithm:
+  - On PDF load, get page 1 natural dimensions via PDFDocumentProxy.getPage(1)
+  - Get container client width (minus padding)
+  - Calculate fit-scale = containerWidth / pageNaturalWidth
+  - Cap at 1.0 — never upscale a small PDF beyond its native size
+  - Use this as initial scale instead of 1.0
+
+When user zooms in past fit-scale (via + button or pinch), content
+exceeds viewport — at that point, scroll IS expected and the user has
+the visual cue (they actively zoomed in) to know panning is needed.
+
+STEP 0 — MANDATORY PRE-FLIGHT
+=============================
+
+  # 1. Confirm P1.1 shipped, PlanViewer.js exists at expected location
+  git fetch origin staging
+  git show origin/staging:frontend/src/components/PlanViewer.js | wc -l
+  # EXPECT: ~247 lines
+
+  # 2. Confirm initial scale = 1.0 (the bug)
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep -n "useState(1.0"
+  # EXPECT: 1 hit on the scale state line
+
+  # 3. Confirm containerRef exists in current code
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep -n "containerRef"
+  # EXPECT: 2-3 hits (declaration + usage in JSX). If absent, spec needs
+  # to add the ref too.
+
+  # 4. Confirm handleLoadSuccess current signature accepts {numPages}
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep -B 1 -A 3 "handleLoadSuccess"
+  # EXPECT: shows the callback with `({ numPages })` destructure.
+  # We need to change this to accept the full PDFDocumentProxy.
+
+If ANY pre-flight returns different content → STOP and report.
+
+PART 1 — FRONTEND
+=================
+
+FILE 1 of 1: frontend/src/components/PlanViewer.js
+---------------------------------------------------
+
+LOCATION 1.1 — Initial scale state
+-----------------------------------
+
+   CURRENT (around L30):
+       const [scale, setScale] = useState(1.0);
+
+   REPLACE WITH:
+       // 2026-05-10 hotfix — start at null, set to fit-to-width on
+       // first PDF load. Avoids flash-of-wrong-scale before fit calc
+       // completes. While null, render placeholder (loading spinner
+       // already covers this — don't render <Page> until scale is set).
+       const [scale, setScale] = useState(null);
+
+LOCATION 1.2 — handleLoadSuccess: accept PDFDocumentProxy + compute fit-scale
+-----------------------------------------------------------------------------
+
+   CURRENT (around L42):
+       const handleLoadSuccess = useCallback(({ numPages }) => {
+         setNumPages(numPages);
+         setLoading(false);
+       }, []);
+
+   REPLACE WITH:
+       // 2026-05-10 hotfix — react-pdf onLoadSuccess passes the full
+       // PDFDocumentProxy (not just {numPages}). We use it to compute
+       // a fit-to-width scale on load so users see the whole plan
+       // edge-to-edge by default. They can zoom in for details via
+       // the + button or pinch.
+       const handleLoadSuccess = useCallback(async (pdf) => {
+         setNumPages(pdf.numPages);
+         setLoading(false);
+         try {
+           if (!containerRef.current) {
+             setScale(1.0);
+             return;
+           }
+           // Subtract p-4 padding (16px each side = 32px) so content
+           // doesn't immediately overflow.
+           const containerWidth = containerRef.current.clientWidth - 32;
+           const containerHeight = containerRef.current.clientHeight - 32;
+           // 2026-05-10 — defensive guard: container may not be laid
+           // out yet when handleLoadSuccess fires (modal still
+           // animating in, display:none transition, mobile keyboard
+           // pushing viewport). clientWidth=0 → containerWidth=-32
+           // → fitScale=negative → clamped to 0.1 → mystery "tiny PDF"
+           // bug. Fall back to 1.0 if dimensions look invalid; user
+           // can zoom in/out manually.
+           if (containerWidth <= 0 || containerHeight <= 0) {
+             setScale(1.0);
+             return;
+           }
+           const page = await pdf.getPage(1);
+           const viewport = page.getViewport({ scale: 1.0 });
+           const widthScale = containerWidth / viewport.width;
+           const heightScale = containerHeight / viewport.height;
+           // Use min so the WHOLE page fits (both dimensions). Cap at
+           // 1.0 — small PDFs (e.g. apartment-only sketch) shouldn't
+           // upscale above native size.
+           const fitScale = Math.min(widthScale, heightScale, 1.0);
+           // Round to nearest 5% so the displayed % is clean.
+           const rounded = Math.max(0.1, Math.round(fitScale * 20) / 20);
+           setScale(rounded);
+         } catch (err) {
+           console.warn('[PlanViewer] fit-scale calculation failed, falling back to 1.0:', err);
+           setScale(1.0);
+         }
+       }, []);
+
+LOCATION 1.3 — Conditional render <Page> until scale is set
+-----------------------------------------------------------
+
+   CURRENT (the <Document><Page> section, around L130):
+       {isPdf && !loadError && (
+         <Document
+           file={plan.file_url}
+           onLoadSuccess={handleLoadSuccess}
+           onLoadError={handleLoadError}
+           loading=""
+           error=""
+         >
+           <Page
+             pageNumber={pageNumber}
+             scale={scale}
+             renderTextLayer={false}
+             renderAnnotationLayer={false}
+           />
+         </Document>
+       )}
+
+   REPLACE WITH:
+       {isPdf && !loadError && (
+         <Document
+           file={plan.file_url}
+           onLoadSuccess={handleLoadSuccess}
+           onLoadError={handleLoadError}
+           loading=""
+           error=""
+         >
+           {scale !== null && (
+             <Page
+               pageNumber={pageNumber}
+               scale={scale}
+               renderTextLayer={false}
+               renderAnnotationLayer={false}
+             />
+           )}
+         </Document>
+       )}
+
+   This avoids rendering <Page> with scale=null (would error in some
+   react-pdf versions) and avoids flash-of-wrong-scale (rendering at
+   scale=1.0 then jumping to fit-scale).
+
+LOCATION 1.4 — Reset scale on plan change
+-----------------------------------------
+
+   CURRENT (around L36, useEffect that resets state on plan change):
+       useEffect(() => {
+         setNumPages(null);
+         setPageNumber(1);
+         setScale(1.0);
+         setLoadError(null);
+         setLoading(true);
+       }, [plan?.id, plan?.file_url]);
+
+   REPLACE WITH:
+       useEffect(() => {
+         setNumPages(null);
+         setPageNumber(1);
+         setScale(null); // recomputed in handleLoadSuccess
+         setLoadError(null);
+         setLoading(true);
+       }, [plan?.id, plan?.file_url]);
+
+LOCATION 1.5 — Update zoom button bounds
+----------------------------------------
+
+   CURRENT (around L60):
+       const zoomIn = useCallback(() => setScale(s => Math.min(s + 0.25, 4.0)), []);
+       const zoomOut = useCallback(() => setScale(s => Math.max(s - 0.25, 0.5)), []);
+
+   REPLACE WITH:
+       // 2026-05-10 hotfix — use multiplicative steps (×1.25 / ×0.8) so
+       // each click feels equally significant regardless of starting
+       // scale. With additive +/- 0.25 and a fit-scale of (e.g.) 0.4,
+       // clicking + once jumps to 0.65 (62% increase) but clicking +
+       // again jumps from 0.65 to 0.9 (38% increase) — uneven.
+       // Multiplicative keeps each click ~25% larger.
+       const zoomIn = useCallback(() => setScale(s => Math.min((s ?? 1.0) * 1.25, 4.0)), []);
+       const zoomOut = useCallback(() => setScale(s => Math.max((s ?? 1.0) * 0.8, 0.1)), []);
+
+   Also reduce minimum from 0.5 to 0.1 — very large plans may need
+   fit-scale below 0.5 (e.g. A0 plan on phone screen = ~0.2).
+
+LOCATION 1.6 — Disabled state for zoom buttons
+----------------------------------------------
+
+   CURRENT (in the bottom bar JSX):
+       <button onClick={zoomOut} disabled={scale <= 0.5} ...>
+       ...
+       <button onClick={zoomIn} disabled={scale >= 4.0} ...>
+
+   REPLACE WITH:
+       <button onClick={zoomOut} disabled={!scale || scale <= 0.1} ...>
+       ...
+       <button onClick={zoomIn} disabled={!scale || scale >= 4.0} ...>
+
+   Adjust both disabled conditions to use the new bounds + handle null
+   during initial load (button disabled until scale is computed).
+
+
+DO NOT TOUCH
+============
+- ❌ Backend (zero changes).
+- ❌ ProjectPlansPage.js / UnitPlansPage.js — they consume PlanViewer
+     via props only; their integration is correct.
+- ❌ The two-layer container pattern (outer overflow-auto + inner
+     min-w-full min-h-full flex center) — keep as-is. When user zooms
+     IN past fit-scale, content overflows and user expects to scroll.
+- ❌ The image-rendering branch — unchanged (already uses width-based
+     scaling, doesn't suffer the same problem).
+- ❌ The fallback for unsupported file types — unchanged.
+- ❌ The worker source (still '/pdf.worker.min.mjs').
+- ❌ touchAction CSS — keep pinch-zoom enabled.
+
+GLOBAL VERIFY
+=============
+
+VERIFY 1 — Lint
+    cd frontend && CI=true npm run lint 2>&1 | tail -10
+    EXPECT: no new errors. New deps: useEffect/useState/useRef already
+    used, no new imports.
+
+VERIFY 2 — Build
+    cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
+        REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com \
+        yarn build 2>&1 | tail -10
+    EXPECT: "Compiled successfully". No errors.
+
+VERIFY 3 — Manual smoke on staging (Zahi runs)
+    Test cases:
+      A. Open the same A1-size architectural PDF that showed the bug
+         (801A-6-003.pdf). Click "צפייה במסך מלא".
+         EXPECT: the WHOLE plan is visible edge-to-edge (left section
+         drawings + center floor plan + right title block all on screen).
+         The bottom-bar percentage shows ~40-60% (depending on viewport).
+
+      B. Click + (zoom in) once.
+         EXPECT: scale increases by 25% (multiplicative). Content may
+         start to exceed viewport. User can pan to see corners.
+
+      C. Click + repeatedly until 400%.
+         EXPECT: scale caps at 4.0, button becomes disabled. Content
+         is much larger than viewport, user pans freely.
+
+      D. Click - (zoom out) repeatedly.
+         EXPECT: scale shrinks down toward 10%. Button disables at 0.1.
+
+      E. Open a small image (jpg/png) plan.
+         EXPECT: existing image branch unchanged. Width-based scaling
+         still works as before. No regression.
+
+      F. Multi-page PDF — KNOWN LIMITATION for this hotfix:
+         - Fit-scale is computed on PAGE 1 only (in handleLoadSuccess
+           we call `pdf.getPage(1)`).
+         - Subsequent pages render at the SAME scale, regardless of
+           their natural size.
+         - If the PDF mixes page sizes (e.g. A1 floor plan as page 1,
+           A4 detail as page 2), pages 2+ will look incorrectly scaled
+           — page 2 may appear way too small (because the fit-scale
+           was computed for the A1 page 1).
+         - This is **acceptable for V1 ship** but flag as known issue.
+         - Real BrikOps PDFs sometimes mix sizes (site plan + floor +
+           details bundle). Worth proactive mention to PMs in the
+           release note rather than waiting for a support ticket.
+
+         Test cases for this verify:
+         (i)  Multi-page PDF with same size on all pages → scale
+              persists correctly across pages (page nav works, no
+              visual artifacts).
+         (ii) Multi-page PDF with mixed sizes (if you have one) →
+              flag the visual mis-scaling. Document the affected PDF
+              for the follow-up batch.
+
+         FOLLOW-UP (defer, out of scope here): track
+         `userManuallyZoomed` boolean. On manual + / - / pinch → set
+         true. On page change, if false → recompute fit-scale for the
+         new page. Tracked separately as "Multi-page mixed-size PDF
+         support" in backlog.
+
+      G. Mobile (real iPhone): same A1 plan.
+         EXPECT: fit-scale computes much smaller (~20-25% on phone
+         viewport). Whole plan visible. Pinch-zoom still works to drill
+         in. Pan after zoom still works.
+
+VERIFY 4 — Bundle inspection
+    No bundle size change expected (just logic edits, no new deps).
+    Verify by build size delta:
+      ls -lh frontend/build/static/js/main.*.js
+    Should be within ±2KB of pre-hotfix size.
+
+DELIVERABLES
+============
+review.txt with:
+  - Rollback SHA (origin/staging HEAD before this commit, currently
+    97643d2c14df88108a87fef7f50e4c704d9670e2 from P1.1)
+  - STEP 0 grep outputs at top (4 checks)
+  - LOCATION 1.1-1.6 diffs (~20 lines added across 6 small edits)
+  - VERIFY 1 (lint), VERIFY 2 (build), VERIFY 4 (bundle) outputs
+  - VERIFY 3 manual smoke deferred to Zahi
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(plans): default to fit-to-width scale in PlanViewer
+
+  P1.1 hotfix — A1-size architectural PDFs (~2000px natural width)
+  rendered at scale=1.0 exceeded viewport (~1800px desktop, much less
+  on mobile). With macOS hidden scrollbars, users couldn't see they
+  needed to pan to see the right side (title block, revision history,
+  sections).
+
+  Standard fix: compute fit-to-width scale on PDF load using
+  containerRef.clientWidth and PDFDocumentProxy.getPage(1) viewport.
+  Cap at 1.0 (don't upscale small PDFs). Apply as initial scale, then
+  user can zoom in via + button or pinch.
+
+  Multiplicative zoom steps (×1.25 / ×0.8) replace additive (+/- 0.25)
+  so each click feels equally significant regardless of starting scale.
+
+  No backend change. ~20 LOC modified across 6 locations in
+  PlanViewer.js.
+
+STEPS
+=====
+1. Run STEP 0 pre-flight (4 greps).
+2. LOCATION 1.1: scale initial state from `1.0` to `null`.
+3. LOCATION 1.2: handleLoadSuccess accepts PDFDocumentProxy + computes
+   fit-scale from page 1 viewport.
+4. LOCATION 1.3: conditional render <Page> only when scale !== null.
+5. LOCATION 1.4: reset useEffect sets scale to `null`, not `1.0`.
+6. LOCATION 1.5: zoom in/out use multiplicative ×1.25 / ×0.8.
+7. LOCATION 1.6: disabled bounds updated for new range + null guard.
+8. Run VERIFY 1 (lint). Paste output.
+9. Run VERIFY 2 (build). Paste output.
+10. Run VERIFY 4 (bundle). Paste output.
+11. Generate review.txt.
+12. Write .local/.commit_message.
+13. STOP. Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+
+ROLLBACK
+========
+git revert <commit-sha>
+git checkout staging && ./deploy.sh --stag
+
+Risk: very low. Single component, all changes are additive logic on
+top of existing structure. Worst case: fit-scale calc throws → falls
+back to scale=1.0 (current pre-hotfix behavior).
+
+================================================================================
+END OF SPEC
+================================================================================

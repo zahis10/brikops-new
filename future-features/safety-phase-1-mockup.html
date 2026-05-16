@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>BrikOps — בטיחות Phase 1 — Visual Mockup</title>
+<style>
+  :root {
+    --navy: #323A4E;
+    --orange: #F97316;
+    --red: #DC2626;
+    --amber: #F59E0B;
+    --green: #16A34A;
+    --blue: #2563EB;
+    --gray-50: #F9FAFB;
+    --gray-100: #F3F4F6;
+    --gray-200: #E5E7EB;
+    --gray-400: #9CA3AF;
+    --gray-500: #6B7280;
+    --gray-600: #4B5563;
+    --gray-700: #374151;
+    --gray-900: #111827;
+  }
+  * { box-sizing: border-box; font-family: -apple-system, 'Segoe UI', Arial, sans-serif; }
+  body { margin: 0; padding: 24px; background: linear-gradient(135deg, #1e293b, #0f172a); color: white; min-height: 100vh; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .subtitle { color: var(--gray-400); margin-bottom: 32px; font-size: 14px; }
+  .grid { display: flex; flex-wrap: wrap; gap: 32px; justify-content: center; }
+  .phone-wrapper { display: flex; flex-direction: column; align-items: center; }
+  .phone {
+    width: 360px; height: 720px; background: white; color: black;
+    border-radius: 38px; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    overflow: hidden; position: relative; border: 8px solid #1a1a1a;
+  }
+  .notch {
+    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    width: 120px; height: 24px; background: #1a1a1a;
+    border-radius: 0 0 14px 14px; z-index: 10;
+  }
+  .phone-label { margin-top: 12px; font-size: 13px; color: var(--gray-400); font-weight: 600; text-align: center; max-width: 360px; }
+  .phone-label b { color: white; display: block; margin-bottom: 2px; font-size: 14px; }
+
+  /* Status bar */
+  .status-bar { height: 24px; background: var(--navy); }
+
+  /* App header */
+  .app-header { background: var(--navy); color: white; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; }
+  .app-header .back { font-size: 20px; }
+  .app-header .title { font-weight: 600; font-size: 15px; }
+  .app-header .menu { font-size: 22px; letter-spacing: -2px; }
+
+  /* Tabs (ProjectControlPage) */
+  .tabs { background: white; border-bottom: 1px solid var(--gray-200); display: flex; overflow-x: auto; padding: 0 8px; }
+  .tab { padding: 12px 14px; white-space: nowrap; font-size: 13px; color: var(--gray-600); border-bottom: 3px solid transparent; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .tab.active { color: var(--orange); border-bottom-color: var(--orange); font-weight: 600; }
+  .tab.new { position: relative; }
+  .tab.new::after { content: "חדש"; position: absolute; top: 2px; left: 2px; font-size: 9px; background: var(--orange); color: white; padding: 1px 4px; border-radius: 4px; }
+
+  /* Content */
+  .content { padding: 16px; background: var(--gray-50); height: calc(100% - 88px); overflow-y: auto; }
+  .content.no-scroll { overflow-y: visible; }
+
+  /* Safety home */
+  .page-title { font-size: 18px; font-weight: bold; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; }
+  .top-actions { display: flex; gap: 6px; }
+  .btn-orange { background: var(--orange); color: white; border: none; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .btn-outline { background: white; border: 1px solid var(--gray-200); padding: 7px 12px; border-radius: 8px; font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer; }
+
+  /* Filters */
+  .filters { display: flex; gap: 6px; margin-bottom: 14px; overflow-x: auto; padding-bottom: 4px; }
+  .filter-chip { background: white; border: 1px solid var(--gray-200); padding: 6px 10px; border-radius: 999px; font-size: 11px; color: var(--gray-600); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+  .filter-chip.active { background: var(--orange); color: white; border-color: var(--orange); }
+  .filter-chip .chevron { font-size: 8px; }
+
+  /* Company card */
+  .company { background: white; border: 1px solid var(--gray-200); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
+  .company-header { padding: 12px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .company-header:hover { background: var(--gray-50); }
+  .company-name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+  .company-name .count { color: var(--gray-500); font-weight: 400; font-size: 12px; }
+  .placeholder-badge { font-size: 9px; background: var(--gray-100); color: var(--gray-600); padding: 2px 6px; border-radius: 4px; font-weight: 500; }
+  .add-worker-btn { color: var(--orange); font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 6px; background: none; border: none; cursor: pointer; }
+  .add-worker-btn:hover { background: #FFF7ED; }
+  .chevron-icon { font-size: 12px; color: var(--gray-400); }
+
+  /* Worker rows */
+  .workers { border-top: 1px solid var(--gray-100); }
+  .worker { padding: 10px 12px; border-bottom: 1px solid var(--gray-100); display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .worker:last-child { border-bottom: none; }
+  .worker-info { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+  .worker-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--gray-100); display: flex; align-items: center; justify-content: center; color: var(--gray-400); font-size: 16px; flex-shrink: 0; }
+  .worker-name { font-size: 13px; font-weight: 500; }
+  .worker-meta { font-size: 11px; color: var(--gray-500); direction: ltr; text-align: right; unicode-bidi: plaintext; }
+  .training-badges { display: flex; gap: 6px; font-size: 10px; }
+  .badge { display: flex; align-items: center; gap: 2px; padding: 2px 6px; border-radius: 4px; font-weight: 600; }
+  .badge-green { background: #DCFCE7; color: var(--green); }
+  .badge-amber { background: #FEF3C7; color: var(--amber); }
+  .badge-red { background: #FEE2E2; color: var(--red); }
+
+  /* Training list (when worker expanded) */
+  .training-list { background: var(--gray-50); padding: 10px 12px; border-top: 1px solid var(--gray-100); }
+  .add-training-link { color: var(--orange); font-size: 11px; font-weight: 600; margin-bottom: 8px; display: inline-block; }
+  .training-pill { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; margin-bottom: 4px; border-radius: 4px; font-size: 11px; border-right: 4px solid; }
+  .training-pill.valid { background: #F0FDF4; border-color: var(--green); color: #065F46; }
+  .training-pill.expired { background: #FEF2F2; border-color: var(--red); color: #7F1D1D; }
+  .training-pill.expiring { background: #FFFBEB; border-color: var(--amber); color: #78350F; }
+  .training-pill.lifetime { background: #EFF6FF; border-color: var(--blue); color: #1E3A8A; }
+  .training-pill .date { color: var(--gray-500); font-size: 10px; margin-right: 6px; font-weight: 400; }
+
+  /* Modal */
+  .modal-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: flex-end; z-index: 100; }
+  .modal { background: white; width: 100%; border-radius: 20px 20px 0 0; padding: 16px; max-height: 85%; overflow-y: auto; }
+  .modal-handle { width: 40px; height: 4px; background: var(--gray-200); border-radius: 2px; margin: 0 auto 12px; }
+  .modal-title { font-size: 16px; font-weight: bold; margin-bottom: 4px; }
+  .modal-subtitle { font-size: 12px; color: var(--gray-500); margin-bottom: 14px; }
+  .modal-tabs { display: flex; background: var(--gray-100); border-radius: 10px; padding: 3px; margin-bottom: 14px; }
+  .modal-tab { flex: 1; text-align: center; padding: 8px; font-size: 12px; font-weight: 500; border-radius: 7px; color: var(--gray-600); cursor: pointer; }
+  .modal-tab.active { background: white; color: var(--navy); box-shadow: 0 1px 3px rgba(0,0,0,0.08); font-weight: 600; }
+
+  .form-group { margin-bottom: 12px; }
+  .form-label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 5px; color: var(--gray-700); }
+  .form-input { width: 100%; padding: 9px 10px; border: 1px solid var(--gray-200); border-radius: 8px; font-size: 13px; font-family: inherit; }
+  .form-input.disabled { background: var(--gray-50); color: var(--gray-500); }
+  .expires-preview { font-size: 11px; color: var(--gray-500); margin-top: 4px; }
+  .expires-preview b { color: var(--navy); }
+
+  .upload-zone { border: 2px dashed var(--gray-200); border-radius: 10px; padding: 18px; text-align: center; color: var(--gray-500); font-size: 12px; }
+  .upload-zone .icon { font-size: 28px; color: var(--orange); margin-bottom: 4px; }
+
+  .signature-canvas { background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; height: 120px; display: flex; align-items: center; justify-content: center; color: var(--gray-400); font-size: 11px; font-style: italic; }
+
+  .translator-section { background: var(--gray-50); padding: 10px; border-radius: 8px; margin-top: 10px; }
+  .translator-title { font-size: 11px; font-weight: 600; color: var(--gray-600); margin-bottom: 6px; }
+  .form-row { display: flex; gap: 8px; }
+  .form-row > .form-group { flex: 1; margin-bottom: 0; }
+
+  .modal-submit { width: 100%; background: var(--orange); color: white; border: none; padding: 13px; border-radius: 10px; font-size: 14px; font-weight: 600; margin-top: 12px; cursor: pointer; }
+  .required { color: var(--red); }
+
+  /* Export dropdown */
+  .export-menu { background: white; border: 1px solid var(--gray-200); border-radius: 8px; padding: 4px; position: absolute; left: 16px; top: 48px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 20; min-width: 140px; }
+  .export-option { padding: 8px 10px; font-size: 12px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+  .export-option:hover { background: var(--gray-50); }
+  .export-option .kind { color: var(--gray-500); font-size: 10px; }
+
+  /* Bottom nav */
+  .bottom-nav { position: absolute; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid var(--gray-200); display: flex; justify-content: space-around; padding: 6px 0 10px; }
+  .nav-item { display: flex; flex-direction: column; align-items: center; font-size: 10px; color: var(--gray-400); gap: 2px; }
+  .nav-item.active { color: var(--orange); }
+
+  /* Architecture section */
+  .arch { margin-top: 48px; background: white; color: black; border-radius: 16px; padding: 28px; max-width: 1100px; margin-inline: auto; }
+  .arch h2 { margin: 0 0 8px; font-size: 20px; }
+  .arch .intro { color: var(--gray-600); margin-bottom: 24px; font-size: 14px; }
+  .arch-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .arch-col { padding: 20px; border-radius: 12px; }
+  .arch-col.existing { background: #F0F9FF; border: 2px solid #BFDBFE; }
+  .arch-col.new { background: #FFF7ED; border: 2px dashed var(--orange); }
+  .arch-col h3 { margin: 0 0 12px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .arch-col .no-touch { color: var(--blue); font-size: 11px; font-weight: 600; background: #DBEAFE; padding: 2px 8px; border-radius: 999px; }
+  .arch-col .fresh { color: var(--orange); font-size: 11px; font-weight: 600; background: #FED7AA; padding: 2px 8px; border-radius: 999px; }
+  .file-list { list-style: none; padding: 0; margin: 0; font-family: 'SF Mono', Menlo, monospace; font-size: 12px; line-height: 1.8; }
+  .file-list li { direction: ltr; text-align: left; color: var(--gray-700); padding-right: 4px; }
+  .file-list .annot { color: var(--gray-400); font-style: italic; font-family: inherit; font-size: 11px; }
+
+  .isolation-rule { background: #FEF2F2; border-right: 4px solid var(--red); padding: 12px; border-radius: 6px; margin-top: 16px; font-size: 13px; color: #7F1D1D; }
+  .isolation-rule b { color: var(--red); }
+
+  /* SOC2 section */
+  .soc2 { margin-top: 32px; background: white; color: black; border-radius: 16px; padding: 28px; max-width: 1100px; margin-inline: auto; }
+  .soc2 h2 { margin: 0 0 16px; font-size: 20px; }
+  .soc2-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .soc2-table th, .soc2-table td { padding: 10px 12px; border-bottom: 1px solid var(--gray-200); text-align: right; }
+  .soc2-table th { background: var(--gray-50); font-weight: 600; color: var(--gray-700); }
+  .soc2-table td:first-child { font-weight: 600; color: var(--navy); width: 22%; }
+  .soc2-check { color: var(--green); font-weight: bold; }
+
+  .footer-note { max-width: 1100px; margin: 32px auto 0; color: var(--gray-400); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>BrikOps — מודול בטיחות Phase 1</h1>
+<div class="subtitle">מוק-אפ ויזואלי + ארכיטקטורת בידוד + SOC2 mapping · 2026-04-22</div>
+
+<div class="grid">
+
+  <!-- ============ SCREEN 1: Tab placement ============ -->
+  <div class="phone-wrapper">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status-bar"></div>
+      <div class="app-header">
+        <span class="back">›</span>
+        <span class="title">מתחם הסופרים — מגרש 801</span>
+        <span class="menu">⋮</span>
+      </div>
+      <div class="tabs">
+        <div class="tab">סקירה</div>
+        <div class="tab">ליקויים</div>
+        <div class="tab">QC</div>
+        <div class="tab">מסירה</div>
+        <div class="tab active new">🛡 בטיחות</div>
+        <div class="tab">משימות</div>
+      </div>
+      <div class="content">
+        <div style="color: var(--gray-500); font-size: 12px; text-align: center; margin-top: 40px;">
+          ← גלול ימינה כדי לראות את הטאב החדש "בטיחות ויומן עבודה"<br>
+          מופיע רק ל-<b>project_manager</b> / <b>management_team</b><br>
+          ורק אם feature flag <code>ENABLE_SAFETY_MODULE=true</code>
+        </div>
+      </div>
+      <div class="bottom-nav">
+        <div class="nav-item">🏠<span>בית</span></div>
+        <div class="nav-item">📁<span>פרויקטים</span></div>
+        <div class="nav-item active">👷<span>פרויקט</span></div>
+        <div class="nav-item">⚙️<span>הגדרות</span></div>
+      </div>
+    </div>
+    <div class="phone-label">
+      <b>מסך 1 · מיקום הטאב</b>
+      ProjectControlPage.js:3497
+    </div>
+  </div>
+
+  <!-- ============ SCREEN 2: Safety home ============ -->
+  <div class="phone-wrapper">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status-bar"></div>
+      <div class="app-header">
+        <span class="back">›</span>
+        <span class="title">בטיחות ויומן עבודה</span>
+        <span class="menu">⋮</span>
+      </div>
+      <div class="tabs">
+        <div class="tab">ליקויים</div>
+        <div class="tab active">🛡 בטיחות</div>
+        <div class="tab">QC</div>
+      </div>
+      <div class="content">
+        <div class="page-title">
+          <span>עובדי האתר</span>
+          <div class="top-actions">
+            <button class="btn-outline">⬇ ייצוא</button>
+            <button class="btn-orange">+ קבלן</button>
+          </div>
+        </div>
+
+        <div class="filters">
+          <div class="filter-chip">חברה <span class="chevron">▼</span></div>
+          <div class="filter-chip">מקצוע <span class="chevron">▼</span></div>
+          <div class="filter-chip active">סטטוס: פג תוקף <span class="chevron">▼</span></div>
+        </div>
+
+        <!-- Company 1: expanded -->
+        <div class="company">
+          <div class="company-header">
+            <div class="company-name">
+              <span class="chevron-icon">▼</span>
+              <span>חברת חשמל AB בע״מ</span>
+              <span class="count">(2)</span>
+            </div>
+            <button class="add-worker-btn">+ עובד</button>
+          </div>
+          <div class="workers">
+            <div class="worker">
+              <div class="worker-info">
+                <div class="worker-avatar">👤</div>
+                <div>
+                  <div class="worker-name">יוסי כהן</div>
+                  <div class="worker-meta">חשמלאי · ****6789</div>
+                </div>
+              </div>
+              <div class="training-badges">
+                <span class="badge badge-red">⚠ 1</span>
+                <span class="badge badge-amber">⏱ 1</span>
+                <span class="badge badge-green">✓ 3</span>
+              </div>
+            </div>
+            <div class="worker">
+              <div class="worker-info">
+                <div class="worker-avatar">👤</div>
+                <div>
+                  <div class="worker-name">אחמד מסראווה</div>
+                  <div class="worker-meta">מפעיל מלגזה · ****3201</div>
+                </div>
+              </div>
+              <div class="training-badges">
+                <span class="badge badge-green">✓ 4</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Company 2: collapsed -->
+        <div class="company">
+          <div class="company-header">
+            <div class="company-name">
+              <span class="chevron-icon">›</span>
+              <span>אלקטרה מערכות בע״מ</span>
+              <span class="count">(5)</span>
+            </div>
+            <button class="add-worker-btn">+ עובד</button>
+          </div>
+        </div>
+
+        <!-- Company 3: placeholder, empty -->
+        <div class="company">
+          <div class="company-header">
+            <div class="company-name">
+              <span class="chevron-icon">›</span>
+              <span>אין חברה</span>
+              <span class="placeholder-badge">מיוחד</span>
+              <span class="count">(0)</span>
+            </div>
+            <button class="add-worker-btn">+ עובד</button>
+          </div>
+        </div>
+      </div>
+      <div class="bottom-nav">
+        <div class="nav-item">🏠<span>בית</span></div>
+        <div class="nav-item">📁<span>פרויקטים</span></div>
+        <div class="nav-item active">👷<span>פרויקט</span></div>
+        <div class="nav-item">⚙️<span>הגדרות</span></div>
+      </div>
+    </div>
+    <div class="phone-label">
+      <b>מסך 2 · דף הבית של המודול</b>
+      קבלנים → עובדים · PII מוסוות (****6789)
+    </div>
+  </div>
+
+  <!-- ============ SCREEN 3: Worker expanded w/ trainings ============ -->
+  <div class="phone-wrapper">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status-bar"></div>
+      <div class="app-header">
+        <span class="back">›</span>
+        <span class="title">בטיחות ויומן עבודה</span>
+        <span class="menu">⋮</span>
+      </div>
+      <div class="tabs">
+        <div class="tab active">🛡 בטיחות</div>
+      </div>
+      <div class="content">
+        <div class="company" style="margin-top: 8px;">
+          <div class="company-header">
+            <div class="company-name">
+              <span class="chevron-icon">▼</span>
+              <span>חברת חשמל AB בע״מ</span>
+              <span class="count">(2)</span>
+            </div>
+            <button class="add-worker-btn">+ עובד</button>
+          </div>
+          <div class="workers">
+            <div class="worker" style="background: var(--gray-50);">
+              <div class="worker-info">
+                <div class="worker-avatar">👤</div>
+                <div>
+                  <div class="worker-name">יוסי כהן</div>
+                  <div class="worker-meta">חשמלאי · ****6789 · 054-123-4567</div>
+                </div>
+              </div>
+              <span class="chevron-icon">▼</span>
+            </div>
+            <div class="training-list">
+              <a class="add-training-link">+ הוסף הדרכה</a>
+              <div class="training-pill expired">
+                <span><b>עבודה בגובה</b> <span class="date">פג לפני 47 ימים</span></span>
+                <span>✕</span>
+              </div>
+              <div class="training-pill expiring">
+                <span><b>הדרכת סיכונים מקצועיים</b> <span class="date">פג עוד 12 ימים</span></span>
+                <span>✕</span>
+              </div>
+              <div class="training-pill valid">
+                <span><b>הדרכת אתר</b> <span class="date">פג 15/03/2027</span></span>
+                <span>✕</span>
+              </div>
+              <div class="training-pill valid">
+                <span><b>עזרה ראשונה</b> <span class="date">פג 22/01/2028</span></span>
+                <span>✕</span>
+              </div>
+              <div class="training-pill lifetime">
+                <span><b>חשמלאי — רישיון</b> <span class="date">לכל החיים</span></span>
+                <span>✕</span>
+              </div>
+            </div>
+            <div class="worker">
+              <div class="worker-info">
+                <div class="worker-avatar">👤</div>
+                <div>
+                  <div class="worker-name">אחמד מסראווה</div>
+                  <div class="worker-meta">מפעיל מלגזה · ****3201</div>
+                </div>
+              </div>
+              <div class="training-badges">
+                <span class="badge badge-green">✓ 4</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="bottom-nav">
+        <div class="nav-item">🏠<span>בית</span></div>
+        <div class="nav-item">📁<span>פרויקטים</span></div>
+        <div class="nav-item active">👷<span>פרויקט</span></div>
+        <div class="nav-item">⚙️<span>הגדרות</span></div>
+      </div>
+    </div>
+    <div class="phone-label">
+      <b>מסך 3 · עובד מורחב</b>
+      סטטוס הדרכה ב-4 צבעים · bar צבעוני מימין
+    </div>
+  </div>
+
+  <!-- ============ SCREEN 4: Add training modal (dual-tab, in-app) ============ -->
+  <div class="phone-wrapper">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status-bar"></div>
+      <div class="app-header">
+        <span class="back">›</span>
+        <span class="title">בטיחות ויומן עבודה</span>
+        <span class="menu">⋮</span>
+      </div>
+      <div class="tabs">
+        <div class="tab active">🛡 בטיחות</div>
+      </div>
+      <!-- dimmed background -->
+      <div style="height: 8px; background: rgba(0,0,0,0.3);"></div>
+      <div class="modal-overlay" style="position: static; height: calc(100% - 88px);">
+        <div class="modal" style="max-height: 100%;">
+          <div class="modal-handle"></div>
+          <div class="modal-title">הוספת הדרכה</div>
+          <div class="modal-subtitle">יוסי כהן · עבודה בגובה</div>
+          <div class="modal-tabs">
+            <div class="modal-tab">סרוק מסמך</div>
+            <div class="modal-tab active">חתום באפליקציה</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">תאריך חתימה <span class="required">*</span></label>
+            <input class="form-input disabled" value="22/04/2026 (היום)" readonly>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">תוקף (חודשים) <span class="required">*</span></label>
+              <input class="form-input" value="24">
+            </div>
+            <div class="form-group">
+              <label class="form-label">פג תוקף</label>
+              <input class="form-input disabled" value="22/04/2028">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">חתימת העובד <span class="required">*</span></label>
+            <div class="signature-canvas">חתום כאן על המסך</div>
+          </div>
+          <div class="translator-section">
+            <div class="translator-title">מתורגמן (אופציונלי)</div>
+            <div class="form-row">
+              <div class="form-group">
+                <input class="form-input" placeholder="שם המתורגמן">
+              </div>
+              <div class="form-group">
+                <input class="form-input" placeholder="ת.ז.">
+              </div>
+            </div>
+          </div>
+          <button class="modal-submit">אשר וחתום</button>
+        </div>
+      </div>
+    </div>
+    <div class="phone-label">
+      <b>מסך 4 · מודל הוספת הדרכה</b>
+      Dual-tab: סרוק מסמך / חתום באפליקציה
+    </div>
+  </div>
+
+  <!-- ============ SCREEN 5: Export menu ============ -->
+  <div class="phone-wrapper">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status-bar"></div>
+      <div class="app-header">
+        <span class="back">›</span>
+        <span class="title">בטיחות ויומן עבודה</span>
+        <span class="menu">⋮</span>
+      </div>
+      <div class="tabs">
+        <div class="tab active">🛡 בטיחות</div>
+      </div>
+      <div class="content no-scroll" style="position: relative;">
+        <div class="page-title">
+          <span>עובדי האתר</span>
+          <div class="top-actions">
+            <button class="btn-outline" style="background: var(--orange); color: white; border-color: var(--orange);">⬇ ייצוא</button>
+            <button class="btn-orange">+ קבלן</button>
+          </div>
+        </div>
+        <div class="export-menu">
+          <div class="export-option">
+            <span><b>PDF</b></span>
+            <span class="kind">רגולציה</span>
+          </div>
+          <div class="export-option">
+            <span><b>CSV</b></span>
+            <span class="kind">אקסל</span>
+          </div>
+          <div class="export-option">
+            <span><b>JSON</b></span>
+            <span class="kind">API</span>
+          </div>
+        </div>
+        <div class="filters">
+          <div class="filter-chip active">חברת חשמל AB ×</div>
+          <div class="filter-chip active">פג תוקף ×</div>
+        </div>
+        <div style="background: #FEF3C7; border-right: 4px solid var(--amber); padding: 10px; border-radius: 6px; font-size: 12px; color: #78350F; margin-bottom: 12px;">
+          <b>⚠ שים לב:</b> הייצוא כולל רק את ה-<b>נתונים המסוננים</b> שמופיעים במסך. ת.ז. מוצפנת בפלט (****1234). מעבר audit ל-audit_events.
+        </div>
+        <div style="background: white; border: 1px solid var(--gray-200); border-radius: 8px; padding: 12px; font-size: 11px; color: var(--gray-600); line-height: 1.6;">
+          <b style="color: var(--navy);">דוגמה לפלט CSV:</b><br>
+          <code style="font-family: monospace; direction: ltr; display: block; margin-top: 6px; color: var(--gray-700); font-size: 10px;">
+            שם מלא,ת.ז.,טלפון,מקצוע,חברה,בתוקף,פגו,פגים בקרוב<br>
+            יוסי כהן,****6789,+972501234567,חשמלאי,חברת חשמל AB,3,1,1
+          </code>
+        </div>
+      </div>
+      <div class="bottom-nav">
+        <div class="nav-item">🏠<span>בית</span></div>
+        <div class="nav-item">📁<span>פרויקטים</span></div>
+        <div class="nav-item active">👷<span>פרויקט</span></div>
+        <div class="nav-item">⚙️<span>הגדרות</span></div>
+      </div>
+    </div>
+    <div class="phone-label">
+      <b>מסך 5 · ייצוא מסונן</b>
+      PDF/CSV/JSON · PII מוסוות · audit-logged
+    </div>
+  </div>
+
+</div>
+
+<!-- ============================ ARCHITECTURE ============================ -->
+<div class="arch">
+  <h2>🏗 ארכיטקטורת בידוד — הקוד הקיים לא נוגע</h2>
+  <div class="intro">
+    הכלל הכי חשוב: המודול החדש נבנה ב-<b>תיקיה נפרדת, router נפרד, collections נפרדים</b>. אפס קבצים קיימים משנים את ההתנהגות שלהם. Kill switch דרך feature flag — אם משהו נשבר, מכבים את הflag ומכל המסכים הקיימים ממשיכים לעבוד.
+  </div>
+  <div class="arch-cols">
+
+    <div class="arch-col existing">
+      <h3>🔒 קיים · <span class="no-touch">לא נוגעים</span></h3>
+      <ul class="file-list">
+        <li>backend/contractor_ops/router.py <span class="annot">— import only</span></li>
+        <li>backend/contractor_ops/tasks_router.py</li>
+        <li>backend/contractor_ops/qc_router.py</li>
+        <li>backend/contractor_ops/handover_router.py</li>
+        <li>backend/contractor_ops/deletion_router.py</li>
+        <li>backend/services/object_storage.py <span class="annot">— import only</span></li>
+        <li>frontend/src/pages/DefectsPage.js</li>
+        <li>frontend/src/pages/QCPage.js</li>
+        <li>frontend/src/pages/HandoverPage.js</li>
+        <li>frontend/src/components/ (כל הקיימים)</li>
+        <li><b>collections:</b> tasks, qc_*, handover_*, defects</li>
+      </ul>
+    </div>
+
+    <div class="arch-col new">
+      <h3>✨ חדש · <span class="fresh">קבצים חדשים בלבד</span></h3>
+      <ul class="file-list">
+        <li><b>backend/</b></li>
+        <li>&nbsp;&nbsp;contractor_ops/safety_router.py <span class="annot">new</span></li>
+        <li>&nbsp;&nbsp;contractor_ops/safety_seed.py <span class="annot">new</span></li>
+        <li>&nbsp;&nbsp;contractor_ops/safety_utils.py <span class="annot">new</span></li>
+        <li>&nbsp;&nbsp;templates/workers_export.html <span class="annot">new</span></li>
+        <li>&nbsp;&nbsp;tests/test_safety_phase1.py <span class="annot">new</span></li>
+        <li><b>frontend/src/</b></li>
+        <li>&nbsp;&nbsp;pages/SafetyModule.js <span class="annot">new</span></li>
+        <li>&nbsp;&nbsp;components/safety/ <span class="annot">new folder</span></li>
+        <li>&nbsp;&nbsp;&nbsp;&nbsp;ContractorCompaniesBlock.js</li>
+        <li>&nbsp;&nbsp;&nbsp;&nbsp;WorkerRow.js</li>
+        <li>&nbsp;&nbsp;&nbsp;&nbsp;AddContractorCompanyModal.js</li>
+        <li>&nbsp;&nbsp;&nbsp;&nbsp;AddWorkerModal.js</li>
+        <li>&nbsp;&nbsp;&nbsp;&nbsp;AddTrainingModal.js</li>
+        <li>&nbsp;&nbsp;&nbsp;&nbsp;SafetyFiltersBar.js</li>
+        <li>&nbsp;&nbsp;&nbsp;&nbsp;SafetyExportMenu.js</li>
+        <li><b>MongoDB (4 collections חדשים):</b></li>
+        <li>&nbsp;&nbsp;contractor_companies</li>
+        <li>&nbsp;&nbsp;workers</li>
+        <li>&nbsp;&nbsp;worker_training_types</li>
+        <li>&nbsp;&nbsp;worker_trainings</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="isolation-rule">
+    <b>3 נקודות מגע מינימליות עם הקוד הקיים</b> (ורק הוספות, לא שינויים):
+    <ol style="margin: 8px 0 0 0; padding-right: 20px;">
+      <li><code>backend/config.py</code> — שורה אחת: <code>ENABLE_SAFETY_MODULE = _env_bool("ENABLE_SAFETY_MODULE", False)</code></li>
+      <li><code>backend/contractor_ops/config_router.py</code> — מפתח אחד ל-response: <code>"safety_module_enabled": ENABLE_SAFETY_MODULE</code></li>
+      <li><code>backend/server.py</code> — <code>app.include_router(safety_router)</code> + 11 שורות <code>create_index</code> + <code>await seed_training_types(db)</code></li>
+      <li><code>frontend/src/pages/ProjectControlPage.js:3497</code> — רשומה אחת למערך workTabs (hidden=!features.safety_module_enabled)</li>
+      <li><code>frontend/src/services/api.js</code> — export חדש <code>safetyService</code> (בנפרד מ-qcService הקיים)</li>
+      <li><code>backend/contractor_ops/schemas.py</code> — append-only בסוף הקובץ, section חדש <code># ============ SAFETY ============</code></li>
+    </ol>
+  </div>
+</div>
+
+<!-- ============================ SOC2 ============================ -->
+<div class="soc2">
+  <h2>🛡 SOC2 Readiness — כל החלטה מקודדת לקונטרול</h2>
+  <table class="soc2-table">
+    <thead>
+      <tr>
+        <th>TSC Control</th>
+        <th>מה בנוי ב-Phase 1</th>
+        <th>איך זה נאכף</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Security · Access Control (CC6.1)</td>
+        <td>RBAC double-gated: role + project membership</td>
+        <td><code>require_roles('project_manager', 'management_team')</code> + <code>_check_project_access()</code> על כל endpoint</td>
+      </tr>
+      <tr>
+        <td>Security · Audit Logging (CC7.2)</td>
+        <td>100% audit coverage על כל mutation</td>
+        <td><code>_audit(entity_type, entity_id, action, actor_id, payload)</code> אחרי כל create/update/soft_delete</td>
+      </tr>
+      <tr>
+        <td>Confidentiality · PII (C1.1)</td>
+        <td>ת.ז. מוצפנת בlist endpoints ובaudit logs</td>
+        <td><code>mask_id_number()</code> → <code>****1234</code>. רק <code>/workers/{id}</code> מחזיר מלא ל-management</td>
+      </tr>
+      <tr>
+        <td>Availability · Change Mgmt (CC8.1)</td>
+        <td>Feature flag off-by-default + kill switch</td>
+        <td><code>ENABLE_SAFETY_MODULE=false</code> בprod. הפעלה idempotent, ביטול מחזיר 404 מיידית</td>
+      </tr>
+      <tr>
+        <td>Processing Integrity · Retention (CC2.1)</td>
+        <td>Soft-delete + retention_until = 7 שנים</td>
+        <td>שדות <code>deleted_at, deleted_by, deletion_reason, retention_until</code> בכל 4 הcollections. אין hard delete.</td>
+      </tr>
+      <tr>
+        <td>Security · Separation of Duties (CC6.3)</td>
+        <td>Cascading soft-delete + placeholder protection</td>
+        <td>מחיקת חברה עם עובדים → 400. מחיקת עובד → cascade מחיקת הדרכותיו. "אין חברה" מוגן ממחיקה ועריכה.</td>
+      </tr>
+      <tr>
+        <td>Monitoring · Anomaly Detection (CC7.3)</td>
+        <td>Audit events פר-project, פר-actor, פר-entity</td>
+        <td><code>audit_events</code> indexed by project_id + actor_id. cron עתידי יגלה patterns חשודים.</td>
+      </tr>
+      <tr>
+        <td>Regulatory · ישראל (תקנות בטיחות 1988)</td>
+        <td>Training types seeded עם regulatory_source</td>
+        <td>8 טיפוסי הדרכה עם אזכור תקנה (למשל: "תקנות בטיחות בעבודה בגובה, התשס״ז-2007")</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="footer-note">
+  BrikOps · Safety Module Phase 1 · נבנה על גבי הקוד הקיים עם בידוד מלא · 2026-04-22<br>
+  קשרים: <code>future-features/safety-and-worklog-concept.md</code> · <code>specs/safety-feature-phase-1-spec.md</code>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,125 @@
+═══════════════════════════════════════════════════════════════════════════════
+ADDENDUM #1 to TASK #465 (BATCH 7A) — Add bell to contractor header
+═══════════════════════════════════════════════════════════════════════════════
+Date:    2026-05-01
+Branch:  staging  (NOT main)
+Files:   1 file, ~3 LOC
+         frontend/src/pages/ContractorDashboard.js
+
+═══════════════════════════════════════════════════════════════════════════════
+WHY
+═══════════════════════════════════════════════════════════════════════════════
+
+DISCOVERED DURING STAGING SMOKE TEST 2026-05-01:
+
+ContractorDashboard.js renders a hand-rolled header at lines 319-362 that does
+NOT include <NotificationBell />. As a result, contractors do not see Event 2
+notifications (PM approve/reject) even though the backend creates them
+correctly in qc_notifications. The notification docs are stored — they're just
+invisible to the contractor.
+
+PMs and admins see the bell because their header uses a different layout that
+already includes <NotificationBell />.
+
+This addendum adds the bell to the contractor header so Event 2 reaches the
+intended recipient visually.
+
+═══════════════════════════════════════════════════════════════════════════════
+SCOPE
+═══════════════════════════════════════════════════════════════════════════════
+
+frontend/src/pages/ContractorDashboard.js
+
+EDIT 1 — Add NotificationBell import. Place IMMEDIATELY AFTER the existing
+   import of Card at line 11:
+
+   CURRENT (line 11):
+       import { Card } from '../components/ui/card';
+
+   APPEND IMMEDIATELY AFTER (new line 12):
+       import NotificationBell from '../components/NotificationBell';
+
+EDIT 2 — Render <NotificationBell /> in the header buttons row.
+
+   FIND THE BLOCK at line ~333 (header buttons div):
+       <div className="flex items-center gap-1">
+         <button onClick={() => navigate('/settings/account')} ...>
+           <Settings className="w-5 h-5" />
+         </button>
+         <button onClick={handleLogout} ...>
+           <LogOut className="w-5 h-5" />
+         </button>
+       </div>
+
+   ADD <NotificationBell /> AS THE FIRST CHILD (so visual order in RTL becomes:
+   bell on the far left of the buttons group, then settings, then logout):
+
+       <div className="flex items-center gap-1">
+         <NotificationBell />
+         <button onClick={() => navigate('/settings/account')} ...>
+           <Settings className="w-5 h-5" />
+         </button>
+         <button onClick={handleLogout} ...>
+           <LogOut className="w-5 h-5" />
+         </button>
+       </div>
+
+   No prop changes needed — NotificationBell is self-contained and uses
+   qcNotificationService directly. Already wired to the same backend
+   endpoint that returns ALL notification types per the main batch's
+   list_notifications extension.
+
+═══════════════════════════════════════════════════════════════════════════════
+DO NOT TOUCH
+═══════════════════════════════════════════════════════════════════════════════
+
+- All other lines in ContractorDashboard.js (1-10, 12-332, 334-end).
+- NotificationBell.js itself — no changes needed. The component renders
+  text-white bell icon, which works on the contractor header's blue gradient
+  background. Hover state (hover:bg-slate-700) will show slightly different
+  on blue gradient — acceptable for now, can be polished in a future visual
+  consistency batch.
+- Backend, tests, all other files from BATCH 7A.
+
+═══════════════════════════════════════════════════════════════════════════════
+ADDITIONAL VERIFY
+═══════════════════════════════════════════════════════════════════════════════
+
+VERIFY A1 — NotificationBell imported in ContractorDashboard:
+   grep -c "import NotificationBell" frontend/src/pages/ContractorDashboard.js
+   → must return 1.
+
+VERIFY A2 — NotificationBell rendered in header:
+   grep -c "<NotificationBell" frontend/src/pages/ContractorDashboard.js
+   → must return 1.
+
+VERIFY A3 — Frontend build still clean:
+   cd frontend && yarn build
+   → no new warnings, no new errors.
+
+VERIFY A4 — Visual smoke (Zahi runs after deploy to staging):
+   a) Login as contractor demo-contractor@brikops.com on staging.
+   b) Verify bell icon appears in the contractor header (top-right area,
+      between settings + name).
+   c) Bell badge should reflect any unread defect_status_change_by_pm
+      notifications already created during prior smoke tests.
+   d) Click bell → see "המנהל אישר את התיקון של ..." or "המנהל דחה ..."
+      entries with ShieldCheck (green) / ShieldX (red) icons.
+   e) Click an entry → navigates to /tasks/{id}?src=bell.
+
+═══════════════════════════════════════════════════════════════════════════════
+DELIVERABLES
+═══════════════════════════════════════════════════════════════════════════════
+
+Update existing review.txt with:
+- New section "ADDENDUM #1" at top
+- A1-A3 outputs
+- A4 deferred-to-Zahi note
+- Final line still: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Update existing .local/.commit_message footer with one line:
+  + frontend: add NotificationBell to ContractorDashboard header (addendum)
+
+═══════════════════════════════════════════════════════════════════════════════
+END OF ADDENDUM
+═══════════════════════════════════════════════════════════════════════════════

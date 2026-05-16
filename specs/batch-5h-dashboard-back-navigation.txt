@@ -1,0 +1,383 @@
+================================================================================
+BATCH 5H — Dashboard → KPI → back-navigation fix (smart back + breadcrumb)
+================================================================================
+Date:           2026-04-29
+Branch:         staging  (NOT main)
+Severity:       P2 UX — found during 5G smoke test (Task #35)
+Files changed:  2 frontend files
+                  Frontend: ProjectDashboardPage.js (7 KPI navigate calls)
+                            ProjectControlPage.js (1 back-button + 1 breadcrumb)
+Mobile:         Capacitor `backButton` handler at App.js:513-519 delegates
+                to `window.history.back()` — same mechanism as browser back.
+                Android hardware back + iOS swipe-back gesture both pop
+                history. Neither uses the in-app arrow we're editing.
+                No mobile-specific changes needed. Confirmed in STEP 0.5.
+
+CONTEXT
+-------
+Reproduce: Open project dashboard → click any KPI card (e.g. "פתוחים") →
+URL changes to /control?workMode=defects&statusChip=open → click the
+in-app back button (ArrowRight in header) → user is sent to /projects
+(project list), not back to /dashboard.
+
+Result: user has no way back to the dashboard except clicking "דשבורד"
+in the top tab strip. The natural "back" instinct fails.
+
+ROOT CAUSE — investigated 2026-04-29:
+  ProjectControlPage.js:3643 has a HARDCODED back button:
+      <button onClick={() => navigate('/projects')} title="חזרה לפרויקטים">
+  It always goes to /projects regardless of where the user came from.
+  Browser back goes correctly to /dashboard (push history), but most
+  users reach for the in-app arrow first.
+
+EXISTING CONVENTION (don't reinvent):
+  ProjectTasksPage.js already solves the same problem using a URL query
+  param `?from=dashboard`:
+    line 81:  const fromDashboard = searchParams.get('from') === 'dashboard';
+    line 358: navigate(fromDashboard ? `/projects/${projectId}/dashboard`
+                                     : getProjectBackPath(...))
+  This batch uses the SAME pattern in ProjectControlPage. Query param
+  (not state.from) survives refresh / deep-link, matches the existing
+  codebase convention, and minimizes risk of breaking other flows.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify spec line numbers match HEAD:
+    grep -n 'navigate(.projects/.\${projectId}/control' frontend/src/pages/ProjectDashboardPage.js
+    # Expect 7 hits at lines ~254, 299, 308, 318, 329, 339, 348, 682, 830.
+    # Of these, 6 are KPI / dashboard-action navigates that need `from=dashboard`.
+    # Lines 254 (dashboard's own back button to /control) and 830 (footer link)
+    # do NOT need from — they're departures from dashboard, not user-initiated
+    # drill-downs. See "DO NOT TOUCH" below.
+
+    grep -n "navigate('/projects')" frontend/src/pages/ProjectControlPage.js
+    # Expect 1 hit at line 3643 — the back button to fix.
+
+    grep -n 'searchParams.get..from..*=== .dashboard' frontend/src/pages/ProjectTasksPage.js
+    # Expect 1 hit at line 81 — the existing convention to mirror.
+
+0.2 — Audit ALL existing navigations to /control to ensure no regression:
+    grep -rn 'navigate(.*\/control' frontend/src/ | grep -v node_modules
+
+    For each hit, classify:
+    - "From dashboard with intent to drill down" → ADD `&from=dashboard`
+      (this batch's scope)
+    - "From elsewhere" or "Going TO control as the project's home" →
+      KEEP AS-IS (don't add `from`; back should still go to /projects)
+
+    Document the classification in review.txt.
+
+0.3 — Audit ALL back-button implementations across the app to ensure
+      they don't conflict with the new `from=dashboard` URL param:
+
+    grep -rn 'getProjectBackPath\|navigate(.*projects.\$.*dashboard\|navigate(-1)\|location.state.returnTo\|location.state.from' frontend/src/pages/
+
+    Existing patterns documented (do NOT touch):
+    - TaskDetailPage uses `state.returnTo` + sessionStorage (different mechanism)
+    - AdminBillingPage / AdminUsersPage use `state.from` (admin-scoped, separate)
+    - ApartmentDashboardPage / ProjectTasksPage / UnitDetailPage all use
+      `state.returnTo` for defect→source navigation (different mechanism)
+    - StageDetailPage uses goBack() local helper (QC flow, different route /qc/*)
+
+    The new `?from=dashboard` query param does NOT collide with any of these
+    because (a) it's URL-based not state-based, (b) it's specific to /control,
+    (c) other pages already use the same pattern (ProjectTasksPage:81).
+
+0.4 — Output STEP 0 audit at the TOP of review.txt before any diffs.
+
+0.5 — Verify Capacitor backButton handler doesn't conflict (mobile audit):
+    grep -n "CapacitorApp.addListener.*backButton" frontend/src/App.js
+    # Expected at line 513. Handler reads:
+    #   if (canGoBack) window.history.back(); else CapacitorApp.exitApp();
+    #
+    # This means Android hardware back + iOS swipe-back gesture both pop
+    # the browser history. They do NOT trigger the in-app header arrow.
+    # So the smart-back fix at ProjectControlPage.js:3643 only affects
+    # users who tap the visible arrow icon. History-pop paths are
+    # unchanged and continue to work correctly (user lands on /dashboard
+    # because that's the previous history entry).
+    # No mobile-specific edits needed.
+
+================================================================================
+PART 1 — FRONTEND (2 files)
+================================================================================
+
+FILE 1 of 2: frontend/src/pages/ProjectDashboardPage.js
+-------------------------------------------------------
+Add `&from=dashboard` to ALL KPI / dashboard-action navigations to /control.
+6 sub-locations.
+
+CONVENTION: append `&from=dashboard` at the end of each existing query string.
+For URLs that already have query params (e.g. `?workMode=defects&statusChip=open`),
+just add `&from=dashboard`. The order matches what's already in the codebase
+(ProjectTasksPage navigates with this same param shape).
+
+LOCATION 1.1 — line 299 (פתוחים KPI):
+   CURRENT:
+       onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=open`)}
+   REPLACE WITH:
+       onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=open&from=dashboard`)}
+
+LOCATION 1.2 — line 318 (נסגרו KPI):
+   CURRENT:
+       onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=closed`)}
+   REPLACE WITH:
+       onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=closed&from=dashboard`)}
+
+LOCATION 1.3 — line 329 (לאישורי KPI):
+   CURRENT:
+       onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval`)}
+   REPLACE WITH:
+       onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval&from=dashboard`)}
+
+LOCATION 1.4 — line 339 (באיחור KPI):
+   CURRENT:
+       onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&overdue=true`)}
+   REPLACE WITH:
+       onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&overdue=true&from=dashboard`)}
+
+LOCATION 1.5 — line 348 (צוות KPI):
+   CURRENT:
+       onClick={() => navigate(`/projects/${projectId}/control?workMode=structure&tab=team`)}
+   REPLACE WITH:
+       onClick={() => navigate(`/projects/${projectId}/control?workMode=structure&tab=team&from=dashboard`)}
+
+LOCATION 1.6 — line 682 (לאישור action button — sub-section, not the KPI):
+   CURRENT:
+       onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval`)}
+   REPLACE WITH:
+       onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval&from=dashboard`)}
+
+NOTE on line 308 (was the בביצוע KPI removed in 5G):
+   This line no longer exists after 5G's deletion of the בביצוע KPI card.
+   If for any reason it's been re-added, also append `&from=dashboard`.
+   Verify with the spec line-number grep in STEP 0.1.
+
+DO NOT TOUCH:
+- Line 254 — dashboard's OWN back button (`/control?workMode=structure`).
+  This is the dashboard departing TO /control. Back from /control should
+  go to /projects (existing behavior). Adding `from=dashboard` here would
+  create a loop: dashboard → control → back to dashboard → control → ...
+- Line 830 — footer link to /control (no query string). User clicking
+  this is exiting the dashboard intentionally. Back to /projects is correct.
+- Lines 363, 528, 621 — navigations to /qc and /handover. Different pages,
+  not affected by this fix.
+- Lines 667, 729 — navigations to /tasks/X with state.returnTo. Existing
+  defect→back-to-dashboard mechanism, works fine.
+
+FILE 2 of 2: frontend/src/pages/ProjectControlPage.js
+------------------------------------------------------
+Two sub-edits: (a) make the header back button smart, (b) add a small
+breadcrumb above the filtered-defects view.
+
+LOCATION 2.1 — line 3643 (header back button):
+   CURRENT:
+       <button onClick={() => navigate('/projects')} className="..." title="חזרה לפרויקטים">
+         <ArrowRight className="w-5 h-5" />
+       </button>
+
+   REPLACE WITH:
+       <button
+         onClick={() => {
+           if (searchParams.get('from') === 'dashboard') {
+             navigate(`/projects/${projectId}/dashboard`);
+           } else {
+             navigate('/projects');
+           }
+         }}
+         className="..."  // unchanged
+         title={searchParams.get('from') === 'dashboard' ? 'חזרה לדשבורד' : 'חזרה לפרויקטים'}
+       >
+         <ArrowRight className="w-5 h-5" />
+       </button>
+
+   The `title` attribute also flips so the tooltip matches the actual
+   destination. Same className unchanged — purely the onClick + title.
+
+   IMPORTANT: `searchParams` is already in scope (used elsewhere in this
+   component, e.g. line 3314 `urlStatusChip = searchParams.get('statusChip')`).
+   No new imports needed.
+
+LOCATION 2.2 — Breadcrumb above the filtered-defects banner (around line 3782):
+
+   INTENTIONAL SCOPE: The breadcrumb only renders inside the
+   `workMode === 'defects' && hasFilterParams` block — i.e. ONLY when
+   user is viewing the filtered-defects list. Other entry paths from
+   dashboard (e.g. "צוות" KPI → /control?workMode=structure&tab=team
+   &from=dashboard) WILL NOT show the breadcrumb. They rely solely on
+   the smart header back arrow (LOCATION 2.1) which works in all modes.
+
+   This is intentional — defects view is the most common drill-down
+   target from KPIs (4 of 6 KPI cards land there) and benefits most
+   from a visible back affordance. Other modes have less user disorientation
+   risk because the structure view's UI matches the project's main entry
+   page (project list → /control?workMode=structure → familiar).
+
+   Not all paths need the breadcrumb. Header back arrow is the universal
+   fallback.
+
+   The existing JSX at line 3782 starts:
+       {workMode === 'defects' && !activeTab && hasFilterParams && (
+         <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-3">
+           <div className="flex items-center gap-2 bg-amber-50 border ...">
+             ...
+           </div>
+   ADD a breadcrumb just inside the outer <div>, BEFORE the amber filter chip:
+
+       {workMode === 'defects' && !activeTab && hasFilterParams && (
+         <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-3">
++          {searchParams.get('from') === 'dashboard' && (
++            <button
++              onClick={() => navigate(`/projects/${projectId}/dashboard`)}
++              className="flex items-center gap-1.5 text-sm text-amber-700 hover:text-amber-800 font-medium"
++            >
++              <ArrowRight className="w-4 h-4" />
++              חזרה לדשבורד
++            </button>
++          )}
+           <div className="flex items-center gap-2 bg-amber-50 border ...">
+             ...
+
+   The breadcrumb uses ArrowRight (already imported) and matches the visual
+   weight of the existing "נקה סינון" button inside the filter chip. Only
+   renders when `from=dashboard` — so the existing entry paths to /control
+   never see it.
+
+DO NOT TOUCH:
+- The workTabs strip (lines 3617-3625, 3669-3683). The "ליקויים" highlight
+  via `workMode === 'defects'` is correct UX — the user IS in defects mode.
+- The handleWorkTab function (line 3627). Tab clicks are intentional
+  intra-page navigation; they don't need the `from` param.
+- The setActiveTab + setSearchParams replace logic (line 3411). Existing
+  tab-switching behavior is preserved.
+- Any other navigate() call in this file. The hardcoded /projects in the
+  back button (line 3643) is the ONLY call we're changing.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend build:
+   cd frontend && yarn build
+   → no new warnings.
+
+VERIFY 2 — All KPI/dashboard-action navigates now include `from=dashboard`:
+   $ grep -c 'from=dashboard' frontend/src/pages/ProjectDashboardPage.js
+   → must return at least 6 (one per KPI/action navigate edited).
+
+VERIFY 3 — Back button + breadcrumb wired correctly in ProjectControlPage:
+   $ grep -c "searchParams.get('from')" frontend/src/pages/ProjectControlPage.js
+   → must return at least 3 (back button onClick + back button title +
+     breadcrumb conditional render).
+
+   $ grep -n "navigate('/projects')" frontend/src/pages/ProjectControlPage.js
+   → expected: still ONE hit, but now wrapped in the else-branch of the
+     back button. Verify it's inside the conditional, not standalone.
+
+VERIFY 4 — Regression: existing /control entry paths still go back to /projects:
+   $ grep -rn 'navigate(.*projects/.*control' frontend/src/ | grep -v 'from=dashboard' | grep -v node_modules
+   → list every remaining navigate to /control WITHOUT `from=dashboard`.
+     For each, document in review.txt that this entry path is intentional
+     (back to /projects is correct). Examples:
+     - utils/navigation.js (project entry from project list)
+     - HamburgerMenu (sidebar nav)
+     - ProjectDashboardPage line 254 + 830 (dashboard's own departures)
+
+VERIFY 4.5 — `from=dashboard` URL param persistence (intentional, document):
+   When user clicks a tab inside /control after arriving with `from=dashboard`,
+   the param SURVIVES because setSearchParams uses {replace: true} (line 3411)
+   and merges existing params. This is intentional — user still wants the
+   "back to dashboard" affordance even after exploring tabs within /control.
+
+   Edge case: if user bookmarks the URL with `from=dashboard` and opens it
+   from the bookmark next session, back arrow will go to /dashboard
+   (technically incorrect — the bookmark wasn't "from dashboard"). Acceptable
+   tradeoff — bookmark of a deep-linked URL with query params is rare,
+   and the worst case is "back goes to dashboard instead of project list,"
+   which is still a sensible destination.
+
+   Document this in review.txt under "Intentional behaviors". No code action.
+
+VERIFY 5 — Behavior smoke (Zahi runs visually on staging):
+
+   a. Project list → click project → lands on /control?workMode=structure
+      → click in-app back arrow → returns to /projects ✓ (preserved)
+   b. /control → click "דשבורד" tab → /dashboard
+      → click in-app back arrow → returns to /control (no from in dashboard's
+      back button). Note: this preserves the existing dashboard-departure flow.
+   c. /dashboard → click "פתוחים" KPI → /control?workMode=defects&statusChip=open&from=dashboard
+      → click in-app back arrow → returns to /dashboard ✓ (THE FIX)
+      → tooltip on the back arrow now reads "חזרה לדשבורד"
+      → above the filter chip, a "← חזרה לדשבורד" link is visible
+   d. /dashboard → click each of: נסגרו, לאישורי, באיחור, צוות KPIs →
+      back arrow returns to /dashboard ✓ (consistent across all KPIs)
+   e. Browser refresh on /control?workMode=defects&statusChip=open&from=dashboard
+      → page reloads, breadcrumb still visible, back arrow still goes to
+      /dashboard (because `from` survives in URL) ✓
+   f. QC flow: project → "בקרת ביצוע" tab → /qc → enter inspection → back
+      → returns to QC home ✓ (existing flow, untouched)
+   g. Defect from apartment: /units/X/defects → click defect → /tasks/Y
+      → back → returns to /units/X/defects ✓ (existing state.returnTo flow,
+      untouched)
+
+   h. Browser back button still works correctly (regression check):
+      /dashboard → click "פתוחים" KPI → /control?...&from=dashboard
+      → press the BROWSER back button (NOT in-app arrow)
+      → returns to /dashboard ✓ (history pop unaffected by our fix)
+
+   i. Android hardware back button (mobile, regression check):
+      Open native app → /dashboard → click KPI → /control?...&from=dashboard
+      → press Android hardware back
+      → returns to /dashboard ✓ (Capacitor handler at App.js:513 calls
+      window.history.back() which pops to /dashboard, exactly like web browser)
+      iOS swipe-back gesture: same mechanism, same expected result.
+
+   j. Tab switching inside /control preserves `from=dashboard`:
+      Land on /control?workMode=defects&statusChip=open&from=dashboard
+      → click "מבנה" tab in workTabs strip
+      → URL becomes /control?workMode=structure&from=dashboard
+        (the from param survives because setSearchParams replaces with merge)
+      → click in-app back arrow → returns to /dashboard ✓
+      Intentional: the dashboard-context follows the user during their
+      session inside /control. They can drill, explore tabs, then back
+      to dashboard.
+
+================================================================================
+DELIVERABLES
+================================================================================
+review.txt with:
+  - STEP 0 audit at top (results of 0.1, 0.2, 0.3 + classification table for 0.2)
+  - Per-file diff (2 files, 8 logical sub-edits)
+  - VERIFY 1-4 outputs (skip 5 — Zahi runs visually)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(nav): smart back from /control to /dashboard when user came from dashboard KPI
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.4 greps + classification, output at top
+   of review.txt). If ANY existing /control entry path is misclassified or
+   any unexpected navigate found → STOP and report.
+2. ProjectDashboardPage: add `&from=dashboard` to 6 navigate calls.
+3. ProjectControlPage: smart back button (line 3643) + breadcrumb (line 3782).
+4. Run VERIFY 1-4.
+5. Generate review.txt + .local/.commit_message.
+6. STOP. Zahi runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+./deploy.sh --prod
+Both files only edit URL strings + 1 conditional in the back button.
+Backwards-compatible: any URL without `from=dashboard` sees the original
+behavior. Safe to revert.
+
+================================================================================
+END OF SPEC
+================================================================================

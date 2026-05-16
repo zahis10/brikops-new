@@ -1,0 +1,284 @@
+================================================================================
+HOTFIX FOLLOWUP TO #487 — Numeric building name sort (parity with #485)
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — UX bug discovered post-#487 mobile prod test.
+
+Files changed:  2 files
+                  Backend: backend/contractor_ops/execution_matrix_router.py (~6 LOC)
+                  Backend: backend/tests/test_execution_matrix.py (~25 LOC, 1 new test)
+
+Tests:          1 NEW test (`test_get_matrix_unit_sort_numeric_building_names`).
+Frontend:       NONE.
+Mobile:         OTA via Capgo. No native files.
+DB migration:   NONE.
+
+Family:         #485 fixed numeric sort on `unit_no`. This fixes the same
+                bug pattern on `building.name` when buildings are named
+                purely with digits (e.g., "8", "9", "10", "11" — common
+                in real BrikOps projects per Zahi's "מגרש 810" project).
+
+================================================================================
+ROOT CAUSE — Zahi's prod mobile test 2026-05-04
+================================================================================
+
+Project "מגרש 810" has 4 buildings named "8", "9", "10", "11" (string
+field on db.buildings, no sort_index populated).
+
+Current `_unit_sort_key` (post-#486) tiebreaks by `b.get("name", "")` —
+plain string sort. Lexicographic order:
+  "10" < "11" < "8" < "9"
+because '1' (0x31) < '8' (0x38) at character 0.
+
+Result on the matrix: units of building "10" appear FIRST, then "11",
+then "8", then "9". User expects: 8, 9, 10, 11 (numeric).
+
+Same pattern as #485's unit_no fix. Solution mirrors that approach:
+add `int(name)` parse with 9999 fallback, place BEFORE the string
+tiebreak.
+
+================================================================================
+DESIGN DECISION
+================================================================================
+
+D1. Numeric-first tiebreak for building.name. Mirror the pattern from
+    `_unit_sort_key` for unit_no (post-#485).
+    Sort tuple becomes 6-tuple:
+      (sort_index, building_name_num, building_name_str,
+       floor_number, unit_no_num, unit_no_str)
+    All numeric components first, string fallbacks second.
+
+D2. NO frontend change. Backend response order drives the matrix render
+    order — frontend just iterates units in returned order.
+
+D3. NO change to building names in DB. We adapt to data, not data to us.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify current `_unit_sort_key` (post-#486):
+    grep -n "_unit_sort_key" backend/contractor_ops/execution_matrix_router.py
+    # Expected: 1 hit on def line + 1 on sort invocation.
+    # Current state per #486 review:
+    #   def _unit_sort_key(u):
+    #       b = buildings_by_id.get(u.get("building_id"), {})
+    #       f = floors_by_id.get(u.get("floor_id"), {})
+    #       unit_no_str = u.get("unit_no", "") or ""
+    #       try:
+    #           unit_no_num = int(unit_no_str)
+    #       except (ValueError, TypeError):
+    #           unit_no_num = 9999
+    #       return (
+    #           b.get("sort_index", 9999),
+    #           b.get("name", "") or "",
+    #           f.get("floor_number", 0),
+    #           unit_no_num,
+    #           unit_no_str,
+    #       )
+    # Document line numbers in review.txt.
+
+0.2 — Verify existing `test_get_matrix_unit_sort_by_building` test
+    passes — should still pass after our change because we ADD a numeric
+    tiebreak BEFORE the existing string tiebreak (additive).
+
+0.3 — Output STEP 0 audit at TOP of review.txt.
+
+================================================================================
+PART 1 — BACKEND: numeric building name tiebreak
+================================================================================
+
+FILE: backend/contractor_ops/execution_matrix_router.py
+-------------------------------------------------------
+
+LOCATION 1.1 — Update `_unit_sort_key` to parse building.name as int:
+
+   FIND (per STEP 0.1, post-#486):
+       def _unit_sort_key(u):
+           b = buildings_by_id.get(u.get("building_id"), {})
+           f = floors_by_id.get(u.get("floor_id"), {})
+           unit_no_str = u.get("unit_no", "") or ""
+           try:
+               unit_no_num = int(unit_no_str)
+           except (ValueError, TypeError):
+               unit_no_num = 9999
+           return (
+               b.get("sort_index", 9999),
+               b.get("name", "") or "",
+               f.get("floor_number", 0),
+               unit_no_num,
+               unit_no_str,
+           )
+
+   REPLACE WITH:
+       def _unit_sort_key(u):
+           b = buildings_by_id.get(u.get("building_id"), {})
+           f = floors_by_id.get(u.get("floor_id"), {})
+           unit_no_str = u.get("unit_no", "") or ""
+           try:
+               unit_no_num = int(unit_no_str)
+           except (ValueError, TypeError):
+               unit_no_num = 9999
+           # NEW: numeric tiebreak for building name (parity with unit_no)
+           # — handles projects where buildings are named just by number
+           # (e.g., "8", "9", "10", "11"). Without this, lex sort places
+           # "10" before "8".
+           building_name_str = b.get("name", "") or ""
+           try:
+               building_name_num = int(building_name_str)
+           except (ValueError, TypeError):
+               building_name_num = 9999  # non-numeric names sort to end
+           return (
+               b.get("sort_index", 9999),
+               building_name_num,           # ← NEW: numeric first
+               building_name_str,           # ← string fallback (existing)
+               f.get("floor_number", 0),
+               unit_no_num,
+               unit_no_str,
+           )
+
+   IMPORTANT:
+   - 6-tuple sort key (was 5-tuple).
+   - Numeric building name first → "8" < "9" < "10" < "11" correct.
+   - String fallback preserved → mixed alphanumeric names ("בניין A",
+     "מגדל הצפון") still sort by name lex.
+   - sort_index still wins when populated.
+
+DO NOT TOUCH:
+- buildings/floors fetch logic.
+- Response dict structure (`buildings`, `floors`, etc. all unchanged).
+- Other endpoints.
+
+================================================================================
+PART 2 — TEST: numeric building name sort regression guard
+================================================================================
+
+FILE: backend/tests/test_execution_matrix.py
+---------------------------------------------
+
+LOCATION 2.1 — Add NEW test after `test_get_matrix_unit_sort_by_building`:
+
+       def test_get_matrix_unit_sort_numeric_building_names():
+           """Buildings named with pure digits ("8", "9", "10", "11") sort
+           numerically, not lexicographically. Regression guard for #489
+           (mirrors #485's unit_no fix at building name level)."""
+           # Mock: 4 buildings named "10", "11", "8", "9" (lex order
+           #   would put "10" first; numeric order is 8, 9, 10, 11).
+           # Each building has 1 floor with 1 unit.
+           # Assert returned units come in numeric building order.
+
+           # Sample mock setup:
+           buildings = [
+               {"id": "b8",  "name": "8",  "sort_index": 0},
+               {"id": "b9",  "name": "9",  "sort_index": 0},
+               {"id": "b10", "name": "10", "sort_index": 0},
+               {"id": "b11", "name": "11", "sort_index": 0},
+           ]
+           # ... floors, units, etc. ...
+           # Expected order: u8, u9, u10, u11
+           # Without the fix, would be: u10, u11, u8, u9
+
+   IMPORTANT:
+   - All buildings have same `sort_index` (0 → falls through to numeric tiebreak).
+   - Verifies numeric int parse handles "10" > "8" correctly.
+   - Mirror the AsyncMock pattern from existing tests in the file.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend syntax + import:
+   cd backend && python -c "from contractor_ops.execution_matrix_router import router; print('OK')"
+   → prints OK
+
+VERIFY 2 — All matrix tests pass:
+   cd backend && python -m pytest tests/test_execution_matrix.py -v
+   → all pass (13 from #486 + 1 new = 14)
+
+VERIFY 3 — QC regression:
+   cd backend && python -m pytest tests/test_qc_override_close.py \
+       tests/test_qc_units_status.py -q
+   → 4 passed (no QC code touched)
+
+VERIFY 4 — _unit_sort_key now contains the numeric building parse:
+   grep -c "building_name_num\|int(building_name_str)" \
+       backend/contractor_ops/execution_matrix_router.py
+   → ≥ 2
+
+VERIFY 5 — Visual smoke (Zahi runs after deploy to staging):
+
+   a) Login → open project "מגרש 810" (or any project with building names
+      "8", "9", "10", "11").
+   b) /projects/{p}/execution-matrix → desktop view.
+   c) Matrix shows building "8" units FIRST (top of grid),
+      then "9", then "10", then "11" — numeric order.
+      (Was: "10", "11", "8", "9" — lex order.)
+   d) Mobile list view: same numeric order in card sequence.
+
+   Negative — projects with sort_index populated:
+   e) Project where buildings have explicit sort_index → still sorts by
+      sort_index (not affected by this change).
+
+   Negative — buildings with non-numeric names:
+   f) Project with buildings named "בניין A", "בניין B" (or "מגדל הצפון",
+      etc.) — string lex sort applies (numeric parse fails → 9999 for all,
+      string tiebreak takes over). No regression from #486.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (2 files, ~30 LOC total)
+  - VERIFY 1-4 outputs
+  - VERIFY 5 deferred-to-Zahi note (6 scenarios a-f)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(matrix): numeric sort for building names (parity with #485)
+
+  Discovered post-#487 prod mobile test (Zahi 2026-05-04). In project
+  "מגרש 810" buildings are named "8", "9", "10", "11" (strings). Lex
+  sort placed "10" before "8" because '1' < '8' character-wise.
+
+  Same bug pattern as #485 (unit_no lex sort), same fix: add
+  `int(name)` parse with 9999 fallback in _unit_sort_key, place
+  numeric tiebreak BEFORE existing string tiebreak.
+
+  Sort tuple grows from 5-tuple to 6-tuple:
+    (sort_index, building_name_num, building_name_str,
+     floor_number, unit_no_num, unit_no_str)
+
+  Backward compatible: projects with sort_index populated unchanged;
+  projects with alphabetic building names unchanged (numeric parse
+  fails → 9999 → string tiebreak handles them).
+
+  Tests: 1 NEW test_get_matrix_unit_sort_numeric_building_names guards
+  against regression. ~30 LOC across 2 files.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (1 grep)
+2. PART 1 — backend numeric building tiebreak (~6 LOC)
+3. PART 2 — test (~25 LOC)
+4. Run VERIFY 1-4
+5. Generate review.txt + .local/.commit_message
+6. STOP. Zahi reviews. Then he runs:
+     git checkout staging && ./deploy.sh --stag
+   ⚠️ COMMIT ON `staging` BRANCH.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+2 files revert. Numeric building sort regresses to lex. NO impact on
+data, frontend, other endpoints, or any other matrix functionality.
+
+================================================================================
+END OF SPEC
+================================================================================

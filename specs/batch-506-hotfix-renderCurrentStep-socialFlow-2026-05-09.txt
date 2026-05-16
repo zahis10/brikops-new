@@ -1,0 +1,289 @@
+================================================================================
+BATCH 506-HOTFIX — renderCurrentStep doesn't show OTP UI after Google in invite flow (P0)
+================================================================================
+Date:           2026-05-09
+Branch:         staging  (NOT main)
+Severity:       P0 — Google/Apple buttons added in 506 are functionally broken
+                in invite flow. After OAuth, user sees no OTP-input UI and
+                gets stuck on the original invite-landing form. Both
+                link_required (existing user) and registration_required (new
+                user) hit the same dead-end.
+Files changed:  1 frontend (no backend changes)
+                  Frontend: frontend/src/pages/OnboardingPage.js
+                  (~5 lines added: 1-line early return + 4-line comment)
+Pre-flight:     Discovered during prod E2E smoke 2026-05-09.
+
+                Bug repro:
+                1. Open /onboarding?invite=X in clean browser
+                2. Check ToS, click Google
+                3. Authenticate with any Google account
+                4. → Toast "קוד אימות נשלח..." but no OTP input field
+                   appears. Page still renders the invite-landing form
+                   (phone input + send-OTP button).
+
+                Root cause: renderCurrentStep (L1684) returns
+                renderInvitePhoneStep when isInviteFlow=true. That render
+                function doesn't have a socialFlow='link'/'register'/'otp'
+                branch — those UIs live in renderPhoneStep (L995-1300).
+                The 506 spec's setStep('phone') in handleSocialAuthResult
+                was a no-op because step='phone' was already the default
+                for invite flow, AND renderCurrentStep's isInviteFlow check
+                routes step='phone' to renderInvitePhoneStep (not
+                renderPhoneStep). My spec was wrong about the linchpin.
+================================================================================
+
+CONTEXT
+-------
+Batch 506 added Google + Apple SSO buttons to renderInvitePhoneStep (the
+invite landing screen). The buttons render correctly. Clicking them fires
+handleGoogleSignIn / handleAppleSignIn → backend /auth/social returns
+either:
+  - link_required (existing user with same Google ID) → frontend sets
+    socialFlow='link' + auto-calls socialSendOtp (sends OTP to user's
+    REGISTERED phone)
+  - registration_required (new user, no Google linkage) → frontend sets
+    socialFlow='register' (waits for user to enter phone)
+
+In BOTH cases, the user needs the renderPhoneStep UI to take over —
+that's where the socialFlow='link'/'register'/'otp' branches live (L1043,
+L1143, L1204). But renderCurrentStep routes invite flow to
+renderInvitePhoneStep regardless of socialFlow:
+
+  // Current (broken):
+  const renderCurrentStep = () => {
+    if (isInviteFlow) {
+      if (step === 'invite-accept') return renderInviteAccept();
+      if (step === 'invite-error') return renderInviteError();
+      if (step === 'invite-login-needed') return renderInviteLoginNeeded();
+      if (step === 'otp') return renderOtpStep();
+      if (step === 'login-password') return renderLoginPassword();
+      return renderInvitePhoneStep();   // ← always returns this
+                                         //    even when socialFlow is set
+    }
+    ...
+  };
+
+So after Google OAuth in invite flow:
+  - socialFlow='link' (or 'register') is set
+  - step is still 'phone' (original invite landing)
+  - renderCurrentStep returns renderInvitePhoneStep
+  - renderInvitePhoneStep doesn't know about socialFlow → user sees the
+    same form, no OTP input
+
+Fix: in renderCurrentStep, when socialFlow is set, return renderPhoneStep
+regardless of isInviteFlow. socialFlow is null by default, so this only
+triggers AFTER user clicks Google/Apple.
+
+This also incidentally fixes a related issue: my prior 506 spec added
+setStep('phone') in handleSocialAuthResult registration_required as a
+"linchpin" — but it was a no-op because step was already 'phone' AND
+the isInviteFlow branch in renderCurrentStep routes step='phone' to
+renderInvitePhoneStep. The actual fix is in renderCurrentStep, not in
+handleSocialAuthResult.
+
+NOT IN SCOPE — separate batch:
+  - Backend `/auth/social/verify-otp` LINK branch does NOT process
+    invite_token. After this hotfix, an existing user clicking Google on
+    an invite link will authenticate successfully but won't get added to
+    the invited project. Needs backend update to process invite_token in
+    link flow (apply membership, mark invite accepted). Track as
+    follow-up batch 506-followup-link-invite.
+  - Existing-user flow on Apple SSO (untested by Zahi per his decision
+    to skip Apple).
+
+STEP 0 — MANDATORY PRE-FLIGHT
+=============================
+Before editing, Replit MUST run all 4 greps below:
+
+  # 1. renderCurrentStep declaration
+  git fetch origin staging
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | grep -n \
+    "const renderCurrentStep = ()"
+  # EXPECT: line 1684
+
+  # 2. renderCurrentStep isInviteFlow branch (the function body to edit)
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | sed -n '1684,1700p'
+  # EXPECT: function body matching CONTEXT section above. The first line
+  # inside the function body should be `if (isInviteFlow) {`.
+
+  # 3. socialFlow state declaration
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | grep -n \
+    "const \[socialFlow"
+  # EXPECT: line 64 (`const [socialFlow, setSocialFlow] = useState(null);`)
+
+  # 4. renderPhoneStep handles all 3 socialFlow branches
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | grep -n \
+    "socialFlow === '\(link\|register\|otp\)'"
+  # EXPECT: 3 hits (one per branch). Confirms renderPhoneStep is the right
+  # render target.
+
+If ANY pre-flight returns different content → STOP and report.
+
+PART 1 — FRONTEND (1 file)
+==========================
+
+FILE 1 of 1: frontend/src/pages/OnboardingPage.js
+--------------------------------------------------
+
+LOCATION 1.1 — renderCurrentStep: add early return for socialFlow
+                 (insert as FIRST statement inside renderCurrentStep,
+                 before the isInviteFlow check)
+
+   CURRENT (lines 1684-1693):
+       const renderCurrentStep = () => {
+         if (isInviteFlow) {
+           if (step === 'invite-accept') return renderInviteAccept();
+           if (step === 'invite-error') return renderInviteError();
+           if (step === 'invite-login-needed') return renderInviteLoginNeeded();
+           if (step === 'otp') return renderOtpStep();
+           if (step === 'login-password') return renderLoginPassword();
+           return renderInvitePhoneStep();
+         }
+
+   REPLACE WITH:
+       const renderCurrentStep = () => {
+         // 2026-05-09 — 506 hotfix: when user clicks Google/Apple from the
+         // invite landing screen, handleSocialAuthResult sets socialFlow=
+         // 'link'/'register'. The OTP-input + phone-input UIs for SSO live
+         // in renderPhoneStep (L1043+), NOT in renderInvitePhoneStep.
+         // Without this early return, the user gets stuck on the invite
+         // landing form with no way to enter OTP after OAuth.
+         if (socialFlow) return renderPhoneStep();
+         if (isInviteFlow) {
+           if (step === 'invite-accept') return renderInviteAccept();
+           if (step === 'invite-error') return renderInviteError();
+           if (step === 'invite-login-needed') return renderInviteLoginNeeded();
+           if (step === 'otp') return renderOtpStep();
+           if (step === 'login-password') return renderLoginPassword();
+           return renderInvitePhoneStep();
+         }
+
+NOTES:
+  - For NON-invite flow: socialFlow set → renderPhoneStep → SAME behavior as
+    before (renderPhoneStep was already the target for step='phone' which
+    is what gets used after `setStep('phone')` from 506 LOCATION 1.1).
+    So no behavior change for non-invite users.
+  - For INVITE flow with socialFlow=null (i.e. user hasn't clicked Google/
+    Apple): no change, still renders renderInvitePhoneStep as before.
+  - Only behavior change: invite flow with socialFlow set → now correctly
+    routes to renderPhoneStep instead of being stuck at renderInvitePhoneStep.
+  - handleSocialBack (L391) clears socialFlow=null, which would route back
+    to renderInvitePhoneStep automatically. Good back-navigation behavior
+    preserved.
+
+DO NOT TOUCH
+============
+- ❌ Do NOT modify handleSocialAuthResult. The setStep('phone') line added
+     by 506 is now a no-op (early return precedes step check) but harmless.
+     Cleaning it up is out of scope.
+- ❌ Do NOT modify the backend. The link-flow invite-consumption gap is a
+     separate, larger fix. Track as follow-up batch.
+- ❌ Do NOT modify renderInvitePhoneStep. Its content is correct (ToS +
+     Google + Apple buttons from 506). The fix is purely in routing.
+- ❌ Do NOT modify renderPhoneStep. Its socialFlow branches are correct;
+     they just weren't being reached from invite flow.
+- ❌ Do NOT add or modify routes, schemas, tests.
+- ❌ Do NOT add new i18n keys.
+
+GLOBAL VERIFY
+=============
+VERIFY 1 — Lint
+    cd frontend && CI=true npm run lint 2>&1 | tail -10
+    EXPECT: no new errors. socialFlow already in scope; no new state, no
+    new deps.
+
+VERIFY 2 — Build
+    cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
+        REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com \
+        yarn build 2>&1 | tail -20
+    EXPECT: "Compiled successfully" or with warnings only. No errors.
+
+VERIFY 3 — Manual smoke on staging (after deploy)
+    Test repro of original bug:
+      a. Open /onboarding?invite=<existing-pending-invite> in incognito
+      b. Check ToS, click Google → authenticate with any Google account
+      c. EXPECT: page transitions to phone-input UI (renderPhoneStep
+         socialFlow='register') OR OTP-input UI (renderPhoneStep
+         socialFlow='link' if Google account already linked to BrikOps)
+      d. Verify ToS checkbox at L1193 (renderPhoneStep) shows as
+         already-checked (state persistence).
+
+    Regression — non-invite flow:
+      e. Open /onboarding (no invite) in incognito
+      f. Click Google → authenticate
+      g. EXPECT: same behavior as before this hotfix — phone-input or
+         OTP-input UI per registration vs link path.
+
+    Regression — phone-OTP path (no SSO click):
+      h. Open invite link, check ToS, enter phone, click "שלח קוד אימות"
+      i. EXPECT: existing flow unchanged — receives SMS, enters OTP,
+         lands on renderInviteLoginNeeded form (505-hotfix).
+
+VERIFY 4 — Bundle inspection
+    Confirm the new early-return is in compiled output:
+    grep -oE 'socialFlow.{0,50}renderPhoneStep|[a-zA-Z_$][a-zA-Z0-9_$]*\?[a-zA-Z_$][a-zA-Z0-9_$]*\(\):' frontend/build/static/js/main.*.js | head -3
+    EXPECT: at least one minified pattern matching the early return logic.
+    The minifier may rewrite `if (socialFlow) return X;` as
+    `if (socialFlow) return X();` or `socialFlow ? X() : ...`.
+
+DELIVERABLES
+============
+review.txt with:
+  - Rollback SHA (origin/staging HEAD before this commit)
+  - Per-file diff (single file, ~5 lines added)
+  - STEP 0 grep outputs at top (all 4)
+  - VERIFY 1 (lint), VERIFY 2 (build), VERIFY 4 (bundle) outputs
+  - VERIFY 3 manual smoke deferred to Zahi
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(onboarding): route socialFlow to renderPhoneStep in invite mode
+
+  506 hotfix — Google + Apple buttons added in batch 506 to the invite
+  landing screen (renderInvitePhoneStep) were functionally broken: after
+  OAuth the user got stuck with no OTP-input UI.
+
+  Root cause: renderCurrentStep returned renderInvitePhoneStep for
+  invite flow regardless of socialFlow. The OTP-input + phone-input UIs
+  for SSO live in renderPhoneStep, not renderInvitePhoneStep.
+
+  Fix: 1-line early return — when socialFlow is set, render renderPhoneStep
+  regardless of isInviteFlow. socialFlow defaults to null, so this only
+  triggers AFTER user clicks Google/Apple. No effect on phone-OTP path or
+  on non-invite flows.
+
+  Note: my prior 506 spec's setStep('phone') in handleSocialAuthResult
+  was a no-op because of this same routing issue. Left in place for now
+  (harmless, can be cleaned up in a future refactor).
+
+  Out of scope (separate batch): /auth/social/verify-otp link flow does
+  not currently process invite_token. After this hotfix, an existing
+  user with linked Google clicking an invite link will authenticate but
+  won't be added to the invited project. Track as 506-followup-link-invite.
+
+STEPS
+=====
+1. Run STEP 0 pre-flight (4 greps). Paste outputs at top of review.txt.
+   If any line numbers drifted → STOP and report.
+2. Edit OnboardingPage.js LOCATION 1.1 (~5 lines added at L1685).
+3. Run VERIFY 1 (lint). Paste output.
+4. Run VERIFY 2 (build). Paste output.
+5. Run VERIFY 4 (bundle inspection). Paste output.
+6. Generate review.txt.
+7. Write .local/.commit_message per template above.
+8. STOP. Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+   Do NOT run ./deploy.sh, ./ship.sh, git commit, or git push.
+
+ROLLBACK
+========
+git revert <commit-sha>
+git checkout staging && ./deploy.sh --stag
+
+Risk: very low. Surface area is one render function, one new early
+return. socialFlow is null by default for all flows that don't trigger
+SSO, so the new branch is purely additive.
+
+================================================================================
+END OF SPEC
+================================================================================

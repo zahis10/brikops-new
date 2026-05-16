@@ -1,0 +1,740 @@
+================================================================================
+P0 HOTFIX — contractor visibility, company name display, and proof flow
+================================================================================
+Date:           2026-05-08
+Branch:         staging  (NOT main)
+Severity:       P0 — production bugs blocking contractors from working.
+                Reported by Zahi 2026-05-07/08 with logs from WUyoughong's
+                phone (plot 810).
+
+Files changed:  3 backend + 1-2 frontend
+                  backend/contractor_ops/router.py        (+18 LOC, helper)
+                  backend/contractor_ops/tasks_router.py  (~60 LOC across 3 endpoints)
+                  frontend/src/pages/TaskDetailPage.js    (~10 LOC)
+                  frontend/src/pages/<contractor list page> (~15 LOC, badge)
+
+Tests:          1 new backend test
+                  backend/tests/test_contractor_visibility.py
+
+Mobile:         Frontend OTA via Capgo. No native files.
+DB migration:   NONE.
+
+Family:         Standalone P0. No coupling to other batches.
+
+================================================================================
+THREE BUGS, ONE BATCH
+================================================================================
+
+BUG 1 — Company name shows "לא שויך" to contractors:
+  Admin sees "חברה: גמרים" on a defect.
+  Contractor opens same defect → sees "חברה: לא שויך".
+  Same backend, different rendering.
+
+  Root cause (TaskDetailPage L1009):
+    {getCompanyName(task.company_id) || task.assignee_company_name || 'לא שויך'}
+
+  getCompanyName looks up in `companies` (global, only id+name+trade)
+  AND `projectCompanies` (only loaded for management at L240).
+  For contractors, projectCompanies is empty → lookup misses
+  project-scoped companies → falls through to "לא שויך".
+
+BUG 2 — Contractor sees ALL defects in projects they're members of:
+  Zahi added a new contractor to "גמרים" company. The contractor
+  immediately saw all 13 defects in plot 810, not just גמרים defects.
+
+  Root cause (tasks_router.py L287):
+    is_contractor = user['role'] == 'contractor'
+
+  This checks the GLOBAL user.role. If a contractor has user.role='user'
+  (default) and project_membership.role='contractor', is_contractor=False,
+  the contractor filter is skipped entirely, and they see every defect in
+  every project they're a member of.
+
+  The L288-291 fallback only kicks in when project_id is passed. For the
+  cross-project dashboard list (no project_id), this fallback never runs.
+
+BUG 3 — Contractors can't close defects assigned only to their company:
+  WUyoughong opened defects in plot 810 with backend logs showing
+  is_assignee=False, is_company_member=True, assignee_id=None. The proof
+  upload card requires isAssignee in the frontend, so contractors in the
+  assigned company but not the specific assignee see no upload card.
+
+  Root cause (TaskDetailPage L786 + tasks_router.py L863):
+    showContractorProof = isContractor && isAssignee && status_ok
+    if task.get('assignee_id') != user['id']: 404
+
+================================================================================
+THE FIX (one batch, four parts)
+================================================================================
+
+PART 1 — Backend GET /tasks/{id} returns task.company_name.
+  Frontend reads task.company_name directly. No more dependency on
+  getCompanyName + projectCompanies (which contractors can't load).
+
+PART 2 — Backend GET /tasks (list) widens contractor detection AND
+  adds per-project company filter for cross-project requests:
+    is_contractor = True if user.role='contractor' OR ANY project
+    membership has role='contractor'.
+    contractor_conditions = [
+      {assignee_id: user.id},
+      ...for each contractor membership: {project_id: X, company_id: Y}
+    ]
+  Also returns per-task `is_my_assignee` flag for the UI badge.
+
+PART 3 — Backend POST /contractor-proof accepts company_member as well
+  as assignee. Frontend showContractorProof gate widens to
+  isAssignee || isCompanyMember.
+
+PART 4 — Frontend badge in contractor list:
+    "🔵 משויך אלי" if is_my_assignee=true
+    "👥 החברה שלי" otherwise
+  WhatsApp / notifications behavior UNCHANGED — still go to assignee only.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+⚠️ Replit MUST run STEP 0 on workspace post-`git pull`. Spec line numbers
+are approximate.
+
+0.1 — TaskDetailPage current rendering of company name:
+    grep -n "getCompanyName\|assignee_company_name\|company_id\|projectCompanies" \
+        frontend/src/pages/TaskDetailPage.js
+    Expected:
+    - L240-area: projectCompanies loaded only inside MGMT_ROLES branch
+    - L701-703: getCompanyName uses companies + projectCompanies
+    - L1009: <span>{getCompanyName(task.company_id) || task.assignee_company_name || not_assigned}</span>
+
+0.2 — tasks_router.py contractor filter:
+    grep -n "is_contractor\s*=\|contractor_conditions" \
+        backend/contractor_ops/tasks_router.py
+    Expected:
+    - L287: is_contractor = user['role'] == 'contractor'  (the bug)
+    - L292-307: contractor_conditions block, only adds company filter when project_id
+
+0.3 — tasks_router.py /contractor-proof guard:
+    grep -n "Only contractors can submit proof\|הליקוי לא נמצא" \
+        backend/contractor_ops/tasks_router.py
+    Expected: L862, L864 (assignee strict check at L864)
+
+0.4 — Find the contractor list page (where the badge will go):
+    grep -rln "דורשים טיפול\|requires_attention\|contractor.*dashboard\|MyTasks" \
+        frontend/src/pages/
+    Expected: 1-2 pages. Document which one renders the contractor's
+    defect list (the screenshots Zahi sent show "דורשים טיפול 13" header
+    above task cards).
+
+0.5 — Confirm no other consumers of `is_contractor` strict check:
+    grep -rn "user\['role'\] == 'contractor'\|user.role === 'contractor'" \
+        backend/contractor_ops/ frontend/src/
+    Expected: ~10-15 hits. We're only touching tasks_router.py L287.
+    Other hits OUT OF SCOPE — note them in review.txt for later batch.
+
+0.6 — Confirm db.project_companies and db.companies both exist and are
+      used:
+    grep -n "db.project_companies\|db.companies\b" \
+        backend/contractor_ops/companies_router.py \
+        backend/contractor_ops/tasks_router.py | head -10
+
+0.7 — VERIFY INDEX on project_memberships.(user_id, role):
+    grep -rn "project_memberships.*create_index\|project_memberships.*index" \
+        backend/
+
+    Expected on HEAD (verified 2026-05-08):
+      L588: project_memberships.create_index([("project_id", 1), ("user_id", 1)], unique=True)
+      L589: project_memberships.create_index([("project_id", 1), ("role", 1)])
+
+    MISSING: (user_id, role) compound index.
+
+    Our new queries (PART 2 LOCATION 2.3) all start with user_id:
+      find_one({'user_id': X, 'role': 'contractor'})
+      find({'user_id': X, 'role': 'contractor'})
+      find({'user_id': X, 'role': {'$in': MGMT_ROLES}})
+
+    Without (user_id, role) index, each /api/tasks call does a
+    collection scan twice. PART 6 adds the missing index.
+
+0.8 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — Helper for company membership check
+================================================================================
+
+FILE: backend/contractor_ops/router.py
+--------------------------------------
+
+Add after _get_contractor_trade_key (around L72):
+
+  async def _is_user_in_task_company(db, user_id: str, task: dict) -> bool:
+      """True if user has a project_membership in the task's project
+      whose company_id matches task.company_id. Used to broaden access
+      to contractor flows (proof upload, visibility) to all members of
+      the assigned company. Returns False if task has no company_id.
+      """
+      task_company_id = task.get('company_id')
+      if not task_company_id:
+          return False
+      mem = await db.project_memberships.find_one(
+          {'user_id': user_id, 'project_id': task['project_id']},
+          {'_id': 0, 'company_id': 1},
+      )
+      if not mem:
+          return False
+      return mem.get('company_id') == task_company_id
+
+
+  async def _resolve_task_company_name(db, company_id: str) -> Optional[str]:
+      """Resolve a task's company_id to a display name. Tries
+      project_companies first (project-scoped), falls back to global
+      companies. Returns None if not found.
+      """
+      if not company_id:
+          return None
+      proj_company = await db.project_companies.find_one(
+          {'id': company_id}, {'_id': 0, 'name': 1}
+      )
+      if proj_company and proj_company.get('name'):
+          return proj_company['name']
+      global_company = await db.companies.find_one(
+          {'id': company_id}, {'_id': 0, 'name': 1}
+      )
+      if global_company and global_company.get('name'):
+          return global_company['name']
+      return None
+
+DO NOT TOUCH:
+- _get_contractor_trade_key, _trades_match (unchanged).
+- MANAGEMENT_ROLES.
+
+================================================================================
+PART 2 — tasks_router.py: 4 changes
+================================================================================
+
+FILE: backend/contractor_ops/tasks_router.py
+--------------------------------------------
+
+LOCATION 2.1 — Update import (around L8):
+
+  ADD `_is_user_in_task_company`, `_resolve_task_company_name`:
+      from .router import (
+          _check_project_access, _get_project_membership, _get_project_role,
+          _get_contractor_trade_key, _trades_match,
+          _is_user_in_task_company, _resolve_task_company_name,
+          ...
+      )
+
+LOCATION 2.2 — GET /tasks/{id} returns company_name + is_company_member.
+
+  At L500-501 (after user_project_role / user_project_sub_role), ADD:
+
+      task_data['is_company_member'] = is_company_member
+      task_data['company_name'] = await _resolve_task_company_name(
+          db, task.get('company_id')
+      )
+
+  Both fields safe to expose to all roles. company_name is the same
+  display value admin already sees indirectly.
+
+LOCATION 2.3 — GET /tasks list: widen is_contractor + cross-project filter.
+
+  FIND (currently L287-307):
+      is_contractor = user['role'] == 'contractor'
+      if not is_contractor and project_id:
+          proj_role = await _get_project_role(user, project_id)
+          if proj_role == 'contractor':
+              is_contractor = True
+      if is_contractor:
+          contractor_conditions = [{'assignee_id': user['id']}]
+          if project_id:
+              user_mem = await db.project_memberships.find_one(
+                  {'project_id': project_id, 'user_id': user['id']},
+                  {'_id': 0, 'company_id': 1}
+              )
+              if user_mem and user_mem.get('company_id'):
+                  contractor_conditions.append({'company_id': user_mem['company_id']})
+          if '$or' in query:
+              ...
+
+  REPLACE WITH:
+      # FIX 2026-05-08: is_contractor must consider per-project memberships,
+      # not just the global user.role. A contractor who registered with
+      # user.role='user' but membership.role='contractor' was previously
+      # bypassing the filter and seeing every defect in their projects.
+      is_contractor = user['role'] == 'contractor'
+      if not is_contractor:
+          contractor_membership = await db.project_memberships.find_one(
+              {'user_id': user['id'], 'role': 'contractor'},
+              {'_id': 0, 'project_id': 1},
+          )
+          if contractor_membership:
+              is_contractor = True
+
+      if is_contractor:
+          contractor_conditions = [{'assignee_id': user['id']}]
+          if project_id:
+              user_mem = await db.project_memberships.find_one(
+                  {'project_id': project_id, 'user_id': user['id']},
+                  {'_id': 0, 'company_id': 1}
+              )
+              if user_mem and user_mem.get('company_id'):
+                  contractor_conditions.append({'company_id': user_mem['company_id']})
+          else:
+              # Cross-project list: build per-project (project_id+company_id)
+              # conditions so the contractor sees only their own company's
+              # defects in each project they're a contractor in.
+              contractor_memberships = await db.project_memberships.find(
+                  {'user_id': user['id'], 'role': 'contractor'},
+                  {'_id': 0, 'project_id': 1, 'company_id': 1},
+              ).to_list(200)
+              for mem in contractor_memberships:
+                  if mem.get('company_id'):
+                      contractor_conditions.append({
+                          'project_id': mem['project_id'],
+                          'company_id': mem['company_id'],
+                      })
+              # MIXED-ROLE FIX: a user who is contractor in project A but
+              # management in project B should still see ALL tasks in B
+              # (regardless of company). Without this, the strict
+              # is_contractor flag would clamp them to assignee_id only
+              # in project B.
+              MGMT_ROLES_FOR_LIST = (
+                  'project_manager', 'management_team', 'super_admin',
+                  'owner', 'org_admin',
+              )
+              mgmt_memberships = await db.project_memberships.find(
+                  {'user_id': user['id'], 'role': {'$in': list(MGMT_ROLES_FOR_LIST)}},
+                  {'_id': 0, 'project_id': 1},
+              ).to_list(200)
+              for mem in mgmt_memberships:
+                  contractor_conditions.append({'project_id': mem['project_id']})
+          if '$or' in query:
+              existing_or = query.pop('$or')
+              query.setdefault('$and', []).extend([{'$or': existing_or}, {'$or': contractor_conditions}])
+          elif '$and' in query:
+              query['$and'].append({'$or': contractor_conditions})
+          else:
+              query['$or'] = contractor_conditions
+
+  Also: in the same endpoint, after building the result list (find the
+  spot where tasks are serialized — around the response construction),
+  add per-task `is_my_assignee`:
+
+      # Add is_my_assignee flag for UI badge ("משויך אלי" vs "החברה שלי")
+      for t in items:
+          t['is_my_assignee'] = (t.get('assignee_id') == user['id'])
+
+  (Find the exact location of the items list construction. The pattern
+  is usually right before `return {"items": items, "total": ...}`.)
+
+LOCATION 2.4 — POST /contractor-proof: accept company members.
+
+  FIND (currently L860-867):
+      project_role = await _get_project_role(user, task['project_id'])
+      if project_role != 'contractor' and user['role'] != 'contractor':
+          raise HTTPException(status_code=403, detail='Only contractors can submit proof')
+      if task.get('assignee_id') != user['id']:
+          raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
+      trade_key = await _get_contractor_trade_key(db, user['id'], task['project_id'])
+      if not _trades_match(task.get('category'), trade_key):
+          raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
+
+  REPLACE WITH:
+      project_role = await _get_project_role(user, task['project_id'])
+      if project_role != 'contractor' and user['role'] != 'contractor':
+          raise HTTPException(status_code=403, detail='Only contractors can submit proof')
+      is_assignee = task.get('assignee_id') == user['id']
+      is_company_member = await _is_user_in_task_company(db, user['id'], task)
+      if not (is_assignee or is_company_member):
+          raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
+      trade_key = await _get_contractor_trade_key(db, user['id'], task['project_id'])
+      if not _trades_match(task.get('category'), trade_key):
+          raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
+
+  trade_match check stays — contractor whose trade doesn't match the
+  defect category still gets 404. Existing behavior.
+
+  assignee_id is NEVER changed by this endpoint. Per Zahi's earlier
+  decision, the assignee stays the same regardless of who uploaded.
+
+DO NOT TOUCH:
+- The status update logic below the guard (still bumps to
+  pending_manager_approval).
+- WhatsApp / notification dispatch (still goes to original assignee
+  only — no contractor-side changes).
+- L160, L168, L287 of OTHER hardcoded 'contractor' checks (out of scope).
+- /tasks/{id}/attachments, /tasks/{id}/updates, /reopen, /approve, /reject
+  endpoints. All keep their current strict assignee-or-management gates.
+- The Task pydantic model schema.
+
+================================================================================
+PART 3 — Frontend TaskDetailPage: company_name + showContractorProof
+================================================================================
+
+FILE: frontend/src/pages/TaskDetailPage.js
+------------------------------------------
+
+LOCATION 3.1 — Use task.company_name directly (around L1009).
+
+  FIND:
+      <span className="font-medium">{getCompanyName(task.company_id) || task.assignee_company_name || t('taskDetail', 'not_assigned')}</span>
+
+  REPLACE WITH:
+      <span className="font-medium">{task.company_name || getCompanyName(task.company_id) || task.assignee_company_name || t('taskDetail', 'not_assigned')}</span>
+
+  We add task.company_name (new field from backend) as the FIRST
+  fallback. getCompanyName stays as a secondary fallback (for management
+  who already had it working). If neither resolves → "לא שויך".
+
+LOCATION 3.2 — Add isCompanyMember + widen showContractorProof.
+
+  FIND (around L235-236):
+      const isAssignee = task?.assignee_id === user?.id;
+      const canManage = isManagement;
+
+  REPLACE WITH:
+      const isAssignee = task?.assignee_id === user?.id;
+      // FIX 2026-05-08: backend now returns is_company_member on
+      // /tasks/{id}. Allows any contractor in the assigned company
+      // to submit proof, not just the explicit assignee.
+      const isCompanyMember = task?.is_company_member === true;
+      const canManage = isManagement;
+
+LOCATION 3.3 — Widen the gate at L786-787.
+
+  FIND:
+      const showContractorProof = isContractor && isAssignee && proofAllowedStatuses.includes(task.status);
+      const showProofLocked = isContractor && isAssignee && proofLockedStatuses.includes(task.status);
+
+  REPLACE WITH:
+      const canSubmitProof = isContractor && (isAssignee || isCompanyMember);
+      const showContractorProof = canSubmitProof && proofAllowedStatuses.includes(task.status);
+      const showProofLocked = canSubmitProof && proofLockedStatuses.includes(task.status);
+
+DO NOT TOUCH:
+- Other usages of isAssignee (attachments filter L779-780, WhatsApp
+  button L885, assignment card text L1015). Those stay strict.
+- handleProofFileChange / handleSubmitProof / annotation flow.
+- proofAllowedStatuses / proofLockedStatuses.
+- The Card UI styling, text, icons.
+
+================================================================================
+PART 4 — Frontend badge in contractor list page
+================================================================================
+
+FILE: frontend/src/pages/<contractor list page found in 0.4>
+------------------------------------------------------------
+
+ADD on each task card a small badge above or beside the title:
+
+  {task.is_my_assignee ? (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700">
+      <User className="w-3 h-3" />
+      משויך אלי
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600">
+      <Users className="w-3 h-3" />
+      החברה שלי
+    </span>
+  )}
+
+Position: prefer above the task title (same row as status badge), or
+beside the trade label. Match existing badge styling (e.g.
+bg-blue-50 text-blue-700 for primary, bg-slate-100 text-slate-600 for
+secondary).
+
+If the contractor list page renders a TaskCard component, edit the
+component once. If it renders inline JSX per task, edit each
+occurrence.
+
+DO NOT TOUCH:
+- The task card layout, click handler, navigation.
+- Other badge positions (status, priority, trade) — only ADD the new
+  one.
+- The list filter / sort logic (no change to ordering).
+- WhatsApp / notification UI elsewhere.
+
+================================================================================
+PART 5 — Add missing compound index on project_memberships
+================================================================================
+
+FILE: backend/server.py
+-----------------------
+
+LOCATION 5.1 — In the startup migration block (around L588-589 where
+existing project_memberships indexes are created), ADD:
+
+  await db.project_memberships.create_index([("user_id", 1), ("role", 1)])
+
+This index supports the new cross-project queries in
+tasks_router.py LOCATION 2.3:
+  find_one({'user_id': X, 'role': 'contractor'})
+  find({'user_id': X, 'role': 'contractor'})
+  find({'user_id': X, 'role': {'$in': MGMT_ROLES_FOR_LIST}})
+
+Without it, each /api/tasks call from a contractor scans the entire
+project_memberships collection twice. With ~hundreds of users it's
+fine; at 10k+ memberships it degrades.
+
+The existing (project_id, user_id) and (project_id, role) indexes
+do NOT cover queries where user_id is the leading filter and
+project_id is absent.
+
+create_index is idempotent in MongoDB — safe to add to startup
+without a separate migration. On first server boot after deploy,
+MongoDB builds the index in background.
+
+DO NOT TOUCH:
+- The existing two indexes (still needed for project-scoped queries).
+- Other index creations in server.py.
+
+================================================================================
+PART 6 — New backend test
+================================================================================
+
+FILE: backend/tests/test_contractor_visibility.py  (NEW, ~150 LOC)
+------------------------------------------------------------------
+
+T1 — _is_user_in_task_company (unit, helper from PART 1):
+     - returns True when membership.company_id matches task.company_id.
+     - returns False when company_id differs.
+     - returns False when no membership.
+     - returns False when task.company_id is None.
+
+T2 — _resolve_task_company_name (unit, helper from PART 1):
+     - returns project_companies name when found.
+     - falls back to global companies name.
+     - returns None when not found.
+     - returns None when company_id is None.
+
+T3 — GET /tasks/{id} response includes company_name:
+     Mock task with company_id, project_company exists. Call endpoint.
+     Assert response includes company_name='Test Company'.
+
+T4 — GET /tasks/{id} response includes is_company_member:
+     Mock contractor user, task in their company. Assert
+     is_company_member=True.
+
+T5 — GET /tasks list — contractor with user.role='user' and
+     project_membership.role='contractor' is now filtered:
+     Mock such user with 1 contractor membership in project P,
+     company=A. Call /api/tasks (no project_id). Assert returned tasks
+     are filtered to: assignee=user OR (project=P AND company=A).
+     Verify a task in same project but different company is NOT in
+     results.
+     Verify a task assigned to user (regardless of company) IS in
+     results.
+
+T6 — GET /tasks list returns is_my_assignee per task:
+     Mock contractor with 2 tasks (1 assigned, 1 company-only). Call
+     endpoint. Assert task1.is_my_assignee=True, task2.is_my_assignee=False.
+
+T7 — POST /contractor-proof accepts company member:
+     Mock contractor in company A, task in company A but assignee is
+     OTHER contractor. Call POST /contractor-proof. Assert 200.
+     Assert task status advanced to pending_manager_approval.
+     Assert task.assignee_id UNCHANGED (still OTHER contractor).
+
+T8 — POST /contractor-proof rejects contractor in different company:
+     Mock contractor in company A, task in company B. Call POST.
+     Assert 404.
+
+T9 — Regression: assignee with matching trade still works:
+     Existing happy-path. Call POST. Assert 200.
+
+T10 — Mixed-role user (contractor in project A, management in project B):
+     Mock user with:
+     - membership in project A: role='contractor', company_id='X'
+     - membership in project B: role='management_team', no company
+     Call /api/tasks (no project_id).
+     Expected results include:
+     a) Tasks assigned to user (any project)
+     b) Tasks in project A where company_id='X' (their company)
+     c) Tasks in project B (any company, any assignee — they're mgmt there)
+     Expected NOT in results:
+     d) Tasks in project A where company_id != 'X'
+     e) Tasks in project C where they have no membership.
+
+Use AsyncMock fixtures from existing tests.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — yarn build (no new warnings):
+     cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
+
+V2 — pytest the new test:
+     cd backend && python -m pytest tests/test_contractor_visibility.py -v
+     → all pass (T1-T10).
+
+V3 — pytest task suite (regression sanity):
+     cd backend && python -m pytest tests/test_qc_units_status.py \
+         tests/test_qc_template_upgrade.py -v
+     → all pass.
+
+V4 — grep verification:
+     grep -c "_is_user_in_task_company\|_resolve_task_company_name" \
+         backend/contractor_ops/router.py
+     → 2 (definitions).
+
+     grep -c "_is_user_in_task_company\|_resolve_task_company_name" \
+         backend/contractor_ops/tasks_router.py
+     → ≥ 3 (1 import + ≥2 uses).
+
+     grep -c "is_my_assignee" backend/contractor_ops/tasks_router.py
+     → ≥ 1.
+
+     grep -c "task.company_name\|task\?.is_company_member" \
+         frontend/src/pages/TaskDetailPage.js
+     → ≥ 2.
+
+     grep -c "is_my_assignee\|משויך אלי\|החברה שלי" \
+         frontend/src/pages/ | head
+     → ≥ 1 (in the contractor list page).
+
+     grep -c "user_id.*1.*role.*1\|create_index.*user_id.*role" \
+         backend/server.py
+     → ≥ 1 (the new compound index).
+
+     grep -c "MGMT_ROLES_FOR_LIST\|mgmt_memberships" \
+         backend/contractor_ops/tasks_router.py
+     → ≥ 2 (the mixed-role fix).
+
+V5 — Visual smoke deferred to Zahi after deploy.
+
+  Phase A (staging — easy reproducer):
+  a) Login as super_admin in staging.
+  b) Find/create a defect assigned to a company "X" with NO specific
+     assignee (assignee_id=null).
+  c) Login as a contractor in company "X".
+  d) Verify the defect appears in their dashboard with badge "👥 החברה שלי".
+  e) Open the defect → company name shows "X" (not "לא שויך").
+  f) Yellow proof card visible, can submit.
+
+  g) Find a defect ALSO assigned to that contractor specifically
+     (assignee_id=contractor.id).
+  h) Verify it appears in dashboard with badge "🔵 משויך אלי".
+  i) Open it → same proof flow works.
+
+  j) Find a defect in a DIFFERENT company (not the contractor's).
+  k) Verify it does NOT appear in the contractor's dashboard.
+
+  Phase B (production verification — plot 810):
+  l) Have WUyoughong open his dashboard.
+     ✅ Sees only defects of company "גמרים" (his company).
+     ✅ a7e94375 shows "🔵 משויך אלי", others show "👥 החברה שלי".
+  m) Open one of the unassigned-but-same-company defects (8b503b73).
+     ✅ Company shows "גמרים" (not "לא שויך").
+     ✅ Yellow proof card visible.
+  n) Submit a proof.
+     ✅ POST returns 200, status advances to pending_manager_approval.
+     ✅ assignee_id unchanged (still null on this defect).
+  o) PM gets notified, can approve (existing flow).
+  p) WhatsApp to original assignee unchanged behavior (no extra notifications).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (0.1-0.6 grep outputs, including the contractor
+    list page found in 0.4).
+  - Per-file diff (3 backend files + 1-2 frontend, ~80 LOC + 120 LOC test).
+  - V1-V4 outputs.
+  - V5 deferred-to-Zahi note (scenarios a-p).
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+
+.local/.commit_message:
+  fix(tasks): contractor visibility, company display, proof flow
+
+  Three production bugs reported 2026-05-07/08 from real contractor
+  use on plot 810. All bundled in one batch because they share root
+  cause area (contractor access to defects).
+
+  BUG 1 — Company name shows "לא שויך" to contractors.
+   Frontend getCompanyName() relied on projectCompanies state which
+   is loaded only for management. Backend now returns company_name
+   directly on GET /tasks/{id}.
+
+  BUG 2 — Contractor sees ALL defects in their projects.
+   tasks_router.py L287 was checking `user.role == 'contractor'` as
+   the global role only. Contractors with user.role='user' and
+   membership.role='contractor' were bypassing the filter for the
+   cross-project dashboard list (no project_id). Now we widen
+   detection to consider per-project memberships, AND add per-project
+   (project_id + company_id) conditions for cross-project requests.
+
+  BUG 3 — Contractor in company can't close company-assigned defect.
+   Frontend showContractorProof and backend /contractor-proof both
+   required isAssignee strict. Now both accept isAssignee OR
+   isCompanyMember (member of the task's assigned company).
+
+   assignee_id is NEVER reassigned. WhatsApp / reminders still go to
+   the original assignee only — UNCHANGED.
+
+  Plus UI badge in contractor list:
+   - "🔵 משויך אלי" when is_my_assignee=true
+   - "👥 החברה שלי" otherwise
+
+  No DB migration. No native files. Frontend OTA via Capgo. No new
+  endpoints. Existing endpoints widened or augmented with non-PII fields.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (greps 0.1-0.7; output at top of review.txt).
+2. PART 1 — _is_user_in_task_company + _resolve_task_company_name helpers.
+3. PART 2 — tasks_router.py 4 changes (import, GET task body, list filter
+   with mixed-role mgmt fix, /contractor-proof guard).
+4. PART 3 — TaskDetailPage company_name + isCompanyMember + showContractorProof.
+5. PART 4 — Contractor list page badge.
+6. PART 5 — server.py: add (user_id, role) compound index.
+7. PART 6 — New test file (T1-T10).
+8. Run V1-V4.
+9. Generate review.txt + .local/.commit_message.
+10. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+3-4 files revert. All 3 bugs return. No data corruption — changes
+broaden access checks and add non-PII fields; reverting tightens them
+back. No DB writes introduced; no migration to undo.
+
+NO impact on:
+- Manager flows (force close, approve, reject, reopen).
+- WhatsApp / notifications (intentionally unchanged).
+- QC, matrix, handover, safety modules.
+- assignee_id values in DB.
+
+================================================================================
+RISK
+================================================================================
+
+- The cross-project filter (PART 2 LOCATION 2.3) builds a $or with one
+  clause per contractor membership. For contractors in many projects
+  (>50), this could produce a large query. Limited to 200 memberships
+  via to_list(200). MongoDB handles $or with ~hundreds of clauses fine.
+- task.company_name is a new field, never populated before. Frontend
+  uses it as first preference but falls through to existing logic if
+  null — no breakage for existing use.
+- is_my_assignee is computed at query time, no schema change.
+- The widened is_contractor check adds 2-3 extra DB queries per
+  /api/tasks call:
+    1. find_one project_memberships where user_id, role='contractor'
+    2. find project_memberships where user_id, role='contractor'
+    3. find project_memberships where user_id, role IN MGMT_ROLES
+  PART 5 adds the (user_id, role) compound index that covers all
+  three. Without the index these would be collection scans.
+- Mixed-role users (contractor in A + management in B) are rare but
+  exist (e.g. a project_manager who's also a contractor on a
+  different project). The MGMT_ROLES_FOR_LIST condition handles them
+  correctly; covered by T10.
+
+================================================================================
+END OF SPEC
+================================================================================

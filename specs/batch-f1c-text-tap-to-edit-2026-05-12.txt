@@ -1,0 +1,503 @@
+================================================================================
+BATCH F.1c — Photo text labels: tap-to-edit existing labels
+================================================================================
+Date:           2026-05-12
+Branch:         staging  (NOT main)
+Severity:       P3 — third and FINAL of three F.1 micro-batches.
+                  - F.1a ✅ size picker (shipped commit dee1879).
+                  - F.1b ✅ drag-to-move (shipped commit 29c23c0).
+                  - F.1b-hotfix-1 ✅ bbox cache (shipped commit a410b29).
+                  - F.1c ← this batch — tap-to-edit (~+55 LOC).
+
+                After F.1b-hotfix-1, tap (no drag past 10px threshold)
+                on an existing text label = currently no-op (explicitly
+                reserved for F.1c per the comment in `endStroke`).
+                F.1c repurposes this slot: pure tap → open edit
+                overlay prefilled with the label's text/color/size →
+                commit REPLACES the stroke in place; cancel leaves
+                unchanged.
+
+                Note: F.1c is IN-SESSION edit only. After Save closes
+                the modal, the JPEG is rasterized and the strokes
+                array is destroyed. Re-opening the saved photo would
+                show a fresh modal with no strokes (re-edit-after-
+                save is a separate architectural batch — out of
+                scope here).
+
+Approach:       Frontend-only. Mirror the existing F commit pattern
+                exactly — same pendingText overlay, same input,
+                same אישור / ביטול buttons. Add an optional
+                `editingIndex` field on the pendingText state that
+                tells commitPendingText whether to REPLACE
+                (editingIndex set) or APPEND (editingIndex undefined,
+                F behavior).
+
+                When entering edit, also call `setColor(stroke.color)`
+                + `setTextSize(stroke.size)` so the toolbar picker
+                UI reflects the current label's properties (and the
+                refs will pick those up via existing sync useEffects).
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only:
+                  - frontend/src/components/PhotoAnnotation.js
+                    (~+55 LOC: 1 setPendingText call in endStroke,
+                    1 branch in commitPendingText, optional reset
+                    suppression in cancel button.)
+                Total: 1 file. No backend, no DB, no env vars, no
+                new dependencies.
+
+Baseline:       origin/staging HEAD = a410b29 (F.1b-hotfix-1, 706 LOC).
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN F.1c:
+  ✅ Pure tap (no drag past threshold) on existing text label →
+     opens pendingText overlay prefilled with the label's:
+       - `text` (loaded into input.value)
+       - `color` (via setColor → updates toolbar color picker)
+       - `size` (via setTextSize → updates size picker)
+       - Anchor `x`, `y` (canvas-space, preserves position).
+  ✅ pendingText shape extended with optional `editingIndex: number`
+     field. Backward compat: missing field = create new (F behavior).
+  ✅ commitPendingText branches on `editingIndex`:
+       - If number → REPLACE strokesRef.current[editingIndex] with
+         new textStroke. Preserves position in array (so undo
+         stack ordering stays consistent).
+       - Else → APPEND (existing F behavior).
+  ✅ The label stays visible on canvas during edit — user sees the
+     pill they're editing PLUS the overlay input. Intuitive.
+  ✅ Cancel button: if `editingIndex` was set, do NOT reset picker
+     to medium / default color (user might want to keep that
+     selection for next interaction). Else (creating new) reset
+     as today.
+
+OUT of F.1c (separate batches):
+  ❌ Re-edit AFTER save (would require persisting strokes server-
+     side as JSON alongside the JPEG — architectural change).
+     Tracked as separate "re-editable annotations" backlog item.
+  ❌ Undo history per stroke (current undo pops the array LIFO; an
+     edit done via F.1c is one-shot — no undo-to-previous-version).
+  ❌ Delete label (tap label → "X" delete button). Future polish.
+  ❌ Multi-tap protection / debouncing (rare edge case).
+  ❌ Long-press → context menu (different interaction pattern).
+
+================================================================================
+STEP 0 — PRE-FLIGHT (5 PASS) — RUN BEFORE EDITING
+================================================================================
+
+1. Confirm origin/staging HEAD = a410b29 (F.1b-hotfix-1):
+   $ git log origin/staging --oneline -3
+   →  Expect HEAD = a410b29 (Improve photo text label dragging and
+      tapping accuracy) → 29c23c0 (F.1b drag) → dee1879 (F.1a size).
+   ✓ If HEAD ≠ a410b29 → STOP, sync needed.
+
+2. Confirm file at 706 LOC:
+   $ wc -l frontend/src/components/PhotoAnnotation.js
+   →  Expect: 706.
+   ✓ If different → drift detected.
+
+3. Confirm endStroke contains the "reserved for F.1c edit, no-op
+   here" comment (the slot we're repurposing):
+   $ grep -n "reserved for F.1c" frontend/src/components/PhotoAnnotation.js
+   →  Expect: 2 hits (one in startStroke comment, one in endStroke
+      comment). The endStroke one is where edit logic plugs in.
+
+4. Confirm commitPendingText callback structure:
+   $ grep -nA 16 "const commitPendingText = useCallback" \
+       frontend/src/components/PhotoAnnotation.js
+   →  Expect: setPendingText(curr => ...) wrapper with textStroke
+      construction + array append.
+   ✓ F.1c adds a branch INSIDE this wrapper.
+
+5. Confirm pendingText shape today (3 fields):
+   $ grep -n "{ x: pos.x, y: pos.y, value:" \
+       frontend/src/components/PhotoAnnotation.js
+   →  Expect: 1 hit in startStroke (F's text mode setPendingText).
+   ✓ F.1c extends to optionally include `editingIndex`.
+
+================================================================================
+LOCATION 1 — endStroke pure-tap branch: open edit overlay
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the text drag branch inside `endStroke` (currently at L387-403).
+
+ANCHOR (find this block — exact lines may shift; match by content):
+  const endStroke = () => {
+    // BATCH F.1b — text drag branch (precedes the freehand path).
+    if (draggingTextRef.current) {
+      const drag = draggingTextRef.current;
+      draggingTextRef.current = null;
+
+      // Only sync to state if user actually dragged. Pure taps
+      // (no movement past threshold) leave state untouched —
+      // reserved for F.1c edit, no-op here.
+      if (drag.hasMovedPastThreshold) {
+        // strokesRef was mutated in place — sync to React state so
+        // undo stack + parent re-renders see the new position.
+        setStrokes([...strokesRef.current]);
+      }
+      return;
+    }
+
+REPLACE WITH:
+  const endStroke = () => {
+    // BATCH F.1b — text drag branch (precedes the freehand path).
+    if (draggingTextRef.current) {
+      const drag = draggingTextRef.current;
+      draggingTextRef.current = null;
+
+      if (drag.hasMovedPastThreshold) {
+        // BATCH F.1b — strokesRef was mutated in place — sync to React
+        // state so undo stack + parent re-renders see the new position.
+        setStrokes([...strokesRef.current]);
+        return;
+      }
+
+      // BATCH F.1c (2026-05-12) — pure tap on an existing label (no
+      // movement past threshold) = open edit overlay prefilled with
+      // the label's current text/color/size. editingIndex tells
+      // commitPendingText to REPLACE (not append). Color/size set
+      // via state setters so the toolbar UI also reflects the
+      // edited label's properties.
+      const stroke = strokesRef.current[drag.strokeIndex];
+      if (stroke && (stroke.type || 'stroke') === 'text') {
+        setPendingText({
+          x: stroke.x,
+          y: stroke.y,
+          value: stroke.text || '',
+          editingIndex: drag.strokeIndex,
+        });
+        setColor(stroke.color || '#ef4444');
+        setTextSize(stroke.size || 'medium');
+      }
+      return;
+    }
+
+Notes:
+- Early-return inside the dragged branch keeps the code tidy.
+- `setColor` + `setTextSize` propagate to `colorRef` / `textSizeRef`
+  via existing sync useEffects, so when user commits the edit, the
+  refs have the current (possibly user-modified) values.
+- The label stays visible on canvas during edit — F.1c doesn't
+  remove it. Commit replaces; cancel leaves untouched.
+
+================================================================================
+LOCATION 2 — commitPendingText: branch on editingIndex
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the body of `commitPendingText` useCallback (currently L485-504).
+
+ANCHOR (find this block):
+  const commitPendingText = useCallback(() => {
+    setPendingText(curr => {
+      if (!curr || !curr.value.trim()) return null;
+      const textStroke = {
+        type: 'text',
+        color: colorRef.current,
+        // BATCH F.1a — capture size at commit time (same pattern as color).
+        size: textSizeRef.current,
+        x: curr.x,
+        y: curr.y,
+        text: curr.value.trim(),
+      };
+      strokesRef.current = [...strokesRef.current, textStroke];
+      setStrokes(prev => [...prev, textStroke]);
+      redraw([...strokesRef.current]);
+      return null;
+    });
+    // BATCH F.1a — reset to default for next label.
+    setTextSize('medium');
+  }, [redraw]);
+
+REPLACE WITH:
+  const commitPendingText = useCallback(() => {
+    setPendingText(curr => {
+      if (!curr || !curr.value.trim()) return null;
+      const textStroke = {
+        type: 'text',
+        color: colorRef.current,
+        // BATCH F.1a — capture size at commit time (same pattern as color).
+        size: textSizeRef.current,
+        x: curr.x,
+        y: curr.y,
+        text: curr.value.trim(),
+      };
+
+      // BATCH F.1c (2026-05-12) — branch on editingIndex. If set,
+      // REPLACE the stroke at that index (preserves array order
+      // + undo stack semantics). Else APPEND (F behavior).
+      // _bbox is intentionally omitted from the new stroke — the
+      // next redraw populates it freshly with the updated dimensions.
+      if (typeof curr.editingIndex === 'number') {
+        strokesRef.current = strokesRef.current.map((s, i) =>
+          i === curr.editingIndex ? textStroke : s
+        );
+        setStrokes([...strokesRef.current]);
+      } else {
+        strokesRef.current = [...strokesRef.current, textStroke];
+        setStrokes(prev => [...prev, textStroke]);
+      }
+      redraw([...strokesRef.current]);
+      return null;
+    });
+    // BATCH F.1a — reset to default for next label.
+    setTextSize('medium');
+  }, [redraw]);
+
+================================================================================
+LOCATION 3 — Cancel button: preserve picker state when canceling edit
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the ביטול button onClick handler in the pendingText overlay
+        (currently around L660-672).
+
+ANCHOR (find this block):
+  <button onClick={(e) => {
+            e.stopPropagation();
+            setPendingText(null);
+            // BATCH F.1a — reset size to default after cancel.
+            setTextSize('medium');
+          }}
+          className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm">
+    ביטול
+  </button>
+
+REPLACE WITH:
+  <button onClick={(e) => {
+            e.stopPropagation();
+            // BATCH F.1c — capture whether we were editing BEFORE
+            // clearing pendingText. If editing, don't reset picker
+            // state (user might still want to apply their selected
+            // color/size to the next interaction).
+            const wasEditing = typeof pendingText?.editingIndex === 'number';
+            setPendingText(null);
+            if (!wasEditing) {
+              // BATCH F.1a — reset size to default after cancel
+              // of a NEW label only.
+              setTextSize('medium');
+            }
+          }}
+          className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm">
+    ביטול
+  </button>
+
+Note: `pendingText` is read directly (not via ref) — it's the React
+state, captured by closure at render time of the cancel button.
+That's fine because the button re-renders whenever pendingText
+changes. We read the FRESH value at click time via state, not stale
+closure.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ hitTestText logic — works correctly for both drag and edit
+     entry. No change needed.
+- ❌ startStroke text-branch — hit-test setup unchanged. F.1c only
+     repurposes the endStroke pure-tap branch.
+- ❌ moveStroke text-branch — drag threshold + in-place mutation
+     unchanged.
+- ❌ Drag state (draggingTextRef) shape, threshold, sync logic.
+- ❌ Bbox cache (stroke._bbox) — populated by redraw, read by
+     hit-test. F.1c doesn't touch it. After edit commit, the next
+     redraw will repopulate _bbox on the replaced stroke.
+- ❌ F.1a size picker JSX, sync useEffect.
+- ❌ F text labels storage shape — same `{ type, color, size, x,
+     y, text }` (no new fields on the textStroke).
+- ❌ Constants (TEXT_FONT_SIZE, TEXT_PADDING_*, SIZE_MULTIPLIERS,
+     DRAG_THRESHOLD_PX, FONT_STACK).
+- ❌ Touch / mouse handlers — they call startStroke/moveStroke/
+     endStroke which now contain the new edit branch internally.
+- ❌ Save handler — reads strokesRef.current; edit-replaced
+     strokes are in there at the right index.
+- ❌ Undo handler — pops last array element; edit doesn't change
+     array length, so undo behavior unchanged (documented in
+     smoke H).
+- ❌ Cursor affordance JSX (the grab/crosshair logic).
+- ❌ Backend / parent contract / saved JPEGs.
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — File size sanity
+================================================================================
+$ wc -l frontend/src/components/PhotoAnnotation.js
+   →  Expect: ~761 lines (706 + ~55).
+   ✓ If >790 → flag scope creep.
+
+================================================================================
+VERIFY 3 — grep sanity
+================================================================================
+$ grep -n "editingIndex" frontend/src/components/PhotoAnnotation.js
+   →  Expect ~5 hits: 1 in endStroke setPendingText call, 1 in
+      commitPendingText `typeof curr.editingIndex`, 1 in commit
+      `i === curr.editingIndex`, 1 in cancel `pendingText?.editingIndex`,
+      maybe 1 in comments.
+
+$ grep -n "setColor(stroke" frontend/src/components/PhotoAnnotation.js
+   →  Expect: 1 hit in endStroke pure-tap branch.
+
+================================================================================
+VERIFY 4 — Manual smoke (DEFERRED TO ZAHI)
+================================================================================
+
+**A — Edit text content (PRIMARY):**
+  1. T → tap canvas → type "5/27" → אישור. Label appears.
+  2. Tap directly on the label (no drag).
+  EXPECT: pendingText overlay opens with "5/27" in the input.
+  Toolbar color picker shows the original color (red).
+  3. Clear input, type "10/30" → אישור.
+  EXPECT: label updates IN PLACE to "10/30". No second label
+  created. Position unchanged. Color/size unchanged.
+
+**B — Edit color:**
+  1. Add red label "X". Tap it.
+  2. Click blue color in toolbar.
+  3. Tap אישור.
+  EXPECT: label "X" now shown in BLUE. Position unchanged.
+
+**C — Edit size:**
+  1. Add medium label "TEST". Tap it.
+  2. Click "א" large in size picker (inside overlay).
+  3. Tap אישור.
+  EXPECT: label "TEST" now rendered LARGE. Position unchanged.
+
+**D — Edit text+color+size combined:**
+  1. Add small red label "A". Tap it.
+  2. Change input to "B", color to black, size to large.
+  3. אישור.
+  EXPECT: "B" in BLACK at LARGE size, same position. Single label
+  on canvas.
+
+**E — Cancel edit (label unchanged):**
+  1. Add red label "X". Tap it.
+  2. Change input to "Y", change color to blue.
+  3. Tap ביטול.
+  EXPECT: label remains "X" in RED. Picker state may show your
+  changes (blue selected, size unchanged) — user can continue
+  with those if they want a new label.
+
+**F — Edit doesn't create duplicate:**
+  1. Add 1 label. Tap it. אישור without changes.
+  EXPECT: still 1 label on canvas. Array length unchanged.
+  Position unchanged.
+
+**G — Edit then drag (independent operations):**
+  1. Add label. Tap it. Change text → אישור.
+  2. NOW drag the (updated) label.
+  EXPECT: label drags as expected. F.1b still works.
+
+**H — Edit while pendingText open (in-progress new label
+     discarded):**
+  1. T → tap empty area → pendingText opens with empty input
+     (creating new).
+  2. WITHOUT typing, tap an EXISTING label.
+  EXPECT: pure tap on existing label → endStroke pure-tap branch
+  OVERWRITES pendingText with edit data for the existing label.
+  In-progress new label (empty value anyway) is discarded.
+  Toolbar color/size picker syncs to the EDITED label's values.
+
+**I — Edit + Undo limitation (documented):**
+  1. Add label "A". Edit "A" → "B" → אישור.
+  2. Tap Undo.
+  EXPECT: "B" disappears (array element popped). The edit history
+  is NOT preserved — undo doesn't restore "A".
+  This is the SAME as how drag + undo works (F.1b smoke I) —
+  consistent architectural behavior. Undo enhancement is a future
+  batch.
+
+**J — Hit-test on edited label still works (regression check):**
+  1. Add label "A". Edit "A" → "AA" → אישור.
+  2. Tap on the now-larger "AA" label.
+  EXPECT: edit overlay opens again with "AA" in input.
+  (This verifies _bbox was repopulated by redraw after the edit.)
+
+**K — Stacked labels (edit topmost):**
+  1. Add "X" → add "Y" on top of "X".
+  2. Tap overlap (no drag).
+  EXPECT: edit overlay opens with "Y" (topmost). "X" untouched.
+
+**L — Edit + Save flow:**
+  1. Add label "v1". Edit to "v2". Tap Save.
+  EXPECT: photo uploads with "v2" rasterized. Modal closes.
+
+**M — Cross-platform:**
+  - Test A + B + C on iPhone (Capacitor) AND Android.
+  EXPECT: edit overlay opens reliably. Picker UI syncs to label
+  properties.
+
+================================================================================
+RISK
+================================================================================
+Low. Pure additive feature; reuses existing pendingText overlay,
+commitPendingText callback structure, and the F.1b "pure tap" slot
+that was explicitly reserved.
+
+- ⚠ `editingIndex` is an OPTIONAL field on pendingText. Code checks
+  `typeof curr.editingIndex === 'number'` to differentiate edit
+  from new. Missing field = new (F default).
+- ⚠ `setColor` + `setTextSize` calls in endStroke trigger React
+  re-renders. The toolbar picker reflects new values before the
+  user even sees the input — feels instant.
+- ⚠ Replace via `.map()` creates a new array reference each commit.
+  Necessary because React reconciles by reference; mutating in
+  place wouldn't trigger re-render of components that depend on
+  strokes state.
+- ⚠ `_bbox` is intentionally NOT copied to the replacement stroke
+  (new textStroke object has fresh fields). The next redraw
+  populates _bbox with the EDITED label's actual dimensions —
+  hit-test stays accurate for subsequent taps.
+- ⚠ Cancel suppression of size-reset only applies when EDITING.
+  Pure new-label cancel still resets to medium (F.1a behavior
+  preserved).
+- ⚠ Undo over edit removes the (edited) stroke entirely.
+  Architectural consistency with F.1b drag; not a new defect.
+- ⚠ Re-edit AFTER save (re-opening JPEG) is NOT addressed —
+  out of scope, separate backlog item.
+
+Bundle size: zero (no new imports).
+Performance: 1 extra array .map() per commit (O(n)). Negligible.
+Backend / schema / env / payment / billing: zero touch.
+
+Why F.1c is safe to ship after F + F.1a + F.1b + hotfix-1:
+- The "tap = no-op" slot was explicitly reserved.
+- Hit-test, drag, and bbox cache already battle-tested green.
+- Edit reuses the same overlay + commit pipeline as create.
+- Only diff: branch on editingIndex.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+- Reverts F.1c only. F + F.1a + F.1b + hotfix-1 remain shipped.
+- Edit feature gone, but tap-on-label remains no-op (reserved
+  slot still inert — same as F.1b pre-F.1c state).
+- No data loss — text strokes in existing JPEGs already
+  rasterized at the time they were saved.
+
+================================================================================
+DONE WITH F.1 SERIES
+================================================================================
+After F.1c ships green, the F.1 micro-batch series is complete:
+  - F           ✅ text labels (white pill, 3 colors, fixed 18px).
+  - F.1a        ✅ size picker (small / medium / large).
+  - F.1b        ✅ drag-to-move.
+  - F.1b-hf-1   ✅ bbox cache + 44×44 min touch area.
+  - F.1c        ← this batch — tap-to-edit.
+
+Future related batches (backlog):
+  - F.2 (already spec'd) — discard "X" close button.
+  - Re-editable annotations — persist strokes server-side
+    (architectural, larger batch).
+  - Delete label — tap → "X" button on the pill.
+  - Undo history per stroke — preserve pre-edit/pre-drag versions.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

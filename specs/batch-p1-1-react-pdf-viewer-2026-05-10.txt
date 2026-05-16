@@ -1,0 +1,797 @@
+================================================================================
+BATCH P1.1 — Plans Phase 1: react-pdf viewer foundation (P1)
+================================================================================
+Date:           2026-05-10
+Branch:         staging  (NOT main)
+Severity:       P1 — feature add. First of 4 sub-batches in Plans Phase 1
+                MVP. Standalone value: 10x better plan viewing experience.
+                No backend changes, no schema changes, no migrations.
+                Foundation for P1.2 (tap-to-pin), P1.3 (context-aware
+                opening + pin overlay), P1.4 (offline + polish).
+Files changed:  Frontend only:
+                  - frontend/package.json (+1 dependency: react-pdf)
+                  - frontend/src/components/PlanViewer.js (NEW, ~250 LOC)
+                  - frontend/src/pages/ProjectPlansPage.js (~10 LOC change)
+                  - frontend/src/pages/UnitPlansPage.js (~10 LOC change)
+                Total: 1 NEW + 3 EDIT, ~280 LOC.
+Pre-flight:     Discovery review at
+                /specs/discovery-plans-feature-audit-2026-05-10.txt
+                provides full context. Today's PDF rendering is
+                <iframe src={file_url} className="h-64"> — a 256px-tall
+                modal iframe with no zoom/pan/page-nav inside the app.
+                Users always escape to "open in new tab" to actually view.
+
+CONTEXT
+-------
+This batch replaces the iframe with a real PDF.js-based viewer in a
+full-screen modal. NOT adding pin/coordinate/defect-linkage yet — that
+is P1.2. Foundation only.
+
+User-visible change after this batch:
+  - Tap a plan card → modal opens
+  - Modal is **FULL-SCREEN** (was 256px iframe)
+  - Pinch-to-zoom + pan + page navigation work natively
+  - Multi-page PDFs render with page selector
+  - For non-PDF files (image/jpg/png/heic/webp/dwg/dxf/xlsx):
+    keep existing behavior (image preview OR file icon + "open in new tab")
+  - The "צפה" external-tab button stays as fallback
+
+What NOT changed:
+  - Plan upload flow (untouched)
+  - Plan list / filter / search UI (untouched)
+  - Versioning / archive / replace / history (untouched)
+  - Backend (zero changes)
+  - Task / defect schema (no plan_id added — that's P1.2)
+
+Sample plans confirmed (real prod data — Zahi uploaded 2026-05-10):
+  - 801A-6-003.pdf (1.6MB) — Floor 6 architecture, plot 801A
+  - 191111_801-6-4.pdf (1.1MB) — Floor electrical, plot 801
+  - building 4 apt 35 plans: HVAC / electrical / plumbing / construction /
+    general bathroom layout (תוכנית שינויי דיירים style)
+  - plot-level: site plan, basement drainage, sprinklers, water system
+
+PDF.js handles 50MB cap easily. Test with these sample files first.
+
+STEP 0 — MANDATORY PRE-FLIGHT
+=============================
+
+  # 1. Confirm React version (react-pdf v9 supports React 18+, may need
+  #    v9.2+ or 10.x for full React 19 support — check before install)
+  grep -E '"react":\s*"\^?19' frontend/package.json
+  # EXPECT: "^19.0.0"
+
+  # 2. Confirm no existing react-pdf install
+  grep -E '"react-pdf"|"pdfjs-dist"' frontend/package.json
+  # EXPECT: empty (no hits — we're adding fresh)
+
+  # 3. Confirm iframe locations to replace
+  grep -n '<iframe src={detailPlan.file_url}' frontend/src/pages/ProjectPlansPage.js \
+                                              frontend/src/pages/UnitPlansPage.js
+  # EXPECT 2 hits:
+  #   ProjectPlansPage.js:1011 — detail modal iframe
+  #   UnitPlansPage.js:610      — detail modal iframe (similar structure)
+
+  # 4. Confirm modal pattern is consistent (will reuse fixed inset-0 z-50)
+  grep -n '"fixed inset-0 z-50' frontend/src/pages/ProjectPlansPage.js | head -3
+  # EXPECT: line ~995 (detail modal) + others (upload/seen/replace modals)
+
+  # 5. Confirm React 19 + react-pdf compatibility
+  # Use react-pdf 9.2.0+ which supports React 19 per release notes.
+  # If install fails with peer-dep error, escalate to Zahi before
+  # attempting workarounds.
+
+  # 6. Verify postinstall portability (NEW — addresses concern that
+  # `cp -f` is Unix-only). Today's environments are all Linux:
+  #   - Replit Cloud Workspace (where Replit Agent runs): Linux
+  #   - Cloudflare Pages CI: Linux
+  #   - Zahi's local dev (Mac for ./ship.sh): macOS (Unix-compatible)
+  # No Windows in the loop today. SAFE to use `cp -f` per LOCATION 1.5.
+  #
+  # If a Windows dev joins the team in the future, swap to Node-based
+  # copy (cross-platform):
+  #   "postinstall-copy-pdfworker": "node -e \"require('fs').copyFileSync('node_modules/pdfjs-dist/build/pdf.worker.min.mjs', 'public/pdf.worker.min.mjs')\""
+  #
+  # NO ACTION NEEDED in this batch. Just documenting the future
+  # migration path. Spec ships with `cp -f` for simplicity.
+
+If ANY pre-flight returns different content → STOP and report.
+
+PART 1 — FRONTEND
+=================
+
+LOCATION 1.1 — Install react-pdf
+--------------------------------
+
+   Run:
+     cd frontend && yarn add react-pdf@^9.2.0
+
+   Expected dependencies added to package.json:
+     "react-pdf": "^9.2.0"
+     (pdfjs-dist will be added as transitive peer-dep automatically)
+
+   If yarn complains about React 19 peer-dep:
+     → STOP. Do not use --force or --legacy-peer-deps.
+     → Try `yarn add react-pdf@latest pdfjs-dist@latest` for explicit
+       versions. If still fails → report to Zahi for compat decision.
+
+
+LOCATION 1.2 — NEW component: PlanViewer.js
+-------------------------------------------
+
+   Path: frontend/src/components/PlanViewer.js
+
+   Full content:
+
+     import React, { useState, useCallback, useRef, useEffect } from 'react';
+     import { Document, Page, pdfjs } from 'react-pdf';
+     import { ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Loader2, X, Download, Eye } from 'lucide-react';
+
+     // 2026-05-10 — react-pdf worker setup. CRITICAL: bundle the worker
+     // LOCALLY (not via CDN) for two reasons:
+     //   1. Capacitor native app fails CDN fetches when offline (and
+     //      may also fail under Capacitor CSP). P1.4 requires offline,
+     //      so we MUST self-host the worker.
+     //   2. Removing external CDN dependency = no single-point-of-failure
+     //      and no CDN cold-start latency.
+     //
+     // Approach: copy the worker file to frontend/public/ at build time
+     // via a postinstall script, then reference relatively. This is the
+     // most CRA-friendly path; the alternative (Webpack `?url` import)
+     // requires custom webpack config which CRA hides.
+     //
+     // See LOCATION 1.5 for the postinstall script that copies the
+     // worker file.
+     pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+
+     /**
+      * PlanViewer — full-screen modal viewer for plan files.
+      *
+      * Phase 1.1 scope: pure viewer. NO pin/coordinate/defect-linkage
+      * (that's P1.2). NO context-aware opening (P1.3). NO offline (P1.4).
+      *
+      * Renders:
+      *   - PDF: via react-pdf (PDF.js + Web Worker). Zoom + pan + page nav.
+      *   - Image (jpg/png/heic/webp): native <img> with pinch-zoom CSS.
+      *   - Other (dwg/dxf/xlsx): icon + "open in external app" link.
+      *
+      * Coordinate system note (for P1.2): when we render Page, we know
+      * the rendered width/height. Coordinates for pins will be stored
+      * as proportional values (0..1, 0..1) so they survive scale changes
+      * and re-renders at different pixel resolutions.
+      */
+     const PlanViewer = ({ plan, onClose }) => {
+       const [numPages, setNumPages] = useState(null);
+       const [pageNumber, setPageNumber] = useState(1);
+       const [scale, setScale] = useState(1.0);
+       const [loadError, setLoadError] = useState(null);
+       const [loading, setLoading] = useState(true);
+       const containerRef = useRef(null);
+
+       // Reset state when plan changes
+       useEffect(() => {
+         setNumPages(null);
+         setPageNumber(1);
+         setScale(1.0);
+         setLoadError(null);
+         setLoading(true);
+       }, [plan?.id, plan?.file_url]);
+
+       const handleLoadSuccess = useCallback(({ numPages }) => {
+         setNumPages(numPages);
+         setLoading(false);
+       }, []);
+
+       const handleLoadError = useCallback((error) => {
+         console.error('[PlanViewer] PDF load error:', error);
+         setLoadError(error?.message || 'שגיאה בטעינת התוכנית');
+         setLoading(false);
+       }, []);
+
+       const isPdf = plan?.file_type === 'application/pdf';
+       const isImage = (plan?.file_type || '').startsWith('image/');
+
+       const zoomIn = useCallback(() => setScale(s => Math.min(s + 0.25, 4.0)), []);
+       const zoomOut = useCallback(() => setScale(s => Math.max(s - 0.25, 0.5)), []);
+       const prevPage = useCallback(() => setPageNumber(p => Math.max(p - 1, 1)), []);
+       const nextPage = useCallback(() => setPageNumber(p => Math.min(p + 1, numPages || 1)), [numPages]);
+
+       if (!plan) return null;
+
+       return (
+         <div className="fixed inset-0 z-[60] flex flex-col bg-slate-900" dir="rtl">
+           {/* Top bar — title + close + external open + download */}
+           <div className="flex items-center justify-between gap-2 px-4 py-3 bg-slate-800 text-white shrink-0">
+             <div className="flex items-center gap-2 min-w-0">
+               <h3 className="text-sm font-bold truncate">
+                 {plan.name || plan.original_filename}
+               </h3>
+               {isPdf && numPages > 1 && (
+                 <span className="text-xs text-slate-300 bg-slate-700 px-2 py-0.5 rounded shrink-0">
+                   {pageNumber} / {numPages}
+                 </span>
+               )}
+             </div>
+             <div className="flex items-center gap-1 shrink-0">
+               <a
+                 href={plan.file_url}
+                 target="_blank"
+                 rel="noopener noreferrer"
+                 className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+                 title="פתח בכרטיסייה חדשה"
+                 aria-label="פתח בכרטיסייה חדשה"
+               >
+                 <Eye className="w-5 h-5" />
+               </a>
+               <a
+                 href={plan.file_url}
+                 download={plan.original_filename || plan.name}
+                 className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+                 title="הורד"
+                 aria-label="הורד"
+               >
+                 <Download className="w-5 h-5" />
+               </a>
+               <button
+                 onClick={onClose}
+                 className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+                 aria-label="סגור"
+               >
+                 <X className="w-5 h-5" />
+               </button>
+             </div>
+           </div>
+
+           {/* Viewer area — outer container scrolls, inner container
+                centers content when it fits, left-aligns when it
+                overflows. Critical: do NOT put `flex items-center
+                justify-center` on the outer scrolling container — it
+                fights with overflow when content > viewport. The
+                two-layer pattern (outer overflow-auto + inner
+                min-w-full min-h-full flex center) lets the user
+                pinch-zoom + pan to corners. */}
+           <div
+             ref={containerRef}
+             className="flex-1 overflow-auto bg-slate-700"
+             style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
+           >
+             <div className="min-w-full min-h-full flex items-center justify-center p-4">
+               {loading && isPdf && (
+                 <div className="flex flex-col items-center gap-2 text-white">
+                   <Loader2 className="w-8 h-8 animate-spin" />
+                   <span className="text-sm">טוען תוכנית…</span>
+                 </div>
+               )}
+
+               {loadError && (
+                 <div className="flex flex-col items-center gap-3 text-white p-6 text-center">
+                   <span className="text-sm text-red-300">{loadError}</span>
+                   <a
+                     href={plan.file_url}
+                     target="_blank"
+                     rel="noopener noreferrer"
+                     className="text-amber-400 underline text-sm"
+                   >
+                     פתח בכרטיסייה חדשה
+                   </a>
+                 </div>
+               )}
+
+               {isPdf && !loadError && (
+                 <Document
+                   file={plan.file_url}
+                   onLoadSuccess={handleLoadSuccess}
+                   onLoadError={handleLoadError}
+                   loading=""
+                   error=""
+                 >
+                   <Page
+                     pageNumber={pageNumber}
+                     scale={scale}
+                     renderTextLayer={false}
+                     renderAnnotationLayer={false}
+                   />
+                 </Document>
+               )}
+
+               {/* For images: use width-based scaling (lets the image
+                    REFLOW the container so the outer overflow-auto can
+                    scroll). CSS transform: scale() looks zoomed but
+                    breaks scroll because the layout box stays the
+                    original size. width: ${scale*100}% IS the right
+                    primitive here. maxWidth:none overrides the
+                    object-contain default that would clamp the image. */}
+               {isImage && (
+                 <img
+                   src={plan.file_url}
+                   alt={plan.name || ''}
+                   style={{
+                     width: `${scale * 100}%`,
+                     maxWidth: 'none',
+                     height: 'auto',
+                     display: 'block',
+                   }}
+                 />
+               )}
+
+               {!isPdf && !isImage && !loadError && (
+                 <div className="flex flex-col items-center gap-3 text-white p-6 text-center">
+                   <span className="text-sm">סוג קובץ לא נתמך לתצוגה מקדימה.</span>
+                   <a
+                     href={plan.file_url}
+                     target="_blank"
+                     rel="noopener noreferrer"
+                     className="text-amber-400 underline text-sm"
+                   >
+                     פתח בכרטיסייה חדשה
+                   </a>
+                 </div>
+               )}
+             </div>
+           </div>
+
+           {/* Bottom bar — zoom + page nav (PDF only) */}
+           <div className="flex items-center justify-center gap-2 px-4 py-3 bg-slate-800 text-white shrink-0">
+             <button
+               onClick={zoomOut}
+               disabled={scale <= 0.5}
+               className="p-2 hover:bg-slate-700 disabled:opacity-30 rounded-lg transition-colors"
+               aria-label="זום אאוט"
+             >
+               <ZoomOut className="w-5 h-5" />
+             </button>
+             <span className="text-xs text-slate-300 min-w-[3rem] text-center">
+               {Math.round(scale * 100)}%
+             </span>
+             <button
+               onClick={zoomIn}
+               disabled={scale >= 4.0}
+               className="p-2 hover:bg-slate-700 disabled:opacity-30 rounded-lg transition-colors"
+               aria-label="זום אין"
+             >
+               <ZoomIn className="w-5 h-5" />
+             </button>
+
+             {isPdf && numPages > 1 && (
+               <>
+                 <div className="w-px h-6 bg-slate-600 mx-2" />
+                 <button
+                   onClick={prevPage}
+                   disabled={pageNumber <= 1}
+                   className="p-2 hover:bg-slate-700 disabled:opacity-30 rounded-lg transition-colors"
+                   aria-label="עמוד קודם"
+                 >
+                   <ChevronRight className="w-5 h-5" />
+                 </button>
+                 <span className="text-xs text-slate-300 min-w-[4rem] text-center">
+                   {pageNumber} / {numPages}
+                 </span>
+                 <button
+                   onClick={nextPage}
+                   disabled={pageNumber >= numPages}
+                   className="p-2 hover:bg-slate-700 disabled:opacity-30 rounded-lg transition-colors"
+                   aria-label="עמוד הבא"
+                 >
+                   <ChevronLeft className="w-5 h-5" />
+                 </button>
+               </>
+             )}
+           </div>
+         </div>
+       );
+     };
+
+     export default PlanViewer;
+
+   Notes on the component:
+   - z-[60] ensures it sits ABOVE the existing detail modal (which is z-50).
+     Architecture: user clicks a card → existing detail modal opens (z-50)
+     → user clicks "fullscreen view" button → PlanViewer opens on top (z-60).
+     OR alternative: detail modal can replace iframe with PlanViewer
+     embedded inline. We'll go with the SECOND approach for P1.1 (simpler:
+     replace the iframe inside the existing detail modal). Z-index won't
+     matter — see LOCATION 1.3.
+   - touchAction CSS hints to mobile browsers: yes, allow pinch-zoom and
+     pan inside this div. Necessary for native pinch-zoom on canvas.
+   - renderTextLayer + renderAnnotationLayer disabled: not needed for
+     viewing, reduces render cost. Re-enable in P1.2 if pin overlay
+     uses annotation layer (probably won't — pins will be a custom layer).
+   - Image rendering uses CSS scale transform — not as smooth as PDF
+     pinch-zoom but acceptable. Mobile native pinch on <img> works
+     because we're INSIDE a touch-action: pinch-zoom container.
+
+
+LOCATION 1.3 — ProjectPlansPage.js: replace iframe in detail modal
+-------------------------------------------------------------------
+
+   Find (around L1011, inside the detail modal at L995):
+
+     ) : (detailPlan.file_type === 'application/pdf') ? (
+       <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50 h-64">
+         <iframe src={detailPlan.file_url} title={detailPlan.name || ''} className="w-full h-full" />
+       </div>
+     ) : (
+
+   Replace with: keep this small thumbnail inline in detail modal as a
+   PREVIEW (h-64), and add a "צפייה במסך מלא" button that opens
+   PlanViewer.
+
+   Actually simpler approach for P1.1: KEEP the inline 256px iframe as a
+   thumbnail (so users see something in the modal preview), and ADD a
+   new "צפייה במסך מלא" button next to the existing "צפה" / "הורד"
+   buttons. Clicking it opens PlanViewer in full-screen.
+
+   Concrete edits:
+
+   a) Add import at top of ProjectPlansPage.js (~L1-30 area, with other
+      lazy imports if used). Use React.lazy to avoid bloating initial
+      bundle:
+
+        const PlanViewer = React.lazy(() => import('../components/PlanViewer'));
+
+      Or eager import if React.lazy isn't used elsewhere on this page:
+
+        import PlanViewer from '../components/PlanViewer';
+
+      Choose the pattern matching the rest of the file. Check L1-30
+      first.
+
+   b) Add new state near the other modal state (around L114):
+
+        const [fullscreenPlan, setFullscreenPlan] = useState(null);
+
+   c) Add new button in the detail modal action row (search for
+      "<a href={detailPlan.file_url} target="_blank"" — that's the "צפה"
+      button at the bottom of the detail modal). Add a button BEFORE it:
+
+        <button
+          onClick={() => setFullscreenPlan(detailPlan)}
+          className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2"
+        >
+          <Maximize2 className="w-4 h-4" />
+          צפייה במסך מלא
+        </button>
+
+      Add `Maximize2` to lucide-react imports at top.
+
+   d) Render PlanViewer at end of return JSX (before final closing `</div>`):
+
+        {fullscreenPlan && (
+          <Suspense fallback={null}>
+            <PlanViewer
+              plan={fullscreenPlan}
+              onClose={() => setFullscreenPlan(null)}
+            />
+          </Suspense>
+        )}
+
+      Add `Suspense` to React imports at top if React.lazy is used.
+
+   IMPORTANT:
+   - Do NOT remove the existing iframe — keep it as a 256px preview
+     inside the detail modal. Users get a thumbnail glance + "fullscreen"
+     button for the real viewing experience.
+   - Do NOT change the detail modal's layout, the upload modal, the
+     plan card grid, the filter logic, or anything else. ONLY add the
+     new button + PlanViewer render.
+
+
+LOCATION 1.5 — Self-host pdfjs-dist worker (CRITICAL for offline + Capacitor)
+-----------------------------------------------------------------------------
+
+   The PlanViewer points workerSrc to `/pdf.worker.min.mjs` (relative,
+   self-hosted). We must copy the worker file from `node_modules/pdfjs-dist`
+   to `frontend/public/` so it's bundled with the app.
+
+   Approach: add a postinstall script to frontend/package.json:
+
+   a) Add to frontend/package.json scripts section:
+
+        "scripts": {
+          // ... existing scripts ...
+          "postinstall-copy-pdfworker": "cp -f node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs",
+          "postinstall": "yarn run postinstall-copy-pdfworker"
+        }
+
+      If `postinstall` already exists in scripts (some CI setups have it),
+      chain instead:
+        "postinstall": "<existing> && yarn run postinstall-copy-pdfworker"
+
+      Verify by running `yarn install` and confirming
+      `frontend/public/pdf.worker.min.mjs` exists (~80KB file).
+
+   b) Add to frontend/.gitignore:
+
+        # PDF.js worker copied at install time (LOCATION 1.5)
+        public/pdf.worker.min.mjs
+
+      We don't commit the worker — it's regenerated on every install.
+      This keeps the version in lockstep with pdfjs-dist version installed.
+
+   c) Verify deployment: Cloudflare Pages runs `yarn install` then
+      `yarn build`. The postinstall hook runs first → worker copied to
+      public/ → CRA build pipeline includes public/* in build output →
+      worker available at https://app.brikops.com/pdf.worker.min.mjs.
+
+   d) Capacitor: when running as native app, `/pdf.worker.min.mjs`
+      resolves to `capacitor://localhost/pdf.worker.min.mjs` which is
+      bundled into the app's assets at build time. No CDN. No network.
+      This is the architecture P1.4 (offline) needs anyway.
+
+   ALTERNATIVE if postinstall is too fragile (rejected by Replit/CI):
+     Manually copy `pdf.worker.min.mjs` to public/ once, commit it to
+     git, document the pdfjs-dist version it matches, and add a CI
+     check that errors if package version drifts from committed worker.
+     This is more brittle but visible. Default to postinstall unless
+     forced otherwise.
+
+   VERIFY this location specifically:
+     ls -lh frontend/public/pdf.worker.min.mjs
+     # EXPECT: ~80KB file present after yarn install.
+     curl -I https://staging.brikops-new.pages.dev/pdf.worker.min.mjs
+     # EXPECT after deploy: HTTP 200, content-type: text/javascript or
+     #         application/javascript.
+
+
+LOCATION 1.4 — UnitPlansPage.js: same change as 1.3
+---------------------------------------------------
+
+   UnitPlansPage.js detail modal at L592+ has a similar iframe at L610.
+   Apply the SAME 4 edits as LOCATION 1.3:
+
+   a) Import PlanViewer (lazy or eager, match file convention)
+   b) Add `fullscreenPlan` state near other modal state (~L79 area)
+   c) Add "צפייה במסך מלא" button before existing "צפה" external link
+      (around L660 in current file)
+   d) Render PlanViewer at end of return JSX before final `</div>`
+
+   Same Maximize2 icon import.
+
+   Same DO NOT touch list — just additive.
+
+
+DO NOT TOUCH
+============
+- ❌ Backend (zero changes — no schema, no endpoints, no migrations).
+- ❌ Plan upload modal (UploadModal — uploads still go through existing
+     POST /projects/:id/plans flow).
+- ❌ Plan list / search / filter UI on either page.
+- ❌ Versioning / archive / replace / history flows.
+- ❌ The existing 256px iframe — keep it as a thumbnail preview. We
+     ADD a fullscreen button, not replace the iframe.
+- ❌ Image rendering path (kept the existing `<img>` for image plans).
+- ❌ DWG/DXF/Excel — keep "open in new tab" (PDF.js doesn't render CAD).
+- ❌ React.lazy patterns elsewhere — match what the file already uses.
+
+GLOBAL VERIFY
+=============
+
+VERIFY 1 — Lint
+    cd frontend && CI=true npm run lint 2>&1 | tail -10
+    EXPECT: no new errors.
+
+VERIFY 2 — Build
+    cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
+        REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com \
+        yarn build 2>&1 | tail -20
+    EXPECT: "Compiled successfully" or with warnings only. No errors.
+    Note: build will increase by ~150KB gzipped (react-pdf + pdfjs-dist
+    worker). With React.lazy, this 150KB is split into a separate chunk
+    that loads only when first plan is opened.
+
+VERIFY 3 — Bundle inspection
+    grep -oE "react-pdf|pdfjs" frontend/build/static/js/*.js | sort -u
+    EXPECT: at least 2 hits (react-pdf + pdfjs identifiers). Confirms
+    library bundled. Should appear in a CHUNK file (e.g. 1234.abc.chunk.js)
+    not in main.js if React.lazy is used correctly.
+
+    ls -lh frontend/build/static/js/*.chunk.js | head -10
+    EXPECT: a new chunk ~150-200KB containing react-pdf code (compare
+    sizes pre- and post-edit if possible).
+
+VERIFY 4 — Manual smoke (Zahi runs after staging deploy)
+
+  Test data: use the prod-uploaded plans Zahi attached on 2026-05-10
+  (801A-6-003.pdf architecture, 191111_801-6-4.pdf electrical, plus
+  unit-specific plans for building 4 unit 35).
+
+  Test cases:
+    A. Open ProjectPlansPage → tap a PDF plan card.
+       EXPECT: existing detail modal appears with 256px thumbnail.
+       Below the thumbnail, a new "צפייה במסך מלא" button.
+
+    B. Click "צפייה במסך מלא".
+       EXPECT: full-screen viewer opens. PDF renders within ~2 seconds.
+       Page 1 visible. Top bar shows plan name. Bottom bar shows zoom
+       controls + (if multi-page) page nav.
+
+    C. Pinch-to-zoom on mobile (or use zoom buttons on desktop).
+       EXPECT: smooth scale up to 400%.
+
+    D. Pan around (drag on touch, scroll on desktop).
+       EXPECT: smooth.
+
+    E. If PDF is multi-page: tap next/prev arrows.
+       EXPECT: page changes; counter updates.
+
+    F. Click external-tab "Eye" icon in top bar.
+       EXPECT: opens plan in new browser tab (existing behavior preserved).
+
+    G. Click X to close.
+       EXPECT: returns to detail modal underneath.
+
+    H. Open an IMAGE plan (jpg/heic/png) — ProjectPlansPage upload one.
+       EXPECT: same modal flow, but in PlanViewer the image renders via
+       <img> (not PDF.js). Zoom buttons work via CSS scale.
+
+    I. Open a DWG/Excel plan.
+       EXPECT: PlanViewer shows "סוג קובץ לא נתמך לתצוגה מקדימה" with
+       link to open externally.
+
+    J. Performance with the 1.6MB sample (801A-6-003.pdf):
+       - First load (cold, 4G — fetches react-pdf chunk + worker + PDF):
+         **<8 seconds** target (realistic). Anything >12s is regression.
+       - Cached load (same session, same plan re-opened): **<2 seconds**.
+       - Re-open same plan after navigation away and back: **<2 seconds**.
+       - Pinch-zoom gesture: smooth, no lag during the gesture itself.
+
+    K. Regression: open same plan via the existing "צפה" external-tab
+       link — should still work as before (browser native PDF view).
+
+    L. Pan after zoom (catches Concern #3 from review):
+       - Open a 1.6MB PDF in PlanViewer. Zoom in to 200% (or 300%).
+       - Try to scroll/pan to see corners (top-right, bottom-left).
+       - EXPECT: viewer scrolls smoothly to all corners. Content does
+         NOT clip to viewport center.
+       - For images (jpg/png): same test — zoom 200%, can scroll to
+         corners.
+       - On mobile: pinch-zoom natively + drag-to-pan. Should feel like
+         the iOS Photos app or PDF-XChange Editor.
+
+    M. Real-device test (NOT just Chrome DevTools mobile mode):
+       - Open BrikOps on actual iPhone or Android. Open a plan.
+       - Verify pinch-zoom feels native (60fps, no lag).
+       - Verify pan/scroll after zoom works.
+       - Verify external-tab "Eye" button opens the device's native PDF
+         viewer (not stuck in webview).
+
+    N. Capacitor airplane-mode test (catches Concern #1 from review):
+       - In the BrikOps mobile app (Capacitor), open a plan. Confirm
+         it renders.
+       - Switch device to airplane mode.
+       - Re-open the SAME plan (still cached in browser memory).
+       - EXPECT: PDF still renders (worker is local, PDF was cached by
+         browser). No "worker fetch failed" error. No broken viewer.
+       - This validates that the PDF.js worker is NOT being fetched
+         from CDN. If worker fails to load → fix LOCATION 1.5.
+       - Note: PDF FILE itself may not load if not cached — that's
+         expected (P1.4 fixes that). What we're testing here: the
+         viewer infrastructure (worker) doesn't crash without internet.
+
+
+DELIVERABLES
+============
+review.txt with:
+  - Rollback SHA (origin/staging HEAD before this commit)
+  - STEP 0 grep outputs at top (all 5)
+  - LOCATION 1.1 install output (yarn add result)
+  - LOCATION 1.2 confirmation that PlanViewer.js was created (~250 LOC)
+  - LOCATION 1.3 + 1.4 diffs (~10 LOC change each)
+  - VERIFY 1 (lint), VERIFY 2 (build), VERIFY 3 (bundle) outputs
+  - VERIFY 4 manual smoke deferred to Zahi
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(plans): add full-screen react-pdf viewer (P1.1 — viewer foundation)
+
+  Replaces nothing — adds a new full-screen PDF viewer alongside the
+  existing 256px iframe thumbnail. Users tap "צפייה במסך מלא" in the
+  plan detail modal to open a real viewer with pinch-zoom, pan,
+  page navigation.
+
+  This is sub-batch 1 of 4 in Plans Phase 1 MVP:
+  - P1.1 (this batch): viewer foundation
+  - P1.2: tap-to-pin defects + Task schema extension
+  - P1.3: context-aware opening + pin density overlay
+  - P1.4: Capacitor offline cache + polish
+
+  Stack: react-pdf v9.x (Mozilla PDF.js + React wrapper), Web Worker
+  rendering, lazy-loaded chunk (~150KB gzipped, only fetched on first
+  plan open).
+
+  Out of scope:
+  - Pin/coordinate/defect linkage (P1.2)
+  - Auto-open by user context (P1.3)
+  - Offline cache (P1.4)
+  - DWG/DXF rendering (deferred indefinitely; CAD-in-browser requires
+    paid Autodesk Forge or similar)
+  - Annotations / drawing tools
+
+  No backend changes, no schema, no migrations.
+
+STEPS
+=====
+1. Run STEP 0 pre-flight (5 greps). Paste outputs at top of review.txt.
+   If any line numbers drifted → STOP and report.
+2. LOCATION 1.1: yarn add react-pdf. Confirm package.json updated +
+   yarn.lock updated. If install fails, STOP.
+3. LOCATION 1.5: add postinstall script + .gitignore entry. Run
+   `yarn install` to trigger postinstall and verify the worker file
+   was copied to frontend/public/pdf.worker.min.mjs (~80KB).
+4. LOCATION 1.2: create frontend/src/components/PlanViewer.js with the
+   full content from spec (note: workerSrc='/pdf.worker.min.mjs', NOT
+   CDN; container uses two-layer pattern; image uses width: scale*100%).
+5. LOCATION 1.3: edit ProjectPlansPage.js (4 sub-edits).
+6. LOCATION 1.4: edit UnitPlansPage.js (4 sub-edits, same pattern).
+7. Run VERIFY 1 (lint). Paste output.
+8. Run VERIFY 2 (build). Paste output. Confirm chunk size delta.
+9. Run VERIFY 3 (bundle inspection). Paste output.
+10. Run VERIFY (LOCATION 1.5 specific): confirm
+    `frontend/public/pdf.worker.min.mjs` exists post-install.
+11. Generate review.txt with diffs and outputs.
+12. Write .local/.commit_message per template above.
+13. STOP. Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+
+ROLLBACK
+========
+git revert <commit-sha>
+git checkout staging && ./deploy.sh --stag
+
+Risk: low. New component + 2 small edits. The existing iframe is left
+in place — if PlanViewer fails for some user, they can still use the
+existing 256px preview + external tab link. Backwards compatible.
+
+DEPLOY PACING
+=============
+NOT auth-area; no chained deploy concerns. Standard cadence: spec →
+Replit → review.txt → Zahi approves → staging → Zahi smoke (~15 min) →
+prod → field test with WUyoughong on plot 810 (per Zahi 2026-05-10
+discovery answer).
+
+NEXT BATCHES IN PLANS PHASE 1
+=============================
+P1.2 — Tap-to-pin + Task schema (~2 weeks):
+  - Backend: Task model gets plan_id (str, optional) +
+    plan_coordinate ({x: float 0..1, y: float 0..1, page: int}).
+  - Backend: GET /api/plans/{plan_id}/pins endpoint returning open tasks
+    with coordinates for that plan.
+  - Frontend: PlanViewer gains tap-mode (passed via prop). When user
+    taps in tap-mode, a coordinate is captured and propagated to caller
+    (NewDefectModal).
+  - Frontend: NewDefectModal gets "📍 סמן על תוכנית" button that opens
+    PlanViewer in tap-mode.
+  - Frontend: TaskDetailPage shows a small thumbnail of the plan with
+    pin marker if task.plan_id + plan_coordinate exist.
+
+P1.3 — Context-aware opening + Pin overlay (~2 weeks):
+  - When NewDefectModal opens from a unit page, pre-resolve plan via
+    Q4 algorithm (trade match → arch unit → arch floor → manual).
+  - Auto-open viewer with that plan in tap-mode.
+  - PlanViewer renders ALL open task pins for the plan (overlay layer,
+    color-coded by status). Tap pin → task detail.
+
+P1.4 — Capacitor offline cache + polish (~2 weeks):
+  - On first plan open, download PDF to Capacitor Filesystem.
+  - Subsequent opens: read from disk. Network fallback.
+  - Cache invalidation on plan.versions[].version bump.
+  - Storage budget per user (200MB) with LRU eviction.
+  - Field testing on plot 810 (real user, real conditions).
+
+  Polish items deferred to P1.4 (not P1.1):
+  - **Pre-warm PlanViewer chunk** on ProjectPlansPage / UnitPlansPage
+    mount, so first user click on a plan card feels instant:
+        useEffect(() => {
+          // Hint browser to fetch PlanViewer chunk in background.
+          // First plan click → instant; chunk arrived during browsing.
+          import('../components/PlanViewer').catch(() => { /* ok */ });
+        }, []);
+    Reason for P1.4 (not P1.1): cold-load is fine for first prod ship;
+    optimize once we have real-user latency data.
+  - **Cross-platform postinstall** if Windows dev joins. Currently
+    Linux/macOS-only via `cp -f`. See STEP 0.6 for the swap.
+  - **Worker pre-warm** — fetch /pdf.worker.min.mjs on app boot so the
+    PDF.js worker is HTTP-cached before user even opens a plan.
+
+================================================================================
+END OF SPEC
+================================================================================

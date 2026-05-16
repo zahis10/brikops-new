@@ -1,0 +1,332 @@
+================================================================================
+HOTFIX SPEC — Founder plan checkout charges wrong amount (P0)
+================================================================================
+Date:           2026-04-27
+Severity:       P0 — real customer impact (lost paying customer today)
+Branch:         staging  (NOT s7-full — separate hotfix, normal staging→prod)
+Files changed:  3 (4 line changes total) + 1 regression test
+================================================================================
+
+PROBLEM
+-------
+User selects "תוכנית מייסדים" (founder plan, ₪499/month × 6 months) in the
+subscription UI. Clicks "שלם באשראי". Backend creates a PayPlus checkout
+page showing the WRONG calculated amount (in observed case: ₪5,700 — the
+calculated price based on existing project units), instead of the correct
+₪499 founder price.
+
+Real customer reported this today. Likely lost the customer.
+
+This bug exists in commit eae605f (pre-S7) — it is NOT caused by S7.
+It was discovered today via real customer report. The S7 batch did not
+touch billing_router.py or billing.py — both are byte-identical to their
+pre-S7 state. The fix below is a separate hotfix.
+
+ROOT CAUSE
+----------
+billing_router.py:207 (in `billing_checkout`) — calls:
+
+    billing_info = await get_billable_amount(org_id, cycle)
+
+But `get_billable_amount` reads `sub.plan_id` from the DB to decide pricing:
+
+    plan_id = sub.get('plan_id', 'standard')        # ← reads DB, not pending
+    ...
+    if plan_id == 'founder_6m':
+        return {'amount': 499, ...}                  # ← founder branch
+    calc_result = await compute_org_billing_amount(org_id, cycle)
+    return {'amount': calc_result['amount_ils'], ...}  # ← falls through to calc
+
+When a user is upgrading FROM standard TO founder, the DB still says
+`plan_id='standard'` (it only flips to 'founder_6m' AFTER PayPlus webhook
+confirms payment via `set_org_plan`). So:
+  - Local variable `pending_plan_id = 'founder_6m'` is set in checkout
+  - But never reaches `get_billable_amount`
+  - Function falls through to `compute_org_billing_amount`
+  - Returns calculated amount (e.g. ₪5,700) instead of ₪499
+  - PayPlus charges ₪5,700
+
+billing_router.py:1571 (in PayPlus webhook validation) has the SAME bug:
+
+    expected_info = await get_billable_amount(org_id, pending_cycle or 'monthly')
+
+If a customer paid the wrong amount, the mismatch detection compares:
+  - actual = what PayPlus charged (₪5,700)
+  - expected = get_billable_amount() (also ₪5,700, same buggy logic)
+  - abs(actual - expected) = 0 → "no mismatch" → false negative
+
+That's why this bug went undetected for so long: both sides of the
+validation had the same bug, so the alert never fired.
+
+FILES TO CHANGE — 3 changes total, ~4 lines
+--------------------------------------------
+
+1. backend/contractor_ops/billing.py  (function `get_billable_amount`,
+   around line 1646)
+
+   Add an optional `plan_override` parameter and use it in plan_id
+   resolution:
+
+   ```python
+   async def get_billable_amount(
+       org_id: str,
+       cycle: str = 'monthly',
+       plan_override: str = None,
+   ) -> dict:
+       """Single source of truth for how much to charge an org.
+       Returns dict with:
+           'amount': int,
+           'source': str,         # 'override' | 'founder_plan' | 'calculated'
+           'plan_id': str,
+           'org_id': str,
+           'cycle': str
+
+       Args:
+           plan_override: Optional plan_id to use INSTEAD of sub.plan_id.
+                          Use this during checkout when the user is selecting
+                          a plan that hasn't been activated in the DB yet
+                          (e.g. upgrading FROM standard TO founder_6m).
+       Priority: manual_override > founder_plan (499) > calculated.
+       Raises ValueError if no subscription exists.
+       """
+       if cycle not in ('monthly', 'yearly'):
+           raise ValueError(f"Invalid cycle: {cycle}. Expected 'monthly' or 'yearly'")
+
+       db = get_db()
+       sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
+
+       if sub is None:
+           logger.warning("BILLING_AMOUNT org=%s — no subscription found", org_id)
+           raise ValueError(f"No subscription found for org {org_id}")
+
+       # CHANGE THIS LINE:
+       # OLD: plan_id = sub.get('plan_id', 'standard')
+       # NEW:
+       plan_id = plan_override or sub.get('plan_id', 'standard')
+
+       # ... rest of function unchanged ...
+   ```
+
+2. backend/contractor_ops/billing_router.py:207 (in `billing_checkout`)
+
+   ```python
+   # OLD:
+   billing_info = await get_billable_amount(org_id, cycle)
+
+   # NEW:
+   billing_info = await get_billable_amount(org_id, cycle, plan_override=pending_plan_id)
+   ```
+
+3. backend/contractor_ops/billing_router.py:1571 (in PayPlus webhook handler,
+   inside the `try:` block around line 1569)
+
+   ```python
+   # OLD:
+   expected_info = await get_billable_amount(org_id, pending_cycle or 'monthly')
+
+   # NEW:
+   expected_info = await get_billable_amount(
+       org_id,
+       pending_cycle or 'monthly',
+       plan_override=pending_plan_id,
+   )
+   ```
+
+DO NOT TOUCH (verified during audit — 5 other callers correctly use sub.plan_id)
+--------------------------------------------------------------------------------
+- backend/contractor_ops/admin_router.py:221
+- backend/contractor_ops/admin_dashboard.py:88
+- backend/contractor_ops/billing.py:979
+- backend/contractor_ops/billing_router.py:766
+- backend/contractor_ops/billing_router.py:1047  (auto-renewal)
+
+These all reflect the CURRENT subscription state (admin views, invoice
+generation for active period, auto-renewal of active plan), so reading
+sub.plan_id is correct. They must NOT pass plan_override.
+
+OUT OF SCOPE
+------------
+- "Founder slot race" edge case (user pays 499 just before all founder
+  slots fill, falls back to standard at webhook) — known theoretical
+  edge case, separate ticket if it ever happens.
+- Frontend changes — frontend already correctly shows ₪499 via the
+  /api/billing/plans-available endpoint (returns price=499). The bug is
+  purely in checkout amount calculation.
+- Refund for the customer who was charged wrong amount — manual process,
+  Zahi will handle outside this spec.
+- Any other security or feature changes.
+
+VERIFY
+------
+
+VERIFY 1 — Syntax
+   python3 -m compileall backend/contractor_ops/ -q
+
+VERIFY 2 — Grep for the new parameter
+   grep -n "plan_override" backend/contractor_ops/billing.py backend/contractor_ops/billing_router.py
+
+   Expected: exactly 4 lines:
+     - billing.py: 1 line in def signature
+     - billing.py: 1 line in `plan_id = plan_override or ...`
+     - billing_router.py: 1 line in checkout call
+     - billing_router.py: 1 line in webhook validation call
+
+VERIFY 3 — Existing pytest still passes (no regression)
+   cd backend && python -m pytest tests/test_billing.py tests/test_billing_v1.py -v
+
+   All tests must pass (or skip). No new failures.
+
+VERIFY 4 — Manual functional test on dev server
+   With the dev server running and a seeded org that has plan_id='standard'
+   and at least one active project_billing producing a calculated monthly
+   amount > 499:
+
+   a. POST to /api/billing/org/{org_id}/checkout
+      Body: {"plan":"founder","cycle":"monthly"}
+      Headers: Authorization: Bearer <super_admin_token>
+      EXPECTED: response.amount == 499
+
+   b. POST to same endpoint
+      Body: {"plan":"standard","cycle":"monthly"}
+      EXPECTED: response.amount == calculated amount (NOT 499)
+
+   c. For an org that ALREADY has plan_id='founder_6m' in DB:
+      POST with {"plan":"founder","cycle":"monthly"}
+      EXPECTED: response.amount == 499 (regression — must still work)
+
+   Capture the curl + response output for review.txt.
+
+VERIFY 5 — NEW regression test
+   Add this test to the bottom of backend/tests/test_billing.py
+   (after the last existing test):
+
+   ```python
+   import pytest
+   from pymongo import MongoClient
+
+
+   @pytest.mark.asyncio
+   async def test_get_billable_amount_plan_override_returns_founder_price():
+       """Regression test for #XXX hotfix.
+
+       Bug: /billing/org/{id}/checkout with {plan:'founder'} was returning
+       the calculated amount (e.g. ₪5,700 from project units) instead of
+       ₪499 because get_billable_amount read sub.plan_id from DB ('standard')
+       instead of the plan being selected. Real customer was charged the
+       wrong amount.
+       """
+       from contractor_ops.billing import get_billable_amount
+
+       db = MongoClient("mongodb://127.0.0.1:27017")["contractor_ops"]
+       test_org_id = "regression-test-billing-plan-override"
+       test_pb_id = f"pb-{test_org_id}"
+
+       # Setup: org on 'standard' plan with active project_billing producing ≠499
+       db.subscriptions.update_one(
+           {"org_id": test_org_id},
+           {"$set": {
+               "org_id": test_org_id,
+               "plan_id": "standard",
+               "status": "active",
+           }},
+           upsert=True,
+       )
+       db.project_billing.update_one(
+           {"id": test_pb_id},
+           {"$set": {
+               "id": test_pb_id,
+               "org_id": test_org_id,
+               "project_id": f"proj-{test_org_id}",
+               "status": "active",
+               "plan_id": "standard",
+               "contracted_units": 50,
+               "monthly_total": 1500,
+           }},
+           upsert=True,
+       )
+
+       try:
+           # Without override: should return calculated amount (NOT 499)
+           baseline = await get_billable_amount(test_org_id, 'monthly')
+           assert baseline['amount'] != 499, \
+               f"Test setup wrong: baseline should NOT be 499, got {baseline['amount']}"
+
+           # With override='founder_6m': MUST return 499 (the bug)
+           with_override = await get_billable_amount(
+               test_org_id, 'monthly', plan_override='founder_6m'
+           )
+           assert with_override['amount'] == 499, \
+               f"plan_override='founder_6m' must return 499, got {with_override['amount']}"
+           assert with_override['source'] == 'founder_plan'
+
+           # Sanity: 'standard' override = calculated (not 499)
+           with_std_override = await get_billable_amount(
+               test_org_id, 'monthly', plan_override='standard'
+           )
+           assert with_std_override['amount'] != 499
+
+       finally:
+           db.subscriptions.delete_one({"org_id": test_org_id})
+           db.project_billing.delete_one({"id": test_pb_id})
+   ```
+
+   Run:
+     cd backend && python -m pytest tests/test_billing.py::test_get_billable_amount_plan_override_returns_founder_price -v
+
+   Required result: 1 passed.
+
+   Capture pytest output for review.txt.
+
+DELIVERABLES
+------------
+
+review.txt — must include:
+  - Rollback SHA (git rev-parse HEAD before any change)
+  - Full diffs of all 3 modified files (billing.py, billing_router.py twice)
+  - The new regression test diff (test_billing.py)
+  - All 5 VERIFY outputs verbatim
+  - Canonical commit message
+  - Post-deploy checklist:
+       * No env var changes
+       * No DB migrations
+       * No frontend changes required
+       * Regression test runs as part of normal pytest
+  - End with the exact line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(billing): pass pending plan to get_billable_amount so founder checkout charges 499 not calculated amount
+
+STEPS
+-----
+1. Edit backend/contractor_ops/billing.py — add `plan_override` parameter
+   to `get_billable_amount`, use it in plan_id resolution (2 line changes)
+2. Edit backend/contractor_ops/billing_router.py:207 — pass `plan_override=pending_plan_id`
+3. Edit backend/contractor_ops/billing_router.py:1571 — pass `plan_override=pending_plan_id`
+4. Edit backend/tests/test_billing.py — append the new regression test
+5. Run VERIFY 1 (compile)
+6. Run VERIFY 2 (grep)
+7. Run VERIFY 3 (existing pytest)
+8. Run VERIFY 4 (manual functional tests via curl)
+9. Run VERIFY 5 (new regression test)
+10. Generate review.txt with all the above
+11. Write .local/.commit_message
+12. STOP. Do NOT commit, push, or deploy. Zahi will:
+    - Review review.txt
+    - Run ./deploy.sh --stag himself
+    - Verify on staging
+    - Run ./deploy.sh --prod himself
+
+ROLLBACK PLAN
+-------------
+If anything breaks in production after deploy:
+
+  git revert <hotfix-commit-sha>
+  ./deploy.sh --prod
+
+The change is purely additive (adds an optional parameter, uses it when
+provided, falls back to current behavior when not provided), so a revert
+is safe and immediate. No data migration to undo.
+
+================================================================================
+END OF SPEC
+================================================================================

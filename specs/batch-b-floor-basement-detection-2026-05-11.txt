@@ -1,0 +1,16 @@
+================================================================================
+BATCH B — CANCELLED 2026-05-11
+================================================================================
+Original concept: Hebrew/English keyword detection in create_floor to map
+"מרתף", "לובי", "גג" → floor_number + FloorKind.
+
+Cancelled because Zahi confirmed users already type numeric floor names like
+"-3" (which the backend parses correctly via int()), not Hebrew names.
+The basement-keyword detection was an inferred / hypothetical bug, not an
+observed one. Per CLAUDE.md "do not assume bugs" rule — deleting.
+
+If a real user reports "I typed 'מרתף' and it appeared at the end of the
+floor list", reopen this and ship it then. Until then — no work needed.
+
+See `batch-c-stage-back-nav-2026-05-11.txt` for the next active batch.
+================================================================================

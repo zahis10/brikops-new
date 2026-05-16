@@ -1,0 +1,667 @@
+================================================================================
+BATCH #502 — Execution Matrix: Excel (.xlsx) export with notes-as-comments
+================================================================================
+Date:           2026-05-05
+Branch:         staging  (NOT main)
+Severity:       P1 — Zahi explicit ask 2026-05-05: "יש לנו עוד לעבוד על הוצאת
+                excel או pdf להורדה". Critical for "true Excel replacement"
+                — field PMs need to share matrix with stakeholders who don't
+                have BrikOps access.
+
+Family:         Followup to #500 (Phase 2D-1 filters). PMs export EXACTLY
+                what they currently see (filtered + visible columns). Not
+                a separate "report" feature — just a binary representation
+                of the current matrix view.
+
+Files changed:  1 NEW backend file (~155 LOC)
+                  1 EDIT backend file (~40 LOC — register endpoint, count
+                                       check, filename sanitize, cell enrich)
+                  1 EDIT frontend service (~25 LOC — exportXlsx method)
+                  1 EDIT frontend page (~30 LOC — button + handler)
+                  1 NEW backend test file (~110 LOC, 5 tests)
+
+LOC estimate:   ~340 total (195 backend + 55 frontend + 110 tests)
+Adjustments:    4 from secondary code review 2026-05-05 — see changelog
+                inside PART 1 (notes section) + PART 2 (count check +
+                filename sanitize + cells_summary enrichment).
+Risk:           Low. NEW module isolated, endpoint additive, frontend
+                button adds to existing header. Rollback removes file +
+                button without affecting any current behavior.
+
+================================================================================
+DESIGN — what gets exported, where, and how
+================================================================================
+
+WHAT GETS EXPORTED:
+  - The CURRENT FILTERED VIEW from the user's session — frontend sends
+    explicit `unit_ids` + `stage_ids` lists derived from useMatrixFilters
+    + the visible stages array. Backend exports exactly what's listed.
+  - Backend validates ownership: `unit_ids` MUST belong to `project_id`,
+    `stage_ids` MUST be in the project's matrix (visible OR hidden — for
+    flexibility, since admin might want to export hidden stages too).
+  - If frontend sends empty `unit_ids` → export ALL units.
+  - If frontend sends empty `stage_ids` → export ALL visible stages.
+
+LAYOUT:
+  - Single sheet "מטריצת ביצוע"
+  - Columns: בניין | קומה | דירה | מס׳ חדרים? | <stages in matrix order>
+    (the location columns mirror what the matrix already shows; custom
+    stages render before template stages — same negative-order trick)
+  - Header row frozen
+  - First 3 cols frozen (so scrolling right keeps building/floor/unit visible)
+  - Auto-width per column (clamp at 30 chars)
+  - RTL view: `ws.sheet_view.rightToLeft = True`
+
+CELL FORMATTING:
+  - Status cells: status label in Hebrew (e.g. "הושלם", "לא בוצע")
+    + light cell color matching MATRIX_STATUSES ramp:
+        completed     → light green   (#D1FAE5)
+        partial       → light amber   (#FEF3C7)
+        in_progress   → light blue    (#DBEAFE)
+        not_done      → light red     (#FEE2E2)
+        not_relevant  → light slate   (#F1F5F9)
+        no_findings   → light teal    (#CCFBF1)
+        empty         → no fill
+  - Tag cells: text_value as plain text. Empty = blank.
+  - Notes: ATTACHED AS EXCEL COMMENTS on the cell (popup on hover).
+    Cleaner than inline suffix, Excel-native UX.
+
+FILENAME:
+  - `מטריצת ביצוע - {project_name} - {YYYY-MM-DD}.xlsx`
+  - Use RFC 5987 `Content-Disposition: attachment; filename*=UTF-8''<encoded>`
+    so Hebrew filenames work in Chrome / Safari / Firefox / iOS WebView.
+  - ASCII fallback `filename="execution-matrix-{date}.xlsx"` for old clients.
+
+DOWNLOAD ON CLIENT:
+  - Use `downloadBlob()` from `frontend/src/utils/fileDownload.js`
+    (per CLAUDE.md Capacitor rule — `<a download>` won't work on native).
+  - On native: filesystem write + Share sheet; on web: blob URL trigger.
+  - Mime type: `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+
+AUTHORIZATION:
+  - Re-uses `_check_matrix_view` (super_admin / project_manager / owner /
+    management_team). Contractor blocked.
+  - 403 if user lacks view access on the project.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify openpyxl is already a backend dependency:
+    grep -n "openpyxl" backend/requirements.txt
+    Expected: present. If missing, add to requirements (already used in
+    safety_router L1427+, export_router L274 — should be installed).
+
+0.2 — Verify existing pattern for xlsx StreamingResponse in BrikOps:
+    grep -n "StreamingResponse\|filename\*=" backend/contractor_ops/safety_router.py | head -10
+    Expected: pattern at safety_router L1633 + L1722 — follow byte-for-byte
+    for Content-Disposition encoding (filename* RFC 5987 with utf-8).
+
+0.3 — Verify downloadBlob helper signature:
+    grep -n "export async function downloadBlob" frontend/src/utils/fileDownload.js
+    Expected: signature `downloadBlob(blob, filename, mimeType)`.
+    Frontend will pass the binary response body + computed filename + xlsx
+    mime type.
+
+0.4 — Verify ExecutionMatrixPage header has the Settings icon to add Export
+       beside (no layout change needed):
+    grep -n "Settings\|⚙\|<button" frontend/src/pages/ExecutionMatrixPage.js | head -10
+    Expected: Settings icon at ~L156 inside a header button group. Export
+    button inserts to the LEFT of Settings (RTL — visually right of it, or
+    might naturally place adjacent depending on flex direction).
+
+0.5 — Verify execution_matrix_router.py current size + register pattern:
+    wc -l backend/contractor_ops/execution_matrix_router.py
+    grep -n "@router.post\|@router.get" backend/contractor_ops/execution_matrix_router.py | tail -5
+    Expected: file ~600 LOC. New POST endpoint goes at end of file (or
+    near other matrix-level endpoints, not /views). Per CLAUDE.md
+    "files חדשים" — NEW helper module `execution_matrix_export.py`
+    holds the heavy logic, router just imports + calls.
+
+0.6 — Output STEP 0 audit at TOP of review.txt.
+
+================================================================================
+PART 1 — Backend: NEW helper module `execution_matrix_export.py`
+================================================================================
+
+NEW FILE: backend/contractor_ops/execution_matrix_export.py  (~150 LOC)
+
+Responsibility: build the .xlsx binary. Pure function — no DB access, no
+auth, no FastAPI — gets all data passed in. Easier to test in isolation.
+
+API:
+    def build_matrix_xlsx(
+        project: dict,
+        units: list,         # already filtered + sorted (frontend order)
+        stages: list,        # already filtered + sorted
+        cells: list,         # all cells for these units × stages
+        buildings: dict,     # {id: building_doc}
+        floors: dict,        # {id: floor_doc}
+    ) -> BytesIO:
+        """Returns a BytesIO containing the .xlsx workbook."""
+
+Implementation outline:
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.comments import Comment
+    from openpyxl.utils import get_column_letter
+
+    STATUS_LABELS = {
+        "completed":     "הושלם",
+        "partial":       "בוצע חלקית",
+        "in_progress":   "בתהליך",
+        "not_done":      "לא בוצע",
+        "not_relevant":  "לא רלוונטי",
+        "no_findings":   "אין חוסרים",
+    }
+
+    STATUS_FILLS = {
+        "completed":     PatternFill("solid", fgColor="D1FAE5"),  # green-100
+        "partial":       PatternFill("solid", fgColor="FEF3C7"),  # amber-100
+        "in_progress":   PatternFill("solid", fgColor="DBEAFE"),  # blue-100
+        "not_done":      PatternFill("solid", fgColor="FEE2E2"),  # red-100
+        "not_relevant":  PatternFill("solid", fgColor="F1F5F9"),  # slate-100
+        "no_findings":   PatternFill("solid", fgColor="CCFBF1"),  # teal-100
+    }
+
+    def build_matrix_xlsx(project, units, stages, cells, buildings, floors):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "מטריצת ביצוע"
+        ws.sheet_view.rightToLeft = True
+
+        # Header row
+        headers = ["בניין", "קומה", "דירה", "מס׳ חדרים"]
+        for s in stages:
+            headers.append(s.get("title", "—"))
+        ws.append(headers)
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = Font(bold=True, size=11)
+            cell.alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
+            cell.fill = PatternFill("solid", fgColor="F3F4F6")  # slate-100
+
+        # Data rows
+        cells_index = {(c["unit_id"], c["stage_id"]): c for c in cells}
+        for row_idx, unit in enumerate(units, start=2):
+            building = buildings.get(unit.get("building_id"), {})
+            floor = floors.get(unit.get("floor_id"), {})
+
+            ws.cell(row=row_idx, column=1, value=building.get("name", "—"))
+            ws.cell(row=row_idx, column=2, value=floor.get("floor_number", "—"))
+            ws.cell(row=row_idx, column=3, value=unit.get("unit_no", "—"))
+            ws.cell(row=row_idx, column=4, value=unit.get("room_count") or "")
+
+            for stage_idx, stage in enumerate(stages):
+                col = 5 + stage_idx
+                cell_xl = ws.cell(row=row_idx, column=col)
+                c = cells_index.get((unit["id"], stage["id"]))
+                if not c:
+                    continue
+                if stage.get("type") == "tag":
+                    cell_xl.value = c.get("text_value") or ""
+                else:
+                    status = c.get("status")
+                    if status:
+                        cell_xl.value = STATUS_LABELS.get(status, status)
+                        cell_xl.fill = STATUS_FILLS.get(status, PatternFill())
+                # Note as Excel comment (truncate at 500 to be safe)
+                # Author = whoever last edited the cell (for audit-trail
+                # context inside Excel — PM hovering sees the name).
+                # Cells MUST be enriched via _summarize_cell BEFORE
+                # being passed in (see PART 2 endpoint — uses summary
+                # form so last_actor_name is populated).
+                note_raw = c.get("note") or ""
+                note_clean = note_raw.strip()
+                if note_clean:
+                    author = c.get("last_actor_name") or "BrikOps"
+                    cell_xl.comment = Comment(note_clean[:500], author)
+
+        # Frozen panes — first 3 cols + header row
+        ws.freeze_panes = "E2"
+
+        # Auto-width (clamp 8..30 chars)
+        for col_idx, header in enumerate(headers, start=1):
+            col_letter = get_column_letter(col_idx)
+            max_len = max(
+                [len(str(header))]
+                + [len(str(ws.cell(row=r, column=col_idx).value or ""))
+                   for r in range(2, ws.max_row + 1)]
+            )
+            ws.column_dimensions[col_letter].width = max(8, min(30, max_len + 2))
+
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf
+
+Tests will exercise this function directly without needing FastAPI.
+
+================================================================================
+PART 2 — Backend: NEW endpoint in execution_matrix_router.py
+================================================================================
+
+EDIT FILE: backend/contractor_ops/execution_matrix_router.py  (~25 LOC added)
+
+Add at end of file (after /views endpoints):
+
+    from contractor_ops.execution_matrix_export import build_matrix_xlsx
+    from fastapi.responses import StreamingResponse
+    from urllib.parse import quote
+
+    @router.post("/{project_id}/export.xlsx")
+    async def export_matrix_xlsx(
+        project_id: str,
+        payload: dict,  # {unit_ids?: [], stage_ids?: []}
+        user: dict = Depends(get_current_user),
+    ):
+        """Export current matrix view as .xlsx. Frontend sends explicit
+        unit_ids + stage_ids lists derived from active filters. Empty
+        lists = export all visible.
+        """
+        db = get_db()
+        await _check_matrix_view(user, project_id)  # 403 if not authorized
+
+        project = await db.projects.find_one({"id": project_id}, {"_id": 0})
+        if not project:
+            raise HTTPException(404, "Project not found")
+
+        # Validate scope: requested IDs must belong to this project
+        requested_unit_ids = payload.get("unit_ids") or []
+        requested_stage_ids = payload.get("stage_ids") or []
+
+        unit_query = {"project_id": project_id, "archived": {"$ne": True}}
+        if requested_unit_ids:
+            unit_query["id"] = {"$in": requested_unit_ids}
+
+        # Hard cap of 2000 units per export — fast-fail rather than
+        # silent truncation by `to_list(2000)`. Real-world projects
+        # with 4 buildings × 50 floors × ~10 units/floor = 2000+ are
+        # plausible; PM should narrow via filters before exporting.
+        total_count = await db.units.count_documents(unit_query)
+        if total_count > 2000:
+            raise HTTPException(
+                400,
+                "ייצוא של יותר מ-2000 דירות אינו נתמך. סנן את התצוגה לפני הייצוא.",
+            )
+
+        units = await db.units.find(unit_query, {"_id": 0}).to_list(2000)
+
+        # Re-use existing helpers from #483 to resolve stages
+        matrix_config = await _get_or_init_matrix_config(db, project_id)
+        tpl = await _get_template(db, project_id=project_id)
+        all_stages = _resolve_visible_stages(matrix_config, tpl)
+        if requested_stage_ids:
+            stages = [s for s in all_stages if s["id"] in requested_stage_ids]
+        else:
+            stages = all_stages
+
+        # Fetch buildings + floors + cells
+        building_ids = list({u["building_id"] for u in units if u.get("building_id")})
+        floor_ids = list({u["floor_id"] for u in units if u.get("floor_id")})
+        buildings = {
+            b["id"]: b for b in await db.buildings.find(
+                {"id": {"$in": building_ids}}, {"_id": 0}
+            ).to_list(100)
+        }
+        floors = {
+            f["id"]: f for f in await db.floors.find(
+                {"id": {"$in": floor_ids}}, {"_id": 0}
+            ).to_list(500)
+        }
+        unit_id_set = {u["id"] for u in units}
+        stage_id_set = {s["id"] for s in stages}
+        cells = await db.execution_matrix_cells.find(
+            {
+                "unit_id": {"$in": list(unit_id_set)},
+                "stage_id": {"$in": list(stage_id_set)},
+            },
+            {"_id": 0},
+        ).to_list(50000)
+
+        # Enrich cells via _summarize_cell so last_actor_name is
+        # populated — needed by build_matrix_xlsx for Excel comment
+        # author. Same shape as /matrix endpoint cells.
+        cells_summary = [_summarize_cell(c) for c in cells]
+
+        # Build xlsx
+        buf = build_matrix_xlsx(project, units, stages, cells_summary, buildings, floors)
+
+        # Filename with RFC 5987 encoding for Hebrew
+        # Sanitize project name — strip filesystem-illegal chars that
+        # break filenames on Windows / iOS / macOS:
+        #   /  \  :  *  ?  "  <  >  |
+        # (Hebrew chars + spaces + parentheses are all fine.)
+        import re
+        from datetime import datetime
+        date_str = datetime.utcnow().strftime("%Y-%m-%d")
+        project_name_raw = project.get("name", "matrix")
+        project_name = re.sub(r'[/\\:*?"<>|]', '_', project_name_raw).strip() or "matrix"
+        filename_he = f"מטריצת ביצוע - {project_name} - {date_str}.xlsx"
+        filename_ascii = f"execution-matrix-{date_str}.xlsx"
+        encoded = quote(filename_he, safe="")
+        disposition = (
+            f'attachment; filename="{filename_ascii}"; '
+            f"filename*=UTF-8''{encoded}"
+        )
+
+        return StreamingResponse(
+            buf,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            headers={"Content-Disposition": disposition},
+        )
+
+================================================================================
+PART 3 — Frontend: matrixService.exportXlsx method
+================================================================================
+
+EDIT FILE: frontend/src/services/matrixService.js  (~25 LOC added)
+
+Add new method:
+
+    async exportXlsx(projectId, { unit_ids = [], stage_ids = [] } = {}) {
+      const url = `${API}/execution-matrix/${projectId}/export.xlsx`;
+      const response = await axios.post(
+        url,
+        { unit_ids, stage_ids },
+        {
+          headers: getAuthHeader(),
+          responseType: "blob",
+        }
+      );
+      // Server returned a binary xlsx — pull suggested filename from header
+      const cd = response.headers["content-disposition"] || "";
+      let filename = `execution-matrix-${new Date().toISOString().slice(0,10)}.xlsx`;
+      const match = cd.match(/filename\*=UTF-8''([^;]+)/);
+      if (match) {
+        try { filename = decodeURIComponent(match[1]); } catch {}
+      } else {
+        const ascii = cd.match(/filename="([^"]+)"/);
+        if (ascii) filename = ascii[1];
+      }
+      return { blob: response.data, filename };
+    },
+
+================================================================================
+PART 4 — Frontend: Export button + handler in ExecutionMatrixPage
+================================================================================
+
+EDIT FILE: frontend/src/pages/ExecutionMatrixPage.js  (~30 LOC added)
+
+Changes:
+  1. Add icon import:
+        import { ..., Download } from 'lucide-react';
+  2. Import downloadBlob:
+        import { downloadBlob } from '../utils/fileDownload';
+  3. State for "exporting" spinner:
+        const [exporting, setExporting] = useState(false);
+  4. Handler:
+        const handleExport = useCallback(async () => {
+          if (exporting) return;
+          setExporting(true);
+          try {
+            const { blob, filename } = await matrixService.exportXlsx(projectId, {
+              unit_ids: filterAPI.filteredUnits.map(u => u.id),
+              stage_ids: stages.map(s => s.id),
+            });
+            await downloadBlob(
+              blob,
+              filename,
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            );
+          } catch (e) {
+            // toast or alert
+            alert("ייצוא נכשל. נסה שוב.");
+          } finally {
+            setExporting(false);
+          }
+        }, [exporting, projectId, filterAPI.filteredUnits, stages]);
+  5. Add button in header (right of Settings icon button):
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          className="p-2 rounded-lg hover:bg-slate-100 active:bg-slate-200 transition-colors disabled:opacity-50 min-h-[44px] min-w-[44px] flex items-center justify-center"
+          aria-label="ייצוא לExcel"
+          title="ייצוא לExcel"
+        >
+          {exporting
+            ? <Loader2 className="w-5 h-5 text-slate-600 animate-spin" />
+            : <Download className="w-5 h-5 text-slate-600" />}
+        </button>
+
+NOT TOUCHED in this batch:
+  - MatrixCell, MatrixGridView, MatrixListView, StageManagementDialog
+  - MatrixFilterDrawer, MatrixFilterFAB, useMatrixFilters
+  - matrixService existing methods (getMatrix, updateCell, ...)
+  - Backend matrix view/edit endpoints
+  - Auth, billing, safety routers
+
+================================================================================
+PART 5 — Backend tests (NEW)
+================================================================================
+
+NEW FILE: backend/tests/test_execution_matrix_export.py  (~110 LOC, 5 tests)
+
+  T1. test_build_xlsx_basic_structure
+      - Pass 2 units, 3 stages, 4 cells (2 status + 1 tag + 1 empty)
+      - Assert wb has 1 sheet titled "מטריצת ביצוע"
+      - Assert sheet.sheet_view.rightToLeft is True
+      - Assert header row has correct labels
+      - Assert frozen panes at "E2"
+
+  T2. test_status_label_translation
+      - Cell with status="completed" → cell value "הושלם", fill present
+      - Cell with status="not_done"  → cell value "לא בוצע", fill present
+      - Cell with no status → cell value None/empty
+
+  T3. test_note_attached_as_comment_with_author_and_whitespace_strip
+      - Cell with note="לא תקין" + last_actor_name="ישראל ישראלי"
+        → Comment present, .author == "ישראל ישראלי"
+      - Cell with note="   " (whitespace only) → NO Comment (stripped)
+      - Cell with note=None → NO Comment
+      - Cell with note set but no last_actor_name → Comment, .author == "BrikOps"
+
+  T4. test_export_endpoint_403_for_contractor
+      - Authenticate as contractor user
+      - POST /export.xlsx → 403
+      - Authenticate as PM → 200 + binary stream
+
+  T5. test_filename_sanitizes_illegal_chars_and_caps_count
+      - Project name "רחוב הרצל / חיפה 123:test" → Content-Disposition
+        header has the slash and colon replaced with underscore
+      - Inject 2001 units into the query result → POST returns 400
+        with body containing "2000 דירות" (Hebrew error message)
+      - 1500 units → 200 success
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — Backend syntax + tests:
+   cd backend && python -m pytest tests/test_execution_matrix_export.py -q
+   → 4 passed
+   cd backend && python -m pytest tests/test_execution_matrix.py -q
+   → 17 passed (unchanged from #497)
+
+V2 — Frontend build:
+   cd frontend && yarn build
+   → no new warnings or errors. Bundle delta ≤5KB (new method + button).
+
+V3 — Existing matrix files untouched:
+   git diff --stat frontend/src/components/matrix/
+   → 0 lines diff (no MatrixCell / MatrixGridView / etc. changes)
+
+V4 — File counts:
+   New backend: execution_matrix_export.py (~150 LOC)
+   New backend test: test_execution_matrix_export.py (~80 LOC)
+   Edit backend: execution_matrix_router.py (+25 LOC)
+   Edit frontend: matrixService.js (+25 LOC), ExecutionMatrixPage.js (+30 LOC)
+
+V5 — Capacitor compliance:
+   - Frontend handler uses downloadBlob() helper (NOT <a download>)
+   - Button is ≥44×44px tap target
+
+V6 — RFC 5987 filename verification (manual):
+   Trigger export with project named "פרויקט מגדלי הדמו" → check the
+   downloaded file's actual name in Finder/file manager. Should preserve
+   Hebrew. Cross-check Content-Disposition header in DevTools Network tab.
+
+================================================================================
+SMOKE TEST (Zahi after deploy to staging)
+================================================================================
+
+Staging URL: https://staging.brikops-new.pages.dev
+Login:       superadmin@brikops.dev / StagingDemo2026!
+Path:        /projects/616c30e0-.../execution-matrix
+
+(a) New "Download" icon visible in header (left of Settings ⚙).
+(b) Click icon → spinner, ~1-2 sec → file download triggered.
+(c) Open the downloaded file in Excel / Numbers / Google Sheets.
+(d) Verify:
+    - Sheet name: "מטריצת ביצוע"
+    - Header row: בניין | קומה | דירה | מס׳ חדרים | <stage names>
+    - 30 unit rows (or filtered count)
+    - Status cells: Hebrew labels with light background colors matching
+      the on-screen UI ramp (green for completed, red for not_done, etc.)
+    - Tag cells: free text values
+    - Empty cells: blank
+    - Hover any cell that has a note → tooltip with the note text
+      (Excel comment; varies per app:
+        - Excel: yellow callout
+        - Numbers: small popup
+        - Google Sheets: triangle indicator + popup)
+    - First 3 columns frozen (scroll right → still see building/floor/unit)
+    - Header row frozen (scroll down → still see column names)
+    - RTL view (text right-aligned, columns flow right-to-left if app
+      respects sheet_view direction)
+
+(e) Apply some filters in the matrix (e.g. only Building A) → click
+    Download → verify the resulting file has ONLY Building A rows.
+    The export reflects exactly what's on screen.
+
+(f) Hide a stage via ⚙ StageManagementDialog → click Download → verify
+    the hidden stage's column does NOT appear in the file.
+
+(g) MOBILE / Capacitor test (after Capgo OTA picks up the frontend change):
+    - Open the app on iPhone/Android
+    - Navigate to matrix → tap Download icon
+    - Native Share sheet appears with the file → save to Files / send
+      via WhatsApp / etc.
+    - File opens in the iOS Numbers app and shows the matrix correctly.
+
+(h) RBAC: as a contractor account, navigate to /execution-matrix → already
+    blocked by view RBAC at the page level. (Endpoint also returns 403,
+    but UI shouldn't even reach the button.)
+
+================================================================================
+OPEN QUESTIONS (decide before implementation)
+================================================================================
+
+Q1. Multi-sheet (one per building)?
+    Recommend: NO for MVP. One flat sheet is closest to PMs' existing
+    Excel habit. Defer multi-sheet to v2 if asked.
+
+Q2. Include hidden stages in export by default?
+    Recommend: NO. Export shows VISIBLE stages only — what the user sees.
+    Power user can re-show via ⚙ before export if needed.
+
+Q3. Include "מספר חדרים" column in export?
+    Recommend: YES — it's already in the matrix data model and useful.
+    Adds 1 column. Document as included.
+
+Q4. Audit history per cell (last 5 changes)?
+    Recommend: NO for MVP. Adds complexity (multi-row per cell or
+    multi-sheet). Defer to v2.
+
+Q5. Show "(ריק)" labels in empty cells?
+    Recommend: NO. Empty cell = blank in xlsx (clean, lets users filter).
+
+Q6. Currency / number locale?
+    N/A — no monetary fields. Skip.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit (5 sub-greps)
+  - Per-file diff
+  - VERIFY 1-6 outputs
+  - Smoke (a)-(h) deferred to Zahi note
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(matrix): Excel (.xlsx) export of current filtered view
+
+  Per Zahi 2026-05-05: "יש לנו עוד לעבוד על הוצאת excel או pdf
+  להורדה". Field PMs need to share the matrix with stakeholders who
+  don't have BrikOps access. Without export the matrix can't fully
+  replace the external Google Sheets they maintain today.
+
+  - NEW backend module execution_matrix_export.py with build_matrix_xlsx
+    function (pure, testable). RTL view, status colors per ramp, notes
+    as Excel comments, frozen panes (3 cols + header), auto-width.
+  - NEW endpoint POST /api/execution-matrix/{id}/export.xlsx accepts
+    explicit unit_ids + stage_ids from frontend (= filtered view).
+    RBAC via _check_matrix_view (super_admin / PM / owner / management).
+  - Frontend: Download icon button in ExecutionMatrixPage header.
+    Handler uses matrixService.exportXlsx + downloadBlob helper
+    (Capacitor-aware — native: filesystem + Share sheet; web: blob URL).
+  - Filename in Hebrew via RFC 5987 (filename* UTF-8 encoding).
+  - 5 NEW backend tests for build function + endpoint RBAC + filename
+    sanitization + 2000-unit cap.
+
+  Adopted 4 adjustments from secondary code review:
+    - Filename sanitization (/, \, :, *, ?, ", <, >, | → _)
+    - 2000-unit cap with Hebrew error (instead of silent truncate)
+    - Note whitespace strip (`note.strip()` before truthy check)
+    - Excel comment author = `cell.last_actor_name` (was "BrikOps") so
+      PM hovering sees who wrote each note (audit trail in Excel)
+
+  ~340 LOC: 195 backend + 55 frontend + 110 tests. Zero changes to
+  matrix view rendering, cell editing, stage management, or filter
+  drawer.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (5 sub-greps)
+2. PART 1 — execution_matrix_export.py (NEW, ~150 LOC)
+3. PART 2 — endpoint in execution_matrix_router.py (~25 LOC)
+4. PART 5 — backend tests (4 tests, ~80 LOC)
+5. PART 3 — matrixService.exportXlsx (~25 LOC)
+6. PART 4 — ExecutionMatrixPage button + handler (~30 LOC)
+7. Run VERIFY 1-6
+8. Generate review.txt + .local/.commit_message
+9. STOP. Zahi reviews. Then he runs:
+     git checkout staging && git merge main && ./deploy.sh --stag
+   ⚠️ COMMIT ON `staging` BRANCH.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+Removes 1 NEW backend module + 1 NEW test file + 4 file edits.
+Matrix functionality completely unaffected — Export button disappears,
+endpoint 404s. Nothing in the database touched. Re-apply by restoring
+the commit.
+
+NO impact on:
+- Matrix view (#484-#492)
+- Cell editing (#494)
+- Stage management (#495+#497+#498)
+- Filter drawer + saved views (#500)
+- Tooltip note (#501)
+- Backend matrix view/edit endpoints
+- Auth, billing, safety routers, plans
+
+================================================================================
+END OF SPEC — #502 Excel Export
+================================================================================

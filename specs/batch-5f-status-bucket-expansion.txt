@@ -1,0 +1,331 @@
+================================================================================
+BATCH 5F — Status bucket expansion in backend + UI label cleanup
+================================================================================
+Date:           2026-04-28
+Branch:         staging  (NOT main)
+Severity:       P1 — fixes 3 user-visible bugs from same architectural root
+Files changed:  2 backend, 4 frontend = 6 files total
+                  Backend:  tasks_router.py, export_router.py
+                  Frontend: UnitDetailPage.js, ProjectTasksPage.js,
+                            ApartmentDashboardPage.js, ProjectControlPage.js
+Mobile (Capacitor): N/A — Capacitor wraps the same React build via WebView.
+                    No native status logic. The frontend changes ship via
+                    Capgo OTA automatically; no `./ship.sh` needed.
+Pre-flight:     This is the FOLLOW-UP to Batch 5C. 5C fixed display + KPI
+                aggregation but did NOT fix the chip-filter ↔ KPI count
+                mismatch that surfaced after deploy. Same architectural gap
+                explains 3 visible symptoms (see CONTEXT below).
+================================================================================
+
+CONTEXT — 3 SYMPTOMS, 1 ROOT CAUSE
+----------------------------------
+
+Symptom 1: KPI shows "13 פתוחים" but clicking it shows 5 tasks.
+Symptom 2: KPI shows "X נסגרו" but clicking it misses force-closed tasks.
+Symptom 3: User confused by "אושר" vs "סגור" labels — same thing in their head.
+
+Root cause for 1+2:
+  KPI cards aggregate by BUCKET (multiple statuses):
+    "פתוחים" = open + assigned + reopened              (3 statuses)
+    "ביצוע"  = in_progress + pending_contractor_proof + ... (5 statuses)
+    "נסגרו"  = closed + approved                       (2 statuses, after 5C)
+  But the chip-click sends ONE literal status to backend:
+    Click "פתוחים" → params.status = 'open' → backend returns ONLY 'open' tasks
+    → User sees 5 instead of 13 because 'assigned' and 'reopened' are missed.
+
+Root cause for 3:
+  We introduced a 2nd Hebrew label ("אושר") in 5C to mark force-closed tasks.
+  User doesn't care about the audit distinction; for them done = "סגור".
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Find ALL callers passing `status=` to taskService.list / /tasks endpoint:
+    grep -rn "taskService\.list\|/api/tasks" frontend/src/ | grep -v node_modules
+
+    For each call site that passes a `status` param, verify it expects
+    BUCKET semantics (open/in_progress/closed maps to multiple) NOT literal.
+    If any caller relies on literal-only behavior → flag and discuss before
+    proceeding. (Expectation: all callers are chip/KPI-driven and want bucket.)
+
+0.2 — Verify line numbers in spec match HEAD:
+    grep -n "if status:" backend/contractor_ops/tasks_router.py | head -5
+    # Expect: line 223 in the list_tasks query construction.
+
+    grep -n "approved:.*אושר" frontend/src/
+    # Expect: 5 hits (the labels we changed in 5C).
+
+0.3 — Check for tests that assert literal status behavior:
+    grep -rn "status.*=.*'closed'\|status.*=.*'open'\|status.*=.*'in_progress'" backend/tests/
+    # If any test asserts "list returns ONLY 'closed' tasks when status=closed",
+    # it will fail after this fix. Update the test (closed bucket should
+    # legitimately return both closed + approved going forward).
+
+0.4 — Find any persisted/saved-filter usage of 'approved' as a value
+      (URL query params, sessionStorage, localStorage, saved-search
+      features). If a user has 'approved' in a saved filter URL and we
+      remove the option from STATUS_FILTER_OPTIONS, the filter widget
+      may show a broken state.
+
+    grep -rn "'approved'\|approved=\|status=approved" frontend/src/ \
+        | grep -v node_modules | grep -iE "session|local|saved|persist|searchParams|getItem|setItem"
+
+    If any hit found → propose a 1-line frontend migration: when reading
+    a persisted filter, normalize 'approved' → 'closed' before applying.
+    Document in review.txt under STEP 0.4. If no hits → safe to remove.
+
+0.5 — Output STEP 0 audit at the TOP of review.txt before any diffs.
+    If anything fails or surfaces unexpected callers, PAUSE and report.
+
+================================================================================
+PART 1 — BACKEND (2 files)
+================================================================================
+
+FILE 1 of 6: backend/contractor_ops/tasks_router.py
+----------------------------------------------------
+The list_tasks endpoint at line 183 currently does an exact-match status
+filter at line 223-224. Change it to recognize 3 known bucket names and
+expand them to their member statuses.
+
+LOCATION 1.1 — Add BUCKET_EXPANSION dict near the top of the file
+   (after the existing imports/constants, around line 30-40 — find a
+   suitable spot among other module-level constants):
+
+       # Status bucket expansion. Maps a "user-facing bucket name" sent by
+       # KPI chips / filter UI → all underlying status values that belong
+       # to that bucket. Single source of truth for what each chip means.
+       # Aligned with the dashboard KPI aggregation in tasks_router.py:363.
+       STATUS_BUCKET_EXPANSION = {
+           'open': ['open', 'assigned', 'reopened'],
+           'in_progress': ['in_progress', 'pending_contractor_proof',
+                           'pending_manager_approval', 'returned_to_contractor',
+                           'waiting_verify'],
+           'closed': ['closed', 'approved'],
+       }
+
+LOCATION 1.2 — line 223-224 (inside list_tasks function):
+   CURRENT:
+       if status:
+           query['status'] = status
+   REPLACE WITH:
+       if status:
+           if status in STATUS_BUCKET_EXPANSION:
+               query['status'] = {'$in': STATUS_BUCKET_EXPANSION[status]}
+           else:
+               query['status'] = status
+
+   Behavior change:
+   - status='open'         → returns open + assigned + reopened
+   - status='in_progress'  → returns all 5 in-progress sub-statuses
+   - status='closed'       → returns closed + approved
+   - status='waiting_verify' (or any other literal) → unchanged (literal match)
+
+   This makes the backend the single source of truth for what each "bucket
+   chip" means. Every frontend that already sends `status=closed` etc.
+   becomes correct without per-page edits.
+
+FILE 2 of 6: backend/contractor_ops/export_router.py
+-----------------------------------------------------
+LOCATION 2.1 — line 33 (STATUS_LABELS map, the 'approved' entry that
+   5C added):
+   CURRENT:
+       'approved': 'אושר',
+   REPLACE WITH:
+       'approved': 'סגור',
+
+LOCATION 2.2 — line 46 (STATUS_COLORS map):
+   The color is already '#22C55E' (green-500) — same as 'closed'. No
+   change needed. Verify with grep.
+
+================================================================================
+PART 2 — FRONTEND (4 files)
+================================================================================
+
+For each file: change the 'approved' label from 'אושר' to 'סגור', and
+change the color from `bg-emerald-100 text-emerald-700` to
+`bg-green-100 text-green-700` (matching the existing 'closed' entry).
+The user sees one consistent label/color for both done states.
+
+FILE 3 of 6: frontend/src/pages/UnitDetailPage.js
+--------------------------------------------------
+LOCATION 3.1 — STATUS_LABELS, the 'approved' entry from 5C:
+   CURRENT:
+       approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
+   REPLACE WITH:
+       approved: { label: 'סגור', color: 'bg-green-100 text-green-700' },
+
+LOCATION 3.2 — STATUS_FILTER_OPTIONS, REMOVE the 'approved' entry from 5C:
+   DELETE:
+       { value: 'approved', label: 'אושר' },
+   The remaining `{ value: 'closed', label: 'סגור' }` entry now covers
+   BOTH thanks to the backend bucket expansion.
+
+FILE 4 of 6: frontend/src/pages/ProjectTasksPage.js
+----------------------------------------------------
+LOCATION 4.1 — STATUS_CONFIG, the 'approved' entry from 5C:
+   CURRENT:
+       approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
+   REPLACE WITH:
+       approved: { label: 'סגור', color: 'bg-green-100 text-green-700' },
+
+LOCATION 4.2 — MANAGER_STATUS_CHIPS closed chip — REVERT 5C's statusIn
+   back to status: 'closed' (backend now expands it):
+   CURRENT (from 5C):
+       { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
+   REPLACE WITH:
+       { key: 'closed', label: 'סגור', status: 'closed' },
+
+LOCATION 4.3 — CONTRACTOR_STATUS_CHIPS closed chip — same revert:
+   CURRENT (from 5C):
+       { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
+   REPLACE WITH:
+       { key: 'closed', label: 'סגור', status: 'closed' },
+
+   NOTE on the chip count display logic (around lines 398-405): it already
+   handles both `chip.statusIn` and `chip.status`. Reverting to `status`
+   keeps the count correct — `bucketData.status_counts.closed` already
+   includes approved tasks via the 5C backend fix at projects_router.py:1448.
+
+FILE 5 of 6: frontend/src/pages/ApartmentDashboardPage.js
+----------------------------------------------------------
+LOCATION 5.1 — STATUS_LABELS, the 'approved' entry from 5C:
+   CURRENT:
+       approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700', key: 'closed' },
+   REPLACE WITH:
+       approved: { label: 'סגור', color: 'bg-green-100 text-green-700', key: 'closed' },
+
+   The `key: 'closed'` routing stays — it's correct, it routes the badge
+   into the closed KPI bucket on this page.
+
+FILE 6 of 6: frontend/src/pages/ProjectControlPage.js
+------------------------------------------------------
+LOCATION 6.1 — DEFECT_STATUS_CONFIG, the 'approved' entry from 5C:
+   CURRENT:
+       approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
+   REPLACE WITH:
+       approved: { label: 'סגור', color: 'bg-green-100 text-green-700' },
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- StatusPill.jsx — already maps approved to bg-emerald-500 dot. Acceptable
+  as-is (a small dot, color difference invisible at that size).
+- Any other STATUS_LABELS map that DOESN'T have an 'approved' entry today
+  (e.g., TaskDetailPage.js — uses tStatus i18n proxy, already returns "אושר"
+  from i18n. We're keeping i18n unchanged for this batch — TaskDetailPage
+  badge is the audit-trail surface, "אושר" is correct context there).
+  → If the user complains about TaskDetailPage label, file as separate task.
+- Backend audit fields, write-side branches, schema enums.
+- The new BUCKET_EXPANSION dict shape — it MUST stay aligned with the
+  dashboard KPI logic at tasks_router.py:363 (open_statuses /
+  handled_statuses). If those change, this dict must change too.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend syntax compile:
+   python3 -m compileall backend/contractor_ops/ -q
+
+VERIFY 2 — Backend grep — confirm bucket expansion in place:
+   grep -n "STATUS_BUCKET_EXPANSION" backend/contractor_ops/tasks_router.py
+   → must return at least 2 hits (declaration + usage in list_tasks).
+
+VERIFY 3 — Frontend build:
+   cd frontend && yarn build
+   → succeeds, no NEW warnings.
+
+VERIFY 4 — Frontend grep — confirm 'אושר' label removed everywhere user-facing:
+   grep -rn "label: 'אושר'\|'אושר'" frontend/src/pages/ frontend/src/components/ \
+       | grep -v ".test." | grep -v i18n
+   → Acceptable surviving matches: TaskDetailPage.js context (audit) and
+     i18n files (kept unchanged). Any other match → flag.
+
+VERIFY 4.5 — Bucket expansion drift guard (REQUIRED — new test):
+   Add a regression test (in backend/tests/test_status_buckets.py or
+   bundle into the existing test_m6_manager_panel.py file) that asserts
+   STATUS_BUCKET_EXPANSION matches the dashboard KPI aggregation logic
+   at tasks_router.py:363 (open_statuses + handled_statuses).
+
+   The test catches a future contributor adding a new status to the
+   dashboard buckets but forgetting to add it to STATUS_BUCKET_EXPANSION
+   (or vice versa) — the exact drift we're trying to prevent.
+
+   def test_bucket_expansion_matches_dashboard_kpi():
+       from contractor_ops.tasks_router import STATUS_BUCKET_EXPANSION
+
+       # Members must mirror the dashboard's per-bucket aggregations.
+       assert set(STATUS_BUCKET_EXPANSION['open']) == {
+           'open', 'assigned', 'reopened',
+       }, "STATUS_BUCKET_EXPANSION['open'] drifted from dashboard open_statuses"
+
+       assert set(STATUS_BUCKET_EXPANSION['in_progress']) == {
+           'in_progress', 'pending_contractor_proof',
+           'pending_manager_approval', 'returned_to_contractor',
+           'waiting_verify',
+       }, "STATUS_BUCKET_EXPANSION['in_progress'] drifted from dashboard"
+
+       assert set(STATUS_BUCKET_EXPANSION['closed']) == {
+           'closed', 'approved',
+       }, "STATUS_BUCKET_EXPANSION['closed'] drifted from dashboard handled_statuses"
+
+   Run it: cd backend && python -m pytest tests/test_status_buckets.py -v
+   → must PASS.
+
+   This adds a 4th REQUIRED LAUNCH-BLOCKING test on top of the 4 already
+   defined in Task #28 (force_close regression suite).
+
+VERIFY 5 — Behavior smoke (Zahi runs, not Replit):
+   On staging:
+   a. Project dashboard "פתוחים" KPI: shows 13 → click → list shows 13 (NOT 5).
+   b. KPI "נסגרו": click → list includes force-closed tasks.
+   c. KPI "ביצוע": click → list includes all 5 in-progress sub-statuses.
+   d. KPI "לאישורי" (literal status, not a bucket): click → unchanged behavior.
+   e. UnitDetailPage filter dropdown: ONE "סגור" option (not two). Selecting
+      it returns both closed + force-closed defects.
+   f. Defect badge for a force-closed defect: green "סגור" (not "אושר").
+
+================================================================================
+DELIVERABLES
+================================================================================
+review.txt with:
+  - STEP 0 audit at top (results of 0.1, 0.2, 0.3 + any flagged callers)
+  - Per-file diff (6 files)
+  - VERIFY 1-4 outputs (skip 5 — Zahi runs visually)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(tasks): expand status query buckets in backend; unify approved/closed UI label
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.5 greps, output at top of review.txt). If
+   ANY caller of taskService.list passes `status=closed` expecting ONLY
+   literal closed tasks → STOP and report before editing. If STEP 0.4
+   surfaces persisted 'approved' values → add the 1-line normalization
+   to the spec scope before proceeding.
+2. Backend: add STATUS_BUCKET_EXPANSION dict + update list_tasks logic.
+3. Backend: change export_router.py:33 'אושר' → 'סגור'.
+4. Frontend: 4 files, change 'אושר' → 'סגור' + emerald → green in each
+   STATUS map; remove the redundant filter option in UnitDetailPage;
+   revert ProjectTasksPage chips from statusIn back to status.
+5. Add the bucket-expansion drift guard test (VERIFY 4.5 above).
+6. Run VERIFY 1-4 + 4.5.
+7. Generate review.txt.
+8. Write .local/.commit_message.
+9. STOP. Zahi runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+./deploy.sh --prod
+The backend change is additive (new dict + alias logic), forward-compatible.
+Frontend changes only affect labels/colors. Safe to revert.
+
+================================================================================
+END OF SPEC
+================================================================================

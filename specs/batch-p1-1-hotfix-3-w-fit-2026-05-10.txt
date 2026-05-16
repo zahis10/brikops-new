@@ -1,0 +1,243 @@
+================================================================================
+BATCH P1.1-HOTFIX-3 — Inner container w-fit so it grows with content (P1)
+================================================================================
+Date:           2026-05-10
+Branch:         staging  (NOT main)
+Severity:       P1 — overflow + scroll still broken after hotfix-2.
+                Math.floor + dir="ltr" + visible scrollbars all landed,
+                but A1 PDF still gets clipped on the right with no
+                ability to pan. Root cause: inner wrapper div is
+                pinned at min-w-full (= viewport width) and doesn't
+                grow with the canvas, so canvas overflows the wrapper
+                on both sides; the outer overflow-auto sees no
+                horizontal overflow because the wrapper is exactly
+                viewport-width.
+Files changed:  1 frontend
+                  - frontend/src/components/PlanViewer.js
+                  (~3 LOC change — add `w-fit` to one className)
+Pre-flight:     Zahi confirmed hotfix-2 deployed (preview thumbnail now
+                works → LOCATION 2.1 took effect → bundle is current).
+                Therefore Math.floor and dir="ltr" are also live, but
+                clipping persists. The remaining cause is layout, not
+                computation or RTL.
+================================================================================
+
+CONTEXT — why hotfix-2 didn't fully fix it
+==========================================
+
+After hotfix-2 lands, the JSX in PlanViewer.js is:
+
+  <div className="flex-1 overflow-auto bg-slate-700 [&::-webkit-scrollbar]:..." dir="ltr">
+    <div className="min-w-full min-h-full flex items-center justify-center p-4">
+      <Document><Page scale={scale} /></Document>
+    </div>
+  </div>
+
+The inner wrapper div has:
+  - `min-w-full` → min-width: 100% of parent (= viewport width)
+  - NO `width: ...` → width defaults to `auto` for block elements
+  - `flex items-center justify-center` → centers child(ren)
+
+CSS behavior with these constraints when child (canvas) is wider than
+parent:
+  - width: auto in a block context = same as 100% of parent
+  - min-width: 100% reinforces this lower bound
+  - **No upper bound, but no growth instruction either**
+  - Net: wrapper div stays at viewport width
+  - Canvas (e.g. 2000px) is wider than wrapper (e.g. 1500px)
+  - With `justify-center`, canvas is centered within the wrapper, so it
+    overflows the wrapper by ~250px on each side
+  - The OUTER container has `overflow-auto` — but it scrolls **its own
+    content**, which is the wrapper div. The wrapper is exactly the
+    viewport width, so outer has NO horizontal overflow → no scrollbar
+    appears, no scroll happens
+  - The canvas overflow LEAKS OUT of the wrapper but is INVISIBLE to
+    the outer scroll machinery
+
+The fix: tell the wrapper to **grow with its content** while still
+honoring the minimum width.
+
+Tailwind primitive: `w-fit` (= `width: fit-content`).
+With `w-fit + min-w-full`, the computed width is:
+  - max(content, container)
+  - When canvas fits → wrapper = container width → centering works
+  - When canvas overflows → wrapper = canvas width → outer overflow-auto
+    sees the overflow → scroll works → user can pan
+
+This is the correct CSS for the centered-when-fits, scroll-when-
+overflows pattern. It's how Excel viewers, Figma, Photoshop's image
+canvases, and the PDF.js reference viewer all handle their canvases.
+
+STEP 0 — MANDATORY PRE-FLIGHT
+=============================
+
+  # 1. Confirm hotfix-2 deployed (preview thumbnail works → bundle current)
+  git fetch origin staging
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep -n "Math.floor"
+  # EXPECT: 1 hit (the rounding line in handleLoadSuccess)
+
+  # 2. Confirm dir="ltr" lives on the scrolling container
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep -n 'dir="ltr"'
+  # EXPECT: 1 hit (only on the scroll container, not the outer modal)
+
+  # 3. Confirm the inner wrapper className we'll edit
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep -n "min-w-full min-h-full flex items-center justify-center"
+  # EXPECT: 1 hit. This is the line we modify in LOCATION 1.1.
+
+  # 4. Confirm Tailwind 3.4+ supports w-fit (it does in 3.4.17, just
+  #    sanity check the package version)
+  grep '"tailwindcss"' frontend/package.json
+  # EXPECT: ^3.4.17 (or higher)
+
+If ANY pre-flight returns different content → STOP and report.
+
+PART 1 — FRONTEND
+=================
+
+FILE 1 of 1: frontend/src/components/PlanViewer.js
+---------------------------------------------------
+
+LOCATION 1.1 — Add `w-fit` to the inner wrapper className
+
+   CURRENT (the inner div inside the scroll container, ~L172-174):
+       <div className="min-w-full min-h-full flex items-center justify-center p-4">
+         {/* loading / error / pdf / image / fallback */}
+       </div>
+
+   REPLACE WITH:
+       {/* 2026-05-10 hotfix-3 — `w-fit` (width: fit-content) added so
+            the wrapper grows with the canvas when canvas is wider than
+            the viewport. Without this, the wrapper was pinned at 100%
+            (min-w-full) and the canvas overflowed it on both sides
+            with no way for the outer overflow-auto to see/scroll the
+            overflow. With w-fit + min-w-full, computed width is
+            max(content, viewport) — centered when content fits,
+            content-sized (and scrollable via outer) when overflows. */}
+       <div className="min-w-full min-h-full w-fit flex items-center justify-center p-4">
+         {/* loading / error / pdf / image / fallback */}
+       </div>
+
+   That's the entire fix. One Tailwind class added.
+
+DO NOT TOUCH
+============
+- ❌ Backend (zero changes).
+- ❌ ProjectPlansPage / UnitPlansPage — they consume PlanViewer via
+     props only; their integration is correct.
+- ❌ The outer scroll container (`flex-1 overflow-auto bg-slate-700
+     [&::-webkit-scrollbar]:...`) — keep dir="ltr" + scrollbar
+     classes from hotfix-2.
+- ❌ Math.floor (hotfix-2) — keep.
+- ❌ touchAction CSS — keep pinch-zoom enabled.
+- ❌ image-rendering branch (already uses width: ${scale*100}% which
+     naturally grows the wrapper).
+- ❌ react-pdf Page component props — unchanged.
+
+GLOBAL VERIFY
+=============
+
+VERIFY 1 — Lint (implicit via build, no separate npm run lint).
+
+VERIFY 2 — Build
+    cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
+        REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com \
+        yarn build 2>&1 | tail -10
+    EXPECT: "Compiled successfully", no new warnings.
+    Tailwind JIT will pick up `w-fit` (it's a default Tailwind 3 class,
+    not arbitrary).
+
+VERIFY 3 — Manual smoke (Zahi runs after staging deploy)
+
+  Test cases (focused on the bug):
+
+    A. Open A1 PDF (e.g. 801A-6-003.pdf). Click "צפייה במסך מלא".
+       EXPECT: whole plan visible edge-to-edge at fit-scale (~50-60%
+       on desktop). NO horizontal clip, even at fit. (This was true
+       after hotfix-2 already; just confirming no regression.)
+
+    B. Click + ONCE → scale ×1.25 (~70%). Content now overflows.
+       EXPECT:
+       - Visible scrollbars at the bottom AND right edge (white-on-dark,
+         12px wide, persistent — from hotfix-2).
+       - **Drag horizontal scrollbar to the right → see the right edge
+         of the plan (title block, revisions, sections).**
+       - **Drag back to the left → see the left edge of the plan.**
+       - Both edges fully reachable. ⭐ This is the test that has been
+         failing.
+
+    C. Click + repeatedly to 400%. Pan around with scrollbars.
+       EXPECT: smooth scroll in both directions, no stuck state.
+
+    D. Real iPhone — same A1 PDF.
+       EXPECT: fit-scale ~25-30%, pinch to zoom, swipe-pan in any
+       direction reaches all corners. Native touch behavior, no clip.
+
+    E. Detail-modal preview (regression check):
+       EXPECT: thumbnail PNG still showing (hotfix-2 fix preserved).
+
+    F. Small PDF (e.g. apartment-only sketch smaller than viewport):
+       EXPECT: opens at scale 1.0 (cap from hotfix-1), CENTERED in
+       viewport (because w-fit + min-w-full = container width when
+       content fits). No scroll needed.
+
+VERIFY 4 — Bundle inspection
+    Logic-free + 1 Tailwind class = no measurable bundle delta.
+    ls -lh frontend/build/static/js/main.*.js
+    EXPECT: ±0KB delta vs hotfix-2.
+
+
+DELIVERABLES
+============
+review.txt with:
+  - Rollback SHA (origin/staging HEAD before this commit)
+  - STEP 0 grep outputs (4 checks)
+  - LOCATION 1.1 diff (1 line change)
+  - VERIFY 2 (build), VERIFY 4 (bundle) outputs
+  - VERIFY 3 manual smoke deferred to Zahi
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(plans): add w-fit to plan viewer wrapper so it grows with content
+
+  P1.1-hotfix-3 — A1 PDFs were still being clipped on the right edge
+  after hotfix-2 (Math.floor + dir="ltr" + visible scrollbars all
+  worked, but the canvas overflowed an inner wrapper that was pinned
+  at min-w-full / no width grow).
+
+  Root cause: `min-w-full` sets a minimum but no upper bound, and
+  there was no `width: auto-grow` instruction. The wrapper stayed
+  at 100% of viewport even when canvas was 2000px wide. The outer
+  overflow-auto saw no horizontal overflow because the wrapper was
+  exactly viewport width; the canvas leaked OUT of the wrapper but
+  was invisible to the outer scroll machinery.
+
+  Fix: add `w-fit` (= `width: fit-content`). With `w-fit + min-w-full`,
+  computed width is max(content, viewport):
+  - When canvas fits viewport → wrapper = viewport, centered.
+  - When canvas overflows → wrapper = canvas width, outer scrolls.
+
+  Single-class change. No backend, no schema, no logic edits.
+
+STEPS
+=====
+1. STEP 0 pre-flight (4 greps).
+2. LOCATION 1.1: add `w-fit` between `min-h-full` and `flex` in the
+   inner wrapper className.
+3. VERIFY 2 (build).
+4. VERIFY 4 (bundle).
+5. Generate review.txt + commit message.
+6. STOP. AWAITING ZAHI APPROVAL.
+
+ROLLBACK
+========
+git revert <commit-sha>
+git checkout staging && ./deploy.sh --stag
+
+Risk: trivial. One Tailwind class added. Worst case: visual regression
+to hotfix-2 (still functional, scrollbars visible, just couldn't pan
+through them).
+
+================================================================================
+END OF SPEC
+================================================================================

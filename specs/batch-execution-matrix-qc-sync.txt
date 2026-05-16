@@ -1,0 +1,772 @@
+================================================================================
+BATCH #503 — QC → Matrix continuous sync (one-way, item-level granularity)
+================================================================================
+Date:           2026-05-06
+Branch:         staging  (NOT main)
+Severity:       P1 — Without sync, PMs maintain duplicate state in QC + matrix
+                and inevitably abandon one. Zahi 2026-05-06: "אנחנו רוצים
+                למנוע את זה ולדרבן אותו להשתמש גם בזה וגם בזה".
+
+Family:         New phase of Execution Matrix — sync layer on top of #483
+                independent data store.
+                  Phase 1     #483  ✅ shipped (independent matrix backend)
+                  Phase 2A    #484-#492 ✅ shipped (read-only frontend)
+                  Phase 2B    #494 ✅ shipped (cell editing)
+                  Phase 2C    #495+#497+#498 ✅ shipped (stage management)
+                  Phase 2D-1  #500 ✅ shipped (filter drawer + saved views)
+                  #501  ✅ shipped (tooltip note)
+                  #502  ✅ shipped (Excel export)
+                  #502-followup  📋 spec ready (sort + auto_filter + button)
+                  #503        ← THIS BATCH (QC → Matrix sync)
+
+Files changed:  1 NEW backend module (~140 LOC)
+                  1 EDIT backend qc_router.py (+~75 LOC across 3 endpoints
+                                               — BackgroundTasks pattern) 
+                  1 EDIT backend schemas.py (+~5 LOC for 2 new fields)
+                  1 NEW backend test file (~360 LOC, 11 tests — incl. 4
+                                           critical safety + edge tests)
+                  1 EDIT frontend CellEditDialog.js (+~25 LOC for warning + badge)
+                  1 EDIT frontend MatrixCell.js (+~10 LOC for sync indicator)
+
+LOC estimate:   ~615 total (225 backend + 35 frontend + 360 tests)
+                  +125 vs original estimate from secondary review additions:
+                    BackgroundTasks pattern in 3 handlers (+15 LOC)
+                    4 extra tests (T8 flag, T9 critical safety, T10 deleted
+                                   run, T11 actor name None) (+110 LOC)
+Risk:           HIGH — first batch that DOES couple QC and matrix. Touches
+                qc_router which is 2,936 LOC. If sync hook breaks, QC
+                writes could fail. Mitigations:
+                  - sync wrapped in try/except — failure logs but doesn't
+                    block the QC write (matrix is "best effort")
+                  - feature flag `MATRIX_QC_SYNC_ENABLED` (env var) — if
+                    something explodes in prod, flip flag and revert
+                    behavior to pre-#503 instantly without code change
+                  - 7 tests cover the mapping matrix exhaustively
+
+================================================================================
+DECISIONS (Zahi 2026-05-06)
+================================================================================
+
+D1. Direction: ONE-WAY ONLY (QC → Matrix). **PERMANENT decision** by
+    Zahi 2026-05-06: "חשוב לי שהכיוון יהיה כיוון אחד, בקרת ביצוע לא
+    אמורה להשתנות בשום שלב כתוצאה מהמטריצה, המטריצה בסך הכל שואבת
+    את המידע מבקרת הביצוע ולא להיפך".
+    Reverse direction (Matrix → QC) is **never** going to happen.
+    QC has photo-evidence requirements that bypassing via matrix
+    edits would compromise. This is an architectural lock, not a
+    deferred feature.
+
+D2. Granularity: ITEM-LEVEL CONTINUOUS sync (option B from spec discussion).
+    Matrix cell updates on every QC item status change, not just when
+    the stage is officially closed. Aggregate mapping below.
+
+D3. Conflict resolution: QC ALWAYS WINS. Manual matrix edits on
+    QC-template stages are transient — overwritten on next QC change.
+    UI shows warning in edit dialog so PM understands.
+
+D4. Architecture: SYNC WRITE. Every QC change triggers a write to
+    `execution_matrix_cells`. Single source of truth for read = the cell
+    document. Audit chain preserved. Marked with `synced_from_qc: true`.
+
+D5. Scope of sync: UNIT-scope QC stages only. Floor-scope stages
+    (e.g. "אישור סומסום בקומה") deferred to a follow-up — they require
+    multi-cell update logic that's significantly more complex.
+
+D6. PM custom stages (tag or status added in matrix's StageManagementDialog):
+    NEVER synced. PM edits them freely as today.
+
+D7. Backfill: NO. Historical QC runs that closed before #503 deploys
+    don't auto-populate the matrix. Forward-looking only — first QC
+    activity after deploy fires sync. PMs can manually fill historical
+    cells if they want a clean view.
+
+================================================================================
+THE MAPPING — QC items → Matrix cell status (one stage at a time)
+================================================================================
+
+For a single (unit_id, stage_id) pair, gather all items in the latest
+active QC run for that stage. Compute a single matrix status:
+
+  IF run does not exist OR all items still ממתין (no manual touch):
+      → matrix cell DELETED if it was synced before, OR no-op if never synced
+      → cell appears empty in UI
+
+  ELSE IF any item is לא תקין (status != "passed", may be "failed"):
+      → matrix cell `status = "not_done"` (red)
+      → fires immediately on first failed item — PM sees red the moment
+        a defect is recorded
+
+  ELSE IF all items are תקין (closed + passed):
+      → matrix cell `status = "completed"` (green)
+
+  ELSE (some items תקין, some still ממתין, NONE לא תקין):
+      → matrix cell `status = "in_progress"` (blue)
+      → PM sees that work is happening on this cell
+
+Override-close (PM closes stage with override per #478):
+  → matrix cell `status = "completed"` (treated same as natural close)
+  → audit entry notes the override
+
+NOT mapped (NEVER auto-set):
+  - "partial" — manual-only status; PM uses for "kitchen done, baths pending"
+  - "not_relevant" — manual-only; PM marks "this stage doesn't apply here"
+  - "no_findings" — manual-only; visual distinction from "completed"
+
+PMs can still set these manually via CellEditDialog. They DO NOT survive
+a subsequent QC sync (per D3 — QC wins). UI warns about this.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify current QC item status enum (the source of truth):
+    grep -n "QC_ITEM_STATUSES\|class QCItemUpdate\|status.*=.*Field" \
+        backend/contractor_ops/schemas.py | head -10
+    Expected: discover the actual string values for תקין / לא תקין /
+    ממתין. Spec uses "passed" / "failed" / "pending" but the codebase
+    might use different ones. Match exactly.
+
+0.2 — Verify QC item update endpoint location + signature:
+    grep -n "@router.put\|@router.patch\|@router.post" \
+        backend/contractor_ops/qc_router.py | head -15
+    Identify the 3 endpoints that change item or stage status:
+      - item update (per-item status)
+      - stage close/approve
+      - override-close (#478)
+    These are the 3 sites where sync hook gets injected.
+
+0.3 — Verify execution_matrix_cells schema currently:
+    grep -n "execution_matrix_cells\|MATRIX_STATUS_VALUES\|class MatrixCell" \
+        backend/contractor_ops/schemas.py | head -10
+    Note current shape. We add: `synced_from_qc: bool`, `last_qc_sync_at: str`.
+
+0.4 — Verify QC stage scope detection:
+    grep -n "scope.*unit\|scope.*floor\|stage.*scope" \
+        backend/contractor_ops/qc_router.py | head -10
+    The sync hook MUST skip floor-scope stages (D5). Find the field name.
+
+0.5 — Verify CellEditDialog current structure:
+    grep -n "synced_from_qc\|warning\|badge\|status.*onChange" \
+        frontend/src/components/matrix/CellEditDialog.js | head -10
+    Find where to inject the badge + warning UI.
+
+0.6 — Output STEP 0 audit at TOP of review.txt.
+
+================================================================================
+PART 1 — Backend: NEW sync module `qc_to_matrix_sync.py`
+================================================================================
+
+NEW FILE: backend/contractor_ops/qc_to_matrix_sync.py  (~140 LOC)
+
+Pure async functions. No HTTP layer. Called from qc_router endpoints.
+
+Public API:
+    async def sync_qc_stage_to_matrix(
+        db,
+        project_id: str,
+        unit_id: str,
+        stage_id: str,
+        actor: dict,            # {id, name} from get_current_user
+        qc_run: dict | None,    # latest run for this (unit, stage), or None
+        qc_items: list[dict],   # all items of that run
+    ) -> dict | None:
+        """Compute matrix status from QC items, upsert into
+        execution_matrix_cells. Returns the resulting cell dict, or
+        None if no sync was applied (e.g. floor-scope stage).
+        """
+
+Internal helpers:
+    def _compute_matrix_status_from_qc_items(items: list, run: dict | None) -> str | None
+    def _is_qc_template_stage(stage_id: str, project_id, db) -> bool   # async
+    def _is_floor_scope_stage(stage_id: str, project_id, db) -> bool   # async
+
+Mapping logic (per D2 + D5) — CHECK run.closed FIRST:
+    def _compute_matrix_status_from_qc_items(items, run):
+        # CRITICAL: closed run wins over item-level inspection.
+        # Override-close (#478) closes the run with items still pending.
+        # Without this branch, sync would return "in_progress" instead
+        # of "completed" — breaks T5 (override-close mapping).
+        if run and run.get("closed"):
+            if any(i.get("status") == "failed" for i in items):
+                return "not_done"  # closed with at least one failure
+            return "completed"  # closed naturally OR via override
+
+        # Run is open — apply item-level continuous logic
+        if any(i.get("status") == "failed" for i in items):
+            return "not_done"  # red on first failure
+        passed = [i for i in items if i.get("status") == "passed"]
+        if not passed:
+            return None  # all pending or no items — leave cell empty
+        if len(passed) == len(items):
+            return "completed"  # all items passed but run not yet closed
+        return "in_progress"  # some passed, some pending
+
+Upsert logic:
+    cell = await db.execution_matrix_cells.find_one({
+        "project_id": project_id,
+        "unit_id": unit_id,
+        "stage_id": stage_id,
+    })
+    new_status = _compute_matrix_status_from_qc_items(items, run)
+    if new_status is None:
+        # Optionally delete an existing sync-only cell
+        if cell and cell.get("synced_from_qc"):
+            await db.execution_matrix_cells.delete_one({"id": cell["id"]})
+        return None
+    audit_entry = {
+        "type": "qc_sync",
+        "actor_id": actor["id"],
+        "actor_name": actor.get("name") or "QC sync",  # `or` not default arg — None values trigger fallback
+        "ts": _now(),
+        "before": cell.get("status") if cell else None,
+        "after": new_status,
+    }
+    if cell:
+        await db.execution_matrix_cells.update_one(
+            {"id": cell["id"]},
+            {
+                "$set": {
+                    "status": new_status,
+                    "synced_from_qc": True,
+                    "last_qc_sync_at": _now(),
+                    "last_updated_at": _now(),
+                    "last_updated_by": actor["id"],
+                },
+                # AUDIT PRUNING — keep last 50 entries to prevent
+                # unbounded growth (PMs may rapid-fire QC updates,
+                # producing many audit entries per cell over time).
+                "$push": {
+                    "audit": {
+                        "$each": [audit_entry],
+                        "$slice": -50,
+                    },
+                },
+            },
+        )
+    else:
+        new_doc = {
+            "id": str(uuid.uuid4()),
+            "project_id": project_id,
+            "unit_id": unit_id,
+            "stage_id": stage_id,
+            "status": new_status,
+            "note": None,
+            "text_value": None,
+            "synced_from_qc": True,
+            "last_qc_sync_at": _now(),
+            "last_updated_at": _now(),
+            "last_updated_by": actor["id"],
+            "created_at": _now(),
+            "audit": [audit_entry],
+        }
+        await db.execution_matrix_cells.insert_one(new_doc)
+    return await db.execution_matrix_cells.find_one(
+        {"unit_id": unit_id, "stage_id": stage_id, "project_id": project_id},
+        {"_id": 0},
+    )
+
+Feature flag check at top of sync_qc_stage_to_matrix:
+    import os
+    # DEFAULT OFF — high-risk batch (first QC ↔ Matrix coupling).
+    # Deploy with flag OFF, verify zero impact on QC, THEN flip ON
+    # in staging → smoke 24h → flip ON in prod during low-traffic window.
+    if os.getenv("MATRIX_QC_SYNC_ENABLED", "false").lower() != "true":
+        return None
+    # ... rest of logic
+
+⚠️ Default OFF means: after the deploy completes, sync DOES NOT run
+until ops explicitly sets MATRIX_QC_SYNC_ENABLED=true in the env.
+This is intentional. Phased rollout below.
+
+================================================================================
+PART 2 — Backend: schema additions
+================================================================================
+
+EDIT FILE: backend/contractor_ops/schemas.py  (~5 LOC)
+
+Add to whatever Pydantic model represents the matrix cell shape (look up
+in STEP 0.3):
+
+    synced_from_qc: Optional[bool] = False
+    last_qc_sync_at: Optional[str] = None
+
+These are additive — existing cells that don't have them deserialize
+fine because of `Optional`.
+
+No migration needed. New cells get the fields. Old cells get None on
+read.
+
+================================================================================
+PART 3 — Backend: wire sync into qc_router endpoints
+================================================================================
+
+EDIT FILE: backend/contractor_ops/qc_router.py  (+~75 LOC)
+  (BackgroundTasks pattern is verbose: imports + 3 endpoint signatures +
+   `_run_sync` inner async fn × 3 + try/except × 3 + add_task × 3.
+   ~25 LOC per endpoint × 3 endpoints = ~75 LOC total.)
+
+Per STEP 0.2, identify the 3 endpoint handlers that change QC state:
+  - Item update (per-item status flip)
+  - Stage close/approve
+  - Override-close (#478)
+
+In EACH of the 3 handlers, AFTER the QC write succeeds and BEFORE
+returning the response. Uses **FastAPI BackgroundTasks** so sync runs
+AFTER the HTTP response is sent — QC user sees fast response (no
+~100-300ms blocking on the sync's 4 DB ops):
+
+    from fastapi import BackgroundTasks
+    from contractor_ops.qc_to_matrix_sync import sync_qc_stage_to_matrix
+
+    @router.put("/qc/items/{item_id}")
+    async def update_qc_item(
+        item_id: str,
+        ...,
+        background_tasks: BackgroundTasks,
+        user: dict = Depends(get_current_user),
+    ):
+        # ... existing QC item update logic — runs synchronously
+        await db.qc_items.update_one({"id": item_id}, {...})
+        # ... whatever response is built today
+
+        # #503 — schedule matrix sync to run AFTER response is sent.
+        # Best-effort: failure logs but never blocks QC.
+        async def _run_sync():
+            try:
+                run = await db.qc_runs.find_one({...latest run for this stage...})
+                items = await db.qc_items.find({...all items of that stage...}).to_list(500)
+                await sync_qc_stage_to_matrix(
+                    db,
+                    project_id=run["project_id"],
+                    unit_id=run["unit_id"],
+                    stage_id=stage_id,
+                    actor={
+                        "id": user["id"],
+                        "name": user.get("display_name") or user.get("name"),
+                    },
+                    qc_run=run,
+                    qc_items=items,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[#503] QC→matrix sync failed for stage_id={stage_id}: {e}"
+                )
+
+        background_tasks.add_task(_run_sync)
+        return response  # original QC response, NOT awaiting sync
+
+Trade-offs of BackgroundTasks vs inline await:
+  ✅ QC response is fast (~100-300ms saved per request)
+  ✅ Sync still runs after response (matrix still updates)
+  ✅ Try/except still wraps it — failure doesn't crash the worker
+  ⚠️  Matrix may lag 0.5-2s behind QC update (acceptable — PM doesn't
+      see the matrix in the same second they click QC)
+  ⚠️  If sync fails, the user is already gone — error is logged-only,
+      no UI feedback. Same as inline-await with try/except in this regard.
+
+Why best-effort + background:
+  - Matrix is auxiliary; QC is primary truth
+  - If sync fails, QC users completely unaffected
+  - QC perf doesn't degrade (high-frequency item updates stay snappy)
+  - Logged warning lets us debug post-hoc
+
+Repeat the same pattern in the OTHER 2 handlers identified in STEP 0.2:
+  - Stage close/approve endpoint
+  - Override-close endpoint (#478)
+
+================================================================================
+PART 4 — Frontend: CellEditDialog QC-sync awareness
+================================================================================
+
+EDIT FILE: frontend/src/components/matrix/CellEditDialog.js  (~25 LOC)
+
+Two additions:
+
+1. Badge near the dialog title:
+       {cell?.synced_from_qc && (
+         <span className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-200 inline-flex items-center gap-1">
+           🔗 מסונכרן מבקרת ביצוע
+         </span>
+       )}
+
+2. Warning text below the status picker (visible only for QC-template stages):
+       {isQcTemplateStage && (
+         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mt-2">
+           ⚠️ עריכה ידנית של שלב מבקרת הביצוע תידחס בעדכון QC הבא.
+           לעריכה קבועה — עדכן בבקרת הביצוע.
+         </div>
+       )}
+
+Detection of `isQcTemplateStage`:
+  - The stage object passed to the dialog has `source: 'base' | 'custom'`
+    field from #495. Use `source === 'base'` as the signal that this is
+    a QC-template stage and therefore subject to sync.
+  - Custom stages (`source === 'custom'`) — no badge, no warning.
+
+================================================================================
+PART 5 — Frontend: MatrixCell sync indicator
+================================================================================
+
+EDIT FILE: frontend/src/components/matrix/MatrixCell.js  (~10 LOC)
+
+Optional small indicator on cells that have `synced_from_qc: true`:
+
+  Tiny 8×8 chain-link icon in the bottom-right corner of the cell.
+  Or: subtle blue dot. Don't compete with the status icon — keep it
+  minimal so it doesn't clutter the matrix.
+
+  {cell?.synced_from_qc && (
+    <span
+      className="absolute bottom-0.5 left-0.5 w-1.5 h-1.5 rounded-full bg-blue-500"
+      title="מסונכרן מ-QC"
+    />
+  )}
+
+Requires the cell `<div>` to be `relative` positioned (probably already is).
+
+================================================================================
+PART 6 — Backend tests (NEW)
+================================================================================
+
+NEW FILE: backend/tests/test_qc_to_matrix_sync.py  (~250 LOC, 7 tests)
+
+  T1. test_all_pending_no_sync
+      Run with 3 items, all pending → no matrix cell created.
+
+  T2. test_one_passed_in_progress
+      3 items: 1 passed, 2 pending → matrix cell status="in_progress".
+
+  T3. test_all_passed_completed
+      3 items, all passed → matrix cell status="completed",
+      synced_from_qc=True.
+
+  T4. test_any_failed_immediately_not_done
+      3 items: 1 passed, 1 failed, 1 pending → matrix cell status="not_done".
+      (Failed wins over pending — PM sees red immediately.)
+
+  T5. test_override_close_marks_completed
+      Run closed via #478 override → matrix cell status="completed".
+
+  T6. test_floor_scope_stage_skipped
+      Stage with scope="floor" → no matrix sync (D5).
+
+  T7. test_pm_manual_edit_overwritten_by_next_qc
+      Insert manual cell with status="completed", synced_from_qc=False.
+      Trigger QC sync with all items failing.
+      Cell now has status="not_done", synced_from_qc=True.
+      Original manual entry preserved in audit.
+
+  T8. test_feature_flag_off_no_sync
+      With MATRIX_QC_SYNC_ENABLED=false (default!), no sync occurs.
+      Cell remains empty regardless of QC state.
+
+  T9. test_sync_failure_does_not_block_qc_write   ⭐ MOST CRITICAL
+      Mock `sync_qc_stage_to_matrix` to raise an Exception.
+      Trigger QC item update endpoint via TestClient.
+      Assert:
+        - QC item updated successfully (DB shows new status)
+        - HTTP response is 200 (not 500)
+        - matrix_cell unchanged
+        - logger.warning was called with "[#503]" message
+      This proves the try/except actually protects QC from any
+      future bug in the sync module. WITHOUT this test, the
+      "best-effort" claim is unverified.
+
+  T10. test_sync_with_deleted_qc_run
+      Setup: QC run exists, items present.
+      Action: between QC update and sync's call to fetch run, the
+      run is deleted (simulate via mock).
+      Result: sync_qc_stage_to_matrix returns None gracefully,
+      no exception, no crash. matrix_cell unchanged.
+
+  T11. test_actor_name_none_fallback
+      user dict has display_name=None and name=None (edge case for
+      some auth flows).
+      Sync runs → audit entry has actor_name="QC sync" (from `or`
+      fallback, NOT from .get default which doesn't trigger on None).
+      This catches the .get(key, default) Python gotcha.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — Backend tests pass:
+   cd backend && python -m pytest tests/test_qc_to_matrix_sync.py \
+                                   tests/test_execution_matrix.py \
+                                   tests/test_execution_matrix_export.py -q
+   → 7 + 17 + 5 = 29 passed total (or 8 + 17 + 5 = 30 with T8 bonus)
+
+V2 — Existing QC tests untouched:
+   cd backend && python -m pytest tests/test_qc_router.py -q
+   → existing count unchanged (the sync calls are wrapped in try/except,
+     so QC behavior is unaffected even if matrix sync errors)
+
+V3 — Frontend build:
+   cd frontend && yarn build
+   → clean.
+
+V4 — Diff scope:
+   git diff --stat backend/ frontend/
+   → expected files:
+     backend/contractor_ops/qc_to_matrix_sync.py    (NEW ~140)
+     backend/contractor_ops/qc_router.py            (+~75)
+     backend/contractor_ops/schemas.py              (+~5)
+     backend/tests/test_qc_to_matrix_sync.py        (NEW ~360)
+     frontend/src/components/matrix/CellEditDialog.js (+~25)
+     frontend/src/components/matrix/MatrixCell.js   (+~10)
+
+V5 — Sibling matrix files untouched:
+   git diff --stat frontend/src/components/matrix/MatrixGridView.js \
+                   frontend/src/components/matrix/MatrixListView.js \
+                   frontend/src/components/matrix/MatrixFilterDrawer.js \
+                   frontend/src/components/matrix/StageManagementDialog.js \
+                   frontend/src/hooks/useMatrixFilters.js
+   → 0 lines diff
+
+V6 — Feature flag default (CRITICAL — implementation must match):
+   grep "MATRIX_QC_SYNC_ENABLED" backend/contractor_ops/qc_to_matrix_sync.py
+   → default `"false"` — sync is OFF by default for phased rollout.
+     This is INTENTIONAL — code deploys safely without changing behavior;
+     ops then sets MATRIX_QC_SYNC_ENABLED=true via env var to activate
+     in each environment (staging first, prod second per the 10-step
+     rollout plan below).
+   ⚠️ DO NOT "fix" this default to "true" — that would break the
+     phased rollout safety net. The expected default is "false".
+
+================================================================================
+SMOKE TEST (Zahi after staging deploy)
+================================================================================
+
+Project: same staging project (any 4-building × N-units).
+
+(a) PRE-CONDITION: a unit has at least one stage that's NOT YET
+    completed in matrix (e.g. "טיח" of דירה 1 בניין A is empty).
+
+(b) CONTINUOUS sync — granular updates:
+    1. Open QC for that unit's טיח stage.
+    2. Mark first item as תקין → matrix cell becomes BLUE (in_progress).
+    3. Mark second item as תקין → matrix cell stays BLUE.
+    4. Mark third item as תקין (last one) → matrix cell becomes GREEN
+       (completed).
+
+(c) FAILED case:
+    1. New stage on a different unit.
+    2. Mark first item as לא תקין → matrix cell IMMEDIATELY RED (not_done).
+    3. Other items still pending → matrix stays RED (failed wins).
+
+(d) OVERRIDE-CLOSE case (#478 path):
+    1. Stage with all items still pending.
+    2. PM uses override-close → matrix cell becomes GREEN with audit
+       entry "qc_sync" type "override".
+
+(e) FLOOR-SCOPE skip:
+    1. Find a floor-scope stage (e.g. "אישור סומסום בקומה" if scoped to floor).
+    2. Update QC on that stage → matrix cells of units on that floor
+       remain UNCHANGED (D5 — floor-scope deferred).
+
+(f) PM CUSTOM STAGE — never touched:
+    1. Custom column in matrix (גז or "סוג מכירה").
+    2. Edit the cell manually → saves as before.
+    3. No QC ever fires for it. Stays manual forever.
+
+(g) MANUAL EDIT WARNING:
+    1. Open CellEditDialog on a QC-template stage.
+    2. See the amber warning "ערכה ידנית תידחס בעדכון QC הבא".
+    3. Save manual override.
+    4. Trigger any QC item change on that stage → matrix overwrites.
+
+(h) BADGE on synced cells:
+    1. Cell that's synced shows tiny blue dot in corner.
+    2. Hover MatrixCell → tooltip mentions "מסונכרן מ-QC".
+
+(i) DataIntegrity safety:
+    1. Atlas → execution_matrix_cells → find synced cell.
+    2. Confirm `synced_from_qc: true`, `last_qc_sync_at: <recent>`,
+       audit array contains "qc_sync" entry.
+    3. Confirm cell.note (manual) preserved if was set before sync —
+       sync only changes `status`, doesn't touch note.
+
+================================================================================
+OPEN QUESTIONS (resolve before implementation)
+================================================================================
+
+Q1. What happens to cell.note (manual) when QC sync overwrites status?
+    Recommend: PRESERVE — sync only changes `status`. PM's note stays.
+    Default: preserve.
+
+Q2. Should sync update cell.text_value for tag-type stages?
+    There's no QC mapping for tag values, so: NO — sync only touches
+    status-type cells. Tag stages are PM-only by design.
+    Default: ignore tag stages in sync.
+
+Q3. If PM hides a QC-template stage in matrix (#495), does sync still write?
+    Recommend: YES — hide is display-only. Cell exists. When PM unhides,
+    they see the latest synced state.
+    Default: yes.
+
+Q4. UI affordance for "this cell is QC-controlled — go edit in QC":
+    Recommend: keep as a hint in dialog, NOT a hard block. PM can still
+    override (overwritten on next QC change). This keeps backward
+    compat with current matrix workflow.
+    Default: warn, don't block.
+
+Q5. Backfill historical QC runs?
+    Recommend: NO — forward-looking only. Document in deliverables for
+    Zahi awareness.
+    Default: no.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit (5 sub-greps)
+  - Per-file diff
+  - VERIFY 1-6 outputs
+  - Smoke (a)-(i) deferred to Zahi
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(matrix): #503 — QC → Matrix continuous sync (one-way, item-level)
+
+  Per Zahi 2026-05-06: PMs maintain duplicate state in QC and matrix
+  today and abandon one. This batch wires QC item updates to
+  automatically reflect in the matrix.
+
+  Mapping (any QC item change triggers re-sync):
+    no items touched   → cell empty
+    1+ passed, others pending → "in_progress" (blue)
+    any failed         → "not_done" (red)  [fires immediately]
+    all passed         → "completed" (green)
+    override-close     → "completed" (green) with audit "override"
+
+  Architecture (per Zahi decisions 2026-05-06):
+    - One-way only (Matrix → QC reverse defer to a future batch)
+    - Item-level continuous (cell flips on every item change, not just stage close)
+    - QC always wins — manual matrix edits on QC-template stages are
+      transient (overwritten on next QC change)
+    - PM custom stages (tag/status added in matrix) NEVER synced —
+      remain freely editable
+    - Sync write architecture — matrix_cells is single source of truth
+      for read; updated on QC change via best-effort hook
+
+  Resilience:
+    - Sync wrapped in try/except — failure logs but doesn't block QC writes
+    - Feature flag MATRIX_QC_SYNC_ENABLED (default "false" — phased
+      rollout: deploy with flag off → verify zero impact → flip on in
+      staging → smoke 24h → flip on in prod during low-traffic window).
+    - BackgroundTasks pattern (FastAPI) — sync runs AFTER HTTP response
+      so QC requests don't slow down by ~100-300ms.
+    - Floor-scope QC stages SKIPPED (D5) — defer to follow-up batch
+
+  ~615 LOC across 6 files. 11 backend tests covering:
+    - Mapping matrix: T1 all-pending no sync, T2 1+ passed in_progress,
+      T3 all passed completed, T4 any failed → not_done, T5 override-close
+      (run.closed branch) → completed, T6 floor-scope skipped
+    - Manual overwrite preserved-then-replaced (T7)
+    - Feature flag default OFF respected (T8)
+    - ⭐ Sync failure does NOT block QC write (T9 — MOST CRITICAL)
+    - Deleted QC run graceful handling (T10)
+    - Actor name None → "QC sync" fallback via `or` not default (T11)
+
+  Out of scope: backfill of historical QC runs (forward-looking only),
+  floor-scope stage sync, Matrix → QC reverse direction (PERMANENT
+  architectural lock per D1 — never going to happen).
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (5 sub-greps)
+2. PART 1 — qc_to_matrix_sync.py module (~140 LOC) + STEP 0 audit
+3. PART 2 — schema field additions (~5 LOC)
+4. PART 6 — write 7 tests FIRST (TDD-ish — drives the helper API)
+5. RUN pytest — verify 7 tests pass on the helper alone
+6. PART 3 — wire sync into 3 qc_router endpoints (~60 LOC)
+7. RUN pytest — full suite (29-30 tests must pass; especially regression
+   on existing QC tests)
+8. PART 4 — CellEditDialog warning + badge (~25 LOC)
+9. PART 5 — MatrixCell tiny indicator (~10 LOC)
+10. RUN yarn build — clean
+11. Generate review.txt + .local/.commit_message
+12. STOP. Zahi reviews. Then he runs:
+      git checkout staging && git merge main && ./deploy.sh --stag
+    ⚠️ COMMIT ON `staging` BRANCH. Smoke before prod.
+
+================================================================================
+PHASED ROLLOUT (10 STEPS — DON'T SHORTCUT)
+================================================================================
+
+This is THE most cautious deploy in the matrix series. Follow strictly:
+
+Step 1: Replit implements with all 4 critical fixes + 2 small fixes:
+  - Override-close mapping (run.closed branch first)
+  - BackgroundTasks for sync (perf)
+  - 4 extra tests (T8/T9/T10/T11)
+  - Feature flag default OFF
+  - actor_name `or` fallback
+  - Audit pruning $slice -50
+
+Step 2: Deploy to STAGING with flag OFF (default).
+  Verify all 11 tests pass in CI + yarn build clean.
+
+Step 3: Smoke test STAGING — QC works EXACTLY as before.
+  No matrix sync should fire because flag is OFF.
+  This proves the code addition is non-impactful when disabled.
+
+Step 4: Set MATRIX_QC_SYNC_ENABLED=true in staging env vars.
+  No redeploy needed (env var only).
+
+Step 5: Smoke test ALL 9 scenarios (a)-(i) on staging.
+  Especially (b) continuous sync, (d) override close, (g) manual
+  edit warning. Watch for race conditions, performance regression
+  on QC updates.
+
+Step 6: Watch staging for 24 HOURS minimum.
+  Check error logs daily for "[#503] QC→matrix sync failed" entries.
+
+Step 7: Deploy to PROD with flag OFF (default).
+  Same code path — but sync still doesn't fire in prod yet.
+
+Step 8: Verify prod QC unchanged (no regressions on existing flows).
+
+Step 9: Set MATRIX_QC_SYNC_ENABLED=true in PROD during a LOW-TRAFFIC
+  window (e.g. evening Israel time). Monitor for 1 hour.
+  - Check that matrix cells start syncing for new QC activity
+  - Watch for error logs
+  - Ask Zahi to test on a real project
+
+Step 10: If stable — leave flag ON permanently.
+  Document in CLAUDE.md that #503 sync is GA.
+  If anything weird in step 9 → flip flag OFF instantly via env var.
+
+================================================================================
+ROLLBACK (3 modes — choose by severity)
+================================================================================
+
+MILD (sync misbehaving but harmless):
+  Set MATRIX_QC_SYNC_ENABLED=false via env var. Sync stops instantly.
+  No code change, no redeploy. PMs go back to manual matrix edits.
+
+MEDIUM (logic bug in mapping):
+  git revert <commit-sha> just for #503.
+  6 files restore (delete sync module + revert qc_router edits +
+  revert schema + revert frontend).
+
+SEVERE (sync corrupted matrix cells):
+  Restore execution_matrix_cells from Atlas Continuous Backup
+  (point-in-time before deploy).
+  Then git revert.
+  This is a worst-case path — extremely unlikely given test coverage,
+  but documented for Zahi awareness.
+
+NO impact on:
+  - QC functionality (#478, #481 etc.) — sync hook is additive, wrapped
+    in try/except. Existing QC tests unchanged.
+  - Matrix view (#484-#492), cell editing (#494), stage management
+    (#495+#497+#498), filter drawer (#500), tooltip (#501), Excel
+    export (#502).
+  - Auth, billing, safety routers, plans.
+
+================================================================================
+END OF SPEC — #503 QC→Matrix sync (one-way Phase A)
+================================================================================

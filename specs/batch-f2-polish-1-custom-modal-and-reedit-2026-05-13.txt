@@ -1,0 +1,513 @@
+================================================================================
+BATCH F.2-polish-1 — Custom Hebrew confirm modal + re-edit preserves drawings
+================================================================================
+Date:           2026-05-13
+Branch:         staging  (NOT main)
+Severity:       P3 — two UX polish items reported by Zahi 2026-05-12
+                after F.2 v3 staging smoke:
+
+                Issue 1: Native `window.confirm` shows "האתר אומר"
+                prefix + small system-styled buttons. Doesn't match
+                the BrikOps dark/professional look. F.2 v3 spec
+                pre-documented this as a future ~30-LOC follow-up
+                via Radix Dialog (TaskDetailPage reopen pattern).
+                Zahi confirmed UX is jarring — time to ship the
+                follow-up.
+
+                Issue 2: After saving a photo with drawings, tapping
+                the edit (pencil) icon on the thumbnail loads the
+                ORIGINAL raw photo instead of the annotated version.
+                User sees a clean image and loses their work
+                visually. Reported by Zahi 2026-05-12: "אחרי ששמרתי
+                תמונה עם ציור למשל, אני לוחץ על עריכה, זה מוחק את
+                הציור ומשאיר לי תמונה נקיה".
+
+                Root cause for Issue 2: `NewDefectModal.js:1080`
+                feeds `originalFile || file` to PhotoAnnotation
+                on re-annotate. The `||` priority loads `originalFile`
+                (raw) FIRST when it exists. Flipping the priority
+                to `file || originalFile` loads the ANNOTATED JPEG
+                first → user sees rasterized drawings → can add new
+                strokes on top.
+
+                NOTE: this is the **intermediate fix**. User sees
+                old drawings as pixels (rasterized), can paint over
+                them, but cannot edit/undo individual previous
+                strokes. The full architectural fix (persist strokes
+                as JSON server-side) remains in backlog as
+                "Re-editable annotations". For 80% of cases,
+                Option A solves the user-facing pain.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only (2 files):
+                  - frontend/src/components/PhotoAnnotation.js
+                    (~+38 LOC: state + handleDiscard update + dialog JSX)
+                  - frontend/src/components/NewDefectModal.js
+                    (1 line flip — priority order on imageFile prop)
+                Total: 2 files, ~+39 LOC. No backend, no DB, no env vars,
+                no new dependencies (inline modal, no Radix needed).
+
+Baseline:       origin/staging HEAD = F.2 v3 (commit TBD after deploy).
+                PhotoAnnotation.js: 838 LOC. NewDefectModal.js: per F.2 v3.
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN this batch:
+  ✅ Replace `window.confirm` call in `handleDiscard` with a
+     custom inline modal.
+  ✅ Custom modal: dark BrikOps-styled, Hebrew text + Hebrew buttons
+     (אישור / ביטול), destructive (red) confirm action.
+  ✅ Click overlay or ביטול → dismiss without discarding.
+  ✅ Click אישור → invoke onDiscard (or fallback to onSave(null, false)).
+  ✅ Flip imageFile priority in NewDefectModal.js re-annotate render
+     (Instance A) from `originalFile || file` to `file || originalFile`.
+
+OUT of this batch:
+  ❌ Full re-editable annotations (architectural — persist strokes
+     as JSON server-side). Remains in backlog. Option A here is the
+     INTERMEDIATE fix.
+  ❌ Migration of EXISTING images already saved with originalFile
+     priority — those will start showing their annotations next time
+     user re-edits (no data migration needed; the priority flip
+     applies forward).
+  ❌ Use of Radix Dialog (`@radix-ui/react-dialog`). Inline modal
+     inside the existing PhotoAnnotation portal is simpler and
+     avoids cross-portal z-index complexity.
+
+================================================================================
+STEP 0 — PRE-FLIGHT (5 PASS)
+================================================================================
+
+1. Confirm F.2 v3 is shipped (or staging matches F.2 v3 state):
+   $ git log origin/staging --oneline -3
+   →  Expect HEAD includes the F.2 v3 commit (PhotoAnnotation 838 LOC,
+      onDiscard prop wired across 7 render sites).
+   ✓ If F.2 v3 not yet on staging → STOP, ship F.2 first.
+
+2. Confirm `handleDiscard` exists and currently calls `window.confirm`:
+   $ grep -nA 4 "const handleDiscard" frontend/src/components/PhotoAnnotation.js
+   →  Expect: 1 hit. Body contains `window.confirm(...)`.
+
+3. Confirm NewDefectModal Instance A line still reads
+   `originalFile || file`:
+   $ grep -n "originalFile || images\[annotatingIndex\].file" \
+       frontend/src/components/NewDefectModal.js
+   →  Expect: 1 hit near L1080.
+
+4. Confirm there are no existing `showDiscardConfirm` state references:
+   $ grep -n "showDiscardConfirm" frontend/src/components/PhotoAnnotation.js
+   →  Expect: 0 hits (clean baseline).
+
+5. Confirm PhotoAnnotation uses `ReactDOM.createPortal(content, document.body)`
+   wrapper (so the new modal renders inside the same portal):
+   $ grep -n "createPortal" frontend/src/components/PhotoAnnotation.js
+   →  Expect: 1 hit at the bottom of the component.
+
+6. **Verify image existence guard for re-annotate flow:**
+   $ grep -B1 "annotatingIndex !== null" frontend/src/components/NewDefectModal.js
+   →  Expect: JSX condition `{annotatingIndex !== null && images[annotatingIndex] && (...)}`.
+   ✓ This protects against `images[i]` being undefined.
+   ⚠ BUT: does NOT protect against `images[i].file === null && images[i].originalFile === null`.
+     With the priority flip (file || originalFile), if BOTH are null/undefined,
+     `imageFile` becomes `undefined` → PhotoAnnotation receives undefined → image
+     load fails silently or crashes.
+
+   **Mitigation in this spec:** LOCATION 4 extends the JSX gate to ALSO check
+   that at least one of file/originalFile is truthy. Defensive guard for edge
+   cases (shouldn't happen in practice — every saved image has at least one —
+   but cheap insurance).
+
+================================================================================
+LOCATION 1 — Add showDiscardConfirm state
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: near other UI-only state (e.g., after `const [saving, setSaving] = useState(false);`
+        — anchor by content).
+
+ANCHOR (find this line — F state for saving spinner):
+  const [saving, setSaving] = useState(false);
+
+ADD AFTER:
+  // BATCH F.2-polish-1 (2026-05-13) — custom Hebrew confirm modal
+  // for the discard action, replacing window.confirm (which shows
+  // "האתר אומר" prefix + tiny system buttons that don't match the
+  // BrikOps look). Modal renders inline inside the PhotoAnnotation
+  // portal, so it inherits z-index above the canvas.
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+
+================================================================================
+LOCATION 2 — Update handleDiscard to use the modal state
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: `handleDiscard` callback (currently ~L561-579 after F.2 v3).
+
+ANCHOR (find this block — current handleDiscard from F.2 v3):
+  const handleDiscard = useCallback(() => {
+    if (strokesRef.current.length > 0) {
+      if (!window.confirm('לבטל את כל השינויים ולסגור?')) return;
+    }
+    if (onDiscardRef.current) {
+      onDiscardRef.current();
+    } else {
+      onSaveRef.current(null, false);
+    }
+  }, []);
+
+REPLACE WITH:
+  // BATCH F.2-polish-1 — if user made annotations, show the custom
+  // confirm modal instead of window.confirm. The modal's "אישור"
+  // button then calls confirmDiscard which does the actual close.
+  const handleDiscard = useCallback(() => {
+    if (strokesRef.current.length > 0) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    // No annotations → close immediately (no confirm needed).
+    if (onDiscardRef.current) {
+      onDiscardRef.current();
+    } else {
+      onSaveRef.current(null, false);
+    }
+  }, []);
+
+  // BATCH F.2-polish-1 — called by the modal's "אישור" button.
+  // Same close logic as handleDiscard's no-strokes path.
+  const confirmDiscard = useCallback(() => {
+    setShowDiscardConfirm(false);
+    if (onDiscardRef.current) {
+      onDiscardRef.current();
+    } else {
+      onSaveRef.current(null, false);
+    }
+  }, []);
+
+================================================================================
+LOCATION 3 — Render the custom modal inside the PhotoAnnotation content
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: INSIDE the existing `content` JSX (the one wrapped by
+        ReactDOM.createPortal), AS THE LAST CHILD before the closing
+        `</div>` of the outermost modal wrapper.
+
+ANCHOR (find the closing of the PhotoAnnotation modal — typically the
+last `</div>` before `</div>` followed by createPortal):
+
+  ... (existing JSX: top toolbar, canvas, bottom action bar, pendingText overlay) ...
+  </div>    // ← THE OUTERMOST WRAPPER CLOSES HERE
+);
+
+ADD JUST BEFORE the outermost closing `</div>`:
+
+  {/* BATCH F.2-polish-1 (2026-05-13) — custom Hebrew confirm modal,
+      replaces window.confirm for the discard action. Inline inside
+      the PhotoAnnotation portal so z-index naturally sits above the
+      canvas. Click overlay or ביטול to dismiss. */}
+  {showDiscardConfirm && (
+    <div
+      className="absolute inset-0 bg-black/70 flex items-center justify-center px-6"
+      style={{ zIndex: 50 }}
+      onClick={() => setShowDiscardConfirm(false)}
+    >
+      <div
+        className="bg-slate-800 rounded-2xl p-5 max-w-sm w-full border border-slate-700 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        dir="rtl"
+      >
+        <div className="text-white text-base font-medium mb-5 text-center">
+          לבטל את כל השינויים ולסגור?
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowDiscardConfirm(false); }}
+            className="flex-1 px-4 py-2.5 rounded-xl bg-slate-700 text-slate-200 text-sm font-medium hover:bg-slate-600 transition-colors"
+          >
+            ביטול
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); confirmDiscard(); }}
+            className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors"
+          >
+            אישור
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+
+Notes:
+- `absolute inset-0` + `z-50` keeps the modal pinned within the
+  PhotoAnnotation portal. Since PhotoAnnotation's outermost wrapper
+  is `fixed inset-0` with `zIndex: 10001`, the modal naturally
+  appears above the canvas + toolbars.
+- Click overlay → dismiss. Click on the inner panel → does NOT
+  dismiss (stopPropagation).
+- Buttons: ביטול = neutral slate; אישור = destructive red. Matches
+  app convention for destructive confirmation.
+- Hebrew is preserved via `dir="rtl"`.
+- Body text size 16px+ (`text-base`) prevents iOS auto-zoom (not
+  triggered here since it's not an input, but consistent).
+- No new dependencies — pure HTML/Tailwind. Total: 1 div overlay +
+  1 panel + 1 title + 2 buttons.
+
+================================================================================
+LOCATION 4 — Flip imageFile priority + defensive guard in NewDefectModal
+================================================================================
+File: frontend/src/components/NewDefectModal.js
+Modify: the re-annotate render (Instance A, currently ~L1079-1083).
+
+ANCHOR (find this block):
+  {annotatingIndex !== null && images[annotatingIndex] && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={images[annotatingIndex].originalFile || images[annotatingIndex].file}
+        onSave={handleAnnotationSave}
+        onDiscard={() => setAnnotatingIndex(null)}
+      />
+    </Suspense>
+  )}
+
+REPLACE WITH:
+  {annotatingIndex !== null && images[annotatingIndex] &&
+   (images[annotatingIndex].file || images[annotatingIndex].originalFile) && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        // BATCH F.2-polish-1 (2026-05-13) — load the annotated file
+        // first when re-editing. User sees their previous drawings
+        // as rasterized pixels on the canvas; can add new strokes
+        // on top. Old strokes can't be edited individually
+        // (rasterized — that's the "Re-editable annotations"
+        // backlog batch). originalFile fallback covers the edge
+        // case where file is missing (shouldn't happen but defensive).
+        // The gate above ALSO guards against both being null —
+        // prevents PhotoAnnotation receiving undefined imageFile.
+        imageFile={images[annotatingIndex].file || images[annotatingIndex].originalFile}
+        onSave={handleAnnotationSave}
+        onDiscard={() => setAnnotatingIndex(null)}
+      />
+    </Suspense>
+  )}
+
+Notes:
+- 1-line CONTENT change in `imageFile` (priority flip: `originalFile || file`
+  → `file || originalFile`).
+- 1-line CONDITION change in the JSX gate: adds
+  `(images[annotatingIndex].file || images[annotatingIndex].originalFile)`
+  as an additional guard. Prevents PhotoAnnotation from being rendered with
+  `imageFile === undefined` (would silently fail to load or crash).
+- Plus 8-line comment block for future maintainers documenting the WHY.
+- NO other consumer needs this change — re-annotate flow only exists in
+  NewDefectModal Instance A.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ All other F.2 v3 logic (onDiscard prop, onDiscardRef, X button,
+     7 consumer wirings) — preserved as-is.
+- ❌ F + F.1 + F-keyboard logic.
+- ❌ Save / Undo buttons.
+- ❌ Color picker UI / T button.
+- ❌ Text tool overlay UI (size picker).
+- ❌ Drag/edit/hit-testing (F.1b, F.1c).
+- ❌ Touch handlers, viewport lock, scaleRef math.
+- ❌ Other 6 consumer render sites (TaskDetailPage ×2,
+     StageDetailPage, NewDefectModal Instance B, HandoverSectionPage,
+     HandoverItemModal) — only Instance A of NewDefectModal touches
+     re-annotate flow.
+- ❌ Save logic / handlers in any consumer.
+- ❌ Backend / parent contract / saved JPEGs / data shape.
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — File size sanity
+================================================================================
+$ wc -l frontend/src/components/PhotoAnnotation.js
+   →  Expect: ~876 (838 + ~38). Cap 890.
+
+$ wc -l frontend/src/components/NewDefectModal.js
+   →  Expect: +~7 (1 line content change + 6 line comment block).
+
+================================================================================
+VERIFY 3 — grep sanity
+================================================================================
+$ grep -n "showDiscardConfirm\|confirmDiscard\|window.confirm" \
+    frontend/src/components/PhotoAnnotation.js
+   →  Expect:
+     - showDiscardConfirm: ~3 hits (state declaration + JSX gate + 2 setters)
+     - confirmDiscard: ~2 hits (callback def + JSX button)
+     - **window.confirm: 0 hits** (must be removed from PhotoAnnotation.js).
+
+$ grep -n "images\[annotatingIndex\]\.file ||" \
+    frontend/src/components/NewDefectModal.js
+   →  Expect: 1 hit. The `originalFile ||` priority is GONE.
+
+================================================================================
+VERIFY 4 — Manual smoke (DEFERRED TO ZAHI)
+================================================================================
+
+**A — Custom modal appears (PRIMARY for Issue 1):**
+  1. Open PhotoAnnotation, draw an annotation.
+  2. Tap X.
+  EXPECT: custom Hebrew modal appears with:
+    - Title: "לבטל את כל השינויים ולסגור?"
+    - Two buttons side-by-side: [ביטול] [אישור]
+    - אישור is RED (destructive)
+    - ביטול is slate (neutral)
+    - Dark BrikOps style (slate-800 panel, slate-700 border)
+    - NO "האתר אומר" prefix
+    - NO native iOS dialog look
+
+**B — Click overlay dismisses:**
+  1. Same as A → modal open.
+  2. Tap OUTSIDE the modal panel (the dark overlay area).
+  EXPECT: modal closes silently. Annotations intact. NO discard.
+
+**C — Click ביטול dismisses:**
+  1. Same as A → modal open.
+  2. Tap ביטול button.
+  EXPECT: modal closes. Annotations intact. NO discard.
+
+**D — Click אישור discards:**
+  1. Same as A → modal open.
+  2. Tap אישור button.
+  EXPECT: modal + PhotoAnnotation close. No upload. Photo cleared.
+
+**E — No annotations + X = silent close (regression check):**
+  1. Open PhotoAnnotation, don't draw.
+  2. Tap X.
+  EXPECT: PhotoAnnotation closes immediately. NO custom modal
+  appears (no strokes = no confirm needed). NO upload.
+
+**F — Re-edit preserves drawings (PRIMARY for Issue 2):**
+  1. Open new defect modal → take photo → annotate (draw a red oval) → אישור (save).
+  2. Photo thumbnail appears in the form's image list.
+  3. Tap the pencil/edit icon on the thumbnail.
+  EXPECT: PhotoAnnotation re-opens. The RED OVAL is visible on the
+  canvas (rasterized into the image). The toolbar is fresh (no
+  strokes in the array — they're pixels now). User can add new
+  strokes on top.
+  BEFORE this fix: canvas was clean (no oval).
+
+**G — Re-edit + add new stroke + save:**
+  1. Same as F → see the rasterized oval.
+  2. Draw a blue line.
+  3. Tap שמור.
+  EXPECT: photo saves with BOTH the red oval (rasterized from v1) AND
+  the new blue line (rasterized from v2). The thumbnail updates.
+
+**H — Re-edit + X (discard) = no change to existing image:**
+  1. Re-open photo for edit → see rasterized drawings.
+  2. Add a stroke (or don't).
+  3. Tap X → confirm אישור.
+  EXPECT: PhotoAnnotation closes. The image in `images[]` is
+  UNCHANGED. The thumbnail still shows the previous state. No upload.
+
+**J — Discard modal with keyboard up (F-keyboard interaction):**
+  1. T → tap canvas → keyboard pops up.
+  2. Type something in the pendingText overlay (DON'T tap אישור yet)
+     OR draw something on the canvas before tapping T.
+  3. Tap X in the top toolbar.
+  EXPECT: confirm modal appears (because strokes exist OR text is
+  pending). Modal is FULLY VISIBLE — not behind the keyboard.
+  Both [ביטול] and [אישור] buttons are reachable.
+  3a. Tap ביטול → modal closes, PhotoAnnotation stays open with
+      keyboard + pendingText intact.
+  3b. Tap אישור → PhotoAnnotation closes (keyboard dismisses
+      automatically with the unmount).
+
+  **Critical:** if the modal appears behind the keyboard or buttons
+  are not reachable → bug. Mitigation in code: modal uses
+  `absolute inset-0` within the PhotoAnnotation portal, and the
+  F-keyboard `applyDisplayScale` listener shrinks the canvas area
+  when keyboard appears. The modal should sit ABOVE the canvas
+  (zIndex 50 within the portal), and the modal's vertical centering
+  in `items-center` will center it within the AVAILABLE space (post-
+  keyboard). Edge case to verify in smoke.
+
+  **If modal IS behind keyboard:** follow-up batch adds
+  `document.activeElement?.blur()` in `handleDiscard` to force
+  dismiss the keyboard before showing the modal. Not in this spec.
+
+**K — Cross-platform:**
+  - Test A + F + J on iPhone (Capacitor) AND Android.
+  EXPECT: custom modal looks identical on both (no more native
+  iOS "האתר אומר" prefix). Re-edit preserves drawings on both.
+  Modal with keyboard up works on both.
+
+================================================================================
+RISK
+================================================================================
+Low. Pure UI polish + 1-line priority flip.
+
+- ⚠ Custom modal renders absolutely-positioned inside the
+  PhotoAnnotation portal. `z-50` is relative to the parent's
+  stacking context. PhotoAnnotation's portal root is at `zIndex:
+  10001`, so the modal sits above the canvas naturally.
+- ⚠ Click-outside dismisses the modal. This is standard UX
+  (Cancel = dismiss). If user wants to confirm by tapping outside
+  on a touch device, they'd need to explicitly tap אישור.
+- ⚠ Re-edit imageFile flip: ANY existing image saved before this
+  batch with `originalFile` populated and `file === originalFile`
+  (i.e. user took photo but didn't annotate → both fields same)
+  will load `file` (which is the raw photo). No regression — same
+  user-visible behavior.
+- ⚠ NewDefectModal Instance A is the ONLY consumer with re-edit
+  flow. Other 6 consumers don't render PhotoAnnotation on an
+  already-stored image. No need to flip priority elsewhere.
+- ⚠ Old strokes after re-edit are RASTERIZED (pixels) — user
+  cannot edit/drag/undo them individually. This is the intermediate
+  fix. Full architectural fix ("Re-editable annotations") remains
+  in backlog. Document in commit message.
+
+Bundle size: zero (no new imports).
+Performance: zero impact.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+- Reverts custom modal → window.confirm returns.
+- Reverts re-edit priority → originalFile loads on re-annotate.
+- Does NOT affect F.2 v3 (discard button still works, just with
+  the system confirm dialog).
+- F + F.1 + F-keyboard preserved.
+
+================================================================================
+DEPLOY ORDERING
+================================================================================
+F.2 v3 must be on staging+prod first. This batch lands on top:
+- LOCATION 1-3 (PhotoAnnotation): touches handleDiscard + adds state
+  + adds inline modal. No overlap with F/F.1/F-keyboard areas.
+- LOCATION 4 (NewDefectModal): 1-line content change in Instance A.
+  No overlap with F.2 v3's onDiscard prop wiring (different line).
+- Zero merge conflicts expected.
+
+================================================================================
+NEXT STEPS (after this batch ships green)
+================================================================================
+PhotoAnnotation polish track is essentially complete:
+  - F           ✅ Text labels
+  - F.1a/b/c    ✅ Size, drag, tap-to-edit
+  - F.1b-hf-1   ✅ Bbox cache + 44×44 min touch
+  - F-keyboard  ✅ Viewport-aware canvas
+  - F.2 v3      ✅ Discard X button + 7 consumer wirings
+  - F.2-polish-1 ← this batch — Hebrew modal + re-edit preserves
+
+Architectural / future work still in backlog:
+  - **Re-editable annotations** (persist strokes as JSON server-side)
+    → Option B. Real edit/undo/delete on previous strokes. ~1-2 day
+    batch. Decide based on field demand.
+  - Undo history per stroke (restore pre-edit/pre-drag values).
+  - Delete single label (tap label → X button on pill).
+  - Long-press → context menu.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

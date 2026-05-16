@@ -1,0 +1,138 @@
+================================================================================
+BATCH 5I — Handover back button → /control instead of broken /projects/:id
+================================================================================
+Date:           2026-04-29
+Branch:         staging  (NOT main)
+Severity:       P2 UX — found during 5H smoke test (Task #35 follow-up).
+Files changed:  1 frontend file / 1 logical edit
+                  Frontend: HandoverOverviewPage.js
+Mobile:         N/A — Capacitor WebView, Capgo OTA.
+
+CONTEXT
+-------
+On /handover (HandoverOverviewPage), the header back arrow does:
+    navigate(`/projects/${projectId}`)
+
+But there is NO route `/projects/:projectId` defined in App.js (verified —
+all project routes have a suffix: /control, /dashboard, /handover, /qc,
+etc.). React Router falls through and lands the user on /projects
+(project list) instead of returning them to their project context.
+
+Zahi 2026-04-29: "כשאני לוחץ על חץ חזרה במסירות, הוא שולח אותי לדף
+הפרויקטים במקום להחזיר אותי לעמוד מבנה". Confirmed in screenshot.
+
+FIX — single line. Mirror the convention used on the project's other
+top-level pages by routing back to /control with workMode=structure
+(the project's "home" view).
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify the broken navigate call is at the expected location:
+    grep -n "navigate(\`/projects/\${projectId}\`)" frontend/src/pages/HandoverOverviewPage.js
+    # Expect 1 hit at line 231 (the header back button).
+
+0.2 — Verify no OTHER caller depends on /projects/:projectId as a route:
+    grep -rn "navigate(\`/projects/\${projectId}\`)" frontend/src/ | grep -v node_modules
+    # Document each hit. Any others should also be reviewed for the same
+    # root cause (broken route → falls to /projects).
+    #
+    # If found in additional files, decide per-file: include in this spec
+    # OR file as separate batch. Default: include if surgical (1-3 lines
+    # each, similar pattern). Otherwise file separately.
+
+0.3 — Verify the target route exists and is correct:
+    grep -n 'path="/projects/:projectId/control"' frontend/src/App.js
+    # Expect 1 hit at line 285. Confirms the destination is valid.
+
+0.4 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — FRONTEND (1 file)
+================================================================================
+
+FILE 1 of 1: frontend/src/pages/HandoverOverviewPage.js
+--------------------------------------------------------
+LOCATION 1.1 — line 231 (header back button onClick):
+   CURRENT:
+       <button onClick={() => navigate(`/projects/${projectId}`)} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors">
+         <ChevronRight className="w-4 h-4" />
+       </button>
+
+   REPLACE WITH:
+       <button onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקט">
+         <ChevronRight className="w-4 h-4" />
+       </button>
+
+   Two changes:
+   - onClick: target the existing /control route with workMode=structure
+     (the project's "home" view, where most user flows originate).
+   - title: add Hebrew tooltip "חזרה לפרויקט" so the affordance is clear
+     on hover (consistent with other back arrows in the app).
+
+DO NOT TOUCH:
+- Any other navigate() call in this file.
+- The ChevronRight icon (visual unchanged).
+- The className (styling unchanged).
+- Any other handover-related file (HandoverTabPage, HandoverSectionPage,
+  HandoverProtocolPage) unless STEP 0.2 surfaces the same broken pattern
+  there.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend build:
+   cd frontend && yarn build
+   → no new warnings.
+
+VERIFY 2 — Confirm the broken navigate is gone:
+   grep -c "navigate(\`/projects/\${projectId}\`)" frontend/src/pages/HandoverOverviewPage.js
+   → must return 0.
+
+VERIFY 3 — Confirm the new navigate is in place:
+   grep -c "navigate(\`/projects/\${projectId}/control?workMode=structure\`)" frontend/src/pages/HandoverOverviewPage.js
+   → must return at least 1.
+
+VERIFY 4 — Behavior smoke (Zahi runs visually on staging):
+   a. Open project → click "מסירות" tab → /handover loads
+   b. Click header back arrow (right side, ChevronRight)
+   c. Expected: returns to /control?workMode=structure (the project's
+      structure view), NOT to /projects (project list).
+   d. Hover the back arrow → tooltip reads "חזרה לפרויקט".
+
+================================================================================
+DELIVERABLES
+================================================================================
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (1 file, 1 sub-edit)
+  - VERIFY 1-3 outputs (skip 4 — Zahi runs visually)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(handover): back arrow returns to /control instead of falling through to /projects
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.3 greps, output at top of review.txt).
+   If 0.2 surfaces additional broken callers in OTHER files → flag and
+   ask before expanding scope.
+2. Edit HandoverOverviewPage.js:231 — onClick target + title attribute.
+3. Run VERIFY 1-3.
+4. Generate review.txt + .local/.commit_message.
+5. STOP. Zahi runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+./deploy.sh --prod
+Single-file, single-line change. Trivially safe to revert.
+
+================================================================================
+END OF SPEC
+================================================================================

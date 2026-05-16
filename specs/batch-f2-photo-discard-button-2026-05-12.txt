@@ -1,0 +1,243 @@
+================================================================================
+BATCH F.2 — Photo annotation: discard button (close without saving)
+================================================================================
+Date:           2026-05-12
+Branch:         staging  (NOT main)
+Severity:       P3 — UX gap discovered by Zahi 2026-05-12 during F.1
+                staging test. PhotoAnnotation modal has Save + Undo
+                buttons but NO way to discard the photo entirely.
+                If user takes a photo by mistake or changes their
+                mind, they're forced to press "שמור" (save) — there's
+                no escape hatch.
+
+                Zahi: "צילמתי תמונה, אבל נניח שהתחרטתי ואני רוצה
+                לבטל, אין אפשרות לבטל, חייב ללחוץ רק שמור".
+
+Approach:       Add a small "X" (close) button to the top toolbar
+                (LEFT side in RTL = end of row, opposite the color
+                circles + T button). On click:
+                - If `strokes.length > 0` → `window.confirm` guard:
+                  "לבטל את כל השינויים ולסגור?"
+                - Otherwise → close immediately.
+                Closing calls `onSaveRef.current(null, false)` —
+                the existing signal-abandonment path already used
+                when there are no annotations (component currently
+                takes this path automatically via `handleSave` when
+                `hasAnnotations === false`).
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only:
+                  - frontend/src/components/PhotoAnnotation.js
+                    (~15 LOC: 1 import + 1 button + handler)
+                Total: 1 file. No backend, no DB, no env vars, no
+                new dependencies (X icon is already in lucide-react).
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN this batch:
+  ✅ "X" close button in top toolbar, LEFT side (RTL = end of row).
+  ✅ Confirmation dialog only if user has made annotations.
+  ✅ Calls onSave(null, false) — existing abandonment signal.
+
+OUT of this batch (deferred):
+  ❌ Hardware-back-button handling on Android (Capacitor App.addListener).
+     Future polish — separate batch if observed.
+  ❌ Swipe-down-to-dismiss gesture. Native mobile pattern but adds
+     complexity. Defer.
+  ❌ Visual difference between "discard" and "back" — currently the
+     existing flow uses onSave(null, false) for "no annotations"
+     case. We reuse that same callback for explicit discard.
+     Parent component sees the same signal. If parent needs to
+     distinguish → follow-up batch.
+
+================================================================================
+STEP 0 — PRE-FLIGHT (3 PASS)
+================================================================================
+
+1. Confirm existing `handleSave` already uses `onSave(null, false)`
+   for the no-annotations path:
+   $ grep -nA 5 "hasAnnotations" frontend/src/components/PhotoAnnotation.js
+   →  L273-275: const hasAnnotations = strokesRef.current.length > 0;
+              if (!hasAnnotations) { onSaveRef.current(null, false); }
+   ✓ Abandonment signal already used by component. Parent handles it.
+
+2. Confirm top toolbar has space on LEFT (start of row in LTR / end
+   in RTL):
+   $ grep -nA 5 "flex items-center justify-between px-3 py-2" \
+       frontend/src/components/PhotoAnnotation.js
+   →  Top toolbar uses `justify-between` with a single inner `<div>`
+      containing color circles + "T". Adding a sibling div before it
+      will land on the LEFT (justify-between pushes them apart).
+   ✓ Clean spot for "X" button.
+
+3. Confirm lucide-react imports already in file:
+   $ grep -n "from 'lucide-react'" frontend/src/components/PhotoAnnotation.js
+   →  L3: import { Undo2, Save, Loader2 } from 'lucide-react';
+   ✓ Just add `X` to the same import line. `X` is a standard
+     lucide-react icon (close/cancel symbol).
+
+================================================================================
+LOCATION 1 — Import `X` icon
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Line: 3
+
+BEFORE:
+  import { Undo2, Save, Loader2 } from 'lucide-react';
+
+AFTER:
+  import { Undo2, Save, Loader2, X } from 'lucide-react';
+
+================================================================================
+LOCATION 2 — handleDiscard callback
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: near other useCallback handlers (handleSave, handleUndo,
+        commitPendingText) — around L257-260
+
+ADD:
+  // BATCH F.2 (2026-05-12) — explicit discard handler. Closes the
+  // annotation modal without saving the photo at all. Confirmation
+  // only when user has made annotations (cheap protection against
+  // accidental cancel of work; no confirmation if no annotations yet
+  // = same as "back-out before drawing anything").
+  const handleDiscard = useCallback(() => {
+    if (strokesRef.current.length > 0) {
+      if (!window.confirm('לבטל את כל השינויים ולסגור?')) return;
+    }
+    onSaveRef.current(null, false);
+  }, []);
+
+================================================================================
+LOCATION 3 — Top toolbar: add "X" button on LEFT (RTL = end of row)
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Lines: top toolbar structure (~L305-320 after F)
+
+BEFORE (current — F + F.1 state):
+  <div className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-700 shrink-0"
+       style={{ position: 'relative', zIndex: 20 }}>
+    <div className="flex items-center gap-2">
+      {COLORS.map(c => ( <button ... /> ))}
+      {/* BATCH F — text tool toggle. */}
+      <button onClick={(e) => { ... setTool ... }}> T </button>
+    </div>
+  </div>
+
+AFTER (new sibling div for the X button — justify-between pushes them apart):
+  <div className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-700 shrink-0"
+       style={{ position: 'relative', zIndex: 20 }}>
+    <div className="flex items-center gap-2">
+      {COLORS.map(c => ( <button ... /> ))}
+      <button onClick={(e) => { ... setTool ... }}> T </button>
+    </div>
+
+    {/* BATCH F.2 (2026-05-12) — discard button. Closes the modal
+        without saving. Confirmation only when user has drawn or
+        added text. RTL places this on the visual LEFT, opposite
+        the color/T cluster. */}
+    <button
+      onClick={(e) => { e.stopPropagation(); handleDiscard(); }}
+      aria-label="סגור ללא שמירה"
+      title="סגור ללא שמירה"
+      className="w-8 h-8 rounded-full flex items-center justify-center text-slate-300 hover:bg-slate-700 transition-colors"
+    >
+      <X className="w-5 h-5" />
+    </button>
+  </div>
+
+Visual: subtle "X" icon in slate-300, hover state with darker bg.
+NOT styled as a destructive red — the confirmation dialog is the
+guard against accidental tap. Matches the unobtrusive close pattern
+used elsewhere in the app.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ Save / Undo buttons (bottom toolbar) — preserved.
+- ❌ Color picker UI / T button.
+- ❌ Text tool overlay UI (size picker, מחק button, etc. — all F.1
+     work preserved).
+- ❌ Drag/edit/hit-testing logic.
+- ❌ Touch handlers, viewport lock, scaleRef math.
+- ❌ Existing `hasAnnotations` no-op path in handleSave — its
+     onSave(null, false) call stays as-is.
+- ❌ Backend / parent component contract — same `onSave(file|null,
+     hasAnnotations: bool)` signature.
+- ❌ Existing saved JPEG blobs.
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — Manual smoke (DEFERRED TO ZAHI)
+================================================================================
+
+**A — Discard with no annotations (no confirmation):**
+  1. Take/upload a photo → annotation modal opens.
+  2. Don't draw or add text.
+  3. Tap "X" (top-left of toolbar, RTL).
+  EXPECT: modal closes immediately, no save. No confirm dialog.
+  EXPECT: photo NOT uploaded; parent returns to defect view.
+
+**B — Discard with annotations (confirmation):**
+  1. Open annotation modal.
+  2. Draw an oval (or add a text label).
+  3. Tap "X".
+  EXPECT: `window.confirm('לבטל את כל השינויים ולסגור?')` dialog.
+  3a. Tap Cancel → dialog closes, annotation modal stays open,
+      drawings intact.
+  3b. Tap OK → modal closes, no save, parent returns.
+
+**C — Discard vs Save flow regression:**
+  1. Same setup as B but tap "שמור" (Save) instead.
+  EXPECT: existing Save flow unchanged. Photo uploads with
+  annotations.
+
+**D — Discard with text-pending overlay open:**
+  1. Tap "T" → tap canvas → start typing → tap "X" without
+     committing the text.
+  EXPECT: confirmation IF other strokes exist (the pending text
+  itself isn't in `strokes` yet), else immediate close.
+  Note: in-progress pendingText is discarded silently — that's
+  fine since user is canceling everything.
+
+**E — Regression — back-navigation by parent (existing):**
+  - If parent component calls `onSave(null, false)` via some other
+    path → same behavior as discard (since both use the same
+    callback signature).
+
+================================================================================
+RISK
+================================================================================
+Very low. Single button + callback addition. No state changes.
+
+- ⚠ Parent component may not handle `onSave(null, false)` for the
+  "user discarded after taking photo" path differently than the
+  existing "no annotations to save" path. Verified: spec confirms
+  parent already handles this signal (used by no-annotation save).
+- ⚠ `window.confirm` cross-platform — native dialog. Different on
+  iOS / Android / desktop but functional. Same pattern as F.1
+  delete confirm.
+- ⚠ Pending text overlay open + X tapped: in-progress text input
+  is discarded. Acceptable — user is canceling everything.
+
+Bundle size: zero (X icon already in lucide-react tree).
+Performance: zero impact.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+- Removes X button. Modal goes back to Save+Undo only.
+- No data lost — existing saves unaffected.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

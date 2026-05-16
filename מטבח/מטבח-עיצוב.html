@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head><meta charset="utf-8"><title>עיצוב מטבח - זאחי</title>
+<style>
+@page { size: A4; margin: 1.4cm 1.2cm; }
+body {
+    font-family: "DejaVu Sans", "Noto Sans Hebrew", sans-serif;
+    direction: rtl; color: #2C2C2A; font-size: 10pt;
+    background: #FAF7F0;
+}
+.page { page-break-after: always; }
+.page:last-child { page-break-after: auto; }
+h1 { color: #2C2C2A; font-size: 26pt; margin: 0 0 4pt 0; font-weight: 500; letter-spacing: -0.3pt; }
+h2 { color: #2C2C2A; font-size: 16pt; margin-top: 18pt; margin-bottom: 8pt; font-weight: 500;
+     border-right: 3px solid #C2A687; padding-right: 10pt; }
+h3 { color: #5C4F36; font-size: 11pt; margin-top: 10pt; margin-bottom: 4pt; font-weight: 500; }
+.cover-hero { height: 320pt; border-radius: 8pt; overflow: hidden; margin: 14pt 0 18pt; box-shadow: 0 2pt 8pt rgba(0,0,0,0.08); }
+.subtitle { color: #6B6660; font-size: 12pt; margin: 4pt 0 18pt; }
+.tagline { font-style: italic; color: #8B7E6E; font-size: 11pt; margin-top: 8pt; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14pt; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12pt; }
+.grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10pt; }
+.swatch-card {
+    background: #fff; border-radius: 6pt; overflow: hidden;
+    border: 0.5pt solid #E5DFD0; box-shadow: 0 1pt 3pt rgba(0,0,0,0.06);
+}
+.swatch-img { height: 110pt; }
+.swatch-info { padding: 8pt 10pt; }
+.swatch-name { font-size: 11pt; font-weight: 500; color: #2C2C2A; }
+.swatch-spec { font-size: 9pt; color: #6B6660; margin-top: 2pt; }
+.swatch-hex { font-family: monospace; font-size: 8.5pt; color: #8B7E6E; margin-top: 2pt; }
+.spec-list { background: #fff; border-radius: 6pt; padding: 12pt 18pt; border: 0.5pt solid #E5DFD0; }
+.spec-list dl { margin: 0; }
+.spec-list dt { font-size: 10pt; font-weight: 500; color: #2C2C2A; margin-top: 8pt; }
+.spec-list dd { font-size: 9.5pt; color: #6B6660; margin: 2pt 0 0 0; line-height: 1.5; }
+.callout { background: #F2EDE3; border-right: 3pt solid #C2A687; padding: 10pt 14pt; border-radius: 4pt; font-size: 10pt; color: #5C4F36; margin: 12pt 0; }
+.footer { position: fixed; bottom: 0.5cm; left: 0; right: 0; text-align: center; font-size: 8pt; color: #B0A89A; }
+.material-large { height: 280pt; border-radius: 8pt; overflow: hidden; }
+table.spec-table { width: 100%; border-collapse: collapse; font-size: 10pt; margin-top: 6pt; }
+table.spec-table td { padding: 6pt 8pt; border-bottom: 0.5pt solid #E5DFD0; }
+table.spec-table td:first-child { color: #6B6660; width: 40%; }
+table.spec-table td:last-child { font-weight: 500; }
+.label-tag {
+    display: inline-block; background: #C2A687; color: #fff;
+    padding: 2pt 8pt; font-size: 8.5pt; border-radius: 3pt; margin-left: 6pt;
+}
+.color-bar { display: flex; height: 30pt; border-radius: 4pt; overflow: hidden; margin: 6pt 0; box-shadow: 0 1pt 2pt rgba(0,0,0,0.05); }
+.color-bar > div { flex: 1; display: flex; align-items: flex-end; padding: 4pt; font-size: 7.5pt; color: rgba(255,255,255,0.92); font-family: monospace; }
+</style></head>
+<body>
+
+<!-- ===== PAGE 1: COVER ===== -->
+<div class="page">
+<h1>מטבח · מודרני קלאסי</h1>
+<div class="subtitle">בז' ננו · פורצלן בטון · אי מרכזי עם ישיבה</div>
+
+<div class="cover-hero">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" style="display:block;width:100%;height:100%;background:#EFE9DD;">
+  <defs>
+    <linearGradient id="floor-g" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#C4AE92"/><stop offset="1" stop-color="#A89074"/>
+    </linearGradient>
+    <linearGradient id="wall-g" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#FAF5EB"/><stop offset="1" stop-color="#EAE3D3"/>
+    </linearGradient>
+    <linearGradient id="cab-g" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#DCCEB4"/><stop offset="1" stop-color="#C9B996"/>
+    </linearGradient>
+    <linearGradient id="counter-g" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#9C998F"/><stop offset="1" stop-color="#7E7B72"/>
+    </linearGradient>
+    <linearGradient id="window-g" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#D4E4F2"/><stop offset="0.6" stop-color="#A8C5DE"/><stop offset="1" stop-color="#7AA2C2"/>
+    </linearGradient>
+  </defs>
+  <!-- floor -->
+  <polygon points="50,420 750,420 720,500 80,500" fill="url(#floor-g)"/>
+  <g stroke="#9F8B70" stroke-width="0.8" opacity="0.5" fill="none">
+    <line x1="60" y1="445" x2="730" y2="445"/>
+    <line x1="65" y1="465" x2="720" y2="465"/>
+    <line x1="70" y1="485" x2="710" y2="485"/>
+  </g>
+  <!-- back wall -->
+  <rect x="50" y="40" width="700" height="380" fill="url(#wall-g)"/>
+  <!-- ceiling line subtle -->
+  <line x1="50" y1="40" x2="750" y2="40" stroke="#D4CDB8" stroke-width="2"/>
+  <!-- upper cabinets left -->
+  <rect x="80" y="120" width="270" height="100" fill="url(#cab-g)" stroke="#A89878" stroke-width="0.8"/>
+  <line x1="170" y1="120" x2="170" y2="220" stroke="#9F8E70" stroke-width="0.5"/>
+  <line x1="260" y1="120" x2="260" y2="220" stroke="#9F8E70" stroke-width="0.5"/>
+  <!-- upper cabinets right -->
+  <rect x="475" y="120" width="195" height="100" fill="url(#cab-g)" stroke="#A89878" stroke-width="0.8"/>
+  <line x1="540" y1="120" x2="540" y2="220" stroke="#9F8E70" stroke-width="0.5"/>
+  <line x1="605" y1="120" x2="605" y2="220" stroke="#9F8E70" stroke-width="0.5"/>
+  <!-- pantry tower right -->
+  <rect x="670" y="120" width="80" height="200" fill="url(#cab-g)" stroke="#A89878" stroke-width="0.8"/>
+  <line x1="710" y1="120" x2="710" y2="320" stroke="#9F8E70" stroke-width="0.4"/>
+  <!-- window -->
+  <rect x="350" y="135" width="125" height="105" fill="url(#window-g)" stroke="#2C2C2A" stroke-width="2"/>
+  <line x1="412" y1="135" x2="412" y2="240" stroke="#2C2C2A" stroke-width="1.5"/>
+  <line x1="350" y1="187" x2="475" y2="187" stroke="#2C2C2A" stroke-width="1"/>
+  <!-- backsplash (concrete porcelain) -->
+  <rect x="80" y="220" width="590" height="100" fill="url(#counter-g)" opacity="0.95"/>
+  <!-- countertop slab -->
+  <rect x="78" y="320" width="595" height="8" fill="#7E7B72"/>
+  <rect x="78" y="320" width="595" height="3" fill="#6A6760"/>
+  <!-- base cabinets -->
+  <rect x="80" y="328" width="290" height="92" fill="url(#cab-g)" stroke="#A89878" stroke-width="0.8"/>
+  <rect x="380" y="328" width="290" height="92" fill="url(#cab-g)" stroke="#A89878" stroke-width="0.8"/>
+  <!-- drawer lines -->
+  <g stroke="#A89878" stroke-width="0.4">
+    <line x1="80" y1="358" x2="370" y2="358"/>
+    <line x1="80" y1="388" x2="370" y2="388"/>
+    <line x1="380" y1="358" x2="670" y2="358"/>
+    <line x1="380" y1="388" x2="670" y2="388"/>
+  </g>
+  <!-- vertical dividers / handle grooves -->
+  <g stroke="#7B6B4D" stroke-width="0.6" opacity="0.7">
+    <line x1="160" y1="340" x2="160" y2="416"/>
+    <line x1="240" y1="340" x2="240" y2="416"/>
+    <line x1="320" y1="340" x2="320" y2="416"/>
+    <line x1="460" y1="340" x2="460" y2="416"/>
+    <line x1="540" y1="340" x2="540" y2="416"/>
+    <line x1="610" y1="340" x2="610" y2="416"/>
+  </g>
+  <!-- sink (hint of darker oval) -->
+  <ellipse cx="412" cy="328" rx="52" ry="6" fill="#2A2A2A" opacity="0.85"/>
+  <!-- faucet -->
+  <line x1="412" y1="328" x2="412" y2="282" stroke="#888" stroke-width="2"/>
+  <path d="M 412,282 Q 412,272 422,272" stroke="#888" stroke-width="2" fill="none"/>
+  <line x1="422" y1="272" x2="422" y2="295" stroke="#888" stroke-width="2"/>
+  <!-- cooktop right -->
+  <rect x="510" y="324" width="100" height="6" fill="#1A1A1A"/>
+  <g fill="#0A0A0A">
+    <circle cx="528" cy="327" r="6"/><circle cx="552" cy="327" r="6"/>
+    <circle cx="572" cy="327" r="6"/><circle cx="596" cy="327" r="6"/>
+  </g>
+  <!-- ISLAND (in foreground, parallel) -->
+  <rect x="160" y="445" width="500" height="50" fill="#7E7B72"/>
+  <rect x="160" y="445" width="500" height="3" fill="#6A6760"/>
+  <rect x="180" y="453" width="460" height="40" fill="url(#cab-g)" stroke="#A89878" stroke-width="0.8" opacity="0"/>
+  <!-- pendant lights over island -->
+  <g>
+    <line x1="240" y1="40" x2="240" y2="190" stroke="#2C2C2A" stroke-width="1.5"/>
+    <ellipse cx="240" cy="200" rx="22" ry="14" fill="#C2A687"/>
+    <ellipse cx="240" cy="207" rx="20" ry="6" fill="#FFE9B5"/>
+    <line x1="400" y1="40" x2="400" y2="190" stroke="#2C2C2A" stroke-width="1.5"/>
+    <ellipse cx="400" cy="200" rx="22" ry="14" fill="#C2A687"/>
+    <ellipse cx="400" cy="207" rx="20" ry="6" fill="#FFE9B5"/>
+    <line x1="560" y1="40" x2="560" y2="190" stroke="#2C2C2A" stroke-width="1.5"/>
+    <ellipse cx="560" cy="200" rx="22" ry="14" fill="#C2A687"/>
+    <ellipse cx="560" cy="207" rx="20" ry="6" fill="#FFE9B5"/>
+  </g>
+  <!-- bar stools (bottom of island, shadow) -->
+  <g>
+    <ellipse cx="240" cy="497" rx="20" ry="3" fill="#000" opacity="0.18"/>
+    <ellipse cx="400" cy="497" rx="20" ry="3" fill="#000" opacity="0.18"/>
+    <ellipse cx="560" cy="497" rx="20" ry="3" fill="#000" opacity="0.18"/>
+  </g>
+</svg>
+</div>
+
+<div class="callout">
+    <strong>הקונספט:</strong> מטבח רך ושלו עם פרופיל נמוך — דלתות מלאות בגוון בז' חמים בגימור ננו
+    שלא משאיר טביעות אצבע, נפגשות עם משטח פורצלן דק בגוון בטון לקיר ולאי. הפרזול מוסתר —
+    push-to-open או חריץ אנכי דק. זה לוק שלא ייצא מהאופנה ב-2026 וגם לא ב-2036.
+</div>
+
+<h3>מה רואים בתמונה</h3>
+<table class="spec-table">
+<tr><td>קיר המטבח (אורך)</td><td>605 ס"מ — מקיר לקיר</td></tr>
+<tr><td>אי</td><td>400 ס"מ × 120 ס"מ + שלוחה 30 ס"מ לישיבה</td></tr>
+<tr><td>גובה משטח עבודה</td><td>92 ס"מ (תיקני)</td></tr>
+<tr><td>גובה כללי לתקרה</td><td>320 ס"מ (נקי, אחרי הנמכת גבס)</td></tr>
+<tr><td>מעבר בין מטבח לאי</td><td>~80 ס"מ — מעט בגבול הנוחות; ראה הערה בעמ' 4</td></tr>
+</table>
+
+</div>
+
+<!-- ===== PAGE 2: PALETTE ===== -->
+<div class="page">
+<h2>פלטת חומרים וצבעים</h2>
+
+<div class="grid-3">
+    <div class="swatch-card">
+        <div class="swatch-img">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" style="display:block;width:100%;height:100%;">
+  <defs>
+    <filter id="b1" x="0" y="0">
+      <feTurbulence type="fractalNoise" baseFrequency="2.5" numOctaves="2" seed="7"/>
+      <feColorMatrix values="0 0 0 0 0.83  0 0 0 0 0.77  0 0 0 0 0.66  0 0 0 0.06 0"/>
+      <feComposite operator="in" in2="SourceGraphic"/>
+    </filter>
+  </defs>
+  <rect width="200" height="200" fill="#D4C5A8"/>
+  <rect width="200" height="200" filter="url(#b1)" fill="#000"/>
+</svg>
+</div>
+        <div class="swatch-info">
+            <div class="swatch-name">בז' ננו matte<span class="label-tag">ארונות</span></div>
+            <div class="swatch-spec">גימור ננו / סופר־מט · עמיד טביעות אצבע</div>
+            <div class="swatch-hex">~ Pantone 14-1109 / RAL 1015 / #D4C5A8</div>
+        </div>
+    </div>
+    <div class="swatch-card">
+        <div class="swatch-img">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" style="display:block;width:100%;height:100%;">
+  <defs>
+    <filter id="r" x="0" y="0">
+      <feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="3" seed="3"/>
+      <feColorMatrix values="0 0 0 0 0.55  0 0 0 0 0.54  0 0 0 0 0.51  0 0 0 0.18 0"/>
+      <feComposite operator="in" in2="SourceGraphic"/>
+    </filter>
+    <linearGradient id="cg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#9C988E"/>
+      <stop offset="0.5" stop-color="#8A877E"/>
+      <stop offset="1" stop-color="#7A776F"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" fill="url(#cg)"/>
+  <rect width="200" height="200" filter="url(#r)" fill="#000"/>
+  <line x1="0" y1="65" x2="200" y2="60" stroke="#6E6B62" stroke-width="0.4" opacity="0.5"/>
+  <line x1="0" y1="120" x2="200" y2="125" stroke="#6E6B62" stroke-width="0.3" opacity="0.4"/>
+  <line x1="80" y1="0" x2="78" y2="200" stroke="#7B7870" stroke-width="0.3" opacity="0.3"/>
+</svg>
+</div>
+        <div class="swatch-info">
+            <div class="swatch-name">פורצלן בטון<span class="label-tag">משטח+חיפוי</span></div>
+            <div class="swatch-spec">slab דק 12 מ"מ · גוון אפור-בטון אורבני</div>
+            <div class="swatch-hex">~ Laminam Calce Tortora / SapienStone Cement Grey / #8E8B82</div>
+        </div>
+    </div>
+    <div class="swatch-card">
+        <div class="swatch-img">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" style="display:block;width:100%;height:100%;">
+  <defs>
+    <linearGradient id="mg" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#3A3A38"/>
+      <stop offset="0.5" stop-color="#5A5A58"/>
+      <stop offset="1" stop-color="#3A3A38"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" fill="url(#mg)"/>
+  <g stroke="#2A2A28" stroke-width="0.3" opacity="0.35">
+    <line x1="0" y1="20" x2="200" y2="20"/>
+    <line x1="0" y1="60" x2="200" y2="60"/>
+    <line x1="0" y1="100" x2="200" y2="100"/>
+    <line x1="0" y1="140" x2="200" y2="140"/>
+    <line x1="0" y1="180" x2="200" y2="180"/>
+  </g>
+</svg>
+</div>
+        <div class="swatch-info">
+            <div class="swatch-name">פרזול ברונזה כהה<span class="label-tag">מתכת</span></div>
+            <div class="swatch-spec">חריץ אנכי או push-to-open · גימור brushed</div>
+            <div class="swatch-hex">~ Dark Bronze / Gunmetal / #4A4A48</div>
+        </div>
+    </div>
+    <div class="swatch-card">
+        <div class="swatch-img">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" style="display:block;width:100%;height:100%;">
+  <rect width="200" height="200" fill="#C4AE92"/>
+  <g opacity="0.55" stroke="#9F8B70" stroke-width="0.5" fill="none">
+    <line x1="0" y1="20" x2="200" y2="22"/>
+    <line x1="0" y1="55" x2="200" y2="53"/>
+    <line x1="0" y1="95" x2="200" y2="97"/>
+    <line x1="0" y1="135" x2="200" y2="133"/>
+    <line x1="0" y1="170" x2="200" y2="172"/>
+  </g>
+  <g opacity="0.3" fill="#A38967">
+    <ellipse cx="40" cy="35" rx="15" ry="2"/>
+    <ellipse cx="120" cy="75" rx="20" ry="2"/>
+    <ellipse cx="80" cy="115" rx="18" ry="2"/>
+    <ellipse cx="160" cy="155" rx="16" ry="2"/>
+  </g>
+</svg>
+</div>
+        <div class="swatch-info">
+            <div class="swatch-name">רצפה אלון בהיר<span class="label-tag">רצפה</span></div>
+            <div class="swatch-spec">פרקט מהונדס / SPC · אלון אדום בהיר</div>
+            <div class="swatch-hex">~ Light Oak / Honey / #C4AE92</div>
+        </div>
+    </div>
+    <div class="swatch-card">
+        <div class="swatch-img">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" style="display:block;width:100%;height:100%;">
+  <rect width="200" height="200" fill="#C2A687"/>
+  <g fill="#A88E70" opacity="0.4">
+    <circle cx="20" cy="30" r="3"/><circle cx="50" cy="20" r="2"/><circle cx="80" cy="40" r="3"/>
+    <circle cx="120" cy="25" r="2"/><circle cx="160" cy="35" r="3"/><circle cx="190" cy="50" r="2"/>
+    <circle cx="30" cy="80" r="2"/><circle cx="70" cy="90" r="3"/><circle cx="110" cy="75" r="2"/>
+    <circle cx="150" cy="85" r="3"/><circle cx="180" cy="100" r="2"/>
+    <circle cx="20" cy="130" r="3"/><circle cx="60" cy="140" r="2"/><circle cx="100" cy="125" r="3"/>
+    <circle cx="140" cy="135" r="2"/><circle cx="170" cy="150" r="3"/>
+    <circle cx="40" cy="180" r="2"/><circle cx="90" cy="170" r="3"/><circle cx="130" cy="185" r="2"/>
+    <circle cx="170" cy="180" r="3"/>
+  </g>
+</svg>
+</div>
+        <div class="swatch-info">
+            <div class="swatch-name">ישיבה bouclé<span class="label-tag">שרפרפים</span></div>
+            <div class="swatch-spec">בד bouclé בגוון חרדל-בז' עם רגל מתכת</div>
+            <div class="swatch-hex">~ Bouclé Caramel / #C2A687</div>
+        </div>
+    </div>
+    <div class="swatch-card">
+        <div style="height: 110pt; background: #F7F2E8;"></div>
+        <div class="swatch-info">
+            <div class="swatch-name">קירות + תקרה<span class="label-tag">צבע</span></div>
+            <div class="swatch-spec">לבן-שמנת חם, מט · NCS S 0505-Y20R</div>
+            <div class="swatch-hex">~ Tambour T0102 / Dulux Almond White / #F7F2E8</div>
+        </div>
+    </div>
+</div>
+
+<h3 style="margin-top: 18pt;">סולם הגוונים</h3>
+<div class="color-bar">
+    <div style="background:#FFFFFF; color:#888;">#FFFFFF</div>
+    <div style="background:#F7F2E8;">#F7F2E8</div>
+    <div style="background:#D4C5A8;">#D4C5A8</div>
+    <div style="background:#C2A687;">#C2A687</div>
+    <div style="background:#9C998F;">#9C998F</div>
+    <div style="background:#8E8B82;">#8E8B82</div>
+    <div style="background:#4A4A48;">#4A4A48</div>
+    <div style="background:#2C2C2A;">#2C2C2A</div>
+</div>
+
+<div class="callout">
+    <strong>למה הקומבינציה הזו עובדת:</strong> בז' חם של הארונות נותן את הרכות (לא קליני, לא קר),
+    הפורצלן הבטון מוסיף עומק וטקסטורה אורבנית בלי להעביר את המטבח ל-cold-modern,
+    והפרזול הברונזה מחבר ביניהם. הכל בטון אדמתי-טבעי שלא מתעייף לעין.
+</div>
+
+</div>
+
+<!-- ===== PAGE 3: TOP VIEW ===== -->
+<div class="page">
+<h2>תוכנית מטבח · מבט-על</h2>
+
+<div style="height: 380pt; border-radius: 6pt; overflow: hidden; border: 0.5pt solid #E5DFD0;">
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" style="display:block;width:100%;height:100%;background:#FAF7F0;">
+  <defs>
+    <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="6" stroke="#8E8B82" stroke-width="3" opacity="0.4"/>
+    </pattern>
+  </defs>
+  <!-- room outline (matches user's plan dimensions) -->
+  <!-- scale: 1m = 80px -->
+  <!-- Kitchen+dining area, kitchen wall on the LEFT (north in plan) -->
+  <g stroke="#2C2C2A" stroke-width="3" fill="none">
+    <!-- Outer walls -->
+    <polyline points="80,80 80,520 720,520 720,80 80,80" stroke-linejoin="miter"/>
+  </g>
+  <!-- Wall thickness shading -->
+  <g fill="#3A3A38" opacity="0.85">
+    <rect x="68" y="68" width="664" height="14"/>
+    <rect x="68" y="518" width="664" height="14"/>
+    <rect x="68" y="68" width="14" height="464"/>
+    <rect x="718" y="68" width="14" height="464"/>
+  </g>
+  <!-- Kitchen counter on left wall (running 6m = 480px) -->
+  <rect x="82" y="120" width="56" height="400" fill="#D4C5A8" stroke="#9F8E70" stroke-width="1"/>
+  <!-- Pantry tall (bottom-left corner) -->
+  <rect x="82" y="120" width="56" height="56" fill="#BFAE91" stroke="#9F8E70" stroke-width="1"/>
+  <!-- Cooktop -->
+  <rect x="82" y="186" width="56" height="56" fill="#1A1A1A"/>
+  <g fill="#444">
+    <circle cx="100" cy="204" r="6"/><circle cx="120" cy="204" r="6"/>
+    <circle cx="100" cy="224" r="6"/><circle cx="120" cy="224" r="6"/>
+  </g>
+  <!-- Sink area -->
+  <rect x="82" y="296" width="56" height="68" fill="#3A3A3A" stroke="#222" stroke-width="0.8"/>
+  <!-- Window indication (gap in upper cabinet — shown as dashed) -->
+  <line x1="82" y1="280" x2="82" y2="380" stroke="#7AA2C2" stroke-width="6" stroke-dasharray="4,3"/>
+  <text x="20" y="335" font-family="Arial" font-size="11" fill="#476684" transform="rotate(-90 25,335)">חלון</text>
+
+  <!-- Island (parallel to kitchen, 4m × 1.2m) -->
+  <rect x="220" y="200" width="96" height="320" fill="#D4C5A8" stroke="#9F8E70" stroke-width="1"/>
+  <rect x="220" y="200" width="96" height="320" fill="url(#hatch)"/>
+  <!-- Island countertop overhang -->
+  <rect x="316" y="200" width="24" height="320" fill="#8E8B82" stroke="#6A6760" stroke-width="0.5"/>
+  <!-- 3 stools along the dining side of island -->
+  <g fill="#C2A687" stroke="#9F8E70" stroke-width="0.6">
+    <circle cx="380" cy="260" r="18"/>
+    <circle cx="380" cy="360" r="18"/>
+    <circle cx="380" cy="460" r="18"/>
+  </g>
+
+  <!-- Dining table (per original plan, in upper-right area) -->
+  <rect x="450" y="120" width="180" height="240" rx="6" fill="#E8DAB8" stroke="#A89878" stroke-width="1"/>
+  <g fill="#9F8E70">
+    <rect x="430" y="140" width="20" height="40" rx="3"/>
+    <rect x="430" y="200" width="20" height="40" rx="3"/>
+    <rect x="430" y="260" width="20" height="40" rx="3"/>
+    <rect x="430" y="320" width="20" height="40" rx="3"/>
+    <rect x="630" y="140" width="20" height="40" rx="3"/>
+    <rect x="630" y="200" width="20" height="40" rx="3"/>
+    <rect x="630" y="260" width="20" height="40" rx="3"/>
+    <rect x="630" y="320" width="20" height="40" rx="3"/>
+  </g>
+
+  <!-- Bathroom (right side, bottom) -->
+  <rect x="560" y="400" width="160" height="120" fill="#F0EDE3" stroke="#888" stroke-width="0.8"/>
+  <text x="640" y="465" font-family="Arial" font-size="13" fill="#777" text-anchor="middle">חדר רחצה</text>
+
+  <!-- Title -->
+  <text x="400" y="50" font-family="Arial" font-size="20" fill="#2C2C2A" text-anchor="middle" font-weight="600">תוכנית מטבח - מבט-על</text>
+  <text x="400" y="70" font-family="Arial" font-size="11" fill="#777" text-anchor="middle">קנה מידה משוער · 1 ס"מ = 12.5 ס"מ במציאות</text>
+
+  <!-- Labels -->
+  <text x="110" y="95" font-family="Arial" font-size="13" fill="#5C4F36" text-anchor="middle" font-weight="500">קיר מטבח (605 ס"מ)</text>
+  <text x="268" y="195" font-family="Arial" font-size="13" fill="#5C4F36" text-anchor="middle" font-weight="500">אי (400 × 120 ס"מ)</text>
+  <text x="540" y="240" font-family="Arial" font-size="13" fill="#5C4F36" text-anchor="middle">פינת אוכל</text>
+  <text x="380" y="555" font-family="Arial" font-size="11" fill="#666" text-anchor="middle">ישיבה: 3 שרפרפי בר</text>
+
+  <!-- Dimensions -->
+  <g stroke="#666" stroke-width="0.5" fill="none">
+    <line x1="82" y1="540" x2="138" y2="540"/>
+    <line x1="220" y1="540" x2="316" y2="540"/>
+    <line x1="316" y1="540" x2="340" y2="540" stroke-dasharray="2,2"/>
+  </g>
+  <text x="110" y="557" font-family="Arial" font-size="10" fill="#666" text-anchor="middle">70 ס"מ</text>
+  <text x="268" y="557" font-family="Arial" font-size="10" fill="#666" text-anchor="middle">120 ס"מ</text>
+  <text x="328" y="557" font-family="Arial" font-size="9" fill="#888" text-anchor="middle">+30 ס"מ</text>
+
+  <!-- Walking aisle measurement -->
+  <line x1="138" y1="350" x2="220" y2="350" stroke="#476684" stroke-width="0.5" stroke-dasharray="3,2"/>
+  <text x="179" y="345" font-family="Arial" font-size="10" fill="#476684" text-anchor="middle">82 ס"מ מעבר</text>
+
+  <!-- Compass / north arrow -->
+  <g transform="translate(745, 90)">
+    <circle r="14" fill="#fff" stroke="#888" stroke-width="0.5"/>
+    <polygon points="0,-10 4,4 0,1 -4,4" fill="#2C2C2A"/>
+    <text x="0" y="22" font-family="Arial" font-size="9" fill="#666" text-anchor="middle">N</text>
+  </g>
+</svg>
+
+</div>
+
+<div class="callout">
+    <strong>שים לב — מעבר בין מטבח לאי:</strong> בתוכנית הקיימת המעבר יוצא ~82 ס"מ.
+    זה מעט צר לזוג שעובד יחד במטבח (תקן נוח: 100-120 ס"מ).
+    אופציות: לצמצם את עומק האי ל-100 ס"מ (במקום 120) ולקבל 102 ס"מ מעבר,
+    או להזיז את האי 10 ס"מ דרומה אם הפינת אוכל מאפשרת.
+</div>
+
+<h3>פירוט הנפחים</h3>
+<table class="spec-table">
+<tr><td>קיר מטבח — תאי בסיס</td><td>2 × 260 ס"מ + מגדל פנטרי 65 ס"מ = 585 ס"מ נטו</td></tr>
+<tr><td>קיר מטבח — תאים עליונים</td><td>240 ס"מ שמאל + 195 ס"מ ימין (גובה 70 ס"מ)</td></tr>
+<tr><td>חלון</td><td>גובה 100 ס"מ × רוחב 120 ס"מ, מעל הכיור</td></tr>
+<tr><td>אי — אחסון</td><td>4 מטר אורך, מגירות בצד המטבח, מגירות עזר בצד הישיבה</td></tr>
+<tr><td>אי — שלוחה</td><td>30 ס"מ ל-3 שרפרפי בר במרווח של ~70 ס"מ</td></tr>
+</table>
+
+</div>
+
+<!-- ===== PAGE 4: SPEC SHEET ===== -->
+<div class="page">
+<h2>פירוט טכני · spec sheet</h2>
+
+<div class="spec-list">
+<h3>ארונות</h3>
+<dl>
+    <dt>חזיתות</dt>
+    <dd>לוח MDF עבה 19 מ"מ עם ציפוי ננו / Fenix NTM, ללא ידיות. חריץ אנכי 4 מ"מ ברוחב הדלת.</dd>
+    <dt>קופסה (carcass)</dt>
+    <dd>MDF 18 מ"מ בציפוי מלמין לבן או בז' תואם.</dd>
+    <dt>צירים</dt>
+    <dd>Blum BLUMOTION soft-close ב-110°. דרישה: 2 צירים לדלת, 3 לדלתות גבוהות מ-90 ס"מ.</dd>
+    <dt>מגירות</dt>
+    <dd>Blum LEGRABOX או Tandembox עם soft-close. עומק פנים 50 ס"מ בבסיס.</dd>
+</dl>
+</div>
+
+<div class="spec-list" style="margin-top: 10pt;">
+<h3>משטח עבודה וחיפוי</h3>
+<dl>
+    <dt>סוג</dt><dd>פורצלן דק 12 מ"מ (Laminam / SapienStone / Neolith).</dd>
+    <dt>גמר קצוות</dt><dd>קצה ישר 90° ללא חיתוך אלכסוני (mitred). הקלות אסטטית עדינה.</dd>
+    <dt>חיפוי קיר</dt><dd>אותו slab רץ עד תחתית התאים העליונים — ללא רובה, חיבור יבש.</dd>
+    <dt>אי</dt><dd>אותו פורצלן עם שלוחה 30 ס"מ; חיזוק תחתי במידת הצורך.</dd>
+</dl>
+</div>
+
+<div class="spec-list" style="margin-top: 10pt;">
+<h3>מערכות</h3>
+<dl>
+    <dt>כיור</dt><dd>תת-משטח בודד מנירוסטה PVD שחור או חרס שחור (Blanco / Franke).</dd>
+    <dt>ברז</dt><dd>קומפקטי שחור-מט עם קשת גבוהה, שתי פעולות — Hansgrohe Talis M54 או דומה.</dd>
+    <dt>כיריים</dt><dd>אינדוקציה 60-75 ס"מ, frameless. Bosch / Siemens / Miele.</dd>
+    <dt>תנור</dt><dd>בנוי בפנטרי בגובה עיניים. פלוס מיקרו-קומבי.</dd>
+    <dt>קולט אדים</dt><dd>סמוי בתקרה (built-in) או דאון-דראפט שבולט מהאי.</dd>
+    <dt>תאורה</dt><dd>3 פנדנטים מעל האי, גובה תחתון 75 ס"מ ממשטח. בנוסף: LED רצועות מתחת לתאים העליונים.</dd>
+</dl>
+</div>
+
+<h3 style="margin-top: 14pt;">הצעה לתקציב משוער</h3>
+<table class="spec-table">
+<tr><td>נגרות (ארונות + פנטרי + אי)</td><td>~ 55,000 - 75,000 ₪</td></tr>
+<tr><td>משטח פורצלן + חיפוי + אי (כ-15 מ"ר slab)</td><td>~ 22,000 - 35,000 ₪</td></tr>
+<tr><td>מערכות (כיריים, תנור, מיקרו, קולט)</td><td>~ 15,000 - 30,000 ₪</td></tr>
+<tr><td>כיור + ברז</td><td>~ 3,500 - 6,000 ₪</td></tr>
+<tr><td>פנדנטים + תאוורת LED</td><td>~ 4,000 - 8,000 ₪</td></tr>
+<tr><td>שרפרפים (3)</td><td>~ 3,000 - 6,000 ₪</td></tr>
+<tr><td><strong>סה"כ משוער</strong></td><td><strong>~ 100,000 - 160,000 ₪</strong></td></tr>
+</table>
+<p style="font-size: 9pt; color: #888; margin-top: 4pt;">
+טווח רחב כי הוא תלוי במותגים. הקצה הנמוך = איכות סבירה ישראלית; הגבוה = יבוא איטלקי / Miele.
+</p>
+
+<div class="callout" style="margin-top: 14pt;">
+    <strong>שאלות שנשארו פתוחות:</strong> האם להתקין כיריים גז או אינדוקציה? היכן ימוקם המקרר —
+    בפנטרי או נפרד? האם החלון יישאר ברוחב הקיים או אפשר להרחיבו? — אלה ישפיעו על תוכנית הפנטרי.
+</div>
+</div>
+
+</body></html>

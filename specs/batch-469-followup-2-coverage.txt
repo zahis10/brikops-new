@@ -1,0 +1,352 @@
+================================================================================
+BATCH #469 FOLLOWUP-2 — Safety tag coverage gaps
+================================================================================
+Date:           2026-05-03
+Branch:         staging  (NOT main)
+Severity:       P3 — coverage gaps discovered during #469 staging smoke.
+                NOT regressions — features that were either deferred per spec
+                OR underspecified in #469 ("defects list" was ambiguous about
+                which list).
+
+Files changed:  2 files (1 frontend page extend + 1 frontend page extend)
+                  Frontend: frontend/src/pages/TaskDetailPage.js (~3 LOC)
+                  Frontend: frontend/src/pages/BuildingDefectsPage.js (~15 LOC)
+
+Tests:          No new tests. UI/UX surfaces — covered by manual smoke.
+                #469's existing schema tests still pass.
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+                Touch targets ≥44px (py-3 on chip) per CLAUDE.md.
+
+================================================================================
+CONTEXT
+================================================================================
+
+#469 (defect "בטיחות" tag) shipped to staging 2026-05-03 with 3 known gaps
+discovered during Zahi's smoke test:
+
+GAP A — TaskDetailPage missing safety pill
+  Per #469 spec, the safety pill on TaskDetailPage was DEFERRED:
+  > "Out of scope: Safety pill on TaskDetailPage (defer to follow-up
+  >  polish; this batch focuses on list view + create flow)."
+  This batch closes that gap.
+
+GAP B — BuildingDefectsPage sidebar filter missing safety option
+  Real spec gap (my fault). The #469 spec said: "Defects list has a
+  🛡️ בטיחות בלבד filter chip." But the codebase has 3 defect surfaces:
+  ProjectControlPage filtered view (was added), BuildingDefectsPage
+  with sidebar (NOT added — this batch fixes), ProjectTasksPage
+  (separate flow, deferred to future if needed).
+
+GAP C (deferred to #471) — Safety dashboard aggregation
+  Per #469 spec: "Safety dashboard widget aggregating safety-tagged
+  defects (#471 dashboard polish — will reuse the new is_safety filter)."
+  NOT in this batch. #471 is a separate ticket.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify TaskDetailPage current chip rendering pattern:
+    grep -n "priorityCfg\|priorityConfig\|דחיפות\|task\.priority\|task\.is_safety" \
+        frontend/src/pages/TaskDetailPage.js | head -10
+    # Expected: at least one render of priority chip near task header.
+    # Find the JSX that renders priority + status — that's where we
+    # add the safety pill (parallel to how it's done in ProjectControlPage).
+
+0.2 — Verify BuildingDefectsPage filter shape:
+    grep -n "BUILDING_DEFAULT_FILTERS\|setFilters\|filters\.status\|filters\.category" \
+        frontend/src/pages/BuildingDefectsPage.js | head -15
+    # Expected:
+    #   const BUILDING_DEFAULT_FILTERS = { status: [], category: [], floor: [], unit: [] };
+    #   const [filters, setFilters] = useState({ ...BUILDING_DEFAULT_FILTERS });
+    #   filter logic at lines ~182-200
+    # We add `is_safety: false` (boolean, not array) to the default + apply.
+
+0.3 — Verify the filter drawer / sidebar JSX in BuildingDefectsPage:
+    grep -n "filterDrawerOpen\|FilterDrawer\|סינון\|<aside\|filter-sidebar" \
+        frontend/src/pages/BuildingDefectsPage.js | head -10
+    # Expected: filterDrawerOpen state + a drawer/aside JSX block.
+    # We insert a new "בטיחות" section in the drawer with a single toggle.
+
+0.4 — Verify api.js taskService.list params include is_safety filter:
+    grep -n "is_safety\|listTasks\|taskService\.list" \
+        frontend/src/services/api.js frontend/src/pages/BuildingDefectsPage.js | head -10
+    # Confirm BuildingDefectsPage uses taskService.list (or similar) — if
+    # so, is_safety can be passed as a query param. If BuildingDefectsPage
+    # uses building-aggregated counts (not task list), the filter is
+    # client-side only.
+
+0.5 — Verify how BuildingDefectsPage applies category filter (template
+    for is_safety filter):
+    grep -n -A 5 "filters\.category\|filters.status" \
+        frontend/src/pages/BuildingDefectsPage.js | head -25
+    # We mirror this exact pattern for is_safety filtering.
+
+0.6 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — GAP A: SAFETY PILL ON TASKDETAILPAGE
+================================================================================
+
+FILE: frontend/src/pages/TaskDetailPage.js
+-------------------------------------------
+
+LOCATION 1.1 — Find where the priority chip is rendered near the task
+   header. STEP 0.1 identifies this location. The pattern looks like:
+
+       <span className={priorityCfg.color || ''}>
+         {priorityCfg.label || task.priority}
+       </span>
+
+   OR a similar rendering of priority/status near the task title.
+
+LOCATION 1.2 — Add the safety pill IMMEDIATELY AFTER the priority chip,
+   following the EXACT pattern from ProjectControlPage.js (added by #469):
+
+   ADD (paste after the priority chip JSX):
+       {task.is_safety && (
+         <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-full">
+           🛡️ בטיחות
+         </span>
+       )}
+
+   IMPORTANT — keep the same Tailwind classes as ProjectControlPage.js
+   (verified in #469 diff at line ~3910):
+     - bg-orange-100 text-orange-700 (low-emphasis badge variant)
+     - rounded-full
+     - px-2 py-0.5 text-xs (matches sibling chip sizing on this page)
+
+   The pill appears ONLY when task.is_safety === true. Legacy tasks
+   without the field render WITHOUT the pill (backward compat — same
+   pattern as #469).
+
+DO NOT TOUCH:
+- Status / priority chips themselves (preserve them).
+- Task header structure.
+- Any data fetching / mutations.
+- The admin panel section (פאנל ניהול) — out of scope.
+
+================================================================================
+PART 2 — GAP B: BUILDINGDEFECTSPAGE SIDEBAR FILTER
+================================================================================
+
+FILE: frontend/src/pages/BuildingDefectsPage.js
+------------------------------------------------
+
+LOCATION 2.1 — Extend `BUILDING_DEFAULT_FILTERS` to include `is_safety: false`:
+
+   FIND (line ~25-50, exact line per STEP 0.2):
+       const BUILDING_DEFAULT_FILTERS = {
+         status: [],
+         category: [],
+         floor: [],
+         unit: [],
+       };
+
+   REPLACE WITH:
+       const BUILDING_DEFAULT_FILTERS = {
+         status: [],
+         category: [],
+         floor: [],
+         unit: [],
+         is_safety: false,  // Batch #469 followup-2 — toggle for safety-only view
+       };
+
+LOCATION 2.2 — Add filter logic IMMEDIATELY AFTER the existing
+   `filters.category` / `filters.status` apply blocks (around line ~182-192):
+
+   FIND the existing apply block — it returns false if a filter excludes
+   the unit/task. The exact shape depends on whether this page filters
+   units (with aggregate counts) or individual tasks. STEP 0.5 confirms.
+
+   IF the page aggregates by unit with counts (status object on each unit):
+       At the unit-level filter — we cannot filter by is_safety at the
+       aggregate level because counts don't track safety. SKIP unit-level
+       filter. Move to LOCATION 2.3 — server-side filter on task fetch.
+
+   IF the page filters individual tasks (rawItems):
+       ADD after `filters.status` block:
+           if (filters.is_safety === true && task.is_safety !== true) return false;
+
+LOCATION 2.3 — Wire `is_safety` into the task fetch params. Find where
+   `taskService.list` (or equivalent) is called and the params object
+   is built:
+
+   FIND something like:
+       const params = { project_id: projectId, building_id: buildingId, ... };
+       if (filters.status.length > 0) params.status = filters.status[0];
+       ...
+
+   ADD a parallel block:
+       if (filters.is_safety === true) params.is_safety = true;
+
+   IMPORTANT: the backend `is_safety` filter (added by #469 in
+   tasks_router.py:271) only filters when the param is sent. Sending
+   `false` would over-filter. Send only when true.
+
+LOCATION 2.4 — Add the filter UI in the drawer/sidebar. STEP 0.3
+   identifies the sidebar JSX. The current filter sections look like:
+
+       <section>
+         <h3>סטטוס</h3>
+         {/* checkboxes for status options */}
+       </section>
+       <section>
+         <h3>תחום</h3>
+         {/* checkboxes for category */}
+       </section>
+       ...
+
+   ADD a new section IMMEDIATELY AFTER the תחום (category) section:
+
+       {/* Batch #469 followup-2 — safety toggle */}
+       <section className="border-t border-slate-100 pt-4 mt-4">
+         <label className="flex items-center justify-between gap-2 cursor-pointer py-3">
+           <span className="text-sm font-medium text-slate-700">
+             🛡️ ליקויי בטיחות בלבד
+           </span>
+           <input
+             type="checkbox"
+             checked={filters.is_safety || false}
+             onChange={(e) => setFilters(prev => ({ ...prev, is_safety: e.target.checked }))}
+             className="w-5 h-5 rounded text-orange-500 focus:ring-orange-500 cursor-pointer"
+           />
+         </label>
+       </section>
+
+   IMPORTANT:
+   - Wrapper has py-3 → label height ≥44px (Capacitor compliance).
+   - dir="rtl" — the parent likely already provides this; if not, the
+     `flex justify-between` reverses correctly in RTL.
+   - Same orange palette as the chip in ProjectControlPage (consistency).
+
+LOCATION 2.5 — Update the filter "אפס" (reset) handler if one exists.
+   Search for `BUILDING_DEFAULT_FILTERS` usage in reset logic — if reset
+   uses `{ ...BUILDING_DEFAULT_FILTERS }`, the new field is included
+   automatically (already covered). Verify no manual reset that would
+   miss it.
+
+DO NOT TOUCH:
+- Other filter sections (status, category, floor, unit) — they stay.
+- The unit grid / floor grid display — only filter logic + UI.
+- Search input — separate concern.
+- Bulk actions — separate concern.
+
+================================================================================
+NOT IN SCOPE (intentional)
+================================================================================
+
+- ProjectTasksPage filter chip — different surface, separate batch if needed.
+- Safety dashboard aggregation — that's #471 (Safety dashboard polish).
+- Safety pill in defect cards in BuildingDefectsPage — depends on whether
+  this page renders task-level cards or aggregate unit cards. If task-level,
+  the pill rendering should be added; if aggregate, deferred. STEP 0.5
+  reveals which.
+- URL persistence of is_safety filter (Batch 469-followup SF1) — separate
+  spec, separate batch.
+- Touch target on the existing chip (Batch 469-followup SF2) — separate.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 2 — TaskDetailPage references is_safety:
+   grep -c "is_safety" frontend/src/pages/TaskDetailPage.js
+   → at least 1
+
+VERIFY 3 — TaskDetailPage uses the same orange palette as the existing
+   pill in ProjectControlPage:
+   grep -c "bg-orange-100\|text-orange-700" frontend/src/pages/TaskDetailPage.js
+   → at least 2 (for the pill — bg + text)
+
+VERIFY 4 — BuildingDefectsPage extends filter state:
+   grep -c "is_safety" frontend/src/pages/BuildingDefectsPage.js
+   → at least 3 (default value + apply logic + UI checkbox + URL/params)
+
+VERIFY 5 — BuildingDefectsPage UI label exists:
+   grep -c "ליקויי בטיחות בלבד\|🛡️" frontend/src/pages/BuildingDefectsPage.js
+   → at least 1 (Hebrew label)
+
+VERIFY 6 — Existing #469 schema tests still pass (no regression):
+   cd backend && python -m pytest tests/test_defect_safety_tag.py -v
+   → 5 passed (unchanged from #469)
+
+VERIFY 7 — Visual smoke (Zahi runs after deploy to staging):
+
+   Scenario A — TaskDetailPage pill:
+   a) Open the test defect created during #469 staging smoke
+      (the one marked is_safety=true).
+   b) On TaskDetailPage → see 🛡️ בטיחות pill near priority/category.
+   c) Open a regular defect (not marked safety) → no pill.
+
+   Scenario B — BuildingDefectsPage sidebar filter:
+   d) Navigate to /projects/{id}/buildings/{id}/defects → see the building
+      view with sidebar filter (the screen Zahi showed earlier).
+   e) Open the filter sidebar → scroll to a new section "🛡️ ליקויי בטיחות בלבד"
+      after the category section. Toggle is OFF by default.
+   f) Toggle ON → list re-filters to show only safety defects.
+   g) Toggle OFF → list returns to full set.
+   h) Click "אפס" (reset) → toggle returns to OFF (covered by spread).
+   i) Mobile viewport (375px DevTools): toggle is tappable, label readable,
+      no overflow.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Drift summary if any
+  - Per-file diff (2 files)
+  - VERIFY 1-6 outputs
+  - VERIFY 7 deferred-to-Zahi note (9 scenarios a-i)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(safety-ui): TaskDetailPage pill + BuildingDefectsPage filter
+    (#469 followup-2)
+
+  Closes 2 coverage gaps from #469 staging smoke:
+   - TaskDetailPage now shows 🛡️ בטיחות pill on safety-tagged defects
+     (was explicitly deferred in #469 spec; this batch closes the gap).
+   - BuildingDefectsPage sidebar filter has a new "🛡️ ליקויי בטיחות בלבד"
+     toggle that filters to safety defects only (was missed in #469
+     spec which said "defects list" ambiguously — only ProjectControlPage
+     was wired in #469).
+
+  Same orange palette as the existing chip + pill (consistent with the
+  3-level emphasis hierarchy documented in #469 followup spec).
+
+  No new tests (UI/UX surfaces — manual smoke covers it). No backend
+  changes — uses the existing is_safety query param wired by #469.
+  Capacitor compliance: toggle wrapper py-3 (≥44px touch target).
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.5 greps, paste output to top of review.txt)
+2. PART 1 — TaskDetailPage pill (3 LOC, after priority chip)
+3. PART 2 — BuildingDefectsPage filter (default + logic + params + UI)
+4. Run VERIFY 1-6
+5. Generate review.txt + .local/.commit_message
+6. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+2 files revert. The TaskDetailPage pill disappears. The BuildingDefectsPage
+sidebar loses the safety toggle. No data, no schema, no API changes.
+Existing safety defects continue to render and be filterable via
+ProjectControlPage filtered view (the path #469 wired).
+
+================================================================================
+END OF SPEC
+================================================================================

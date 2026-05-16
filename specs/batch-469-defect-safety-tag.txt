@@ -1,0 +1,458 @@
+================================================================================
+BATCH #469 — Defect "בטיחות" tag (Phase 1 finishing #2)
+================================================================================
+Stream:         Safety Phase 1 finishing — sub-batch 2 of ~4 (#468 was #1).
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — feature work, not bug.
+Files changed:  4 files (no new files — extends existing tasks layer)
+                  Backend: backend/contractor_ops/schemas.py
+                            backend/contractor_ops/tasks_router.py
+                  Frontend: frontend/src/components/NewDefectModal.js
+                            frontend/src/pages/ProjectControlPage.js
+                  Tests:    backend/tests/test_defect_safety_tag.py (NEW)
+Mobile:         N/A — backend + frontend OTA.
+Pattern note:   Per CLAUDE.md "קבצים חדשים, לא להעמיס קיימים" rule — this
+                batch does NOT create a new router file because we are
+                EXTENDING existing tasks routes (adding a field), not
+                introducing a new domain. The rule applies to NEW domains
+                with new endpoints (like #468 registration); field
+                extensions naturally belong to the existing schema +
+                router.
+
+================================================================================
+CONTEXT
+================================================================================
+
+Per Phase 1 concept doc (`safety-and-worklog-concept.md:778`):
+"Defect 'בטיחות' tag + pill + megaphone + 'סגור' affordance | 2 ימים"
+
+Today, defects (tasks collection) have no way to be marked as
+safety-related. PMs who want to flag a defect as safety-relevant for
+internal awareness, supervisor reporting, or future safety dashboard
+aggregation, have no tool — they end up putting "בטיחות" in the title
+or description, which doesn't surface in any structured way.
+
+This batch adds a simple boolean tag (`is_safety`), exposes it in the
+defect creation modal, displays a pill on defect cards + detail view,
+and supports filtering. NO new router file (per CLAUDE.md pattern —
+extension, not new domain).
+
+OUT OF SCOPE for this batch (separate sub-batches later):
+- Megaphone notification (alert when safety defect created) — fits
+  with Stream C bell wiring or future notifications batch.
+- Safety dashboard widget showing safety-tagged defects count — fits
+  with #471 dashboard polish.
+- "סגור" affordance (special close flow if needed for safety) —
+  separate UX polish if needed.
+- Auto-tag based on category keywords — not in concept; manual only.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify Task / TaskCreate / TaskUpdate schemas (no existing is_safety):
+    grep -n "class Task\|class TaskCreate\|class TaskUpdate\|is_safety" backend/contractor_ops/schemas.py | head -10
+    # Expected:
+    #   line 277: class Task(BaseModel):
+    #   line 305: class TaskCreate(BaseModel):
+    #   line 319: class TaskUpdate(BaseModel):
+    # is_safety should appear 0 times. If it appears — STOP and report.
+
+0.2 — Verify NO collision with is_safety_concern (different field):
+    grep -n "is_safety_concern" backend/models.py
+    # Expected: 2 hits (line 288 + 319) — these are for TENANT EVIDENCE
+    # (handover module), totally separate from tasks. We use `is_safety`
+    # for defects to avoid name collision.
+
+0.3 — Verify GET /tasks endpoint location for filter addition:
+    grep -n "@router.get(\"/tasks\")\|def list_tasks\|def get_tasks" backend/contractor_ops/tasks_router.py | head -5
+    # Expected: 1 GET /tasks endpoint. Identify line for adding the filter.
+
+0.4 — Verify NewDefectModal location for toggle insertion:
+    grep -n "priority.*useState\|category.*useState\|setPriority\|<Switch\|<Toggle" frontend/src/components/NewDefectModal.js | head -10
+    # Expected:
+    #   line 83: const [category, setCategory] = useState('');
+    #   line 86: const [priority, setPriority] = useState('medium');
+    # Toggle goes near these (logically grouped with form state).
+
+0.5 — Verify ProjectControlPage defect card render anchor:
+    grep -n "CategoryPill\|priorityCfg.label\|task.category" frontend/src/pages/ProjectControlPage.js | head -5
+    # Expected:
+    #   line 19:   import CategoryPill from '../components/CategoryPill';
+    #   line 3861: <CategoryPill>{tCategory(task.category)}</CategoryPill>
+    #   line 3862: <span ...>{priorityCfg.label || task.priority}</span>
+    # We add the safety pill as a sibling next to these.
+
+0.6 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — BACKEND SCHEMAS (file 1 of 4)
+================================================================================
+
+FILE 1 of 4: backend/contractor_ops/schemas.py
+-----------------------------------------------
+
+LOCATION 1.1 — Inside `class Task(BaseModel):` (line 277-302), append a new
+   field after `force_closed_type: Optional[str] = None` (line 302):
+
+   CURRENT (last fields of Task, ~line 300-302):
+       force_closed_at: Optional[str] = None
+       force_closed_type: Optional[str] = None
+
+   APPEND IMMEDIATELY AFTER (inside the same class):
+       # Batch #469 — manual tag for safety-related defects
+       is_safety: Optional[bool] = False
+
+LOCATION 1.2 — Inside `class TaskCreate(BaseModel):` (line 305-317), append
+   AFTER `due_date: Optional[str] = None` (last field):
+
+   APPEND:
+       is_safety: Optional[bool] = False
+
+LOCATION 1.3 — Inside `class TaskUpdate(BaseModel):` (line 319-326), append
+   AFTER `category: Optional[Category] = None` (last field):
+
+   APPEND:
+       is_safety: Optional[bool] = None  # None = don't update, True/False = set
+
+   IMPORTANT: TaskUpdate uses `None` as "don't change" sentinel for partial
+   updates (PATCH semantics). Task and TaskCreate use `False` as default
+   (existing defects without the field render as not-safety).
+
+DO NOT TOUCH:
+- Any other class in schemas.py.
+- Order of existing fields.
+
+================================================================================
+PART 2 — BACKEND ROUTES (file 2 of 4)
+================================================================================
+
+FILE 2 of 4: backend/contractor_ops/tasks_router.py
+-----------------------------------------------------
+
+LOCATION 2.1 — In the GET /tasks endpoint (location verified in STEP 0.3):
+
+   The endpoint accepts query params for filtering. Find the params block
+   and add `is_safety` as an optional filter.
+
+   FIND a query params block similar to:
+       async def list_tasks(
+           project_id: Optional[str] = Query(None),
+           status: Optional[str] = Query(None),
+           # ... other filters ...
+       ):
+
+   ADD `is_safety` as a new query param (alphabetic order or near other
+   boolean filters):
+       is_safety: Optional[bool] = Query(None, description="Filter to safety defects only when True"),
+
+LOCATION 2.2 — In the same endpoint body, add the filter to the MongoDB query:
+
+   FIND where other filters are conditionally added to the query dict:
+       if status:
+           query["status"] = status
+       # ... other if-add blocks ...
+
+   ADD a similar block:
+       if is_safety is not None:
+           query["is_safety"] = is_safety
+
+LOCATION 2.3 — In the POST /tasks endpoint (create), the new field should
+   automatically pass through TaskCreate → doc. Verify the endpoint uses
+   `payload.dict()` or similar to build the inserted doc. If it uses
+   explicit field assignment, ADD `is_safety: payload.is_safety` to the doc.
+
+LOCATION 2.4 — In the PATCH /tasks/{id} endpoint (update), the new field
+   should pass through TaskUpdate. If endpoint uses
+   `payload.dict(exclude_unset=True)`, no change needed (None values are
+   excluded). If it uses explicit field assignment, add the conditional:
+       if payload.is_safety is not None:
+           updates["is_safety"] = payload.is_safety
+
+DO NOT TOUCH:
+- Other endpoints.
+- Existing query param logic — only ADD the new param + filter.
+- Existing fields on insert/update.
+
+================================================================================
+PART 3 — FRONTEND NewDefectModal (file 3 of 4)
+================================================================================
+
+FILE 3 of 4: frontend/src/components/NewDefectModal.js
+--------------------------------------------------------
+
+LOCATION 3.1 — Add useState for is_safety. Place IMMEDIATELY AFTER existing
+   priority useState (line 86):
+
+   CURRENT (line 86):
+       const [priority, setPriority] = useState('medium');
+
+   APPEND IMMEDIATELY AFTER:
+       // Batch #469 — safety tag toggle
+       const [isSafety, setIsSafety] = useState(false);
+
+LOCATION 3.2 — Update the form draft restore logic (around line 175 area
+   where draft.priority is restored):
+
+   FIND:
+       if (draft.priority) setPriority(draft.priority);
+
+   APPEND IMMEDIATELY AFTER:
+       if (typeof draft.is_safety === 'boolean') setIsSafety(draft.is_safety);
+
+LOCATION 3.3 — Update the form submit / payload building. Find where the
+   payload object is constructed (typically a `const payload = { ... }`
+   block before the API call). Add `is_safety: isSafety` to it.
+
+   The exact line varies — search for where category, priority, etc.
+   are included in the payload.
+
+LOCATION 3.4 — Add the toggle UI. Place it near the priority selector in
+   the form layout. The exact location depends on the JSX structure — find
+   where priority is rendered and add this block as a sibling:
+
+   ADD:
+       {/* Batch #469 — safety tag toggle */}
+       <div className="flex items-center justify-between py-3 border-t border-slate-100">
+         <div className="flex items-center gap-2">
+           <span className="text-orange-500">🛡️</span>
+           <label htmlFor="is-safety-toggle" className="text-sm font-medium text-slate-700">
+             סמן כליקוי בטיחות
+           </label>
+         </div>
+         <input
+           id="is-safety-toggle"
+           type="checkbox"
+           checked={isSafety}
+           onChange={(e) => setIsSafety(e.target.checked)}
+           className="w-5 h-5 rounded text-orange-500 focus:ring-orange-500"
+         />
+       </div>
+
+   PLACEMENT GUIDANCE: render this block right BEFORE the company/assignee
+   selectors (after priority, before company). If the priority selector
+   is in a 2-column grid, place this row in its OWN row below the grid.
+
+DO NOT TOUCH:
+- Other form fields or validation logic.
+- Submit handler logic (only add `is_safety: isSafety` to payload).
+- Modal open/close behavior.
+
+================================================================================
+PART 4 — FRONTEND ProjectControlPage (file 4 of 4)
+================================================================================
+
+FILE 4 of 4: frontend/src/pages/ProjectControlPage.js
+-------------------------------------------------------
+
+LOCATION 4.1 — Show safety pill on defect card. Find line 3861 area where
+   CategoryPill renders:
+
+   CURRENT (line 3861-3862):
+       <CategoryPill>{tCategory(task.category)}</CategoryPill>
+       <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
+
+   APPEND IMMEDIATELY AFTER LINE 3862 (as a sibling pill in the same row):
+       {task.is_safety && (
+         <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-full">
+           🛡️ בטיחות
+         </span>
+       )}
+
+   Conditionally renders only when `task.is_safety === true`. Defects
+   without the field (existing data) → false → no pill.
+
+LOCATION 4.2 — Add filter chip for "safety only". Find the filter chip
+   row in the defects list (typically near the top of the list). Look for
+   existing chips like "פתוחים" / "באישור מנהל" / "ממתינים".
+
+   The exact location requires reading the surrounding JSX. Add a new chip:
+
+       <button
+         onClick={() => setSafetyFilter(prev => !prev)}
+         className={`px-3 py-1.5 rounded-full text-xs font-medium ${
+           safetyFilter
+             ? 'bg-orange-500 text-white'
+             : 'bg-slate-100 text-slate-700'
+         }`}
+       >
+         🛡️ בטיחות בלבד
+       </button>
+
+   ADD `const [safetyFilter, setSafetyFilter] = useState(false);` near
+   the other filter state declarations.
+
+   ADD to the API call params: `is_safety: safetyFilter || undefined`
+   (don't send the param if false — filter to "all" by default).
+
+DO NOT TOUCH:
+- Existing CategoryPill / priority pill rendering.
+- Other filter chips.
+- The defects list pagination / sorting / fetching logic — only add
+  the new filter to the params object.
+
+================================================================================
+PART 5 — TESTS (file 5 of 5, NEW)
+================================================================================
+
+FILE 5 of 5: backend/tests/test_defect_safety_tag.py  (CREATE NEW)
+
+Use the asyncio.run(run()) pattern (no pytest-asyncio plugin in codebase
+per Batch 6A v2 Finding B).
+
+Required tests (5 total):
+
+    """Tests for Batch #469 — Defect safety tag."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+
+    def test_task_create_accepts_is_safety_field():
+        from contractor_ops.schemas import TaskCreate
+        payload = TaskCreate(
+            project_id="p1", building_id="b1", floor_id="f1", unit_id="u1",
+            title="Test", is_safety=True
+        )
+        assert payload.is_safety is True
+
+    def test_task_create_default_is_safety_false():
+        from contractor_ops.schemas import TaskCreate
+        payload = TaskCreate(
+            project_id="p1", building_id="b1", floor_id="f1", unit_id="u1",
+            title="Test"
+        )
+        assert payload.is_safety is False
+
+    def test_task_update_is_safety_optional():
+        """TaskUpdate uses None sentinel for partial updates."""
+        from contractor_ops.schemas import TaskUpdate
+        payload = TaskUpdate(is_safety=True)
+        assert payload.is_safety is True
+        payload2 = TaskUpdate(title="just title")
+        assert payload2.is_safety is None  # not set → don't update
+
+    def test_task_response_default_is_safety_false():
+        from contractor_ops.schemas import Task
+        t = Task(project_id="p1", title="x")
+        assert t.is_safety is False
+
+    def test_task_existing_data_without_field_renders_as_false():
+        """Backward compat: legacy Task docs without is_safety → False."""
+        from contractor_ops.schemas import Task
+        # Simulate doc loaded from DB without the field
+        t = Task(**{"project_id": "p1", "title": "x"})
+        assert t.is_safety is False
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend imports:
+   cd backend && python -c "from contractor_ops.schemas import Task, TaskCreate, TaskUpdate; print('OK')"
+
+VERIFY 2 — pytest:
+   cd backend && python -m pytest tests/test_defect_safety_tag.py -v
+   → 5 passed
+
+VERIFY 3 — is_safety in schemas:
+   grep -c "is_safety" backend/contractor_ops/schemas.py
+   → 3 (1 per class: Task, TaskCreate, TaskUpdate)
+
+VERIFY 4 — is_safety filter in tasks_router:
+   grep -c "is_safety" backend/contractor_ops/tasks_router.py
+   → at least 2 (1 query param + 1 filter)
+
+VERIFY 5 — Frontend NewDefectModal toggle:
+   grep -c "is_safety\|isSafety" frontend/src/components/NewDefectModal.js
+   → at least 4 (state declaration + draft restore + payload + JSX)
+
+VERIFY 6 — Frontend ProjectControlPage safety pill:
+   grep -c "is_safety\|בטיחות" frontend/src/pages/ProjectControlPage.js
+   → at least 2 (pill render + filter chip + param)
+
+VERIFY 7 — Frontend builds:
+   cd frontend && yarn build
+   → no new warnings (or babel parse on changed files if timeout)
+
+VERIFY 8 — Visual smoke (Zahi runs after deploy to staging):
+   a) Login as PM. Open NewDefectModal. Verify toggle "🛡️ סמן כליקוי
+      בטיחות" appears near priority selector.
+   b) Create a defect with toggle ON. Verify it appears in the list with
+      orange "🛡️ בטיחות" pill next to category/priority pills.
+   c) Create a regular defect (toggle OFF, default). Verify no pill.
+   d) Toggle "בטיחות בלבד" filter chip in defects list. Verify only
+      safety-tagged defects show.
+   e) Toggle off the filter. All defects show again.
+   f) Edit existing safety defect → toggle off → save → pill disappears.
+   g) Open TaskDetailPage of a safety defect → pill should appear in
+      header/info area too (if not naturally — defer to a follow-up
+      polish; this batch focuses on list view).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (4 files modified + 1 new test):
+      * schemas.py: ~3 LOC added (1 line per class)
+      * tasks_router.py: ~5 LOC added (query param + filter)
+      * NewDefectModal.js: ~20 LOC added (state + UI block)
+      * ProjectControlPage.js: ~15 LOC added (pill + filter chip)
+      * tests/test_defect_safety_tag.py: NEW (~70 LOC, 5 tests)
+  - VERIFY 1-7 outputs (skip 8 — Zahi runs visually)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(safety): add 'בטיחות' tag to defects (Batch #469)
+
+  Second sub-batch finishing Phase 1 of the safety module. Adds a
+  manual boolean tag `is_safety` to defects (tasks collection) so PMs
+  can mark safety-related defects for visibility + filtering.
+
+  - Backend: schema field on Task/TaskCreate/TaskUpdate (default False)
+  - Backend: GET /tasks accepts is_safety query param for filtering
+  - Frontend: toggle in NewDefectModal "סמן כליקוי בטיחות"
+  - Frontend: orange "🛡️ בטיחות" pill on defect cards (alongside
+    category/priority pills) when is_safety=true
+  - Frontend: filter chip "בטיחות בלבד" in defects list
+  - 5 unit tests (schema validation, default values, optional update)
+
+  No new router file (per CLAUDE.md "new file per new domain" rule —
+  this is a field extension on existing tasks domain).
+
+  Backward compat: existing defects without the field render as
+  is_safety=false (pill hidden). No DB migration needed.
+
+  Next sub-batches: #470 Bottom nav update (~1 day), #471 Safety Home
+  dashboard polish (uses is_safety filter for safety widget).
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.5 greps, paste output to top of review.txt)
+2. PART 1 — schemas.py: add is_safety to 3 classes
+3. PART 2 — tasks_router.py: add query param + filter
+4. PART 3 — NewDefectModal.js: state + draft restore + payload + UI block
+5. PART 4 — ProjectControlPage.js: pill render + filter chip
+6. PART 5 — create tests/test_defect_safety_tag.py with 5 tests
+7. Run VERIFY 1-7 (VERIFY 8 is Zahi visual)
+8. Generate review.txt + .local/.commit_message
+9. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+4 modified files revert. The new collection field `is_safety` may exist
+on a few task docs created before revert — these become orphaned data
+(harmless). Optional cleanup:
+  db.tasks.updateMany({}, {$unset: {is_safety: ""}})
+But not required.
+
+================================================================================
+END OF SPEC
+================================================================================

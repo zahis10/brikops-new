@@ -1,0 +1,338 @@
+================================================================================
+BATCH G — Stop WhatsApp on defect close (keep on reject/reopen)
+================================================================================
+Date:           2026-05-11
+Branch:         staging  (NOT main)
+Severity:       P2 — UX noise reduction.
+                Today: PM closes a defect → contractor receives a
+                WhatsApp message that includes their own proof photo.
+                Result: WhatsApp flood, zero value (contractor knows
+                they uploaded the photo), erodes trust in WA notifs.
+
+Approach:       (per Zahi's choice 2026-05-11 — Option B)
+                "אין צורך לעדכן אותו על סגירה זה סתם מציף בהודעות
+                ווטסאפ" — skip the WhatsApp notification ENTIRELY when
+                a defect is closed/approved. **KEEP** the WA notification
+                on reject/reopen — contractor needs to know to come
+                back to the work.
+
+                Bell (in-app) notifications are NOT touched — they're
+                fine, they don't flood, and they're useful for
+                in-app awareness.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Backend only:
+                  - backend/contractor_ops/tasks_router.py
+                    (~6 LOC changed across 2 locations)
+                Total: 1 file. No frontend changes. No DB migrations.
+                No Meta WA template re-approval needed (we're removing
+                a send, not modifying message content).
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN this batch:
+  ✅ `manager_decision` endpoint (L1061+): only fire WhatsApp event
+     when `decision === 'reject'`. Skip WA on approve.
+  ✅ `change_task_status` endpoint (L745+): remove `'closed':
+     'status_closed'` from the `notify_events` mapping. Keep
+     `'waiting_verify'` (PM needs to know contractor uploaded proof).
+
+OUT of this batch (preserved):
+  ❌ Bell notification at L1107-1124 (`create_defect_notification`)
+     — KEEP for both approve+reject. In-app notification is useful,
+     doesn't flood. Zahi's complaint is specifically WhatsApp.
+  ❌ Reject path (`manager_rejected` event + `status_returned_to_contractor`)
+     — KEEP firing WA. Contractor needs to know to redo work.
+  ❌ `waiting_verify` event — KEEP firing WA. PM needs to know
+     contractor uploaded proof.
+  ❌ Other notification events (`task_created`, `task_assigned`,
+     reminder digests) — unaffected.
+  ❌ Meta WhatsApp template content — unchanged (no template re-submit).
+
+================================================================================
+STEP 0 — PRE-FLIGHT (4 PASS)
+================================================================================
+
+1. Confirm WA-on-approve at manager_decision endpoint:
+   $ grep -nA 2 "event_type = 'manager_approved'" \\
+       backend/contractor_ops/tasks_router.py
+   →  1141: event_type = 'manager_approved' if decision == 'approve' else 'manager_rejected'
+   →  1142: engine = get_notification_engine()
+   ✓ Confirmed — fires `manager_approved` event on approve path.
+
+2. Confirm WA-on-status-closed at change_task_status endpoint:
+   $ grep -nA 4 "notify_events = {" \\
+       backend/contractor_ops/tasks_router.py
+   →  795: notify_events = {
+   →  796:     'waiting_verify': 'status_waiting_verify',
+   →  797:     'closed': 'status_closed',
+   ✓ Confirmed — manual status change to 'closed' also fires WA event.
+
+3. Confirm Bell notification path stays separate (untouched by this batch):
+   $ grep -nA 3 "create_defect_notification" \\
+       backend/contractor_ops/tasks_router.py | head -10
+   →  Line ~1110: await create_defect_notification(db, [assignee_id],
+                  notification_type='defect_status_change_by_pm', ...)
+   ✓ Confirmed — Bell notification is independent of WA enqueue.
+
+4. Confirm only one consumer of 'manager_approved' event:
+   $ grep -rn "manager_approved" backend/contractor_ops/
+   →  tasks_router.py L1088: 'manager_approved_closed' (audit string — unrelated)
+   →  tasks_router.py L1141: event_type = 'manager_approved' (THE bug)
+   →  schemas.py L399: enum value definition
+   ✓ Only one place fires the event. Single fix point covers it.
+
+4.5. **CRITICAL — Bell notification fires UNCONDITIONALLY in manager_decision:**
+   Verifies the spec's claim that after this batch, contractor will still
+   get an in-app Bell notification on approve (just no WA).
+   $ sed -n '1105,1124p' backend/contractor_ops/tasks_router.py
+   →  L1105-1106: comment block "PM made a decision, the assignee
+                  (contractor) needs to know."
+   →  L1107: `try:` (no if-decision guard above)
+   →  L1108: `assignee_id = task.get('assignee_id')`
+   →  L1109: `if assignee_id and assignee_id != user['id']:` ← only
+              guard, NOT decision-specific
+   →  L1110-1122: `await create_defect_notification(... action=decision ...)`
+                  fires for BOTH approve and reject paths.
+   →  L1120: body uses `build_status_change_body(decision, ...)` which
+              handles both 'approve' and 'reject' string cases.
+   ✓ **Confirmed Bell fires unconditionally on decision.** After Batch G,
+     approve path will still have an in-app Bell notification — only the
+     WhatsApp dispatch is removed. No silent-close risk for the
+     manager-decision flow.
+
+   **HOWEVER — flag for `change_task_status` (Vector 2):**
+   $ grep -nC 3 "create_defect_notification" backend/contractor_ops/tasks_router.py | grep -B2 -A2 "745\|800\|805"
+   →  No create_defect_notification call inside change_task_status
+      function (lines 745-812).
+   ⚠ Vector 2 path (PM manually setting status to 'closed' via
+     POST /tasks/{id}/status) has NEVER had a Bell notification —
+     today it sends ONLY WhatsApp. After this batch, contractor will
+     get NOTHING via that path. See "Known limitation" below.
+
+================================================================================
+LOCATION 1 — tasks_router.py:1141-1151 — Skip WA on approve
+================================================================================
+File: backend/contractor_ops/tasks_router.py
+Lines: 1141-1151 (inside manager_decision endpoint)
+
+BEFORE:
+    event_type = 'manager_approved' if decision == 'approve' else 'manager_rejected'
+    engine = get_notification_engine()
+    if engine:
+        try:
+            task_link = _get_task_link(task_id)
+            job = await engine.enqueue(task_id, event_type, user['id'],
+                                       custom_message=body.reason or '', task_link=task_link)
+            if job and job.get('status') == 'queued':
+                await engine.process_job(job)
+        except Exception as e:
+            logger.warning(f"[NOTIFY] manager-decision notification failed: {e}")
+
+AFTER:
+    # BATCH G (2026-05-11) — skip WhatsApp on approve (close).
+    # Contractor's work is done; sending WA with their own proof photo
+    # is noise. KEEP WA on reject — they need to know to redo.
+    # Bell notification above (L1107-1124) still fires for both paths.
+    if decision == 'reject':
+        engine = get_notification_engine()
+        if engine:
+            try:
+                task_link = _get_task_link(task_id)
+                job = await engine.enqueue(task_id, 'manager_rejected', user['id'],
+                                           custom_message=body.reason or '', task_link=task_link)
+                if job and job.get('status') == 'queued':
+                    await engine.process_job(job)
+            except Exception as e:
+                logger.warning(f"[NOTIFY] manager-decision reject notification failed: {e}")
+
+Changes:
+- Wrap engine.enqueue inside `if decision == 'reject':` block.
+- Use literal 'manager_rejected' instead of computed event_type (clearer
+  intent now that we only fire on reject).
+- Update log message to mention "reject" explicitly.
+
+Edge cases preserved:
+- Approve path: engine is never called → no WA → contractor doesn't
+  get a phone buzz on close.
+- Reject path: identical to before.
+- Bell notification (L1107-1124) untouched — both approve+reject still
+  create in-app notification.
+- Audit, status update, task_updates — all untouched.
+
+================================================================================
+LOCATION 2 — tasks_router.py:795-797 — Remove 'closed' from notify_events
+================================================================================
+File: backend/contractor_ops/tasks_router.py
+Lines: 795-797 (inside change_task_status endpoint)
+
+BEFORE:
+    notify_events = {
+        'waiting_verify': 'status_waiting_verify',
+        'closed': 'status_closed',
+    }
+
+AFTER:
+    # BATCH G (2026-05-11) — 'closed' removed.
+    # When PM manually sets status to closed (not via manager-decision),
+    # contractor previously got a WhatsApp. Same noise as the
+    # manager_approved path. Bell notifications still work if/where
+    # configured elsewhere.
+    notify_events = {
+        'waiting_verify': 'status_waiting_verify',
+    }
+
+Changes:
+- One line removed from the dict.
+- Plus 4-line comment explaining the WHY (so a future contributor
+  reading this doesn't think it's a missing key).
+
+Edge cases preserved:
+- `waiting_verify` event — still fires. PM gets WA when contractor
+  uploads proof. This is the desired flow.
+- The `event_type = notify_events.get(target_status.value)` lookup at
+  L799 returns None for 'closed' → the entire enqueue block is skipped
+  (existing `if event_type:` guard). No code change needed there.
+- Status transitions to 'closed' are still allowed and recorded in
+  task_status_history + task_updates + audit_events. Only the WA
+  enqueue is removed.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ Bell notification creation at L1107-1124 (`create_defect_notification`).
+     KEEP firing for both approve+reject. In-app, no flooding risk.
+- ❌ `status_waiting_verify` event — still useful (PM-facing notification).
+- ❌ `manager_rejected` event — kept inside the new `if decision == 'reject':`
+     block. Still fires WA.
+- ❌ Other engine.enqueue calls (task_created L135, task_assigned L569+L709)
+     — unrelated, unaffected.
+- ❌ force_close endpoint (L997+) — doesn't fire WA event today. No change.
+- ❌ Meta WhatsApp templates (WA_DEFECT_TEMPLATES in config.py). No
+     content change → no Meta re-approval cycle.
+- ❌ reminder_service.py (daily digest) — different path entirely.
+
+================================================================================
+VERIFY 1 — Backend import sanity
+================================================================================
+$ cd backend && python -c "from contractor_ops.tasks_router import *; print('OK')"
+   →  EXIT=0 expected. No SyntaxError.
+
+================================================================================
+VERIFY 2 — Backend unit tests (suggested)
+================================================================================
+Test scenarios for manager_decision endpoint:
+1. PM approves a task → notification_jobs collection has NO 'manager_approved'
+   event for that task_id. Bell notification (qc_notifications) still
+   exists.
+2. PM rejects a task → notification_jobs has 'manager_rejected' event.
+   Bell notification also exists with `action='reject'`.
+
+Test scenarios for change_task_status endpoint:
+3. PM manually transitions task to 'closed' → notification_jobs has
+   NO event for that task. Status history + task_updates still
+   recorded.
+4. Contractor uploads proof → status 'waiting_verify' → notification_jobs
+   has 'status_waiting_verify' event (PM notification). PRESERVED.
+
+================================================================================
+VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging or prod)
+================================================================================
+**A — MOST CRITICAL (verifies Bell preservation):**
+   Zahi as PM, navigate to a project with a defect in
+   `pending_manager_approval` status (contractor uploaded proof).
+   Click "אשר" (approve).
+   EXPECT: defect status → closed.
+   EXPECT: contractor's phone receives **NO WhatsApp**.
+   EXPECT: contractor's in-app bell **DOES show** the approval
+   notification (text: "המנהל אישר את התיקון של ...").
+
+   ⚠ **CRITICAL — if Bell is ABSENT on approve:** STOP, do not proceed
+   to prod. That means our STEP 0.5 reading was wrong and we just
+   shipped a silent-close path. Revert immediately and re-investigate.
+
+B. Same flow but click "דחה" + give a reason.
+   EXPECT: defect status → returned_to_contractor.
+   EXPECT: contractor's phone receives a WhatsApp with the rejection
+   reason (existing behavior, unchanged).
+   EXPECT: in-app bell shows rejection notification.
+
+C. PM manually changes a defect status from in_progress → closed
+   via POST /tasks/{id}/status (status dropdown if/where exposed).
+   EXPECT: defect status → closed.
+   EXPECT: NO WhatsApp to contractor.
+   EXPECT: NO Bell notification either (this path never had a Bell;
+   see "Known limitation" below).
+
+D. Contractor uploads proof on an in_progress defect (status →
+   waiting_verify).
+   EXPECT: PM receives a WhatsApp notification. PRESERVED.
+
+Regression sweep:
+- E. task_created event — unaffected (still fires for new defects).
+- F. task_assigned event — unaffected.
+- G. Daily contractor reminder (Batch 6A digest) — unaffected.
+- H. Bell notifications panel — unaffected (in-app, both approve+reject
+     paths still create entries).
+
+================================================================================
+KNOWN LIMITATION (documented, not fixed in this batch)
+================================================================================
+The `change_task_status` endpoint (Vector 2 — POST /tasks/{id}/status with
+target_status='closed') has NEVER created a Bell notification — only a
+WhatsApp. After this batch removes the WhatsApp:
+  - Contractor gets ZERO notification when PM manually transitions a
+    defect to 'closed' via this endpoint.
+  - That's a silent close.
+
+Why this is acceptable for this batch:
+  1. The "manual status change to closed" path is rarely used in
+     practice. The canonical PM-close flow is the `manager_decision`
+     endpoint (after contractor uploaded proof), which still creates
+     a Bell.
+  2. If a PM is manually changing status (without going through
+     the proof-review flow), they're typically doing admin cleanup
+     and have already informed the contractor via other channels.
+  3. Adding a Bell to change_task_status would require extending its
+     existing dispatch logic (which currently has no Bell at all) —
+     larger scope and risk for an edge case.
+
+If observed as a problem in practice: separate follow-up batch to
+add a Bell to change_task_status for status='closed' transitions.
+
+================================================================================
+RISK
+================================================================================
+Very low. Removing two WA dispatch points; no change to message content,
+no change to data model, no change to other notification paths.
+
+Risk vectors:
+- ⚠ False expectation — a contractor who used to rely on the WA on
+  close to "confirm" the PM saw the work will no longer get it. But
+  they can still see the status in the app, and they got a WA when
+  the PM rejected previously. If a real user reports this is a loss,
+  we can add it back behind a different template (e.g. text-only,
+  no photo).
+- ⚠ Edge case — if some downstream system (analytics, webhook
+  consumer, etc.) listens for 'manager_approved' or 'status_closed'
+  notification events, they'll stop firing. Verified no other
+  consumers in this codebase. If we have external listeners, this
+  spec needs an addendum.
+
+Bundle size impact: zero (backend only).
+Backend code size impact: ~3 LOC net change (one branch added, one
+dict key removed, plus comments).
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+(Reverts to "WA on every PM decision and status close". Contractors
+go back to receiving photo-laden WA on every close.)
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

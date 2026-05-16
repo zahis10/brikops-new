@@ -1,0 +1,298 @@
+================================================================================
+BATCH A — Unit natural sort + Progress bar overflow fix
+================================================================================
+Date:           2026-05-11
+Branch:         staging  (NOT main)
+Severity:       P2 — UX bugs from real-device testing (#28 + #34).
+                #28: Unit list in QC page shows lex sort ("10" before "2",
+                "20" between "2" and "3"). Affects every project with
+                more than 10 units per floor.
+                #34: On iPhone Safari + Capacitor WebView, header row of
+                unit card overflows when unit_name is long + status badge
+                is "ממתין לאישור QC" — pushes content past right edge,
+                horizontal scroll appears on QC לפי דירות page.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Backend:
+                  - backend/contractor_ops/qc_router.py (~3 LOC changed,
+                    1 import added)
+                Frontend:
+                  - frontend/src/pages/UnitQCSelectionPage.js (~8 LOC
+                    changed across 3 LOCATIONS)
+                Total: 2 files, ~12 LOC.
+
+================================================================================
+STEP 0 — PRE-FLIGHT (5 checks PASS)
+================================================================================
+
+1. Backend lex sort confirmed at qc_router.py:911:
+   $ grep -n "units.sort" backend/contractor_ops/qc_router.py
+   →  911: units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
+   ✓ Lex sort exists. Will replace with natural sort.
+
+2. _natural_sort_key helper exists in projects_router.py — REUSE (per CLAUDE.md
+   "no local duplicates of constants/helpers" rule):
+   $ grep -n "def _natural_sort_key" backend/contractor_ops/projects_router.py
+   →  112: def _natural_sort_key(name: str):
+   $ grep -n "from .projects_router\|from contractor_ops.projects_router" \
+       backend/contractor_ops/qc_router.py
+   →  (no existing import — will be added)
+   ✓ No circular: projects_router does not import from qc_router (verified
+     via grep below).
+   $ grep -n "from .qc_router\|from contractor_ops.qc_router" \
+       backend/contractor_ops/projects_router.py
+   →  (empty)
+   ✓ Safe to add `from contractor_ops.projects_router import _natural_sort_key`
+     at top of qc_router.py.
+
+3. UnitQCSelectionPage aggregates from stages and produces Map.values() in
+   insertion order (no sort):
+   $ grep -n "Array.from.unitAggMap\|unitAggMap.values" \
+       frontend/src/pages/UnitQCSelectionPage.js
+   →  140: const units = Array.from(unitAggMap.values()).map(u => {
+   ✓ Confirmed — relies on insertion order which mirrors backend lex sort.
+     Even after backend fix, this aggregation across stages re-orders units
+     by which stage they first appear in. Explicit sort required.
+
+4. Broader grep — other frontend pages displaying unit lists:
+   $ grep -rn "Array.from.*unit\|units.map(" frontend/src/pages/ | head -10
+   →  ExecutionMatrixPage.js:38 — data.units.map(u => u.building_id) (no sort needed — extracting field for filter)
+   →  ProjectControlPage.js — uses backend hierarchy directly (sorted via
+      sort_index in /projects/{id}/hierarchy)
+   ✓ No other touchpoints. After backend fix, all hierarchy-driven pages
+     get correct sort automatically.
+
+5. Progress bar / card overflow at UnitQCSelectionPage.js:200-232 — verified
+   parent container has NO overflow-x-hidden:
+   $ grep -n "min-h-screen bg-slate-50\|overflow-x" \
+       frontend/src/pages/UnitQCSelectionPage.js
+   →  156: <div className="min-h-screen bg-slate-50">
+   ✓ No horizontal overflow guard. Unit name + badge + count in header row
+     are flex with no min-w-0 / truncate / flex-shrink-0 → can push past
+     card edge on narrow viewports (iPhone 375px).
+
+================================================================================
+LOCATION 1.1 — qc_router.py: import _natural_sort_key
+================================================================================
+File: backend/contractor_ops/qc_router.py
+Action: ADD import near top of file (after existing local imports).
+
+Search for the block of existing `from contractor_ops.*` imports near the
+top and add the line after the last one. Recommended placement: after the
+`from contractor_ops.router import ...` line if present, otherwise after
+the last `from contractor_ops.*` import.
+
+ADD:
++ from contractor_ops.projects_router import _natural_sort_key
+
+================================================================================
+LOCATION 1.2 — qc_router.py:911 replace lex sort with natural sort
+================================================================================
+File: backend/contractor_ops/qc_router.py
+Line: 911
+
+BEFORE:
+-    units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
+
+AFTER:
++    units.sort(key=lambda u: _natural_sort_key(u.get("unit_no") or u.get("name") or ""))
+
+Why `_natural_sort_key` works for unit_no:
+- "1" → [(0, 1)] → sorts as number 1
+- "2" → [(0, 2)]
+- "10" → [(0, 10)]
+- "A1" → [(1, "A"), (0, 1)] → groups A-prefix together, sorted by number within
+- "ק-901" → [(1, "ק-"), (0, 901)] → Hebrew prefix group sorted by trailing number
+- "" → [(1, "")] (empty string fallback)
+
+Result order: 1, 2, 10, 20, A1, A2, A10, ק-901, ק-1001 (correct natural sort).
+
+================================================================================
+LOCATION 2.1 — UnitQCSelectionPage.js: add explicit sort to unit aggregate
+================================================================================
+File: frontend/src/pages/UnitQCSelectionPage.js
+Line: ~140-148 (the `const units = Array.from(unitAggMap.values()).map(u => {...})`
+       block — find by anchor "const allApproved = u._statuses.length > 0")
+
+BEFORE:
+   const units = Array.from(unitAggMap.values()).map(u => {
+     const allApproved = u._statuses.length > 0 && u._statuses.every(s => s === 'approved');
+     const anyInProgress = u._statuses.some(s => s === 'in_progress' || s === 'approved');
+     const status = allApproved ? 'approved'
+                  : anyInProgress ? 'in_progress'
+                  : 'not_started';
+     const { _statuses, ...rest } = u;
+     return { ...rest, status };
+   });
+
+AFTER:
+   const units = Array.from(unitAggMap.values()).map(u => {
+     const allApproved = u._statuses.length > 0 && u._statuses.every(s => s === 'approved');
+     const anyInProgress = u._statuses.some(s => s === 'in_progress' || s === 'approved');
+     const status = allApproved ? 'approved'
+                  : anyInProgress ? 'in_progress'
+                  : 'not_started';
+     const { _statuses, ...rest } = u;
+     return { ...rest, status };
+   }).sort((a, b) => {
+     // Natural sort (numeric-aware) — keeps "10" after "2" not after "1".
+     // Hebrew locale so "ק-901" sorts predictably with Hebrew prefixes.
+     const aKey = String(a.unit_no || a.unit_name || '');
+     const bKey = String(b.unit_no || b.unit_name || '');
+     return aKey.localeCompare(bKey, 'he', { numeric: true });
+   });
+
+Why localeCompare with `numeric: true` works:
+- "1".localeCompare("10", 'he', {numeric:true}) → -1 (1 before 10)
+- "2".localeCompare("10", 'he', {numeric:true}) → -1 (2 before 10)
+- "A1".localeCompare("A10", 'he', {numeric:true}) → -1 (A1 before A10)
+- "ק-901".localeCompare("ק-1001", 'he', {numeric:true}) → -1
+
+This is browser-native and handles edge cases (Unicode normalization, RTL chars).
+
+================================================================================
+LOCATION 2.2 — UnitQCSelectionPage.js:156 add overflow-x-hidden safety
+================================================================================
+File: frontend/src/pages/UnitQCSelectionPage.js
+Line: 156
+
+BEFORE:
+-    <div className="min-h-screen bg-slate-50">
+
+AFTER:
++    <div className="min-h-screen bg-slate-50 overflow-x-hidden">
+
+Belt-and-suspenders: even if structural fixes in LOCATION 2.3 fail, the page
+won't trigger horizontal scroll. This is the iOS app primary use case so
+must not regress.
+
+================================================================================
+LOCATION 2.3 — UnitQCSelectionPage.js: header row truncate + shrink fix
+================================================================================
+File: frontend/src/pages/UnitQCSelectionPage.js
+Lines: 207-224 (the `<div className="flex items-center justify-between mb-2">`
+       block — search by anchor "STATUS_ICONS[unit.status]")
+
+BEFORE:
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    {isNavigating ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                    ) : (
+                      <Home className="w-4 h-4 text-slate-400" />
+                    )}
+                    <span className="text-sm font-bold text-slate-700">
+                      {unit.unit_name || `דירה ${unit.unit_no}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border ${cfg.color}`}>
+                      <Icon className="w-3 h-3" />
+                      {cfg.label}
+                    </span>
+                    <span className="text-xs font-medium text-slate-500">{unit.handled_count}/{unit.total}</span>
+                  </div>
+                </div>
+
+AFTER (3 class additions):
+                <div className="flex items-center justify-between mb-2 gap-2">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    {isNavigating ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-500 flex-shrink-0" />
+                    ) : (
+                      <Home className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    )}
+                    <span className="text-sm font-bold text-slate-700 truncate">
+                      {unit.unit_name || `דירה ${unit.unit_no}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border ${cfg.color}`}>
+                      <Icon className="w-3 h-3" />
+                      {cfg.label}
+                    </span>
+                    <span className="text-xs font-medium text-slate-500">{unit.handled_count}/{unit.total}</span>
+                  </div>
+                </div>
+
+Changes summary:
+- outer flex: + `gap-2` (separation between left/right when truncated)
+- left group: + `min-w-0 flex-1` (allows shrink + truncate)
+- icons inside left: + `flex-shrink-0` (prevents icon from being squeezed)
+- unit name span: + `truncate` (ellipsis when overflow)
+- right group: + `flex-shrink-0` (badge + count always visible)
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ Sort logic anywhere outside qc_router.py:911 — backend hierarchy endpoint
+     (projects_router.py:1047) already sorts units by sort_index correctly.
+- ❌ ExecutionMatrixPage.js — no list sort happening, just .map() for fields.
+- ❌ ProjectControlPage.js — uses backend hierarchy (sorted server-side).
+- ❌ Progress bar fill `<div className="h-1.5 rounded-full ..." style={{ width: `${pct}%` }}>`
+     — already correct. Don't touch.
+- ❌ Outer container max-w-2xl, sticky header, status badge color logic.
+
+================================================================================
+VERIFY 1 — Build
+================================================================================
+$ cd frontend && CI=true yarn build
+   →  EXIT=0 expected
+   →  No new ESLint warnings (locale arg to localeCompare is valid)
+
+$ cd backend && python -c "from contractor_ops.qc_router import *"
+   →  EXIT=0 expected
+   →  No ImportError (cross-router import works)
+
+================================================================================
+VERIFY 2 — Smoke (DEFERRED TO ZAHI on staging)
+================================================================================
+Focus areas:
+
+A. Create or use a project with > 10 units per floor (e.g. floor with units
+   "1", "2", ..., "11", "12", "20", "101", "A1").
+B. Open the project on Capacitor mobile app → בקרת ביצוע → choose building →
+   choose floor → "לפי דירות".
+   EXPECT: units appear in order 1, 2, 3, ..., 10, 11, 12, 20, 101, A1
+   (NOT 1, 10, 101, 11, 12, 2, 20, 3, A1).
+C. On the same screen, scroll the page horizontally on iPhone (try to swipe
+   left-right on the unit list).
+   EXPECT: NO horizontal scroll. Page is locked to vertical only.
+D. If any unit has a long name (test: temporarily set unit display_label to
+   "דירת פנט-האוז גן הפסגות 901-A"), check that:
+   - the name truncates with "..." at the right edge of its container
+   - the status badge + count remain fully visible on the right
+   - the progress bar (below) still spans the full card width
+
+================================================================================
+VERIFY 3 — Regression sweep
+================================================================================
+A. Hierarchy load: open execution control → walk into a building → floor → units.
+   Units should still display correctly (now in natural sort order).
+B. Existing unit_no patterns: verify Hebrew letters, mixed alphanumeric units
+   still appear (no crash on unusual unit_no values).
+C. Status badges: all 3 states (not_started / in_progress / approved) still
+   render correctly with the new truncation classes.
+
+================================================================================
+RISK
+================================================================================
+Low. Sort change is pure ordering — no data mutation. CSS changes are
+additive (only adding classes, not removing). Worst case: localeCompare
+behavior differs across browsers, but `numeric: true` is well-supported
+(all evergreen browsers + Safari 10+). Capacitor WebView is iOS Safari so
+fully supported.
+
+Bundle size impact: zero (no new dependencies).
+Performance impact: negligible — sort runs once per unit list render.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+(Reverts to current lex sort + no truncate. No data migration needed.)
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

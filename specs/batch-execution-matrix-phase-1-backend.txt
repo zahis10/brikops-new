@@ -1,0 +1,1065 @@
+================================================================================
+BATCH — Execution Matrix (מטריצת ביצוע) — PHASE 1: BACKEND
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — major new feature for execution control. NOT a bug fix.
+                Closes the gap between BrikOps's documentation-heavy QC system
+                and engineers' real workflow (Eli's external Excel-based
+                tracker observed in production data).
+
+This is PHASE 1 of 2 (or 3). PHASE 1 = backend only. PHASE 2 = frontend.
+
+Files changed:  3 NEW files + 2 small extensions
+                  Backend (NEW):    backend/contractor_ops/execution_matrix_router.py (~600 LOC)
+                  Backend (NEW):    backend/tests/test_execution_matrix.py (~250 LOC)
+                  Backend (extend): backend/contractor_ops/schemas.py (~80 LOC append)
+                  Backend (extend): backend/server.py (+3 lines for router registration)
+
+Tests:          REQUIRED. Mirror existing safety_router test patterns
+                (AsyncMock + patch.object). Cover: RBAC, stage list
+                customization, cell update + audit, saved views.
+
+Mobile:         N/A — backend only.
+DB migration:   NONE. Three new collections lazy-init on first access:
+                  - execution_matrix          (1 doc per project — stage config)
+                  - execution_matrix_cells    (1 doc per cell — status + audit)
+                  - execution_matrix_views    (1 doc per saved view — per-user)
+
+CLAUDE.md compliance:
+  - "קבצים חדשים, לא להעמיס קיימים" — NEW router file, NEW test file, NEW
+    collections. Schemas appended to schemas.py (consistent with safety
+    additions in #468).
+  - "לא לנחש, לבדוק בקוד תמיד" — STEP 0 verifies existing approvers
+    system + qc_template + qc_runs + project_memberships shapes BEFORE
+    coding.
+  - "Always verify, never assume API response shape" — added per the
+    new iron rule from #481.
+
+================================================================================
+CONTEXT — what this feature is, why it exists
+================================================================================
+
+PMs and execution engineers in production today maintain external Google
+Sheets to track project execution at a glance. Eli's tracker observed
+2026-05-04 (~/Downloads/טבלת מעקב בניין 8+9 -אלי - Google Sheets.pdf):
+50 units × 20 stages, simple status values per cell, free-text notes,
+sales-status columns, lobby/common-area rows.
+
+The gap: BrikOps's existing בקרת ביצוע is documentation-heavy (photos,
+notes, signatures) — too slow for "where's everything at?" management
+overview. Engineers fall back to external Excel.
+
+Goal: replace the external Excel WITHIN BrikOps. Not a fancy dashboard
+— literally an Excel-replacement experience tightly integrated with
+project data, with light read-only annotations from the formal record.
+
+Architectural decision (Zahi 2026-05-04):
+  - Matrix = INDEPENDENT data store (own collections, own state)
+  - Annotations from qc_runs are READ-ONLY display hints (no state coupling)
+  - Marking a cell in the matrix does NOT modify qc_runs
+  - Admin edits to qc_template auto-reflect in matrix base stages
+    (computed at render time, no migration)
+  - Engineers can ADD custom stages + REMOVE base stages (per-project,
+    not per-user)
+
+Out of scope for PHASE 1 (deferred):
+  - Frontend (PHASE 2)
+  - Read-only 📎 annotation overlay (PHASE 2 frontend OR Tier 2)
+  - Excel/PDF export (Tier 2)
+  - Realtime collaboration (Tier 3, requires WebSocket)
+  - Per-user matrix variants (intentionally rejected — one matrix per project)
+  - Shared saved views across project members (currently per-user only;
+    add `is_shared` flag in PHASE 2 if requested)
+  - Stage reordering endpoint (PHASE 2 — currently order is set on create
+    and changed only via full custom_stages_added replace)
+  - Cleanup of orphaned cells when custom stage deleted (PHASE 2 —
+    currently cells with hidden stages are simply not rendered)
+  - GDPR-compliant audit anonymization on user account deletion (Tier 2 —
+    currently audit retains actor_id forever; requires sweep across all
+    audit-bearing collections, not matrix-specific)
+  - Pagination for large projects (>100 units / >3MB response) — current
+    response returns all cells in one query; PHASE 2 frontend may
+    paginate client-side first, backend pagination if scale demands
+
+================================================================================
+CRITICAL PRESERVATION — DO NOT TOUCH
+================================================================================
+
+✋ qc_router.py (2,936 LOC) — NOT touched. Matrix is fully independent.
+✋ qc_template structure — only READ from. Matrix never modifies templates.
+✋ qc_runs / qc_items collections — only READ for annotations (PHASE 2). Matrix
+   never writes to them.
+✋ Existing approvers system (project_approvers collection / endpoints) —
+   only READ to check who can edit matrix. No new approver endpoints.
+✋ Safety router family (safety_router.py, safety_registration_router.py,
+   safety_personnel_router.py) — independent.
+✋ Project memberships, auth, billing — untouched.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+⚠️ This is a feature spec (not a bug fix). STEP 0 is unusually thorough
+   to lock down assumptions about existing systems we'll integrate with.
+
+0.1 — Verify qc_template structure (we read stages from here):
+    grep -n "class.*Template\|qc_templates\|tpl\[\"stages\"\]" \
+        backend/contractor_ops/qc_router.py | head -10
+    # Expected:
+    #   - tpl["stages"] is a list with elements: {id, title, scope, order, items}
+    #   - scope is "floor" or "unit"
+    #   - Live retrieval via _get_template(db, project_id=...)
+    # We use the SAME helper to fetch base stages.
+
+0.2 — Verify project_approvers collection shape (HIGH-RISK — current
+    implementation has placeholder query; STEP 0.9 below verifies exact shape):
+    grep -rn "project_approvers\|approver" backend/contractor_ops/qc_router.py | head -15
+    # Expected: there's an existing endpoint for listing/managing approvers
+    # at qc_router.py around line 1785-1900. Document the actual collection
+    # name and shape (likely {project_id, user_id, can_approve_stages: [...]}).
+
+0.3 — Verify the role helpers we'll use:
+    grep -n "_get_project_role\|_is_super_admin\|_check_qc_access\|MANAGEMENT_ROLES" \
+        backend/contractor_ops/qc_router.py backend/contractor_ops/router.py | head -10
+    # Expected to find:
+    #   - _get_project_role(user, project_id) returns role string
+    #   - _is_super_admin(user) returns bool
+    #   - MANAGEMENT_ROLES tuple defined
+    # We import these helpers in our new router.
+
+0.4 — Verify project_memberships structure for unit/building data:
+    grep -n "class Unit\|class Building\|class Floor\|db.units\|db.buildings\|db.floors" \
+        backend/contractor_ops/schemas.py backend/contractor_ops/qc_router.py | head -15
+    # Expected: db.units has documents with {id, floor_id, unit_no, name, room_count?}.
+    # Matrix needs unit_id + unit_no + room_count for filtering.
+
+0.5 — Confirm there's NO existing execution_matrix-related code:
+    grep -rn "execution_matrix\|ExecutionMatrix\|matrix_cell" \
+        backend/ frontend/src/
+    # Expected: 0 hits. If anything found — STOP and report.
+
+0.6 — Confirm Pydantic style + datetime conventions:
+    grep -n "class.*BaseModel.*:.*\|\.dict(exclude_unset" \
+        backend/contractor_ops/schemas.py | head -10
+    # Document whether codebase uses Pydantic v1 (.dict()) or v2 (.model_dump()).
+    # Match the existing convention.
+
+0.7 — Server.py route registration pattern (for our new router):
+    grep -n "from contractor_ops.safety_personnel_router\|app.include_router(safety" \
+        backend/server.py | head -5
+    # Expected pattern (per #473 / S2B v2):
+    #   from contractor_ops.execution_matrix_router import router as execution_matrix_router
+    #   app.include_router(execution_matrix_router)
+    # Match this style exactly.
+
+0.8 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+0.9 — 🚨 CRITICAL — Verify EXACT shape of project_approvers documents
+    (this is what _get_matrix_approver_user_ids will query — wrong shape
+     = silent RBAC failure → matrix approvers can't edit, or worse,
+     wrong people get edit access). Per CLAUDE.md "לא לנחש, לבדוק":
+
+    Step A — find a real document:
+        cd backend && python -c "
+        import asyncio
+        from contractor_ops.router import get_db
+        async def main():
+            db = get_db()
+            doc = await db.project_approvers.find_one({}, {'_id': 0})
+            print('SAMPLE DOC:', doc)
+            count = await db.project_approvers.count_documents({})
+            print('TOTAL DOCS:', count)
+        asyncio.run(main())
+        "
+
+    Step B — also grep the existing approvers endpoint in qc_router.py
+    to see how it's QUERIED (this is the canonical pattern to follow):
+        grep -n "project_approvers" backend/contractor_ops/qc_router.py
+        # Look for the function that lists approvers for a project — what
+        # exact filter does it use? what fields does it project? does each
+        # approver doc represent ONE user (one doc per user_id) or MANY
+        # users in one doc per project (e.g. {project_id, approvers: [user_ids]})?
+
+    Step C — document findings in review.txt under STEP 0.9:
+       • Exact collection name (project_approvers? qc_approvers? etc.)
+       • Exact field that holds user IDs (user_id? approver_id? user_ids[]?)
+       • Whether one doc = one user, or one doc = list of users
+       • Whether there's a `role` / `can_approve_stages` field that gates
+         which approvers count (if so — ALL approvers count for matrix,
+         OR only those with stage-approve perms? Document the decision.)
+       • Any soft-delete / status field (deletedAt? active?)
+
+    Step D — UPDATE _get_matrix_approver_user_ids to match exact shape.
+    The current spec shows a PLACEHOLDER:
+        cursor = db.project_approvers.find(
+            {"project_id": project_id},
+            {"_id": 0, "user_id": 1}
+        )
+        return {a["user_id"] async for a in cursor}
+    This MUST be replaced with the verified query before commit.
+
+    If the actual shape is e.g. one doc per project with an array of
+    user_ids:
+        doc = await db.project_approvers.find_one({"project_id": project_id})
+        return set(doc.get("approver_user_ids", [])) if doc else set()
+    Then update the helper accordingly.
+
+    DO NOT proceed to PART 1 if STEP 0.9 returns "no docs found" without
+    a clear answer for what query shape applies.
+
+================================================================================
+PART 1 — SCHEMAS in backend/contractor_ops/schemas.py (~80 LOC append)
+================================================================================
+
+LOCATION 1.1 — Append at end of schemas.py (after the last existing model).
+
+   ADD:
+       # =====================================================================
+       # Execution Matrix (Batch Execution Matrix Phase 1, 2026-05-04)
+       # PMs / execution engineers track project state in a 2D grid
+       # (units × stages) with 6 status values + custom columns.
+       # See spec: batch-execution-matrix-phase-1-backend.txt
+       # =====================================================================
+
+       MATRIX_STATUS_VALUES = (
+           'completed',     # ✓ בוצע
+           'partial',       # ⚠ חלקי
+           'in_progress',   # ◷ בעבודה
+           'not_done',      # ✗ לא בוצע
+           'not_relevant',  # − אין צורך
+           'no_findings',   # ⊘ אין חוסרים
+       )
+
+       MATRIX_STAGE_TYPES = ('status', 'tag')
+
+       class MatrixStageCreate(BaseModel):
+           """Custom stage added by approver/PM (NOT part of qc_template)."""
+           title: str = Field(..., min_length=1, max_length=80)
+           type: Literal['status', 'tag'] = 'status'
+           order: Optional[int] = None  # if None, append to end
+
+       class MatrixStage(BaseModel):
+           """Stage entry in the matrix — either base (from qc_template) or custom."""
+           id: str
+           title: str
+           type: Literal['status', 'tag']
+           order: int
+           source: Literal['base', 'custom']  # base = from qc_template; custom = engineer-added
+           # Base stages additionally include:
+           scope: Optional[Literal['floor', 'unit']] = None  # only for base stages
+
+       class MatrixStagesUpdate(BaseModel):
+           """PATCH-style update for the project matrix's stage list."""
+           custom_stages_added: Optional[List[MatrixStageCreate]] = None  # full replace if provided
+           base_stages_removed: Optional[List[str]] = None  # stage_ids hidden from base
+           # If both omitted → no change.
+
+       class MatrixCellAuditEntry(BaseModel):
+           actor_id: str
+           actor_name: str
+           timestamp: str  # ISO
+           status_before: Optional[str] = None
+           status_after: Optional[str] = None
+           note_before: Optional[str] = None
+           note_after: Optional[str] = None
+           text_before: Optional[str] = None  # for tag-type cells
+           text_after: Optional[str] = None
+
+       class MatrixCellUpdate(BaseModel):
+           """PATCH-style update for a single matrix cell."""
+           status: Optional[Literal[
+               'completed', 'partial', 'in_progress',
+               'not_done', 'not_relevant', 'no_findings',
+           ]] = None
+           note: Optional[str] = Field(None, max_length=500)
+           text_value: Optional[str] = Field(None, max_length=200)  # for tag-type stages
+
+       class MatrixCell(BaseModel):
+           """Cell in the matrix — one (unit_id × stage_id) entry."""
+           project_id: str
+           unit_id: str  # use unit_id; for non-unit rows in PHASE 2, special location IDs
+           stage_id: str
+           status: Optional[str] = None
+           text_value: Optional[str] = None
+           note: Optional[str] = None
+           audit: List[MatrixCellAuditEntry] = Field(default_factory=list)
+           last_updated_at: Optional[str] = None
+           last_updated_by: Optional[str] = None
+
+       class MatrixSavedViewFilters(BaseModel):
+           """Filter configuration for a saved view."""
+           # Location filters (any-of within each list)
+           building_ids: Optional[List[str]] = None
+           floor_ids: Optional[List[str]] = None
+           unit_ids: Optional[List[str]] = None
+           # Per-stage status filter — {stage_id: [allowed_status_values]}
+           stage_status_filters: Optional[Dict[str, List[str]]] = None
+           # Per-tag-column value filter — {column_id: [allowed_text_values]}
+           tag_value_filters: Optional[Dict[str, List[str]]] = None
+           # Free text search (matches notes + tag values)
+           search_text: Optional[str] = None
+
+       class MatrixSavedViewCreate(BaseModel):
+           title: str = Field(..., min_length=1, max_length=80)
+           icon: Optional[str] = Field(None, max_length=10)  # emoji or symbol
+           filters: MatrixSavedViewFilters
+
+       class MatrixSavedView(BaseModel):
+           id: str
+           project_id: str
+           user_id: str
+           title: str
+           icon: Optional[str] = None
+           filters: MatrixSavedViewFilters
+           created_at: str
+           updated_at: Optional[str] = None
+
+DO NOT TOUCH:
+- Any existing schema in schemas.py.
+- Imports at top — `Literal`, `Optional`, `List`, `Dict`, `Field`, `BaseModel`
+  all already imported (verified in S2B v2 history). If `Dict` is somehow
+  missing, add to the typing import line.
+
+================================================================================
+PART 2 — NEW FILE backend/contractor_ops/execution_matrix_router.py (~600 LOC)
+================================================================================
+
+CREATE NEW FILE per CLAUDE.md "new file per new sub-batch" rule.
+
+   FULL FILE STRUCTURE (high level — flesh out per-endpoint per spec):
+
+       """
+       Execution Matrix routes — Phase 1 backend.
+       Implements the project-level matrix grid (units × stages) with:
+         - Stage list customization (base from qc_template + custom additions)
+         - Per-cell status + note + audit history
+         - Per-user saved views
+
+       NO modification of qc_template, qc_runs, or qc_items.
+       READS qc_template stages live (computed render).
+       READS qc_runs.stage_statuses for annotations (PHASE 2 only — not in PHASE 1).
+       """
+       from __future__ import annotations
+
+       import uuid
+       from typing import Optional, List, Dict, Any
+       from fastapi import APIRouter, Depends, HTTPException, Query
+
+       from contractor_ops.router import (
+           _check_project_access, _now, _audit, get_db, require_roles,
+       )
+       from contractor_ops.qc_router import (
+           _get_template,
+           _get_project_role,
+           _is_super_admin,
+           MANAGEMENT_ROLES,
+       )
+       from contractor_ops.schemas import (
+           MATRIX_STATUS_VALUES, MATRIX_STAGE_TYPES,
+           MatrixStage, MatrixStageCreate, MatrixStagesUpdate,
+           MatrixCell, MatrixCellUpdate, MatrixCellAuditEntry,
+           MatrixSavedView, MatrixSavedViewCreate, MatrixSavedViewFilters,
+       )
+
+       router = APIRouter(prefix="/api/execution-matrix", tags=["execution-matrix"])
+
+       # =====================================================================
+       # RBAC helpers
+       # =====================================================================
+
+       async def _get_matrix_approver_user_ids(db, project_id: str) -> set:
+           """Return set of user_ids that are 'בקרת ביצוע approvers' for this
+           project. Uses the existing project_approvers collection (verified
+           in STEP 0.2)."""
+           # NOTE: actual collection name + field shape verified in STEP 0.2.
+           # Likely query:
+           cursor = db.project_approvers.find(
+               {"project_id": project_id},
+               {"_id": 0, "user_id": 1}
+           )
+           return {a["user_id"] async for a in cursor}
+
+       async def _check_matrix_view(user, project_id):
+           """Anyone in management_team / project_manager / super_admin can view.
+           Contractors are explicitly blocked."""
+           role = await _get_project_role(user, project_id)
+           if _is_super_admin(user):
+               return role
+           if role == "contractor":
+               raise HTTPException(status_code=403, detail="קבלן אינו רשאי לצפות במטריצת ביצוע")
+           if role not in (*MANAGEMENT_ROLES, "project_manager", "viewer"):
+               # viewer has read-only access to most project data; allow.
+               # If role is unknown / unauthorized, block.
+               raise HTTPException(status_code=403, detail="אין הרשאה לצפות במטריצת ביצוע")
+           return role
+
+       async def _check_matrix_edit(user, project_id):
+           """Edit allowed for: project_manager, super_admin, OR anyone in
+           the project's approvers list."""
+           if _is_super_admin(user):
+               return "super_admin"
+           role = await _get_project_role(user, project_id)
+           if role == "project_manager":
+               return role
+           db = get_db()
+           approver_ids = await _get_matrix_approver_user_ids(db, project_id)
+           if user["id"] in approver_ids:
+               return "approver"
+           raise HTTPException(
+               status_code=403,
+               detail="עריכה במטריצת ביצוע מותרת רק למנהל פרויקט או מאשרי בקרת ביצוע",
+           )
+
+       # =====================================================================
+       # Lazy init
+       # =====================================================================
+
+       async def _get_or_init_matrix_config(db, project_id: str) -> dict:
+           """Get the project's matrix config doc, or create empty one.
+           Doc shape:
+             {project_id, custom_stages: [], base_stages_removed: [],
+              created_at, created_by, updated_at, updated_by}"""
+           existing = await db.execution_matrix.find_one(
+               {"project_id": project_id, "deletedAt": None},
+               {"_id": 0}
+           )
+           if existing:
+               return existing
+           now = _now()
+           doc = {
+               "id": str(uuid.uuid4()),
+               "project_id": project_id,
+               "custom_stages": [],
+               "base_stages_removed": [],
+               "created_at": now,
+               "created_by": None,
+               "updated_at": now,
+               "updated_by": None,
+               "deletedAt": None,
+           }
+           await db.execution_matrix.insert_one(doc)
+           return doc
+
+       def _resolve_visible_stages(matrix_config: dict, tpl: dict) -> List[dict]:
+           """Compute the visible stage list:
+              base = qc_template.stages (filtered to remove base_stages_removed)
+              custom = matrix_config.custom_stages
+              merged = sort by .order
+           """
+           base_removed = set(matrix_config.get("base_stages_removed", []))
+           base_stages = []
+           for s in tpl.get("stages", []):
+               if s["id"] in base_removed:
+                   continue
+               base_stages.append({
+                   "id": s["id"],
+                   "title": s.get("title", ""),
+                   "type": "status",  # base stages are always status type
+                   "order": s.get("order", 0),
+                   "source": "base",
+                   "scope": s.get("scope"),
+               })
+           custom_stages = []
+           for cs in matrix_config.get("custom_stages", []):
+               custom_stages.append({
+                   "id": cs["id"],
+                   "title": cs.get("title", ""),
+                   "type": cs.get("type", "status"),
+                   "order": cs.get("order", 9999),
+                   "source": "custom",
+                   "scope": None,  # custom stages aren't scoped
+               })
+           merged = sorted(base_stages + custom_stages, key=lambda x: x["order"])
+           return merged
+
+
+       # =====================================================================
+       # ENDPOINTS
+       # =====================================================================
+
+       @router.get("/{project_id}")
+       async def get_matrix(
+           project_id: str,
+           user: dict = Depends(get_current_user)
+       ):
+           """Return the full matrix view for a project:
+              - List of resolved stages (base + custom)
+              - List of units (sorted by floor → unit_no)
+              - List of cells (status + note + last_updated_by)
+              - User's permissions (can_view, can_edit)
+           """
+           db = get_db()
+           role = await _check_matrix_view(user, project_id)
+           can_edit = False
+           try:
+               await _check_matrix_edit(user, project_id)
+               can_edit = True
+           except HTTPException:
+               pass  # view-only
+
+           matrix_config = await _get_or_init_matrix_config(db, project_id)
+           tpl = await _get_template(db, project_id=project_id)
+           stages = _resolve_visible_stages(matrix_config, tpl)
+
+           # Units (sorted by floor + unit_no)
+           # NOTE: requires JOIN with floors+buildings to sort properly
+           units_cursor = db.units.find(
+               {"project_id": project_id, "archived": {"$ne": True}},
+               {"_id": 0}
+           )
+           units = await units_cursor.to_list(2000)
+           # Enrich with floor + building data
+           floor_ids = list({u["floor_id"] for u in units if "floor_id" in u})
+           floors = await db.floors.find(
+               {"id": {"$in": floor_ids}, "archived": {"$ne": True}},
+               {"_id": 0}
+           ).to_list(500)
+           floors_by_id = {f["id"]: f for f in floors}
+           # Sort units: by floor_number (floors_by_id[u.floor_id].floor_number), then unit_no
+           def _unit_sort_key(u):
+               f = floors_by_id.get(u.get("floor_id"), {})
+               return (f.get("floor_number", 0), u.get("unit_no", ""))
+           units.sort(key=_unit_sort_key)
+
+           # Cells — fetch all for this project in one query
+           stage_ids = [s["id"] for s in stages]
+           cells_docs = await db.execution_matrix_cells.find(
+               {"project_id": project_id, "stage_id": {"$in": stage_ids}},
+               {"_id": 0}
+           ).to_list(50000)
+
+           # Strip audit history for list view (return only last entry summary)
+           def _summarize_cell(c):
+               last_audit = c.get("audit", [])[-1] if c.get("audit") else None
+               return {
+                   "unit_id": c["unit_id"],
+                   "stage_id": c["stage_id"],
+                   "status": c.get("status"),
+                   "text_value": c.get("text_value"),
+                   "note": c.get("note"),
+                   "last_updated_at": c.get("last_updated_at"),
+                   "last_updated_by": c.get("last_updated_by"),
+                   "last_actor_name": last_audit.get("actor_name") if last_audit else None,
+               }
+           cells_summary = [_summarize_cell(c) for c in cells_docs]
+
+           return {
+               "project_id": project_id,
+               "stages": stages,
+               "units": units,
+               "cells": cells_summary,
+               "permissions": {
+                   "role": role,
+                   "can_view": True,
+                   "can_edit": can_edit,
+               },
+               "matrix_config_id": matrix_config["id"],
+           }
+
+       @router.patch("/{project_id}/stages")
+       async def update_stages(
+           project_id: str,
+           payload: MatrixStagesUpdate,
+           user: dict = Depends(get_current_user)
+       ):
+           """Edit the project's stage list:
+              - Add/remove/reorder custom stages
+              - Hide/show base stages (toggle base_stages_removed)
+           Allowed for: PM + super_admin + matrix approvers.
+           """
+           db = get_db()
+           await _check_matrix_edit(user, project_id)
+
+           matrix_config = await _get_or_init_matrix_config(db, project_id)
+           updates = payload.dict(exclude_unset=True)
+
+           # Process custom_stages_added: assign IDs + order
+           if "custom_stages_added" in updates:
+               max_existing_order = max(
+                   (s.get("order", 0) for s in matrix_config.get("custom_stages", [])),
+                   default=999,
+               )
+               new_custom = []
+               for i, s in enumerate(updates["custom_stages_added"]):
+                   new_custom.append({
+                       "id": s.get("id") or f"custom_{uuid.uuid4().hex[:12]}",
+                       "title": s["title"].strip(),
+                       "type": s.get("type", "status"),
+                       "order": s.get("order") if s.get("order") is not None else max_existing_order + i + 1,
+                       "created_by": user["id"],
+                       "created_at": _now(),
+                   })
+               updates["custom_stages"] = new_custom
+               del updates["custom_stages_added"]
+
+           if "base_stages_removed" in updates:
+               # Sanity: stage_ids must be strings
+               updates["base_stages_removed"] = [str(s) for s in updates["base_stages_removed"]]
+
+           updates["updated_at"] = _now()
+           updates["updated_by"] = user["id"]
+
+           await db.execution_matrix.update_one(
+               {"project_id": project_id, "deletedAt": None},
+               {"$set": updates}
+           )
+
+           await _audit(
+               "execution_matrix", project_id, "matrix_stages_updated",
+               user["id"], {"updates": list(updates.keys())},
+           )
+
+           refreshed = await _get_or_init_matrix_config(db, project_id)
+           tpl = await _get_template(db, project_id=project_id)
+           return {
+               "project_id": project_id,
+               "stages": _resolve_visible_stages(refreshed, tpl),
+           }
+
+       @router.put("/{project_id}/cells/{unit_id}/{stage_id}")
+       async def update_cell(
+           project_id: str,
+           unit_id: str,
+           stage_id: str,
+           payload: MatrixCellUpdate,
+           user: dict = Depends(get_current_user)
+       ):
+           """Update a single matrix cell. Append audit entry.
+           Allowed for: PM + super_admin + matrix approvers."""
+           db = get_db()
+           await _check_matrix_edit(user, project_id)
+
+           # Verify stage exists in current visible stages (sanity)
+           matrix_config = await _get_or_init_matrix_config(db, project_id)
+           tpl = await _get_template(db, project_id=project_id)
+           visible_stage_ids = {s["id"] for s in _resolve_visible_stages(matrix_config, tpl)}
+           if stage_id not in visible_stage_ids:
+               raise HTTPException(status_code=404, detail="שלב לא קיים במטריצה")
+
+           # Verify unit_id exists in this project (or is a known non-unit location)
+           unit = await db.units.find_one({"id": unit_id, "project_id": project_id})
+           if not unit:
+               raise HTTPException(status_code=404, detail="דירה לא נמצאה בפרויקט")
+
+           # Status validation
+           new_status = payload.status
+           if new_status is not None and new_status not in MATRIX_STATUS_VALUES:
+               raise HTTPException(status_code=400, detail=f"Status not in {MATRIX_STATUS_VALUES}")
+
+           # Stage type vs payload validation — defensive (prevents engineers
+           # from mixing status + tag inputs and corrupting cell semantics).
+           # Find the stage's type from resolved stages.
+           stage = next(
+               (s for s in _resolve_visible_stages(matrix_config, tpl) if s["id"] == stage_id),
+               None,
+           )
+           stage_type = (stage or {}).get("type", "status")
+           if stage_type == "status" and payload.text_value not in (None, ""):
+               raise HTTPException(
+                   status_code=400,
+                   detail="שלב מסוג סטטוס לא מקבל ערך טקסט (text_value)",
+               )
+           if stage_type == "tag" and payload.status is not None:
+               raise HTTPException(
+                   status_code=400,
+                   detail="שלב מסוג תגית לא מקבל ערך סטטוס (status)",
+               )
+
+           existing = await db.execution_matrix_cells.find_one(
+               {"project_id": project_id, "unit_id": unit_id, "stage_id": stage_id}
+           )
+           now = _now()
+           actor_name = user.get("name") or user.get("email") or user["id"]
+
+           audit_entry = {
+               "actor_id": user["id"],
+               "actor_name": actor_name,
+               "timestamp": now,
+               "status_before": existing.get("status") if existing else None,
+               "status_after": new_status,
+               "note_before": existing.get("note") if existing else None,
+               "note_after": payload.note,
+               "text_before": existing.get("text_value") if existing else None,
+               "text_after": payload.text_value,
+           }
+
+           if existing:
+               new_audit = existing.get("audit", []) + [audit_entry]
+               await db.execution_matrix_cells.update_one(
+                   {"project_id": project_id, "unit_id": unit_id, "stage_id": stage_id},
+                   {"$set": {
+                       "status": new_status,
+                       "note": payload.note,
+                       "text_value": payload.text_value,
+                       "audit": new_audit,
+                       "last_updated_at": now,
+                       "last_updated_by": user["id"],
+                   }}
+               )
+           else:
+               await db.execution_matrix_cells.insert_one({
+                   "id": str(uuid.uuid4()),
+                   "project_id": project_id,
+                   "unit_id": unit_id,
+                   "stage_id": stage_id,
+                   "status": new_status,
+                   "note": payload.note,
+                   "text_value": payload.text_value,
+                   "audit": [audit_entry],
+                   "last_updated_at": now,
+                   "last_updated_by": user["id"],
+                   "created_at": now,
+               })
+
+           return {
+               "project_id": project_id,
+               "unit_id": unit_id,
+               "stage_id": stage_id,
+               "status": new_status,
+               "note": payload.note,
+               "text_value": payload.text_value,
+               "last_updated_at": now,
+               "last_updated_by": user["id"],
+               "last_actor_name": actor_name,
+           }
+
+       @router.get("/{project_id}/cells/{unit_id}/{stage_id}/history")
+       async def get_cell_history(
+           project_id: str,
+           unit_id: str,
+           stage_id: str,
+           user: dict = Depends(get_current_user),
+       ):
+           """Return full audit history for a single cell."""
+           db = get_db()
+           await _check_matrix_view(user, project_id)
+           cell = await db.execution_matrix_cells.find_one(
+               {"project_id": project_id, "unit_id": unit_id, "stage_id": stage_id},
+               {"_id": 0}
+           )
+           if not cell:
+               return {"history": []}
+           return {"history": cell.get("audit", [])}
+
+       # =====================================================================
+       # SAVED VIEWS — per user
+       # =====================================================================
+
+       @router.get("/{project_id}/views")
+       async def list_views(
+           project_id: str,
+           user: dict = Depends(get_current_user)
+       ):
+           """List the current user's saved views for this project."""
+           db = get_db()
+           await _check_matrix_view(user, project_id)
+           views = await db.execution_matrix_views.find(
+               {"project_id": project_id, "user_id": user["id"], "deletedAt": None},
+               {"_id": 0}
+           ).sort([("created_at", 1)]).to_list(100)
+           return {"views": views}
+
+       @router.post("/{project_id}/views", status_code=201)
+       async def create_view(
+           project_id: str,
+           payload: MatrixSavedViewCreate,
+           user: dict = Depends(get_current_user)
+       ):
+           db = get_db()
+           await _check_matrix_view(user, project_id)
+           now = _now()
+           view = {
+               "id": str(uuid.uuid4()),
+               "project_id": project_id,
+               "user_id": user["id"],
+               "title": payload.title.strip(),
+               "icon": (payload.icon or "").strip() or None,
+               "filters": payload.filters.dict(exclude_none=True),
+               "created_at": now,
+               "updated_at": now,
+               "deletedAt": None,
+           }
+           await db.execution_matrix_views.insert_one(view)
+           view.pop("_id", None)
+           return view
+
+       @router.patch("/{project_id}/views/{view_id}")
+       async def update_view(
+           project_id: str,
+           view_id: str,
+           payload: MatrixSavedViewCreate,  # full replace
+           user: dict = Depends(get_current_user)
+       ):
+           db = get_db()
+           await _check_matrix_view(user, project_id)
+           existing = await db.execution_matrix_views.find_one(
+               {"id": view_id, "project_id": project_id, "user_id": user["id"], "deletedAt": None}
+           )
+           if not existing:
+               raise HTTPException(status_code=404, detail="תצוגה לא נמצאה")
+           updates = {
+               "title": payload.title.strip(),
+               "icon": (payload.icon or "").strip() or None,
+               "filters": payload.filters.dict(exclude_none=True),
+               "updated_at": _now(),
+           }
+           await db.execution_matrix_views.update_one(
+               {"id": view_id, "user_id": user["id"]},
+               {"$set": updates}
+           )
+           refreshed = await db.execution_matrix_views.find_one(
+               {"id": view_id, "user_id": user["id"]},
+               {"_id": 0}
+           )
+           return refreshed
+
+       @router.delete("/{project_id}/views/{view_id}", status_code=204)
+       async def delete_view(
+           project_id: str,
+           view_id: str,
+           user: dict = Depends(get_current_user)
+       ):
+           db = get_db()
+           await _check_matrix_view(user, project_id)
+           result = await db.execution_matrix_views.update_one(
+               {"id": view_id, "project_id": project_id, "user_id": user["id"], "deletedAt": None},
+               {"$set": {"deletedAt": _now()}}
+           )
+           if result.matched_count == 0:
+               raise HTTPException(status_code=404, detail="תצוגה לא נמצאה")
+           return None
+
+NOTES:
+- All endpoints under prefix `/api/execution-matrix`.
+- All writes append to audit (cell-level). Stage list edits go to general
+  _audit log.
+- Soft-delete pattern (`deletedAt`) for matrix_config + saved_views.
+- Cell documents are NOT soft-deleted (just updated to status=None or
+  text_value="" if user clears).
+- Performance: GET /matrix returns all cells in one query. With 500 units
+  × 30 stages = 15,000 cells, each ~200 bytes = ~3MB response. If this
+  becomes a problem in Tier 2, paginate by floor.
+
+================================================================================
+PART 3 — backend/server.py registration
+================================================================================
+
+LOCATION 3.1 — Add router registration after the existing safety_personnel
+   registration (per #473 / S2B v2 pattern):
+
+   FIND (existing pattern):
+       from contractor_ops.safety_personnel_router import router as safety_personnel_router
+       ...
+       app.include_router(safety_personnel_router)
+
+   ADD (after that block):
+       from contractor_ops.execution_matrix_router import router as execution_matrix_router
+       ...
+       app.include_router(execution_matrix_router)
+
+   IMPORTANT — match the exact import style (single-line vs multi-line).
+   Verify with STEP 0.7.
+
+DO NOT TOUCH:
+- Other route registrations.
+- Order of registrations (don't reshuffle).
+- Auth / middleware setup.
+
+================================================================================
+PART 4 — TESTS in backend/tests/test_execution_matrix.py (NEW FILE)
+================================================================================
+
+CREATE NEW FILE. Mirror existing test_qc_override_close.py + test_safety_*
+mock pattern.
+
+   10 tests minimum:
+
+       def test_get_matrix_returns_resolved_stages():
+           """Matrix returns base + custom stages, sorted by order, with
+           base_stages_removed filtered out."""
+           # Mock qc_template with 3 stages, matrix_config with 1 custom + 1 base_removed
+           # Assert resolved list has 3 stages (2 base remaining + 1 custom)
+
+       def test_get_matrix_blocks_contractor():
+           """Contractor role → 403 on GET /matrix."""
+
+       def test_update_stages_adds_custom():
+           """PATCH /stages with custom_stages_added → DB has the new custom."""
+
+       def test_update_stages_removes_base():
+           """PATCH /stages with base_stages_removed → next GET filters them out."""
+
+       def test_update_stages_blocks_non_approver():
+           """Site_manager (not in approvers list, not PM) → 403."""
+
+       def test_update_cell_creates_with_audit():
+           """PUT /cells with no existing → INSERT with 1 audit entry, status set."""
+
+       def test_update_cell_appends_audit_on_change():
+           """PUT /cells twice → 2 audit entries, status_before/after correct."""
+
+       def test_saved_view_create_list_delete_per_user():
+           """User A creates view → user A lists → sees it. User B lists → empty.
+           User A deletes → list returns empty."""
+
+       def test_cell_history_returns_full_audit_chain():
+           """3 sequential updates to the same cell (in_progress → partial →
+           completed) → GET /cells/{u}/{s}/history returns 3 audit entries
+           in chronological order with correct status_before/after pairs."""
+           # Verifies the audit chain accumulates and is queryable.
+
+       def test_invalid_status_value_rejected_400():
+           """PUT /cells with status='nonsense_value' → 400 (Status not in
+           MATRIX_STATUS_VALUES). DB cell unchanged. No audit entry written."""
+           # Defensive: ensures Pydantic Literal validation OR explicit
+           # MATRIX_STATUS_VALUES check rejects bogus enum values, so a buggy
+           # frontend can't poison cell state.
+
+   All tests use AsyncMock + patch.object on:
+       - get_db
+       - _check_project_access
+       - _get_template (returns mock template)
+       - _get_project_role
+       - _is_super_admin
+       - _audit
+       - For approver-related: db.project_approvers.find with mock cursor
+
+   Pattern: same as test_qc_override_close.py (#478 tests).
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend syntax + import resolution:
+   cd backend && python -c "from contractor_ops import execution_matrix_router; \
+       from contractor_ops.schemas import MatrixStage, MatrixCell, MatrixSavedView; \
+       print('OK')"
+   → prints OK with no ImportError
+
+VERIFY 2 — Routes registered in app.routes:
+   cd backend && python -c "from server import app; \
+       paths = [r.path for r in app.routes]; \
+       matrix_paths = [p for p in paths if '/execution-matrix' in p]; \
+       assert len(matrix_paths) >= 6, f'Expected ≥6 matrix routes, got {len(matrix_paths)}'; \
+       print('OK', matrix_paths)"
+   → prints OK and at least 6 paths
+
+VERIFY 3 — Run new test file:
+   cd backend && python -m pytest tests/test_execution_matrix.py -v
+   → 10 passed
+
+VERIFY 4 — No regression on existing tests:
+   cd backend && python -m pytest tests/test_qc_override_close.py \
+       tests/test_qc_units_status.py tests/test_safety_registration.py -v
+   → all pass (all unchanged)
+
+VERIFY 5 — schemas.py imports are clean:
+   cd backend && python -c "from contractor_ops.schemas import \
+       MATRIX_STATUS_VALUES, MATRIX_STAGE_TYPES, \
+       MatrixStage, MatrixStageCreate, MatrixStagesUpdate, \
+       MatrixCell, MatrixCellUpdate, MatrixCellAuditEntry, \
+       MatrixSavedView, MatrixSavedViewCreate, MatrixSavedViewFilters; \
+       print('OK')"
+   → prints OK
+
+VERIFY 6 — Router file exists + size sanity:
+   test -f backend/contractor_ops/execution_matrix_router.py && echo "EXISTS"
+   wc -l backend/contractor_ops/execution_matrix_router.py
+   → exists, between 400-800 lines
+
+VERIFY 7 — qc_router.py untouched (no regression in existing QC):
+   git diff origin/staging -- backend/contractor_ops/qc_router.py
+   → 0 lines diff
+
+VERIFY 8 — Visual smoke (manual on staging via curl):
+   Zahi runs after deploy:
+   a) GET /api/execution-matrix/{project_id} — returns stages + units + cells
+   b) PATCH /api/execution-matrix/{project_id}/stages — add custom stage
+   c) PATCH /api/execution-matrix/{project_id}/stages — remove a base stage
+   d) GET again — verify computed visible stages match
+   e) PUT /cells/{unit}/{stage} — set status
+   f) GET /cells/{unit}/{stage}/history — see audit entry
+   g) PUT same cell again with different status — audit grows to 2 entries
+   h) POST /views — create saved view
+   i) GET /views — see it in user's list
+   j) Login as different user → GET /views → empty (per-user isolation)
+   k) Login as contractor → GET /matrix → 403
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (greps + actual collection names + helper signatures)
+  - Per-file diff (4 files: 1 NEW router + 1 NEW test + schemas.py append + server.py +3)
+  - VERIFY 1-7 outputs
+  - VERIFY 8 deferred-to-Zahi note (11 scenarios a-k)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(matrix): execution matrix backend — Phase 1
+
+  Adds the backend foundation for "מטריצת ביצוע" — a 2D project-level
+  grid (units × stages) for engineers to track project state at a
+  glance, replacing external Excel sheets.
+
+  PHASE 1 (this batch) — backend only:
+   - 3 new collections: execution_matrix, execution_matrix_cells,
+     execution_matrix_views
+   - New router at /api/execution-matrix with 7 endpoints (GET matrix,
+     PATCH stages, PUT cell, GET cell history, list/create/update/delete
+     saved views)
+   - 6 status values: completed, partial, in_progress, not_done,
+     not_relevant, no_findings
+   - 2 stage types: status (6 values) and tag (free text)
+   - Per-cell audit history (actor + timestamp + before/after)
+   - Per-user saved views with location + per-stage + tag-value + search filters
+   - RBAC: edit allowed for PM + super_admin + project's qc approvers;
+     view allowed for management_team + viewer; contractors blocked
+   - Stage list = qc_template.stages (live read) + custom_stages -
+     base_stages_removed (computed at render time, no migration)
+   - NO sync with qc_runs / qc_items — matrix is independent
+   - NO modification to qc_template, qc_runs, qc_items, or any existing
+     QC code
+
+  New file per CLAUDE.md "new sub-batch new file" rule. Imports helpers
+  from contractor_ops.qc_router and contractor_ops.router.
+
+  PHASE 2 (frontend, separate spec) will add the page, grid, popover,
+  filters, and saved-view UX.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.7 greps + verify collection names + helpers)
+2. PART 1 — schemas.py append (~80 LOC at end of file)
+3. PART 2 — NEW execution_matrix_router.py (~600 LOC)
+4. PART 3 — server.py +3 lines for router registration
+5. PART 4 — NEW test_execution_matrix.py (~250 LOC, 8 tests)
+6. Run VERIFY 1-7
+7. Generate review.txt + .local/.commit_message
+8. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+4 files revert. The /api/execution-matrix routes 404. New collections
+remain in DB (orphaned but harmless — Mongo doesn't care). schemas.py
+append removed. server.py registration removed.
+
+NO impact on:
+- qc_router.py / qc_template / qc_runs / qc_items
+- safety routers (any)
+- Existing approve/reject/submit/reopen flows
+- Project memberships / auth / billing
+
+NO data loss — there's no PHASE 2 frontend yet, so users haven't created
+matrix data. If we re-deploy, collections are reused.
+
+================================================================================
+END OF SPEC — PHASE 1 BACKEND
+================================================================================

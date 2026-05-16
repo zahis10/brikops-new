@@ -1,0 +1,342 @@
+================================================================
+משימה לרפליט: שדרוג Handover PDF Template ל-v3
+================================================================
+
+שלום,
+
+אני מעביר אליך משימה להחליף את ה-PDF של פרוטוקול המסירה הקיים שלנו
+בעיצוב מודרני שכבר אישרנו ויזואלית.
+
+מצורפים:
+  1. BrikOps Handover Protocol v2.6.html  ← פתח ב-Chrome כדי לראות איך
+                                              ה-PDF צריך להיראות (11 עמודים)
+  2. הספק המלא למטה ↓
+
+חשוב: אל תיגע ב-DB schema. אל תוסיף שדות. רק להחליף את התבנית הקיימת
+ב-`backend/templates/handover_protocol_pdf.html` ולחבר אותה ל-64 המשתנים
+שכבר קיימים ב-`backend/services/handover_pdf_service.py`.
+
+
+
+שאלות לפני שאתה מתחיל / בעת ספק → תשאל אותי.
+
+================================================================
+SPEC — Handover PDF Template v3
+================================================================
+
+> TL;DR: קח את העיצוב של `BrikOps Handover Protocol v2.6.html`, המר אותו
+> ל-Jinja template, חבר אותו ל-64 המשתנים שכבר קיימים. אסור לגעת
+> ב-schema של ה-DB. אסור להוסיף שדות חדשים. רק להחליף את ה-PDF שיוצא
+> מהמערכת בעיצוב המודרני.
+
+
+----------------------------------------------------------------
+1. קבצים
+----------------------------------------------------------------
+
+| קובץ                                            | תפקיד                                  |
+|-------------------------------------------------|----------------------------------------|
+| BrikOps Handover Protocol v2.6.html             | מקור עיצובי — קרא, אל תערוך             |
+| backend/templates/handover_protocol_pdf.html    | יעד — להחליף לחלוטין בעיצוב החדש       |
+| backend/services/handover_pdf_service.py        | אל תיגע. הוא מספק את 64 המשתנים        |
+| backend/contractor_ops/handover_router.py       | אל תיגע. מקור אמת ל-rooms/items/trades |
+
+
+----------------------------------------------------------------
+2. עקרונות-על
+----------------------------------------------------------------
+
+1. שמור על העיצוב של v2.6. Cover Hero כהה + סטטס פאנל + severity bars +
+   defect cards + signature grid + legal blocks + ID Appendix — אסור לשנות.
+2. שמור על ה-schema של ה-DB. אל תוסיף, אל תוריד, אל תשנה שדות.
+   אם משהו בעיצוב לא תואם — תקן את העיצוב, לא את ה-DB.
+3. כל hardcoded data במוקאפ → Jinja variable. רשימת המשתנים בסעיף 4.
+4. תמיכה ב-`@media print` ו-WeasyPrint. ה-PDF מיוצר עם WeasyPrint.
+
+
+----------------------------------------------------------------
+3. המוקאפ כבר עומד בסכמת ה-Backend (אל תשנה)
+----------------------------------------------------------------
+
+המוקאפ v2.6 כבר מותאם 1:1 לסכמת ה-DB:
+
+✓ 11 trade classes (elec, plumb, tile, alum, door, iron, paint, plast,
+                   kitch, marble, gen) — תואם ל-handover_router.py
+✓ 5 status states (ok, partial, defective, not_relevant, not_checked)
+  — תואם ל-STATUS_LABELS ב-handover_pdf_service.py
+✓ 2 מונים בלבד (water, electricity) — תואם ל-meter_water_reading +
+  meter_electricity_reading
+✓ 15 חדרים קנוניים — תואם ל-HANDOVER_TEMPLATE
+✓ 8 שדות נכס — תואם ל-HARDCODED_PROPERTY_LABELS
+✓ 4 חותמים (manager, tenant, tenant_2, contractor_rep) — תואם ל-DEFAULT_SIGNATURE_LABELS
+✓ severity colors (critical/normal/cosmetic) — תואם ל-SEVERITY_COLORS
+
+מיפוי trade בעברית (כפי שבא מה-DB) ל-CSS class:
+{% set trade_class = {
+  'חשמל': 'elec', 'אינסטלציה': 'plumb', 'ריצוף': 'tile',
+  'אלומיניום': 'alum', 'דלתות': 'door', 'ברזל': 'iron',
+  'צביעה': 'paint', 'טיח': 'plast', 'מטבחים': 'kitch',
+  'שיש': 'marble', 'כללי': 'gen'
+}.get(item.trade, 'gen') %}
+
+מיפוי status (key → CSS class):
+{% set status_class = {
+  'ok': 'ok', 'partial': 'partial', 'defective': 'defective',
+  'not_relevant': 'not-relevant', 'not_checked': 'not-checked'
+}.get(item.status, 'not-checked') %}
+
+
+----------------------------------------------------------------
+4. מיפוי משתנים — מוקאפ → Jinja
+----------------------------------------------------------------
+
+| במוקאפ (hardcoded)              | Jinja variable                                                    |
+|---------------------------------|-------------------------------------------------------------------|
+| BO-2026-0412-A3-12              | {{ display_number }}                                              |
+| מתחם הסופרים · בני ברק          | {{ project_name }}                                                |
+| בניין A / קומה 3 / דירה 12      | {{ building_name }} / {{ floor_name }} / {{ unit_name }}          |
+| 4 באפריל 2026 (מסירה — אנושי)   | {{ signed_date }} (פורמט אנושי, helper: _format_hebrew_date)      |
+| 28.04.2026 (הפקה — מספרי קצר)   | {{ generation_date }} (פורמט מספרי קצר, helper: _format_short_date)|
+| 145 / 140 / 2 / 3 (KPIs)        | {{ stats_total }} / {{ stats_ok }} / {{ stats_partial }} / {{ stats_fail }} |
+| 1 / 4 / 0 (severity bars)       | {{ defect_severity_counts.critical }} / .normal / .cosmetic       |
+| 5 ליקויים פתוחים                | {{ total_defects }}                                               |
+| לוגו                            | {{ brikops_logo_b64 }} (כהה) / {{ logo_b64 }} (בהיר)             |
+| מים 11111111                    | {{ meter_water_reading }} + {{ meter_water_photo_b64 }}           |
+| חשמל 00042                      | {{ meter_electricity_reading }} + {{ meter_electricity_photo_b64 }}|
+| אלי אריאלי (דייר 1)             | {% for tenant in tenants %} {{ tenant.name }}                     |
+| ת״ז / טלפון / אימייל            | {{ tenant.id_number }} / {{ tenant.phone }} / {{ tenant.email }}  |
+| 3 בלוקים משפטיים                | {% for ls in legal_sections %} {{ ls.title }} / {{ ls.body|safe }}|
+| 4 כרטיסי חתימה                  | {% for sig in signatures %} {{ sig.label }} / {{ sig.signer_name }} / {{ sig.image_b64 }} |
+| הערות הדייר                     | {{ tenant_notes }}                                                |
+
+הערה לגבי תאריכים: 2 הפורמטים בכוונה — תאריך מסירה הוא event אנושי
+("4 באפריל 2026"), תאריך הפקה הוא טכני ("28.04.2026"). שני ה-helpers
+כבר קיימים ב-handover_pdf_service.py. אל תאחד אותם.
+
+רשימה מלאה של 64 משתנים: ראה את `backend/templates/handover_protocol_pdf.html`
+הקיים — הוא משתמש בכולם. העתק את ה-{% for %} patterns שכבר עובדים שם.
+
+
+----------------------------------------------------------------
+5. רכיבים שצריך להפוך ל-loop במוקאפ
+----------------------------------------------------------------
+
+| מקטע במוקאפ                  | מקור                                                                |
+|------------------------------|---------------------------------------------------------------------|
+| TOC items (15 hardcoded)     | {% for section in sections %}                                       |
+| Defects summary (5 שורות)    | {% for d in defects %} — d.section_name, d.item_name, d.trade, d.severity_label, d.severity_color, d.description |
+| Room inspection tables       | {% for section in sections %}{% for item in section.items %}        |
+| Defect detail cards          | {% for d in critical_defects %} (סינון לפי severity == 'critical')  |
+| Tenants block (Cover)        | {% for tenant in tenants %} — תמיד 1-3 דיירים                       |
+| Legal blocks                 | {% for ls in legal_sections %} — טעון פר-org מה-DB                  |
+| Signature cards              | {% for sig in signatures %} — manager/tenant/tenant_2/contractor_rep|
+| Property fields              | {% for row in property_rows %} — המקור מסנן ריקים אוטומטית          |
+| Handed-over items table      | {% for item in delivered_items %}                                   |
+| ID Appendix (2 דיירים)       | {% for tenant in tenants %} — אותו tenant data, רינדור גדול         |
+
+
+----------------------------------------------------------------
+6. Conditionals חשובים + ביטוח לתאימות
+----------------------------------------------------------------
+
+חשוב: השתמש ב-Jinja `default` filter על כל aggregation/counter
+כדי למנוע KeyError על נתונים legacy:
+
+  {{ defect_severity_counts.critical | default(0) }}
+  {{ stats_total | default(0) }}
+  {{ total_defects | default(0) }}
+  {{ tenants | default([]) }}
+  {{ sections | default([]) }}
+
+הסיבה: handovers ישנים שנחתמו ונסגרו לא יורצו מחדש (זהו הוודאות שלנו),
+אבל handovers ב-draft שנוצרו לפני התבנית עדיין יכולים להיכנס לתבנית
+החדשה. ה-default filters הם safety net זול.
+
+עוד conditionals:
+
+{# Cover thumbnail — אם יש תמונת חזית בפרויקט #}
+{% if project_cover_image_b64 %}
+  <img class="cover-thumb-img" src="{{ project_cover_image_b64 }}" alt="חזית">
+{% else %}
+  <div class="cover-thumb"><svg>...building icon...</svg><span class="lab">חזית</span></div>
+{% endif %}
+
+{# הסתר severity bar אם 0 ליקויים מהסוג הזה #}
+{% if defect_severity_counts.cosmetic | default(0) > 0 %}<div class="sev cosm">...</div>{% endif %}
+
+{# הסתר tenant notes block אם אין הערות #}
+{% if tenant_notes %}<section class="tenant-notes">{{ tenant_notes }}</section>{% endif %}
+
+{# חתימת קבלן — show as unsigned card אם sig.image_b64 ריק #}
+<div class="sig-card {% if sig.image_b64 %}signed{% else %}unsigned{% endif %}">
+
+{# Tenant ID photos — תמיד placeholder ב-batch הזה. תמונות אמיתיות יבואו ב-Spec B #}
+<div class="tenant-id-photos">
+  <div class="id-photo"><span class="lbl">ת.ז · קדמי</span></div>
+  <div class="id-photo"><span class="lbl">ת.ז · אחורי</span></div>
+</div>
+
+
+----------------------------------------------------------------
+7. WeasyPrint compatibility — שינויים נדרשים
+----------------------------------------------------------------
+
+WeasyPrint לא תומך ב:
+- aspect-ratio        → החלף ב-`padding-bottom: 75%` hack לתמונות
+- gap ב-flexbox       → השתמש ב-margin במקום
+- data-uri SVG        → וודא שה-encoding נכון (UTF-8 + URL escape)
+- @font-face עם blob  → לטעון פונטים מ-{{ fonts_dir }}/ (Heebo + JetBrains Mono כבר קיימים)
+- oklch() / חישובים   → היצמד ל-hex
+
+החלף את כל ה-<svg> inline שיש במוקאפ (Lucide icons) — וודא שהם עובדים
+ב-WeasyPrint (width/height מפורש כ-attribute, לא רק CSS).
+
+
+----------------------------------------------------------------
+8. PDF SIZE — חובה לוודא < 16MB (WhatsApp limit)
+----------------------------------------------------------------
+
+ה-PDF נשלח לדיירים/יזמים דרך WhatsApp, Email, וגם הורדה מהאפליקציה.
+WhatsApp limit הוא 16MB — זה ה-binding constraint שלנו.
+
+תרחיש worst case לבדיקה: דירה עם 30 ליקויים × 2 תמונות = 60 תמונות.
+בלי compression זה יוצא ~25MB. עם compression נכון — צריך < 12MB.
+
+חובה — להוסיף ל-`_fetch_image_as_base64` ב-handover_pdf_service.py
+פרמטר `max_width` שונה לפי סוג תמונה:
+
+  • Defect photos:        max_width=600,  jpeg_quality=75
+  • Meter photos:         max_width=800,  jpeg_quality=80
+  • Signature images:     max_width=300,  jpeg_quality=85
+  • Cover thumbnails:     max_width=120,  jpeg_quality=80
+  • Logo images:          max_width=400,  jpeg_quality=90 (כבר ככה היום)
+
+אם הפונקציה לא תומכת ב-`jpeg_quality` כפרמטר — להוסיף אותה.
+אם לא תומכת ב-resizing — להשתמש ב-PIL (כבר imported בקוד).
+
+VERIFY: אחרי merge, צור PDF של דירה עם 30 ליקויים + 60 תמונות,
+תעד את הגודל ב-PR description.
+
+  • אם < 12MB ✓
+  • אם 12-16MB ⚠️ אזהרה — שווה optimization נוסף בעתיד
+  • אם > 16MB ✗ blocking — חייב להקטין לפני merge
+
+
+----------------------------------------------------------------
+9. בדיקות לפני merge
+----------------------------------------------------------------
+
+אין fixtures מוכנים בקוד לבדיקות handover. אבל יש Staging מלא:
+
+  • API:   https://api-staging.brikops.com
+  • App:   https://staging.brikops-new.pages.dev
+  • User:  superadmin@brikops.dev / StagingDemo2026!
+  • Org:   חברת הדגמה (715e2420-e4f1-4ebd-81ed-b690e1f7f84d)
+
+עבוד מול staging — שם כבר יש דירות אמיתיות עם נתונים אמיתיים.
+זה גם יותר מציאותי מ-fixtures מקומיים.
+
+תרחישי בדיקה (3 דירות שונות בstaging):
+
+| תרחיש                                              | מה לבדוק                                          |
+|---------------------------------------------------|--------------------------------------------------|
+| 1. דירה ללא ליקויים בכלל (stats_fail=0)            | severity bars מסתתרים יפה? sig-cards תקינים?     |
+| 2. דירה עם 1 קריטי + 5 רגיל + 2 קוסמטי (אם יש)    | 3 ה-bars מציגים נכון? defect detail cards יש?    |
+| 3. דירה עם 30+ ליקויים + הרבה תמונות               | גודל PDF < 16MB? כל התמונות compressed כראוי?    |
+
+אם אין דירה בstaging שמתאימה לתרחיש 3 — צור אחת ידנית דרך ה-UI.
+
+וודא:
+[ ] PDF נוצר בלי warnings מ-WeasyPrint
+[ ] גודל קובץ סביר (< 12MB טיפוסי, < 16MB worst case)
+[ ] עברית RTL מוצגת נכון
+[ ] תאריכים: signed_date אנושי, generation_date מספרי
+[ ] חתימות מוטמעות כתמונה (לא URL חיצוני)
+
+
+----------------------------------------------------------------
+10. DO NOT
+----------------------------------------------------------------
+
+- אל תוסיף עמודות חדשות ל-DB. כל מה שצריך כבר שם.
+- אל תשנה את חתימת `generate_handover_pdf()`. ה-API עומד.
+- אל תוסיף JS ל-template. WeasyPrint לא מריץ JS.
+- אל תוסיף ספריות חיצוניות ל-CSS (CDN fonts, Tailwind). הכל inline.
+- אל תיגע בקובץ המוקאפ `BrikOps Handover Protocol v2.6.html` — reference, לא יעד.
+- אל תבנה את ה-QR code פעיל — נשאר placeholder עם תווית "בקרוב".
+  עתידי: ROADMAP-handover-pdf.md, Phase 3.
+- אל תבנה את ה-ID upload UI / Tenant model fields — placeholder mode בלבד.
+  עתידי: SPEC-B-id-upload-phase2.md (קובץ נפרד) — Phase 2.
+
+
+----------------------------------------------------------------
+11. הקשר נוסף
+----------------------------------------------------------------
+
+קרא לפני התחלה:
+- backend/templates/handover_protocol_pdf.html  ← ה-template הישן, ראה
+                                                   את ה-loops ו-conditionals שכבר עובדים
+- backend/services/handover_pdf_service.py lines 25-150 ← מילוני
+                                                          STATUS_LABELS, SEVERITY_LABELS,
+                                                          HARDCODED_PROPERTY_LABELS
+- backend/contractor_ops/handover_router.py    ← HANDOVER_TEMPLATE עם 15 חדרים
+                                                  קנוניים ו-145 פריטים
+
+בעת ספק: ה-Jinja הישן הוא ה-source of truth ל-data flow.
+         v2.6 הוא ה-source of truth ל-visual.
+
+
+----------------------------------------------------------------
+12. פלט
+----------------------------------------------------------------
+
+- שמור את ה-template החדש בשם `backend/templates/handover_protocol_pdf.html`
+  (החלפה).
+- שמור backup של הישן בשם `handover_protocol_pdf.v1.html.bak`.
+- כתוב CHANGELOG קצר ב-PR description: מה השתנה ב-Jinja vars (אם שינית),
+  אילו testing scenarios רצו ב-staging, גודל PDF שיצא בתרחיש 3.
+
+זמן עבודה משוער: 4-6 שעות.
+
+
+----------------------------------------------------------------
+13. תוספת חובה — ת״ז בחתימות נסחים משפטיים (P0 — חובה)
+----------------------------------------------------------------
+
+הקשר: עד עכשיו ה-`.legal-sigline .sigchip` הציג רק שם + תאריך:
+  אלי אריאלי · 4.4.2026
+
+זאת **דרישה עסקית של BrikOps** (לא חובה חוקית) — נהוג בענף הבנייה
+הישראלי, סמנטו עושים את זה. צריך:
+  אלי אריאלי · ת״ז 31200009 · 4.4.2026
+
+ב-template (Jinja):
+-------------------
+מצא את ה-loop של legal_sections ועדכן את ה-sigline:
+
+<div class="legal-sigline">
+  {% for tenant in tenants %}
+    <span class="sigchip">{{ tenant.name }} · ת״ז {{ tenant.id_number }} · {{ signed_date }}</span>
+  {% endfor %}
+</div>
+
+CSS — וודא wrap:
+----------------
+.legal-sigline ו-.sigchip חייבים `flex-wrap: wrap` כי ה-chip עכשיו ארוך
+יותר ועלול לחרוג בעמוד צר. ב-v2.6 כבר נוסף:
+
+  .sigchip { flex-wrap: wrap; }
+  .legal-sigline { flex-wrap: wrap; gap: 12px 24px; }
+
+בדיקת תאימות:
+-------------
+חפש בכל ה-template שלא נשארה הופעה של chip ישן (שם בלי ת.ז):
+
+  grep -E "sigchip\">[^<]*[א-ת][^·]*·\s*[0-9]" backend/templates/handover_protocol_pdf.html
+
+כל chip צריך להכיל לפחות 2 פעמים `·` (שם · ת״ז · תאריך).
+
+
+================================================================
+שאלות → אלי. צא לדרך.
+================================================================

@@ -1,0 +1,239 @@
+================================================================================
+HOTFIX FOLLOWUP TO #491 — Safety pill in ApartmentDashboardPage card list
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P3 — UX coverage gap. #491 added safety pill to UnitDetailPage
+                + ProjectTasksPage card lists, but missed ApartmentDashboardPage
+                which is the page route that's actually shown when navigating
+                from BuildingDefectsPage → tap unit. Discovered during Zahi's
+                staging smoke 2026-05-04 of the #487-#491 cluster.
+
+Files changed:  1 frontend file, ~5 LOC
+                  Frontend: pages/ApartmentDashboardPage.js (~5 LOC)
+
+Tests:          None new. Visual addition only. Existing 6 tests in
+                test_defect_safety_tag.py still guard the schema.
+
+Backend:        ZERO changes. `task.is_safety` already in API response.
+Mobile:         Frontend OTA via Capgo. No native files.
+DB migration:   NONE.
+
+Family:         Followup-4 to #469 (defect "בטיחות" tag).
+                #469 added pill to ProjectControlPage list.
+                #488 added pill to TaskDetailPage detail + filter on BuildingDefects.
+                #491 added pill to UnitDetailPage + ProjectTasksPage lists.
+                #493 (THIS) closes the last gap — ApartmentDashboardPage card list.
+
+================================================================================
+ROOT CAUSE — Zahi's staging smoke 2026-05-04
+================================================================================
+
+After #491 deployed to staging, Zahi reported safety pill still missing on
+defect cards he sees at `/projects/{p}/units/{u}/defects`. We initially
+assumed this URL renders UnitDetailPage but verified via App.js routing:
+
+    Route: /projects/:projectId/units/:unitId/defects
+    Component: ApartmentDashboardPage   ← NOT UnitDetailPage
+
+#491 added the pill to UnitDetailPage and ProjectTasksPage. ApartmentDashboardPage
+has the SAME pills row pattern (CategoryPill + priority span + extras) but was
+missed in #491's grep — it surfaces from BuildingDefectsPage's "tap unit" flow,
+which is the most common path users take to view a unit's defects.
+
+Verified locally (synced from origin/staging):
+  grep -c "task.is_safety" frontend/src/pages/ApartmentDashboardPage.js
+  → 0  (clean slate)
+
+================================================================================
+DESIGN DECISION
+================================================================================
+
+D1. Reuse the canonical ProjectControlPage L3913 pattern verbatim:
+    {task.is_safety && (
+      <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
+        🛡️ בטיחות
+      </span>
+    )}
+    Same Tailwind, same emoji, same conditional. Visual consistency
+    across all 5 surfaces:
+      - ProjectControlPage list (#469)
+      - TaskDetailPage detail (#488)
+      - UnitDetailPage list (#491)
+      - ProjectTasksPage list (#491)
+      - ApartmentDashboardPage list (THIS BATCH)
+
+D2. Place the pill INSIDE the existing pills row at L788-796,
+    immediately AFTER the priority span at L791. Same insertion
+    order as #491 ("status → category → priority → safety").
+
+D3. NO change to data fetching, filter logic, or progress bar.
+    NO change to other components or pages.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify ApartmentDashboardPage card pills row at L788-796:
+    grep -n "priorityInfo.label\|task.location\|filteredTasks.map" \
+        frontend/src/pages/ApartmentDashboardPage.js | head -10
+    # Expected:
+    #   L761  filteredTasks.map(task => {
+    #   L763  priorityInfo = PRIORITY_CONFIG[...]
+    #   L790  <span className={...priorityInfo.color}>
+    #   L791  {priorityInfo.label}
+    #   L793  {task.location && (...)}
+    # Insertion point: between L792 (closing </span>) and L793 (location).
+
+0.2 — Confirm clean slate (no existing safety pill):
+    grep -c "task.is_safety\|🛡️" frontend/src/pages/ApartmentDashboardPage.js
+    # Expected: 0 hits.
+
+0.3 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — Add safety pill in ApartmentDashboardPage card
+================================================================================
+
+FILE: frontend/src/pages/ApartmentDashboardPage.js
+---------------------------------------------------
+
+LOCATION 1.1 — Inside the filteredTasks.map render (per STEP 0.1), find
+   the pills row at L788-796:
+
+   FIND:
+       <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+         <CategoryPill>{tCategory(task.category)}</CategoryPill>
+         <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
+           {priorityInfo.label}
+         </span>
+         {task.location && (
+           <span className="text-[10px] text-slate-400">{task.location}</span>
+         )}
+       </div>
+
+   ADD safety pill IMMEDIATELY AFTER the priority span, BEFORE the
+   task.location conditional:
+
+       <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+         <CategoryPill>{tCategory(task.category)}</CategoryPill>
+         <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
+           {priorityInfo.label}
+         </span>
+         {task.is_safety && (
+           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
+             🛡️ בטיחות
+           </span>
+         )}
+         {task.location && (
+           <span className="text-[10px] text-slate-400">{task.location}</span>
+         )}
+       </div>
+
+   IMPORTANT — exact same Tailwind classes as #491 / #469. Visual
+   consistency is critical (this is now the 5th surface that renders
+   the same pill).
+
+DO NOT TOUCH:
+- Title, status pill, image thumbnail, category pill.
+- Priority span (only INSERT after it).
+- task.location, dateStr, assignee_name display.
+- Filter logic, blocking tasks card, tile inventory, navigation.
+- Any state, useEffect, or data fetching.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 2 — File references safety pill:
+   grep -c "task.is_safety\|🛡️ בטיחות" \
+       frontend/src/pages/ApartmentDashboardPage.js
+   → ≥ 2 (1 conditional + 1 emoji label)
+
+VERIFY 3 — Same Tailwind classes as ProjectControlPage:
+   grep -c "bg-orange-100 text-orange-700 border border-orange-200" \
+       frontend/src/pages/ApartmentDashboardPage.js
+   → ≥ 1
+
+VERIFY 4 — Backend regression (none touched):
+   cd backend && python -m pytest tests/test_defect_safety_tag.py -q
+   → 6 passed (unchanged from #488)
+
+VERIFY 5 — Visual smoke (Zahi runs after deploy to staging):
+
+   ApartmentDashboardPage:
+   a) Login → from BuildingDefectsPage tap a unit (or navigate directly
+      to /projects/{p}/units/{u}/defects).
+   b) Defect cards in the list show:
+      - "כבל קרוע" (is_safety=true) → orange "🛡️ בטיחות" pill visible
+        in the pills row, after priority "בינוני".
+      - "נזילה מצינור מים חמים" (assuming non-safety) → no pill.
+   c) Tap a card → still navigates to TaskDetailPage as before (no
+      behavior change).
+
+   Visual consistency:
+   d) Pill style identical to ProjectControlPage / UnitDetailPage /
+      ProjectTasksPage / TaskDetailPage. Same orange, same size.
+
+   Mobile (375px):
+   e) Pill wraps gracefully on narrow viewport (parent has `flex-wrap`).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (1 file, ~5 LOC)
+  - VERIFY 1-4 outputs
+  - VERIFY 5 deferred-to-Zahi note (5 scenarios a-e)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(defects): safety pill in ApartmentDashboardPage card list
+
+  Followup-4 to #469. #491 added the pill to UnitDetailPage +
+  ProjectTasksPage but missed ApartmentDashboardPage — the actual
+  page rendered at /projects/:projectId/units/:unitId/defects (the
+  most common defect-list entry from BuildingDefectsPage).
+
+  Per Zahi's staging smoke 2026-05-04: with the pill missing here,
+  the defects list of the unit shows status/priority but no safety
+  badge — users had to click into each defect to see safety status.
+
+  Fix: 1 file, ~5 LOC. Same byte-identical pill pattern as
+  ProjectControlPage L3913 / UnitDetailPage L327 / ProjectTasksPage
+  L544. Visual consistency across all 5 safety-pill surfaces.
+
+  Backend untouched. No new tests (existing 6 in
+  test_defect_safety_tag.py still guard the schema).
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (2 greps)
+2. PART 1 — Add safety pill at L791 (~5 LOC)
+3. Run VERIFY 1-4
+4. Generate review.txt + .local/.commit_message
+5. STOP. Zahi reviews. Then he runs:
+     git checkout staging && ./deploy.sh --stag
+   ⚠️ COMMIT ON `staging` BRANCH.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+1 file revert. Pill disappears from ApartmentDashboardPage list.
+NO impact on other 4 surfaces (ProjectControlPage / UnitDetailPage /
+ProjectTasksPage / TaskDetailPage), filter (#488), or any other
+safety functionality.
+
+================================================================================
+END OF SPEC
+================================================================================

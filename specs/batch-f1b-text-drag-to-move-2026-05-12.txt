@@ -1,0 +1,634 @@
+================================================================================
+BATCH F.1b — Photo text labels: drag-to-move
+================================================================================
+Date:           2026-05-12
+Branch:         staging  (NOT main)
+Severity:       P3 — second of three F.1 micro-batches (F.1a shipped
+                2026-05-12 at commit dee1879). F.1a added size picker.
+                F.1b adds drag-to-move for EXISTING text labels — tap
+                an existing label and drag it to a new position.
+
+                Roadmap:
+                  - F.1a ✅ size picker (shipped).
+                  - F.1b ← this batch — drag-to-move (~90 LOC).
+                  - F.1c — tap-to-edit (deferred, ~50 LOC).
+
+Approach:       Frontend-only. New "draggingTextRef" state + new
+                hitTestText helper. The text-mode branch of
+                startStroke gets a NEW pre-step: hit-test against
+                existing text strokes first. If hit → start drag
+                interaction. If miss → fall through to existing
+                pendingText behavior (F).
+
+                Movement threshold of 10px (per CLAUDE.md drag rule)
+                differentiates tap from drag. Below threshold → no
+                mutation (tap-only — reserved for F.1c edit).
+                Above threshold → commit to drag, mutate stroke
+                position on every move event.
+
+                Drag mutates `strokesRef.current[i].x/y` directly +
+                calls redraw. State sync to `setStrokes` happens
+                ONCE at endStroke — avoids per-frame re-render (Mode
+                B lesson from P1.1 pinch saga).
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only:
+                  - frontend/src/components/PhotoAnnotation.js
+                    (~+90 LOC: 1 helper + 1 const + 1 ref + branches
+                    in startStroke/moveStroke/endStroke)
+                Total: 1 file. No backend, no DB, no env vars, no
+                new dependencies.
+
+Baseline:       origin/staging HEAD = dee1879 (F.1a shipped, 567 LOC).
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN F.1b:
+  ✅ DRAG_THRESHOLD_PX = 10 constant (canvas-space movement before
+     drag commits).
+  ✅ hitTestText(pos) helper — given canvas-space pos, returns
+     index of topmost text stroke whose pill bbox contains pos
+     (iterates in reverse → last-drawn = top-most). Math mirrors
+     redraw text-branch exactly (same fontSize, padX, padY).
+  ✅ draggingTextRef state ref — `null` or `{ strokeIndex,
+     startTapX, startTapY, origStrokeX, origStrokeY,
+     hasMovedPastThreshold }`.
+  ✅ startStroke text-branch reorder:
+       1. Hit-test against text strokes.
+       2. If HIT → set draggingTextRef, return.
+       3. If MISS → existing pendingText behavior (F).
+  ✅ moveStroke text-branch (NEW):
+       1. If draggingTextRef is null → return (no-op for plain
+          text mode taps — pendingText overlay handles input).
+       2. Compute delta from startTap.
+       3. If !hasMovedPastThreshold and delta < threshold → return.
+       4. Else: set hasMovedPastThreshold = true, mutate
+          strokesRef.current[i].x/y, redraw.
+  ✅ endStroke text-branch (NEW):
+       1. If draggingTextRef is null → return.
+       2. If hasMovedPastThreshold → sync to state via setStrokes
+          (so React knows + undo stack updates).
+       3. If NOT past threshold (pure tap) → no-op (reserved for
+          F.1c edit).
+       4. Clear draggingTextRef.
+  ✅ Cursor affordance: when hovering a text label in text mode on
+     desktop, cursor = 'grab'. During active drag, cursor = 'grabbing'.
+     (Mobile has no hover — only visual feedback during drag itself.)
+
+OUT of F.1b (separate batches):
+  ❌ F.1c — tap-to-edit (tap without drag opens edit overlay).
+  ❌ Visual highlight of selected label.
+  ❌ Snap-to-grid alignment.
+  ❌ Dragging strokes (freehand) — strokes stay anchored.
+  ❌ Multi-select + group drag.
+  ❌ Drag handle indicator (small dot/icon — relies on tap-anywhere).
+
+================================================================================
+STEP 0 — PRE-FLIGHT (6 PASS) — RUN BEFORE EDITING
+================================================================================
+
+1. Confirm origin/staging HEAD includes F.1a:
+   $ git log origin/staging --oneline -3
+   →  Expect HEAD = dee1879 (F.1a) → 85f76f1 (Build mode) →
+      89ac72f (F.1 revert).
+   ✓ If HEAD ≠ dee1879 → STOP, sync to origin/staging.
+
+2. Confirm file at 567 LOC:
+   $ wc -l frontend/src/components/PhotoAnnotation.js
+   →  Expect: 567.
+   ✓ If different → STOP, drift detected.
+
+3. Confirm F + F.1a anchors:
+   $ grep -n "SIZE_MULTIPLIERS\|textSizeRef\|hitTest\|draggingTextRef" \
+       frontend/src/components/PhotoAnnotation.js
+   →  Expect: SIZE_MULTIPLIERS + textSizeRef matches present.
+              hitTest + draggingTextRef NOT present (F.1b adds them).
+
+4. Confirm text stroke shape includes size field (from F.1a):
+   $ grep -nA 6 "const textStroke = {" frontend/src/components/PhotoAnnotation.js
+   →  Expect: type, color, size, x, y, text fields.
+
+5. Confirm startStroke text-branch is at L249:
+   $ sed -n '241,260p' frontend/src/components/PhotoAnnotation.js
+   →  Expect: `if (toolRef.current === 'text') { setPendingText(prev => ...); return; }`
+   ✓ F.1b inserts hit-test branch BEFORE this current branch.
+
+6. Confirm moveStroke + endStroke do NOT have text-mode branches yet:
+   $ sed -n '262,285p' frontend/src/components/PhotoAnnotation.js
+   →  Expect: both check `drawingRef.current` only.
+   ✓ F.1b adds text-mode branches at the TOP of each.
+
+================================================================================
+LOCATION 1 — Add DRAG_THRESHOLD constant
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: AFTER the existing `SIZE_MULTIPLIERS` line (added by F.1a).
+
+ANCHOR (find this line):
+  const SIZE_MULTIPLIERS = { small: 0.7, medium: 1.0, large: 1.4 };
+
+ADD AFTER:
+  // BATCH F.1b (2026-05-12) — drag threshold in canvas-space pixels.
+  // Below this distance from start tap = treated as a tap (reserved
+  // for F.1c edit). At or above = drag commits and mutates stroke
+  // position. Matches CLAUDE.md drag-threshold rule.
+  const DRAG_THRESHOLD_PX = 10;
+
+================================================================================
+LOCATION 2 — Add draggingTextRef
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: AFTER the existing `textSizeRef` declaration (added by F.1a).
+
+ANCHOR (find this line):
+  const textSizeRef = useRef('medium');
+
+ADD AFTER:
+  // BATCH F.1b (2026-05-12) — drag state for text labels.
+  // null = no drag interaction. Otherwise:
+  //   { strokeIndex, startTapX, startTapY,
+  //     origStrokeX, origStrokeY, hasMovedPastThreshold }
+  // strokeIndex points into strokesRef.current array.
+  // (start, orig) captured at tap. Drag delta = (currentPos - startTap).
+  // hasMovedPastThreshold: once true, stays true for this interaction.
+  const draggingTextRef = useRef(null);
+
+================================================================================
+LOCATION 3 — Add hitTestText helper
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: BEFORE the `getPos` callback (around L226 on current HEAD).
+
+ANCHOR (find this line):
+  const getPos = useCallback((clientX, clientY) => {
+
+ADD BEFORE it:
+  // BATCH F.1b (2026-05-12) — hit-test against existing text labels.
+  // Given a canvas-space position, return the index of the topmost
+  // text stroke whose pill bbox contains the position, or -1 if none.
+  // Iterates strokesRef in REVERSE order — last drawn = topmost = first to hit.
+  // Math mirrors redraw's text-branch exactly (same scale, font, padding).
+  const hitTestText = useCallback((pos) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return -1;
+    const ctx = canvas.getContext('2d');
+    const scale = scaleRef.current || 1;
+
+    for (let i = strokesRef.current.length - 1; i >= 0; i--) {
+      const s = strokesRef.current[i];
+      if ((s.type || 'stroke') !== 'text') continue;
+
+      const sizeMultiplier = SIZE_MULTIPLIERS[s.size || 'medium'] || 1.0;
+      const fontSize = (TEXT_FONT_SIZE * sizeMultiplier) / scale;
+      const padX = TEXT_PADDING_X / scale;
+      const padY = TEXT_PADDING_Y / scale;
+
+      ctx.save();
+      ctx.font = `bold ${fontSize}px ${FONT_STACK}`;
+      const metrics = ctx.measureText(s.text || '');
+      ctx.restore();
+
+      const rectWidth = metrics.width + padX * 2;
+      const rectHeight = fontSize + padY * 2;
+      const rectX = s.x - rectWidth / 2;
+      const rectY = s.y - rectHeight / 2;
+
+      if (
+        pos.x >= rectX && pos.x <= rectX + rectWidth &&
+        pos.y >= rectY && pos.y <= rectY + rectHeight
+      ) {
+        return i;
+      }
+    }
+    return -1;
+  }, []);
+
+Notes:
+- `useCallback([])` — relies on refs only (strokesRef, scaleRef,
+  canvasRef). Safe to memoize.
+- `ctx.save/restore` around font set — same defense as redraw,
+  prevents font leaking into subsequent canvas operations.
+- Returns -1 (not null) for "no hit" so caller can check `>= 0`.
+
+================================================================================
+LOCATION 4 — startStroke text-branch: hit-test before pendingText
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the text-branch inside `startStroke` (currently at ~L249).
+
+ANCHOR (find this block — F's text branch):
+  const startStroke = (pos) => {
+    // BATCH F text-mode branch — preserves typed value if pendingText exists,
+    // only updates position. Fresh start requires ביטול.
+    if (toolRef.current === 'text') {
+      setPendingText(prev =>
+        prev
+          ? { ...prev, x: pos.x, y: pos.y }
+          : { x: pos.x, y: pos.y, value: '' }
+      );
+      return;
+    }
+    const newStroke = { type: 'stroke', color: colorRef.current, points: [pos] };
+    currentStrokeRef.current = newStroke;
+    drawingRef.current = true;
+  };
+
+REPLACE WITH:
+  const startStroke = (pos) => {
+    if (toolRef.current === 'text') {
+      // BATCH F.1b — hit-test FIRST. If user tapped on an existing
+      // text label, start a drag interaction instead of opening
+      // pendingText. Drag commits only if movement >= threshold,
+      // otherwise it's a tap (reserved for F.1c edit — no-op for now).
+      const hitIndex = hitTestText(pos);
+      if (hitIndex >= 0) {
+        const s = strokesRef.current[hitIndex];
+        draggingTextRef.current = {
+          strokeIndex: hitIndex,
+          startTapX: pos.x,
+          startTapY: pos.y,
+          origStrokeX: s.x,
+          origStrokeY: s.y,
+          hasMovedPastThreshold: false,
+        };
+        return;
+      }
+
+      // BATCH F text-mode branch — preserves typed value if pendingText
+      // exists, only updates position. Fresh start requires ביטול.
+      setPendingText(prev =>
+        prev
+          ? { ...prev, x: pos.x, y: pos.y }
+          : { x: pos.x, y: pos.y, value: '' }
+      );
+      return;
+    }
+    const newStroke = { type: 'stroke', color: colorRef.current, points: [pos] };
+    currentStrokeRef.current = newStroke;
+    drawingRef.current = true;
+  };
+
+Note: `hitTestText` is from the useCallback at LOCATION 3. The handler
+useEffect's deps array must include `hitTestText` — see LOCATION 7.
+
+================================================================================
+LOCATION 5 — moveStroke text-branch (NEW)
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the `moveStroke` function (currently at ~L262).
+
+ANCHOR (find this block):
+  const moveStroke = (pos) => {
+    if (!drawingRef.current || !currentStrokeRef.current) return;
+    currentStrokeRef.current = {
+      ...currentStrokeRef.current,
+      points: [...currentStrokeRef.current.points, pos],
+    };
+    setStrokes(allStrokes => {
+      redraw([...allStrokes, currentStrokeRef.current]);
+      return allStrokes;
+    });
+  };
+
+REPLACE WITH:
+  const moveStroke = (pos) => {
+    // BATCH F.1b — text drag branch (precedes the freehand path).
+    if (draggingTextRef.current) {
+      const drag = draggingTextRef.current;
+      const dx = pos.x - drag.startTapX;
+      const dy = pos.y - drag.startTapY;
+
+      if (!drag.hasMovedPastThreshold) {
+        // Squared distance check — avoids Math.sqrt per move event.
+        const threshSq = DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX;
+        if (dx * dx + dy * dy < threshSq) return;
+        drag.hasMovedPastThreshold = true;
+      }
+
+      // Mutate in place — avoids per-frame re-render (Mode B lesson
+      // from P1.1 pinch saga). Final state sync happens in endStroke.
+      const stroke = strokesRef.current[drag.strokeIndex];
+      if (stroke && (stroke.type || 'stroke') === 'text') {
+        stroke.x = drag.origStrokeX + dx;
+        stroke.y = drag.origStrokeY + dy;
+        redraw(strokesRef.current);
+      }
+      return;
+    }
+
+    if (!drawingRef.current || !currentStrokeRef.current) return;
+    currentStrokeRef.current = {
+      ...currentStrokeRef.current,
+      points: [...currentStrokeRef.current.points, pos],
+    };
+    setStrokes(allStrokes => {
+      redraw([...allStrokes, currentStrokeRef.current]);
+      return allStrokes;
+    });
+  };
+
+================================================================================
+LOCATION 6 — endStroke text-branch (NEW)
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the `endStroke` function (currently at ~L274).
+
+ANCHOR (find this block):
+  const endStroke = () => {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    const stroke = currentStrokeRef.current;
+    currentStrokeRef.current = null;
+    if (stroke && stroke.points.length >= 2) {
+      setStrokes(prev => {
+        const newAll = [...prev, stroke];
+        redraw(newAll);
+        return newAll;
+      });
+    }
+  };
+
+REPLACE WITH:
+  const endStroke = () => {
+    // BATCH F.1b — text drag branch (precedes the freehand path).
+    if (draggingTextRef.current) {
+      const drag = draggingTextRef.current;
+      draggingTextRef.current = null;
+
+      // Only sync to state if user actually dragged. Pure taps
+      // (no movement past threshold) leave state untouched —
+      // reserved for F.1c edit, no-op here.
+      if (drag.hasMovedPastThreshold) {
+        // strokesRef was mutated in place — sync to React state so
+        // undo stack + parent re-renders see the new position.
+        setStrokes([...strokesRef.current]);
+      }
+      return;
+    }
+
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    const stroke = currentStrokeRef.current;
+    currentStrokeRef.current = null;
+    if (stroke && stroke.points.length >= 2) {
+      setStrokes(prev => {
+        const newAll = [...prev, stroke];
+        redraw(newAll);
+        return newAll;
+      });
+    }
+  };
+
+================================================================================
+LOCATION 7 — Update handler useEffect deps array
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the useEffect dependency array at the bottom of the canvas-
+        handler useEffect (currently `[loaded, getPos, redraw]` at L339).
+
+ANCHOR (find this line):
+  }, [loaded, getPos, redraw]);
+
+REPLACE WITH:
+  }, [loaded, getPos, redraw, hitTestText]);
+
+Note: `hitTestText` is the new useCallback from LOCATION 3. Adding
+it to deps ensures the handlers re-attach if hitTestText identity
+changes (shouldn't, since its deps are []).
+
+================================================================================
+LOCATION 8 — Cursor affordance (desktop only)
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the `<canvas>` JSX element (currently at ~L520).
+
+ANCHOR (find this line):
+  <canvas
+    ref={canvasRef}
+    style={{ touchAction: 'none', display: 'block' }}
+  />
+
+REPLACE WITH:
+  <canvas
+    ref={canvasRef}
+    style={{
+      touchAction: 'none',
+      display: 'block',
+      // BATCH F.1b — desktop cursor hint: grab in text mode,
+      // grabbing during active drag. Mobile has no hover so this
+      // only affects desktop preview.
+      cursor: tool === 'text'
+        ? (draggingTextRef.current?.hasMovedPastThreshold ? 'grabbing' : 'grab')
+        : 'crosshair',
+    }}
+  />
+
+Caveat: `draggingTextRef.current` doesn't trigger re-render — cursor
+won't flip mid-drag without a state piggyback. Acceptable for v1:
+shows 'grab' in text mode steadily, which is the main UX cue. If
+Zahi wants live grab→grabbing flip, that's a follow-up (add
+`dragActive` state synced from the ref).
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ TEXT_FONT_SIZE, TEXT_PADDING_*, TEXT_PILL_RADIUS, SIZE_MULTIPLIERS.
+- ❌ COLORS array, color picker UI, T button.
+- ❌ Size picker (F.1a) — entirely preserved.
+- ❌ pendingText overlay JSX, commitPendingText callback.
+- ❌ Reset-to-medium behavior in F.1a.
+- ❌ Freehand stroke logic (startStroke fall-through, moveStroke
+     fall-through, endStroke fall-through).
+- ❌ Touch handlers (handleTouchStart/Move/End) — they call
+     startStroke/moveStroke/endStroke which now branch internally.
+- ❌ Mouse handlers — same as touch.
+- ❌ Save/Undo handlers — undo over dragged labels works because
+     setStrokes is called at endStroke (new array reference).
+- ❌ scaleRef math, viewport lock, image loader.
+- ❌ Backend / parent contract / saved JPEGs.
+- ❌ No tap-to-edit logic — that's F.1c.
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — File size sanity
+================================================================================
+$ wc -l frontend/src/components/PhotoAnnotation.js
+   →  Expect: ~657 lines (567 + ~90).
+   ✓ If >700 → scope creep, flag.
+
+================================================================================
+VERIFY 3 — grep sanity
+================================================================================
+$ grep -n "DRAG_THRESHOLD\|hitTestText\|draggingTextRef" \
+    frontend/src/components/PhotoAnnotation.js
+   →  Expect ~10 hits: const, ref, helper def, 2 usages in startStroke,
+      2 usages in moveStroke (threshold + position update), 1 in
+      endStroke (sync), 1 in cursor.
+
+================================================================================
+VERIFY 4 — Manual smoke (DEFERRED TO ZAHI)
+================================================================================
+
+**A — F.1a regression (size picker still works):**
+  1. T → tap canvas → set "large" → type "test" → אישור.
+  EXPECT: large label renders. Size picker unchanged.
+
+**B — Drag happy path:**
+  1. Add a text label "5/27" at point A.
+  2. With T mode active, tap on the label and drag 50px to point B.
+  3. Release.
+  EXPECT: label moves smoothly during drag. Final position = B.
+  No new label created.
+
+**C — Pure tap on label (no drag) = no-op:**
+  1. Add label "X".
+  2. Tap directly on "X" without dragging (release within 10px).
+  EXPECT: nothing happens. No pendingText overlay opens. No
+  edit dialog. Label stays in place. (F.1c will repurpose this.)
+
+**D — Tap empty area = pendingText opens (F regression):**
+  1. With T mode active, tap an empty area of the canvas (no label).
+  EXPECT: pendingText overlay appears at tapped location — F
+  behavior preserved.
+
+**E — Drag below threshold = no movement:**
+  1. Add label.
+  2. Tap and slowly move pointer ~5px then release.
+  EXPECT: label DOES NOT MOVE. Threshold guard prevents tiny drift.
+
+**F — Drag past threshold then return = still moves:**
+  1. Add label.
+  2. Tap, move 15px (past threshold), then drag back near start, release.
+  EXPECT: label follows pointer — once threshold crossed, drag is
+  active for the rest of the gesture. Final position reflects last
+  pointer location.
+
+**G — Drag stacked labels (topmost grabbed):**
+  1. Add label "A" → place label "B" on top of "A" (overlapping).
+  2. Tap the overlap area and drag.
+  EXPECT: "B" (drawn later) moves, not "A".
+
+**H — Drag with pendingText open:**
+  1. T → tap empty area → pendingText opens with empty input.
+  2. WITHOUT committing, tap an existing label and drag it.
+  EXPECT: label drags. pendingText overlay still open (user can
+  return to typing). NO label commit; NO drag conflict.
+
+**I — Undo over a dragged label:**
+  1. Add label at point A. Drag it to point B. Tap Undo.
+  EXPECT: label disappears (Undo pops the whole stroke — same LIFO
+  as before).
+  Note: this is the EXPECTED behavior because we treat drag as a
+  state mutation, and the previous stroke version is gone. If Zahi
+  wants undo-restores-position, that's a future enhancement (state
+  history per stroke). Document this in review.
+
+**J — Save after drag:**
+  1. Add label, drag it, then tap Save.
+  EXPECT: photo uploads with label at the FINAL dragged position.
+
+**K — Drag while drawing in same session:**
+  1. With color tool, draw a stroke.
+  2. Switch to T, add text, drag text.
+  3. Switch back to color (T off), draw another stroke.
+  EXPECT: all interactions work independently. Drag doesn't affect
+  freehand strokes.
+
+**L — Cross-platform drag:**
+  - Test B + C + G on iPhone (Capacitor) AND Android (Capacitor
+    or Chrome). Touch drag must be smooth without lag.
+  - Especially watch for: scroll hijacking (touchmove preventDefault
+    is already in place), accidental zoom (viewport lock in place).
+
+**M — Desktop cursor:**
+  - On desktop browser, hover over text labels in T mode.
+  EXPECT: cursor = 'grab' over labels and elsewhere in T mode.
+  (Mid-drag flip to 'grabbing' is acceptable as steady 'grab' per
+  caveat in LOCATION 8.)
+
+**N — Performance: drag a label across the full canvas:**
+  - Drag from one corner to another in one swift gesture.
+  EXPECT: no jank, no lag. (Redraw is O(n) over all strokes per
+  move event — acceptable for typical defect photos with ≤10 strokes.
+  If laggy → flag for follow-up rAF throttling.)
+
+================================================================================
+RISK
+================================================================================
+Medium-low. Touches hot paths (move/end handlers) but additive — new
+branches placed BEFORE existing branches, with early returns.
+
+- ⚠ Hit-test math must EXACTLY mirror redraw math, or labels won't
+  be tappable. Verified by reusing same SIZE_MULTIPLIERS, fontSize
+  formula, padX/padY scaling, and center-aligned rectX/rectY.
+- ⚠ Mutating strokesRef directly without setStrokes during drag
+  works because redraw reads from strokesRef. State diverges from
+  ref mid-drag — sync happens at endStroke. If anything reads
+  setStrokes mid-drag (Save? Undo?) → would see stale state.
+  Verified: Save reads strokesRef.current (line 287); Undo modifies
+  state. Drag should not be interrupted by either.
+- ⚠ Threshold of 10px in CANVAS coords. On a small mobile screen
+  with scale ~0.3, that's 10/0.3 ≈ 33 canvas pixels but only 10
+  display pixels. Standard accessibility threshold. Tuned with
+  CLAUDE.md guidance.
+- ⚠ If user lifts finger BEFORE crossing threshold = no-op (good).
+  But pure tap on label could feel "broken" if user expected
+  something. F.1c will repurpose this for edit. Until then,
+  silence is intentional. Document in smoke test C explanation.
+- ⚠ Drag + Save during gesture: Save button is at bottom of toolbar.
+  If user accidentally taps Save mid-drag (unlikely — buttons are
+  outside canvas area), endStroke wouldn't fire properly. Mitigated
+  by: touchmove preventDefault on canvas blocks tap-through, and
+  user must release on canvas before Save reaches.
+- ⚠ touchcancel handler also calls endStroke — good, cleans up
+  draggingTextRef if iOS interrupts the gesture.
+- ⚠ Undo over a dragged label removes the label entirely (not
+  restore to pre-drag position). Standard behavior for this
+  architecture, documented in test I.
+- ⚠ Cursor flip from grab → grabbing during drag won't be live
+  on desktop (acceptable v1; caveat in LOCATION 8).
+
+Bundle size: zero (no new imports).
+Performance: 1 hit-test per touchstart in text mode; 1 redraw per
+touchmove during drag. O(n) over strokes. Negligible for typical
+photo annotation (≤10 strokes).
+
+Comparison to F.1 (the broken attempt):
+- F.1 added drag + size + edit = 286 LOC in one batch. Too many
+  state interactions; broke the bundle.
+- F.1b is +90 LOC of focused additive logic. Hit-test is a pure
+  function. Drag state is a single ref. Touch handler interception
+  is minimal (one branch per handler). Smaller blast radius.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+- Reverts F.1b only. F + F.1a remain shipped.
+- Text labels still tappable for repositioning of pendingText
+  (F's reposition-on-2nd-tap behavior preserved). They just won't
+  be draggable until F.1b is re-shipped.
+- No data loss — existing labels in saved JPEGs are rasterized.
+
+================================================================================
+NEXT MICRO-BATCH (after F.1b ships green)
+================================================================================
+F.1c — tap-to-edit. Repurposes the "pure tap on label = no-op"
+slot in F.1b's endStroke. Tap (no drag) on an existing label →
+open pendingText overlay prefilled with the label's text/color/size.
+On commit → REPLACE the stroke instead of appending. On cancel →
+no-op.
+
+Estimated ~50 LOC. Spec when F.1b is green on prod.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

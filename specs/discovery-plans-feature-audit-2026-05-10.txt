@@ -1,0 +1,639 @@
+================================================================================
+DISCOVERY REVIEW — Plans Feature Audit + Phase 1 MVP Planning
+================================================================================
+Date:           2026-05-10
+Type:           Discovery / planning (NO code changes)
+Output for:    Zahi to read + answer Q1-Q10 + decide direction
+================================================================================
+
+EXECUTIVE SUMMARY
+=================
+The existing plans feature (#113 + #115 + #117) is a solid CRUD foundation
+but a weak VIEWER. Backend is rich (versioning, archive, restore,
+disciplines, unit/floor mapping). Frontend rendering is bare: a 256px-tall
+iframe inside a modal, with "open in new tab" as the only path to
+full-screen viewing. **Zero defect↔plan linkage exists today** — Phase 1
+will be greenfield for pin/coordinate work.
+
+What's already there (don't rebuild):
+  - Upload, archive, replace, version history (18 backend endpoints)
+  - Disciplines (architecture / electrical / plumbing / hvac / construction
+    / fire_protection + custom), per-project
+  - Floor + unit tagging on plans (optional fields already in schema)
+  - Thumbnails (auto-generated async)
+  - 50MB upload cap, S3 storage, RFC 5987 download support
+  - Archive + restore + history + replace flows
+
+What's missing (Phase 1 will build):
+  - A real PDF viewer (today: native browser iframe, no zoom/pan/page nav
+    inside the app)
+  - Tap-to-pin a defect on a plan with x/y coordinate
+  - Pin overlay (all open defects rendered on the plan)
+  - Context-aware opening (user in unit X → relevant plan opens)
+  - Capacitor offline plan caching
+  - Defect↔plan FK fields (Task model has no plan_id, no coordinate_x/y)
+
+================================================================================
+PART 1 — Audit of existing plans feature
+================================================================================
+
+1.1 — File ownership map
+------------------------
+
+BACKEND:
+  backend/contractor_ops/plans_router.py        — 942 LOC, 18 endpoints
+  backend/contractor_ops/upload_safety.py       — file validation + extensions
+  backend/contractor_ops/router.py              — PLAN_DISCIPLINES tuple,
+                                                  PLAN_UPLOAD_ROLES tuple,
+                                                  PLAN_DISCIPLINES is duplicated
+                                                  (anti-pattern, ~2 declarations)
+  services/storage_service.py                   — S3 upload helper
+  services/thumbnail_service.py                 — PDF→PNG thumb generation
+
+FRONTEND:
+  frontend/src/pages/ProjectPlansPage.js        — 1,518 LOC (project-level
+                                                  list + upload modal +
+                                                  detail modal w/ iframe)
+  frontend/src/pages/UnitPlansPage.js           — 676 LOC (unit-scoped list +
+                                                  upload + detail modal)
+  frontend/src/pages/ProjectPlanHistoryPage.js  — 300 LOC (versioning UI)
+  frontend/src/pages/ProjectPlansArchivePage.js — 410 LOC (archived plans)
+  frontend/src/pages/UnitHomePage.js            — entry point at L82 navigates
+                                                  to /units/{unitId}/plans
+
+ROUTES (App.js):
+  /projects/:projectId/plans                          → ProjectPlansPage
+  /projects/:projectId/plans/archive                  → ProjectPlansArchivePage
+  /projects/:projectId/plans/:planId/history          → ProjectPlanHistoryPage
+  /projects/:projectId/units/:unitId/plans            → UnitPlansPage
+
+Total: ~942 LOC backend + ~2,904 LOC frontend = mature CRUD layer.
+
+
+1.2 — Data model (project_plans collection)
+-------------------------------------------
+
+Document shape (POST handler, plans_router.py:195-217):
+  {
+    'id': str (uuid4),
+    'project_id': str,
+    'discipline': enum or custom key,
+        // PLAN_DISCIPLINES = ('electrical', 'plumbing', 'architecture',
+        //                     'construction', 'hvac', 'fire_protection')
+        // + per-project custom keys via project_disciplines collection
+    'name': str (defaults to filename),
+    'file_url': str (S3),
+    'original_filename': str,
+    'file_size': int (bytes),
+    'file_type': str (MIME),
+    'uploaded_by': str (user_id),
+    'note': str,
+    'plan_type': 'standard' | 'tenant_changes',
+    'floor_id': Optional[str],          // ← already exists!
+    'unit_id': Optional[str],           // ← already exists!
+    'created_at': iso8601,
+    'thumbnail_url': str (set async after upload),
+    'versions': [
+      {
+        'version': 1,
+        'file_url': str,
+        'file_size': int,
+        'file_type': str,
+        'original_filename': str,
+        'uploaded_by': str,
+        'uploaded_at': iso8601,
+        'note': str,
+      },
+      // v2, v3, ... appended via POST /plans/{id}/versions
+    ],
+    'current_version': int,
+    // archive fields (set via PATCH /plans/{id}/archive):
+    'is_archived': bool (optional),
+    'archived_at': iso8601 (optional),
+    'archived_by': str (optional),
+    'archive_note': str (optional),
+  }
+
+A SECOND collection `unit_plans` exists for plans uploaded directly from
+the unit context (POST /projects/{p}/units/{u}/plans). Same shape but
+unit_id is mandatory. **Possible duplication / dual-write concern**: when
+a plan covers one unit, does it go to project_plans (with unit_id set) or
+unit_plans? Worth Zahi confirming intent.
+
+Allowed file types (upload_safety.py):
+  Extensions: .pdf .jpg .jpeg .png .webp .heic .heif .xlsx .xls .dwg .dxf
+  MIME:       application/pdf, image/*, Excel MIMEs, application/dwg,
+              application/dxf, image/vnd.dwg
+
+So the existing system handles photos AND drawings AND CAD AND Excel.
+Phase 1 viewer only needs to handle PDF + images (.pdf / image/*) for the
+core "tap on plan to pin defect" UX. .dwg / .dxf / .xlsx fall back to
+"download to view" — acceptable.
+
+
+1.3 — Frontend rendering
+------------------------
+
+**The PDF viewer is a `<iframe>` of `h-64` (256px tall) inside a max-h-[92vh]
+modal.** No PDF.js, no react-pdf, no @capacitor PDF plugin. Confirmed:
+
+  ProjectPlansPage.js:1011  → <iframe src={detailPlan.file_url} className="w-full h-full" />
+  UnitPlansPage.js:610      → <iframe src={detailPlan.file_url} className="w-full h-full" />
+
+(grep'd `frontend/package.json` for pdfjs/react-pdf/pdf-lib → 0 hits.
+ Native browser PDF rendering only.)
+
+Detail modal contents (in priority order):
+  1. If `thumbnail_url` exists → show thumbnail image
+  2. Else if file is image/* → show <img>
+  3. Else if file is application/pdf → show 256px iframe
+  4. Else (DWG/Excel/etc.) → file-icon placeholder
+
+Below the preview:
+  - Discipline badge + plan_type badge
+  - Date / size / uploader / note
+  - Two buttons: [הורד] (download) + [צפה] (open in new tab)
+
+The "צפה" button is the ONLY way users see the plan at full size on
+the device. It opens `window.open(file_url, '_blank')` which on mobile
+typically opens iOS/Android system PDF viewer or device download.
+
+**This means the plan never lives inside the app's UX** — it always
+escapes to system viewer. Tap-to-pin is impossible with this approach.
+Phase 1 viewer needs to render the PDF in-app.
+
+
+1.4 — Performance audit
+-----------------------
+
+Cannot run real perf measurement without driving Chrome — but the
+architecture predicts:
+
+  - Upload: ✅ S3 streaming, 50MB cap, async thumbnail generation. Solid.
+  - Render: ⚠️ Browser-native PDF render in iframe. Performance depends
+    on browser. iOS Safari and Chrome handle 50MB OK but with no
+    progressive loading control — full PDF must download before render.
+  - Mobile (Capacitor): iframe + S3 url → device's native PDF viewer.
+    No tile-based progressive load. 50MB PDF on 4G = 50 seconds wait.
+  - Cache: NONE. Every page revisit re-downloads from S3.
+    `Cache-Control` headers on S3 might help browser cache, but no
+    explicit Capacitor.Filesystem caching.
+
+Real perf measurement TODO (Zahi can do post-discovery):
+  - Open a 50MB plan on prod via mobile 4G
+  - Open Network tab → time-to-first-byte, full download time
+  - Measure render time (browser native)
+  - Compare same plan opened via direct S3 URL vs via iframe modal
+
+Expectation for Phase 1: with PDF.js, 50MB plan can stream + render
+first page in <2s (it's a tile-based renderer with worker threads).
+Major perf upgrade vs current iframe.
+
+
+1.5 — UX walkthrough
+--------------------
+
+Current flow (inferred from code, not tested live):
+
+a. **PM uploads plans** (`/projects/:p/plans`):
+   - Modal with: file picker + discipline select + plan_type radio
+     (standard/tenant_changes) + optional floor select + optional unit
+     select + optional note + name override
+   - Single-file upload (no bulk yet — #115 mentioned bulk; need to verify)
+   - Async thumbnail generated server-side after upload
+   - 50MB hard cap
+
+b. **PM browses plans on project page**:
+   - Filter by: discipline tab, floor tab, search box (name + filename
+     + note)
+   - Grid of cards with thumbnail + name + discipline badge
+   - Tap card → detail modal (iframe 256px) → "צפה" → opens in new tab
+
+c. **Inspector / contractor on unit page**:
+   - UnitHomePage → "תוכניות" navigation tile → /units/:u/plans
+   - Same UX as project plans page but pre-filtered to that unit
+   - **Filter logic queries `db.unit_plans` only** — does NOT include
+     `db.project_plans` with unit_id matching. **Possible bug**:
+     plans uploaded at project level with unit_id set won't appear here.
+
+d. **Inspector creates defect** (NewDefectModal):
+   - **NO plan integration whatsoever**. Form has: title, description,
+     category, priority, company, assignee, due date.
+   - User cannot reference a plan, cannot pin a coordinate.
+
+e. **PM views existing defects on a plan**:
+   - Not possible. Defects have no plan_id field. Plan view has no
+     defect overlay.
+
+UX gap summary:
+  - Plan UPLOAD: ✅ works
+  - Plan BROWSE: 🟡 works but viewer is tiny (256px) → user always
+    escapes to external tab
+  - Plan↔DEFECT: ❌ zero coupling
+  - CONTEXT-AWARE plan opening: ❌ user must navigate manually
+
+
+================================================================================
+PART 2 — Infrastructure check
+================================================================================
+
+2.1 — Unit ↔ Plan mapping
+-------------------------
+
+EXISTS in schema. Plans have optional `floor_id` and `unit_id` fields,
+populated at upload time via the upload modal's floor/unit selects
+(ProjectPlansPage.js:91-92). Filter logic in plans_router.py:725
+honors `unit_id`.
+
+But: today only ONE unit can be tagged per plan. Real-world plans often
+cover MULTIPLE units (e.g. floor plan covers units 11-15). Phase 1 might
+need:
+  - Either: plans get a `unit_ids: [list]` field (additive)
+  - Or: keep single unit_id, but cross-reference via floor (plan.floor_id
+    → all units on that floor)
+
+The bbox-per-unit approach (Q3 option c) is not in scope today; would
+require a new `plan_zones` collection.
+
+Disciplines: PROJECT-LEVEL CUSTOM, stored in project_disciplines collection.
+Already extensible per-project. Good architecture.
+
+
+2.2 — Defect ↔ Plan linkage
+---------------------------
+
+**NONE.** Confirmed by:
+  - grep `plan_id|plan_coordinate|plan_pin|plan_x|plan_y` in
+    backend/contractor_ops/ → 0 hits
+  - schemas.py Task model (L277-303) has no plan-related fields
+
+Phase 1 will need:
+  - Add to Task model: `plan_id: Optional[str]`, `plan_coordinate:
+    Optional[{x: float, y: float, page: int}]`
+  - Add migration: existing tasks left untouched (nullable fields)
+  - Optionally: TaskUpdate schema extension to allow editing pin position
+
+NEW collection probably NOT needed — pin lives on the task. Backend cost
+is minimal (~10 LOC schema extension + GET /api/projects/{p}/plans/{plan_id}/pins
+endpoint to return all open defects with coordinates for that plan, for
+the overlay feature).
+
+
+2.3 — Capacitor offline storage
+-------------------------------
+
+Current Capacitor Filesystem usage:
+  frontend/src/utils/fileDownload.js → for SAVING xlsx/pdf to device
+                                       (export feature). NOT for offline
+                                       plan caching.
+
+**No offline plan caching exists.** Inspectors in basements with bad 4G
+will see "loading..." forever today. Phase 1 may need:
+  - Either: download plan to Filesystem on first open + serve from disk
+    on subsequent opens
+  - Or: leverage browser CacheStorage (PWA approach)
+  - Or: defer to Phase 2 if MVP timeline tight
+
+`@capacitor/filesystem` IS already installed (used by fileDownload.js),
+so adding cache-on-first-view is ~30 LOC.
+
+
+2.4 — PDF library
+-----------------
+
+Currently installed (frontend/package.json):
+  - **NO** pdfjs / react-pdf / pdf-lib
+  - **NO** @capacitor PDF plugin
+  - Browser native PDF rendering only (via iframe src=URL)
+
+Top recommendation for Phase 1: **react-pdf** (built on pdf.js, ~140 KB
+gzipped). Industry standard. Renders PDF as <canvas> → enables overlay
+of pin markers as <div> children with absolute positioning. Supports
+zoom, pan, page navigation as React state. Worker-based, doesn't block
+main thread.
+
+Alternative: pdf.js directly (~120KB gzipped, more control, more wiring).
+
+DWG/DXF: separate problem. CAD viewer in browser is hard (forge-viewer
+from Autodesk requires backend translation, $$). Defer to Phase 2 — for
+MVP, .dwg files keep current "download to view" path.
+
+
+================================================================================
+PART 3 — Questions for Zahi (please answer Q1-Q10)
+================================================================================
+
+Q1. What's broken about the current #113 plans feature?
+    a) Slow loading (>10 seconds for 50MB)
+    b) Zoom/scroll laggy or buggy
+    c) Can't find the right plan easily
+    d) No connection to defects/units
+    e) UI looks unprofessional
+    f) Other (please describe)
+    [Multi-select OK]
+
+    Audit observation: the most striking gap is (d) — no defect linkage
+    AT ALL — and (e) — viewer is a 256px iframe inside a modal. (a) and
+    (b) depend on real measurement on prod. (c) is partially solved
+    (filters + search exist) but discoverability needs UX work.
+
+Q2. ABSOLUTE PRIORITY for Phase 1 (single answer):
+    a) Speed — open 50MB PDF in <3 seconds
+    b) Tap-to-pin — defect on plan with coordinate
+    c) Context-aware — right plan opens automatically based on user's
+       current unit/floor
+    d) Pin density overlay — all defects visible on plan as colored pins
+    e) Offline support — works without internet in basements
+
+    Audit recommendation: probably (b) or (c). (b) is the killer
+    differentiator (Samento/Ramdor/Vi-Soft don't do it well in Israel
+    per your vision doc). (c) is the "magic" that makes inspectors want
+    to use it. (d) is a 2x multiplier on (b) once (b) ships.
+
+Q3. Plan-to-unit mapping (CRITICAL for context-aware Q2c):
+    a) PM manually tags each plan with floor + unit range (~1 min/plan)
+    b) Filename convention (floor_3_units_11-15.pdf)
+    c) PM draws bounding boxes for each unit on plan (heavy)
+    d) Other approach
+
+    Audit observation: (a) PARTIAL today — floor_id + unit_id are
+    OPTIONAL fields PMs can set at upload. But it's optional, so likely
+    rarely used. Need to: either make required for some plan types, OR
+    extend to `unit_ids: [list]` for multi-unit floor plans.
+
+Q4. Multiple plans per unit (architectural / electrical / plumbing / HVAC):
+    When user creates a defect with category "electrical":
+    a) Show electrical plan automatically
+    b) Show all relevant plans in tabs
+    c) Always show architectural, user switches if needed
+    d) Let user pick which plan to pin on
+
+    Audit recommendation: (a) is cleanest — leverage existing `discipline`
+    enum, map task.category → plan.discipline, auto-open the matching
+    plan. Fall back to architectural if no electrical plan exists for
+    that unit. PM can switch via tabs at top of viewer.
+
+Q5. Pin density overlay (all defects on plan):
+    a) Critical from Phase 1
+    b) Phase 2 — get single pin working first
+    c) Maybe never — list view is enough
+
+Q6. Plan versioning behavior when v2 uploaded with existing pinned defects:
+    a) Keep all pins on v1, new defects on v2 (separate)
+    b) Auto-migrate pins from v1 → v2 (where coordinates still valid)
+    c) Warn PM "20 pins exist on v1, please re-verify"
+    d) Phase 2 problem — defer
+
+    Audit observation: versioning IS implemented (POST /plans/{id}/versions
+    + history page). Today no defects link to versions, so this Q is
+    architectural. Recommendation: (c) for safety — auto-migration
+    risks pinning a defect on the wrong wall after architect moves it.
+
+Q7. Realistic timeline expectation:
+    a) Phase 1 MVP in 4 weeks (smart manual + context)
+    b) Phase 1 in 2 weeks (just tap-to-pin, basic)
+    c) Phase 1 in 8 weeks (everything including pin density + offline)
+    d) Don't care about timeline, build right
+
+Q8. Test data:
+    a) Real production project with plans we can test with?
+    b) Plans uploaded but project not in production?
+    c) PDF files on disk we can upload as test data?
+    d) Need to create test plans from scratch?
+
+    Audit observation: today's prod accounts (zahithrone@gmail.com,
+    zahi.amer@gmail.com) have multiple projects. Need to check if any
+    have actual plans uploaded — recommend Zahi attaches a sample.
+
+Q9. Field testing — can WUyoughong (plot 810) or another real user test
+    Phase 1?
+
+Q10. Offline-first priority:
+    a) Yes — inspectors must access plans without internet
+    b) Nice to have, not critical
+    c) Most projects have wifi, skip
+
+
+================================================================================
+PART 4 — Recommendation (Cowork's reading)
+================================================================================
+
+**Technical approach: extend the existing CRUD with react-pdf viewer +
+defect-pin schema.**
+
+DON'T rebuild #113. Backend is solid. Frontend pages need a new viewer
+component but the CRUD pages around it can stay.
+
+Phase 1 minimum (in order of value):
+
+  1. **Replace iframe with react-pdf** (~1 week)
+     - New component: <PlanViewer plan={plan} onTap={handleTap} pins={pins} />
+     - Uses react-pdf <Document> + <Page>, full-screen modal (not 256px)
+     - Pinch-zoom + page nav + pan native support
+     - Foundation for everything else
+
+  2. **Defect-plan schema** (~3 days)
+     - Add to Task: plan_id, plan_coordinate {x, y, page}
+     - Migration: nullable fields, no backfill needed
+     - GET /api/plans/{plan_id}/pins endpoint → returns open defects
+       with coordinates for overlay
+
+  3. **Tap-to-pin on viewer** (~1 week)
+     - In NewDefectModal: "📍 סמן על תוכנית" button → opens PlanViewer
+       in tap-mode → user taps → coordinate captured → modal closes
+     - On task save: persist plan_id + plan_coordinate
+
+  4. **Context-aware opening** (~3 days)
+     - When user opens NewDefectModal from unit page: pre-select unit's
+       plans (filter by unit_id OR floor_id) by category match
+       (task.category → plan.discipline)
+     - If single plan matches: auto-open it
+     - If multiple: show tabs
+
+  5. **Pin overlay rendering** (~3 days)
+     - <PlanViewer> renders <Pin> children at coordinates per page
+     - Color by status (open=red, in_progress=amber, closed=green)
+     - Tap pin → opens task detail
+     - Phase 2 candidate if 4-week timeline tight
+
+  Total: ~3.5 weeks for items 1-4, ~4 weeks if pin overlay (5) included.
+  Capacitor offline (Q10) deferred to Phase 1.5 or Phase 2.
+
+What this delivers vs Samento/Ramdor/Vi-Soft:
+  - ✅ Tap-to-pin: not a common feature locally
+  - ✅ Auto-open by context: real magic, no competitor does well
+  - ✅ Pin density overlay: visual screenshot for sales
+  - ⚠️ Offline: matched by competitors, defer until users complain
+
+Risks to flag:
+  - **DWG/DXF rendering** is OUT of scope for Phase 1. CAD-in-browser
+    requires Autodesk Forge ($$$) or commercial libs. Plans uploaded
+    as .dwg keep "download to view" path; encourage PMs to upload PDF.
+  - **50MB plans on 4G** = slow even with react-pdf. Mitigation: PDF.js
+    streams pages as needed — first page renders in <2s even on big
+    PDFs. But measure on prod with real data first.
+  - **Mobile pinch-zoom on canvas** is finicky. react-pdf supports it
+    but needs CSS tuning. Plan a half-day for polish.
+  - **`unit_plans` vs `project_plans`** dual-collection might cause
+    silent dedup bugs when filtering by unit. Worth a small audit:
+    do the project-level uploaded plans with unit_id set show up on
+    UnitPlansPage? STEP 0 grep before Phase 1 spec.
+
+================================================================================
+SCREENSHOTS
+================================================================================
+NOT CAPTURED. Audit was code-only — Zahi can capture staging screenshots
+in 5 minutes:
+  1. /projects/<id>/plans → upload modal screenshot
+  2. /projects/<id>/plans → grid view with thumbnails
+  3. Tap any plan → detail modal screenshot (the 256px iframe!)
+  4. /projects/<id>/units/<u>/plans → unit-scoped view
+  5. NewDefectModal → confirms NO plan integration
+
+If helpful, attach to a follow-up message — I can annotate.
+
+================================================================================
+ZAHI'S ANSWERS (2026-05-10)
+================================================================================
+
+Q2. Priority — "לא משנה הסדר, צריך את כולם"
+    → ALL FIVE features in Phase 1 scope: speed + tap-to-pin +
+      context-aware + pin density overlay + offline.
+    → No deferral to Phase 2. **This is full-feature MVP, not minimal.**
+
+Q4. Plan selection logic when creating a defect:
+    Algorithm Zahi specified:
+
+    For an electrical/plumbing/hvac/etc. defect (trade-specific):
+      1. Floor-level plan matching the discipline (e.g. floor 3 electrical)
+      2. If no trade-level plan → fall back to architecture default
+
+    For architecture/general defects (default path):
+      1. Unit-level plan if exists (typically "תוכנית שינויי דיירים" for
+         that specific unit)
+      2. Floor-level architecture plan (this is the 90% case — general
+         floor plan, engineer navigates to the right unit visually)
+
+    Combined algorithm:
+      1. If task.category in trade disciplines (electrical, plumbing,
+         hvac, fire_protection, construction):
+            Try plans matching floor_id + discipline. If found → open.
+            Else fall through to architecture default.
+      2. Architecture default:
+            a. Try unit_id match where discipline = 'architecture'
+            b. Else try floor_id match where discipline = 'architecture'
+            c. Else: user picks manually from list
+
+    Rationale Zahi gave: architecture plans are "הכי נוח לסמן עליה"
+    (easiest to mark on) — they're the visual reference. Unit-specific
+    plans (when they exist) are usually tenant-change overlays that show
+    the apartment's specific interior layout. Floor-level architecture
+    is the universal fallback.
+
+Q7. Timeline — "מיידי מרגע שהתחלנו לא מוותרים עד שמסיימים"
+    → Open-ended; full-focus build, no rush, no premature ship.
+    → **Realistic estimate with all 5 features:** 7-9 weeks of focused
+      work (react-pdf viewer 1w + schema 3d + tap-to-pin 1w + context
+      logic 4d + overlay 3d + offline 1w + integration/polish 2w +
+      prod field test 1w).
+    → **Recommend splitting into 4 sub-batches** to ship value
+      progressively rather than big-bang at week 9 (see "Recommended
+      sub-batch plan" below).
+
+Q10. Offline — "נסיים כבר עם מצב offline כי אני דוחה את זה כבר המון זמן"
+    → Offline IN scope for Phase 1, not deferred.
+    → Implementation: Capacitor Filesystem cache on first plan view,
+      serve from disk subsequently. ~1 week including IndexedDB metadata
+      tracking + cache invalidation on plan version bump.
+
+STILL OPEN (Q1, Q3, Q5, Q6, Q8, Q9):
+    Q1: not answered explicitly; audit findings stand (no defect link
+        + tiny iframe viewer are the obvious gaps).
+    Q3: plan-to-unit mapping today — answered partially in Q4 context;
+        plans HAVE floor_id + unit_id optional fields. Sufficient for
+        Phase 1; bbox-per-unit (option c) deferred.
+    Q5: pin density overlay — implicitly answered by Q2 ("all of them").
+    Q6: versioning behavior with pinned defects — TODO ask before spec.
+    Q8: test data — TODO ask Zahi to attach 1-2 sample PDFs.
+    Q9: field testing on prod — TODO ask if WUyoughong / plot 810 is
+        available as test user.
+
+
+================================================================================
+RECOMMENDED SUB-BATCH PLAN (4 ships, ~2 weeks each)
+================================================================================
+
+Given full Phase 1 scope, I recommend splitting into 4 sub-batches to:
+  - Ship value early (sub-batch 1 alone is a 10x viewer upgrade)
+  - Validate UX assumptions on prod between batches
+  - Reduce blast radius per deploy
+
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ Sub-batch P1.1 — react-pdf viewer (foundation)        ~2 weeks   │
+  │ ──────────────────────────────────────────────────────────────── │
+  │ Replace 256px iframe with full-screen react-pdf viewer.          │
+  │ Pinch-zoom, page nav, pan. Modal becomes full-screen.            │
+  │ NO tap-to-pin yet — purely viewer upgrade.                       │
+  │ Ships: a 10x better plan viewing experience standalone.          │
+  │                                                                   │
+  │ Deps: react-pdf install, PlanViewer component, refactor          │
+  │ ProjectPlansPage + UnitPlansPage modal logic.                    │
+  └──────────────────────────────────────────────────────────────────┘
+                                ↓
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ Sub-batch P1.2 — Tap-to-pin + schema                  ~2 weeks   │
+  │ ──────────────────────────────────────────────────────────────── │
+  │ Backend: Task model gets plan_id + plan_coordinate {x,y,page}.   │
+  │ NewDefectModal: "📍 סמן על תוכנית" button → opens PlanViewer in  │
+  │ tap mode → pins coordinate → saved with defect.                  │
+  │ Pin saved is visible per defect on TaskDetailPage (as a small    │
+  │ thumbnail of the plan with pin marker).                          │
+  │ Ships: defects can now be located on plans.                      │
+  │                                                                   │
+  │ Deps: P1.1 viewer + schema migration + new GET /plans/{id}/pins  │
+  │ endpoint.                                                         │
+  └──────────────────────────────────────────────────────────────────┘
+                                ↓
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ Sub-batch P1.3 — Context-aware opening + Pin overlay  ~2 weeks   │
+  │ ──────────────────────────────────────────────────────────────── │
+  │ NewDefectModal opened from a unit page:                          │
+  │   - Pre-resolve plan via Q4 algorithm (trade match → arch unit   │
+  │     → arch floor → manual)                                       │
+  │   - Auto-open viewer with that plan (1-tap UX)                   │
+  │ PlanViewer renders all pins for the open plan as colored markers │
+  │ (red=open, amber=in_progress, green=closed). Tap pin → task page.│
+  │ Ships: the "magic" Zahi described — context-aware + pin density. │
+  └──────────────────────────────────────────────────────────────────┘
+                                ↓
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ Sub-batch P1.4 — Capacitor offline cache + polish     ~2 weeks   │
+  │ ──────────────────────────────────────────────────────────────── │
+  │ On first plan open: download to Filesystem.Cache.                │
+  │ Subsequent opens: read from disk, fall back to network.          │
+  │ Cache invalidation on plan.versions[].version bump.              │
+  │ Storage budget per user (e.g. 200MB) with LRU eviction.          │
+  │ Plus: prod field testing + bug bash + UX polish.                 │
+  │ Ships: works in basements without 4G.                            │
+  └──────────────────────────────────────────────────────────────────┘
+
+  Total: ~8 weeks (4 × 2 weeks) of focused work.
+
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Zahi answers Q1, Q6, Q8, Q9 (and confirms Q3 default approach).
+2. Zahi attaches 1-2 sample plan PDFs (real prod plans preferred).
+3. Cowork writes spec for **sub-batch P1.1 (react-pdf viewer foundation)**
+   first — biggest standalone upgrade, no schema changes, low risk.
+4. Spec → Replit → review.txt → staging → prod.
+5. Real-user verify on prod, then write P1.2 spec.
+
+This is multi-week work. Recommend keeping #21 task open as umbrella
+"Phase 1 Plans MVP" and spawning sub-tasks per batch.
+
+================================================================================
+END OF DISCOVERY REVIEW
+================================================================================

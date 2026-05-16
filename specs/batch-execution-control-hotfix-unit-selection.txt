@@ -1,0 +1,368 @@
+================================================================================
+HOTFIX — UnitQCSelectionPage broke after #476 (units-status response shape change)
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       🚨 P0 — production deploy of #476 will break UnitQCSelectionPage
+                for ALL users. Currently: staging only. Catch-and-fix BEFORE prod.
+
+Files changed:  1 file
+                  Frontend: frontend/src/pages/UnitQCSelectionPage.js (~33 LOC)
+                  Includes both:
+                  (1) Stage-flattening adapter for new units-status response
+                  (2) stage_id URL param propagation to StageDetailPage
+                      (uses the ?stage_id=X query already wired by #476
+                      from FloorDetailPage onClick).
+
+Tests:          NO new test (UI/UX only, no backend logic).
+                Verified manually via V2 visual smoke (5 scenarios).
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+DB migration:   NONE.
+
+================================================================================
+ROOT CAUSE (verified 2026-05-04 from staging smoke)
+================================================================================
+
+#476 changed the `/floors/{floor_id}/units-status` endpoint response from:
+  OLD: { units: [{unit_id, status, handled_count, total, ...}, ...] }
+  NEW: { stages: [{stage_id, stage_title, units: [...]}, ...] }
+
+Replit's STEP 0.3 grep searched for the string `units-status` and concluded
+"ONLY consumer = api.js:1329 (3-line axios passthrough)". This was correct
+about the ENDPOINT URL but missed the SERVICE METHOD (`qcService.getUnitsStatus`)
+which is consumed by TWO pages:
+
+  ✅ frontend/src/pages/FloorDetailPage.js:140 — UPDATED in #476
+  ❌ frontend/src/pages/UnitQCSelectionPage.js:33 — MISSED, still expects `data.units`
+
+Result: when user clicks any unit-scope card on the floor view → navigates
+to UnitQCSelectionPage → page calls qcService.getUnitsStatus → receives
+new response shape with `stages:[]` instead of `units:[]` → page tries
+`data.units.filter(...)` on undefined → React error boundary → "משהו השתבש".
+
+LESSON for future spec writing — STEP 0 verification of "single consumer"
+must search for both:
+  1. The endpoint URL string (e.g. "units-status")
+  2. The service method name that wraps it (e.g. "getUnitsStatus")
+Updating the SPEC TEMPLATE to enforce this. Tracked separately.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Confirm UnitQCSelectionPage breaks on the new response:
+    grep -n "data.units\|getUnitsStatus\|const { units" \
+        frontend/src/pages/UnitQCSelectionPage.js
+    # Expected:
+    #   line 33: const result = await qcService.getUnitsStatus(floorId);
+    #   line 95: const { units, floor_name } = data;
+    #   line 96: const completedCount = units.filter(...)
+    #   line 97-98: units.reduce(...)
+    # These all assume `data.units` exists. After #476 it does not.
+
+0.2 — Confirm UnitQCSelectionPage is the ONLY remaining consumer
+    (after FloorDetailPage was already fixed):
+    grep -rn "getUnitsStatus" frontend/src/
+    # Expected: 3 hits total —
+    #   api.js:1297 (definition)
+    #   FloorDetailPage.js:140 (already fixed in #476)
+    #   UnitQCSelectionPage.js:33 (this hotfix target)
+    # If any other hits → STOP and report.
+
+0.3 — Confirm the new response shape (post-#476):
+    grep -n -A 2 "\"stages\": stages_out" backend/contractor_ops/qc_router.py
+    # Expected: lines ~1040-1043 of qc_router.py — function returns
+    # {floor_id, floor_name, building_id, building_name, stages: [...]}.
+
+0.4 — DEFENSIVE — verify NO direct fetch/axios calls bypass qcService:
+    grep -rn "/floors/.*units-status\|axios\.get.*units-status" \
+        frontend/src/
+    # Expected: 1 hit only — api.js:1298 (the service wrapper itself).
+    # If MORE hits → that's a 3rd consumer that bypasses the service
+    # layer — must be adapted to new shape too (add to this hotfix).
+    # Verified by Cowork on Mac repo 2026-05-04: clean (1 hit, only api.js).
+    #
+    # This step is a NEW iron rule from CLAUDE.md (added 2026-05-04):
+    # for any endpoint contract change, STEP 0 must check 3 layers:
+    # (1) URL string, (2) service method name, (3) direct fetch/axios.
+
+0.5 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — Frontend hotfix in UnitQCSelectionPage.js
+================================================================================
+
+FILE: frontend/src/pages/UnitQCSelectionPage.js
+------------------------------------------------
+
+DESIGN DECISION (Zahi 2026-05-04 — chose Option B):
+
+UnitQCSelectionPage is a "select which unit to enter" picker — it shows a
+list of units on the floor with aggregate completion status per unit. The
+status logic is "is this unit done?" not "is this unit done for stage X?".
+
+This hotfix implements BOTH:
+
+  Path A — flatten across all unit-scope stages (data adapter):
+    For each unit, sum handled/total across all stages, derive aggregate
+    status (approved if all stages approved; in_progress if any handled;
+    not_started otherwise). Preserves existing UX of the page.
+
+  Path B — propagate ?stage_id=X URL param to StageDetailPage:
+    #476 already added ?stage_id=X to FloorDetailPage onClick navigation.
+    This hotfix completes the wiring: when user clicks a unit-scope card
+    (e.g. "אמבטיה+אינטרפוץ") on the floor, picks a unit on this page, the
+    user lands on the SAME stage they originally clicked — not on the
+    first stage of the unit run (which today is hardcoded to stage_tiling).
+
+    If no ?stage_id= is in the URL (legacy entry — direct navigation,
+    bookmarks, etc.), behavior is unchanged: defaults to first stage of
+    unit run, fallback "stage_tiling".
+
+    3 extra LOC, zero risk. Closes the user-flow loop that #476 opened.
+
+LOCATION 1.1 — Replace the data extraction + aggregation block at lines
+   ~95-99.
+
+   FIND (current — broken):
+       if (!data) return null;
+
+       const { units, floor_name } = data;
+       const completedCount = units.filter(u => u.status === 'approved').length;
+       const totalHandled = units.reduce((s, u) => s + u.handled_count, 0);
+       const totalItems = units.reduce((s, u) => s + u.total, 0);
+       const overallPct = totalItems > 0 ? Math.round((totalHandled / totalItems) * 100) : 0;
+
+   REPLACE WITH (flatten stages → unit aggregates):
+       if (!data) return null;
+
+       // Hotfix (post-#476): the units-status endpoint now returns
+       // { stages: [{units: [...]}] } instead of { units: [...] }.
+       // We flatten stages back to per-unit aggregates here so the
+       // existing unit-picker UX stays intact. PATH B (per-stage view
+       // when ?stage_id=X is present in URL) is a future polish batch.
+       const stages = Array.isArray(data.stages) ? data.stages : [];
+       const floor_name = data.floor_name || '';
+
+       // Aggregate across all unit-scope stages, per unit:
+       //   - handled_count, total, pass_count, fail_count → SUM
+       //   - status: 'approved' only if ALL stages approved for this unit;
+       //             'in_progress' if any handled OR any in_progress;
+       //             'not_started' otherwise
+       const unitAggMap = new Map();
+       stages.forEach(stage => {
+         (stage.units || []).forEach(u => {
+           const existing = unitAggMap.get(u.unit_id);
+           if (!existing) {
+             unitAggMap.set(u.unit_id, {
+               unit_id: u.unit_id,
+               unit_name: u.unit_name,
+               unit_no: u.unit_no,
+               handled_count: u.handled_count || 0,
+               total: u.total || 0,
+               pass_count: u.pass_count || 0,
+               fail_count: u.fail_count || 0,
+               _statuses: [u.status || 'not_started'],
+             });
+           } else {
+             existing.handled_count += u.handled_count || 0;
+             existing.total += u.total || 0;
+             existing.pass_count += u.pass_count || 0;
+             existing.fail_count += u.fail_count || 0;
+             existing._statuses.push(u.status || 'not_started');
+           }
+         });
+       });
+
+       // Derive aggregate unit status from per-stage statuses
+       const units = Array.from(unitAggMap.values()).map(u => {
+         const allApproved = u._statuses.length > 0 && u._statuses.every(s => s === 'approved');
+         const anyInProgress = u._statuses.some(s => s === 'in_progress' || s === 'approved');
+         const status = allApproved ? 'approved'
+                      : anyInProgress ? 'in_progress'
+                      : 'not_started';
+         const { _statuses, ...rest } = u;
+         return { ...rest, status };
+       });
+
+       const completedCount = units.filter(u => u.status === 'approved').length;
+       const totalHandled = units.reduce((s, u) => s + u.handled_count, 0);
+       const totalItems = units.reduce((s, u) => s + u.total, 0);
+       const overallPct = totalItems > 0 ? Math.round((totalHandled / totalItems) * 100) : 0;
+
+LOCATION 1.2 — Update handleUnitClick to read ?stage_id from URL (Path B).
+
+   FIND (current — line ~48-68):
+       const handleUnitClick = async (unit) => {
+         try {
+           setNavigatingUnit(unit.unit_id);
+           const runData = await qcService.getUnitRun(unit.unit_id);
+           const run = runData.run;
+           const stageId = runData.stages?.[0]?.id || 'stage_tiling';
+           navigate(
+             `/projects/${projectId}/qc/floors/${floorId}/run/${run.id}/stage/${stageId}`,
+             {
+               state: {
+                 returnTo: `/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units`,
+                 unitName: unit.unit_name || unit.unit_no,
+                 scope: 'unit',
+               }
+             }
+           );
+         } catch (err) {
+           setError('שגיאה בטעינת דירה');
+           setNavigatingUnit(null);
+         }
+       };
+
+   REPLACE WITH (insert 3 lines for stage_id URL param read; keep
+   everything else identical):
+       const handleUnitClick = async (unit) => {
+         try {
+           setNavigatingUnit(unit.unit_id);
+           const runData = await qcService.getUnitRun(unit.unit_id);
+           const run = runData.run;
+           // Hotfix Path B (post-#476): if user came from a specific
+           // unit-scope card on the floor view (FloorDetailPage adds
+           // ?stage_id=X), respect that stage. Fallback to first stage
+           // of the unit run for legacy/direct entries.
+           const urlParams = new URLSearchParams(window.location.search);
+           const explicitStageId = urlParams.get('stage_id');
+           const stageId = explicitStageId || runData.stages?.[0]?.id || 'stage_tiling';
+           navigate(
+             `/projects/${projectId}/qc/floors/${floorId}/run/${run.id}/stage/${stageId}`,
+             {
+               state: {
+                 returnTo: `/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units`,
+                 unitName: unit.unit_name || unit.unit_no,
+                 scope: 'unit',
+               }
+             }
+           );
+         } catch (err) {
+           setError('שגיאה בטעינת דירה');
+           setNavigatingUnit(null);
+         }
+       };
+
+DO NOT TOUCH:
+- The render/JSX of the unit cards — the data shape passed to them is
+  identical (`{unit_id, unit_name, unit_no, status, handled_count, total, ...}`).
+- The error handling, loading states, navigation back.
+- ANY other page or component.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax:
+   cd frontend && yarn build
+   → no new warnings or errors
+   (Or fall back to babel parser on the changed file: same as #476.)
+
+VERIFY 2 — `data.units` reference is GONE:
+   grep -c "data\.units\|data\?\.units" frontend/src/pages/UnitQCSelectionPage.js
+   → 0
+
+VERIFY 3 — Stage flattening logic is in place:
+   grep -c "data\.stages\|unitAggMap" frontend/src/pages/UnitQCSelectionPage.js
+   → ≥ 2 (1 stages access + 1 unitAggMap reference, likely 3+)
+
+VERIFY 4 — Existing #476 test still passes (no backend regression):
+   cd backend && python -m pytest tests/test_qc_units_status.py -v
+   → 1 passed
+
+VERIFY 5 — Visual smoke (Zahi runs after deploy to staging):
+   a) Navigate to /projects/{id}/floors/{floor_id} → see all unit-scope
+      cards (the #476 fix). Click "אמבטיה+אינטרפוץ" card.
+   b) URL changes to .../qc/units?stage_id=stage_bath_xxx (or whatever
+      the actual stage_id is in your template).
+   c) Page loads without "משהו השתבש" — UnitQCSelectionPage shows the
+      list of units on this floor.
+   d) Header shows aggregate counts: "X/Y דירות הושלמו" + percentage bar
+      with values that make sense (sum across all unit-scope stages).
+   e) Click a specific unit → URL changes to .../stage/stage_bath_xxx
+      → StageDetailPage loads with אמבטיה+אינטרפוץ items (NOT ריצוף).
+      ← This is the Path B win.
+   f) Use browser back → returns to UnitQCSelectionPage with the
+      ?stage_id=... still in URL. Click another unit → goes to
+      אמבטיה+אינטרפוץ stage of that unit. Consistency.
+   g) Click ריצוף דירה card from the floor view → URL becomes
+      .../qc/units?stage_id=stage_tiling. Click a unit → lands on
+      ריצוף stage. Path B works for ריצוף too.
+   h) Direct entry — manually paste .../qc/units (NO stage_id) →
+      page works (Path A — aggregate view). Click a unit → falls back
+      to first stage of unit run (legacy behavior preserved).
+   i) Mobile viewport (375px DevTools) → no overflow, units list scrolls.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (1 file, ~30 LOC)
+  - VERIFY 1-4 outputs
+  - VERIFY 5 deferred-to-Zahi note (6 scenarios a-f)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(qc): UnitQCSelectionPage adapts to new units-status shape +
+    propagates stage_id to StageDetailPage
+
+  Hotfix for regression introduced by #476. The /floors/{id}/units-status
+  endpoint now returns {stages:[{units:[]}]} instead of {units:[]}.
+  Two pages consume this endpoint via qcService.getUnitsStatus:
+    - FloorDetailPage — already fixed in #476
+    - UnitQCSelectionPage — MISSED, this hotfix.
+
+  Path A — data adapter:
+    UnitQCSelectionPage is a unit-picker; it shows aggregate completion
+    status per unit (not per stage). This patch flattens the new
+    per-stage stages[].units[] back to per-unit aggregates so the
+    existing UX is preserved. Status logic: 'approved' if ALL stages
+    approved for this unit; 'in_progress' if any handled or in_progress;
+    'not_started' otherwise.
+
+  Path B — stage_id URL propagation:
+    #476 added ?stage_id=X to FloorDetailPage onClick navigation.
+    This hotfix completes the loop: handleUnitClick reads ?stage_id=
+    from URL and navigates to that stage in StageDetailPage. Falls
+    back to first stage of unit run if no ?stage_id (legacy/direct
+    entries). Result: clicking "אמבטיה+אינטרפוץ" → pick unit → land
+    on אמבטיה stage (not ריצוף).
+
+  Lesson for future spec writing: STEP 0 verification of "single
+  consumer" must grep for both the endpoint URL AND the service
+  method name. Documented in spec template.
+
+  P0 — would break ALL users on production deploy of #476. Caught
+  in staging smoke before prod.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.3 greps, paste output to top of review.txt)
+2. PART 1 — UnitQCSelectionPage.js replacement of lines ~95-99 with
+   stage-flattening aggregator
+3. Run VERIFY 1-4
+4. Generate review.txt + .local/.commit_message
+5. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+1 file revert. UnitQCSelectionPage returns to broken state (calling
+data.units on undefined). At that point, also revert #476 to fully
+restore the old behavior — but better to fix forward (this hotfix)
+than revert two batches.
+
+NO data, schema, or backend changes. Frontend-only fix.
+
+================================================================================
+END OF SPEC
+================================================================================

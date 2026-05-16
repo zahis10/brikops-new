@@ -1,0 +1,189 @@
+================================================================================
+HOTFIX — Billing state-card hidden for comped/auto_renew=false subs
+================================================================================
+Date:           2026-04-28
+Branch:         staging  (NOT main)
+Severity:       P1 — UX bug discovered during cancellation v1 staging test
+Files changed:  1 (frontend only)
+================================================================================
+
+PROBLEM
+-------
+After cancellation v1 deploy (commit 52b173f), OrgBillingPage.js shows NOTHING
+where the new state card was supposed to appear, for any subscription with
+auto_renew=false that wasn't explicitly cancelled.
+
+This affects:
+  - All comped subscriptions (e.g. demo org 715e2420-e4f1-4ebd-81ed-b690e1f7f84d
+    has auto_renew=false because it's a free comped sub valid until 2031)
+  - Any sub where auto_renew is false for non-cancellation reasons (manual
+    admin change, legacy data, etc.)
+
+Real impact: in current prod state where ALL paying customers are 0 and most
+orgs are trial/comped, NO ONE sees the new UI. The whole cancellation v1
+feature is invisible.
+
+ROOT CAUSE
+----------
+frontend/src/pages/OrgBillingPage.js lines ~1410-1490 — the IIFE has 3 mutually
+exclusive states but the conditions don't cover the "active+auto_renew=false+
+not cancelled" case:
+
+    State 1 (Active+auto_renew):
+        subStatus === 'active' && sub?.auto_renew !== false
+        && !sub?.cancelled_at && paidUntilDate > now
+        ↑ FAILS for comped (auto_renew=false)
+
+    State 2 (Cancelled-active):
+        !!sub?.cancelled_at && expiresAtDate > now
+        ↑ FAILS (cancelled_at is null)
+
+    State 3 (Expired):
+        paidUntilDate <= now
+        ↑ FAILS (paid_until is in the future)
+
+    All 3 fail → IIFE returns null → nothing renders.
+
+FIX
+---
+Single file: frontend/src/pages/OrgBillingPage.js around line 1410-1490.
+
+Replace the State 1 block with a broader "active sub" check that ALWAYS
+shows a green card when the sub is active+paid_until-future, but only shows
+the cancel button when auto_renew=true.
+
+CURRENT CODE (around line 1422-1486 — the State 1 condition + render):
+
+    const isActiveAutoRenew = subStatus === 'active'
+                              && sub?.auto_renew !== false
+                              && !sub?.cancelled_at
+                              && paidUntilDate
+                              && paidUntilDate > now;
+    ...
+    if (isActiveAutoRenew) {
+        return (
+            <div className="bg-emerald-50 ...">
+                ...
+                <span>חידוש אוטומטי פעיל</span>
+                <p>המנוי יתחדש אוטומטית ב-{formatDate(subPaidUntil)}</p>
+                <button onClick={...}>ביטול חידוש אוטומטי</button>
+            </div>
+        );
+    }
+
+REPLACE WITH:
+
+    // Renamed and broadened — covers comped/auto_renew=false subs too.
+    // Cancel button is conditionally rendered only when auto_renew is on.
+    const isActive = subStatus === 'active'
+                     && !sub?.cancelled_at
+                     && paidUntilDate
+                     && paidUntilDate > now;
+    ...
+    if (isActive) {
+        const isAutoRenewing = sub?.auto_renew === true;
+        return (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                    <CheckCircle className="w-5 h-5 text-emerald-600" />
+                    <span className="text-sm font-medium text-slate-700">
+                        {isAutoRenewing ? 'חידוש אוטומטי פעיל' : 'מנוי פעיל'}
+                    </span>
+                </div>
+                <p className="text-xs text-slate-500">
+                    {isAutoRenewing
+                        ? `המנוי יתחדש אוטומטית ב-${formatDate(subPaidUntil)}`
+                        : `בתוקף עד ${formatDate(subPaidUntil)} — לא יחויב אוטומטית`}
+                </p>
+                {isAutoRenewing && (
+                    <button
+                        onClick={() => { setCancelReason(''); setShowCancelModal(true); }}
+                        className="text-xs text-rose-600 hover:text-rose-700 font-medium"
+                    >
+                        ביטול חידוש אוטומטי
+                    </button>
+                )}
+            </div>
+        );
+    }
+
+KEEP UNCHANGED — State 2 (Cancelled-active, amber card) and State 3 (Expired,
+rose card). Both are still correct.
+
+DO NOT TOUCH
+- Backend code (no changes needed)
+- Cancel modal (lines ~2179+) — works as-is
+- Cancel/reactivate handlers — work as-is
+- Any other file
+
+VERIFY
+------
+1. Frontend build:
+   cd frontend && yarn build
+   Must succeed, no NEW warnings.
+
+2. Visual smoke test on staging (2 cases):
+
+   CASE A — Comped sub (auto_renew=false, cancelled_at=null, paid_until=future)
+     Org: חברת הדגמה (715e2420-e4f1-4ebd-81ed-b690e1f7f84d)
+     Login: superadmin@brikops.dev / StagingDemo2026!
+     Navigate to: /billing/org/715e2420-...
+     EXPECTED:
+       - Green card visible
+       - Title: "מנוי פעיל" (NOT "חידוש אוטומטי פעיל")
+       - Text: "בתוקף עד DD/MM/YYYY — לא יחויב אוטומטית"
+       - NO cancel button
+
+   CASE B — Active sub with auto_renew=true (the normal case after first payment)
+     If there's no such org in staging, manually flip auto_renew=true on the
+     demo org via mongosh first:
+       db.subscriptions.updateOne(
+         {org_id: '715e2420-e4f1-4ebd-81ed-b690e1f7f84d'},
+         {$set: {auto_renew: true}}
+       )
+     Refresh page.
+     EXPECTED:
+       - Green card visible
+       - Title: "חידוש אוטומטי פעיל"
+       - Text: "המנוי יתחדש אוטומטית ב-DD/MM/YYYY"
+       - Cancel button visible: "ביטול חידוש אוטומטי"
+     Restore auto_renew=false after testing if you flipped it.
+
+3. Code grep:
+   grep -n "isActiveAutoRenew" frontend/src/pages/OrgBillingPage.js
+   Expected: zero matches (variable was renamed/removed).
+
+   grep -n "isActive\b" frontend/src/pages/OrgBillingPage.js
+   Expected: at least 2 matches (the new variable + the if check).
+
+DELIVERABLES
+------------
+review.txt with:
+  - Rollback SHA (git rev-parse HEAD)
+  - Full diff of frontend/src/pages/OrgBillingPage.js
+  - VERIFY 1 + 3 outputs (skip 2 — Zahi runs that visually)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(billing): show state card for comped/auto_renew=false subs (cancel button hidden when no auto-renewal)
+
+STEPS
+-----
+1. Edit frontend/src/pages/OrgBillingPage.js — apply the State 1 replacement.
+2. Run VERIFY 1 (yarn build).
+3. Run VERIFY 3 (greps).
+4. Generate review.txt.
+5. Write .local/.commit_message.
+6. STOP. No commit, no push, no deploy. Zahi runs ./deploy.sh --stag himself.
+
+ROLLBACK
+--------
+git revert <commit-sha>
+./deploy.sh --prod
+
+Frontend-only change. Safe to revert.
+
+================================================================================
+END OF SPEC
+================================================================================

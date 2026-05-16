@@ -1,0 +1,744 @@
+================================================================================
+P1 — Unified auth: open SSO to all roles + ToS consent capture
+================================================================================
+Date:           2026-05-08 (after P1 #management_panel_split deployed)
+Branch:         staging  (NOT main)
+Severity:       P1 — feature + legal compliance.
+
+                Two related concerns:
+                  1. Today Google/Apple SSO is restricted to role='project_manager'.
+                     Contractors/management/team members can't use SSO. Zahi
+                     wants ANY user to be able to sign up via SSO. The phone
+                     remains the canonical identifier (any SSO method ends
+                     in OTP-to-phone, anchoring the user).
+                  2. Israeli Spam Law (חוק התקשורת תיקון 40) requires
+                     explicit user consent to terms of service, with a
+                     tamper-evident record (timestamp + IP). Currently no
+                     terms acceptance is captured.
+
+Files changed:  backend/contractor_ops/onboarding_router.py (~30 LOC)
+                backend/contractor_ops/auth_router.py        (~10 LOC)
+                backend/contractor_ops/schemas.py            (+8 LOC)
+                backend/server.py                            (+5 LOC migration)
+                frontend/src/pages/OnboardingPage.js         (~25 LOC)
+                frontend/src/pages/LoginPage.js              (~5 LOC)
+                frontend/src/services/api.js                 (~3 LOC)
+
+Tests:          1 new backend test file (~80 LOC)
+                backend/tests/test_unified_auth_consent.py
+
+Mobile:         Frontend OTA via Capgo. No native files.
+DB migration:   Backfill `terms_accepted_at = created_at` for all existing
+                users (one-time, idempotent, run on server startup).
+
+Family:         Standalone P1.
+
+================================================================================
+SCOPE
+================================================================================
+
+WHAT THIS BATCH DOES:
+
+1. **Open SSO to all roles** — remove 4 hardcoded `role != 'project_manager'`
+   restrictions that block contractors/management from using Google/Apple.
+   Phone remains the canonical user identifier; SSO methods anchor to phone
+   via OTP (already works in code — just needs the role gate removed).
+
+2. **Capture terms-of-service consent** at signup.
+   - Single mandatory checkbox: "אני מאשר/ת את תנאי השימוש".
+   - Backend stores: terms_accepted_at (ISO timestamp), consent_ip.
+   - Backfill all existing users with `terms_accepted_at = created_at`
+     (test-only customers, no marketing consent ever, per Zahi).
+
+3. **NO marketing consent** — explicitly excluded. BrikOps will never send
+   promotional/marketing communications. Only operational/transactional
+   notifications (defect assignments, reminders, status updates) which are
+   exempt from Israeli spam law's prior-consent requirement.
+
+WHAT THIS BATCH DOES NOT DO:
+- Doesn't change WhatsApp template flow (still operational-only).
+- Doesn't add marketing email infrastructure (no need).
+- Doesn't change contractor invite flow — they still get WhatsApp invite,
+  click link, register via the same unified page (just any auth method).
+- Doesn't modify password requirements / 2FA / session management.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+⚠️ Replit MUST run STEP 0 on workspace post-`git pull`. Lines numbered
+from the actual workspace HEAD (not spec).
+
+0.1 — Locate the 4 PM-only restrictions in onboarding_router.py:
+    grep -n "התחברות חברתית זמינה למנהלי פרויקט בלבד" \
+        backend/contractor_ops/onboarding_router.py
+    Expected: 4 hits at L1798, L1851, L1935, L2029. ALL 4 to remove.
+
+0.2 — Confirm SocialAuthRequest / social verify-otp / register schemas:
+    grep -n "class SocialAuthRequest\|class SocialVerifyOtpRequest\|class SocialSendOtpRequest\|class RegisterRequest\|class VerifyOtpRequest" \
+        backend/contractor_ops/schemas.py \
+        backend/contractor_ops/onboarding_router.py
+    Document line numbers + which file each lives in. We extend
+    SocialVerifyOtpRequest + RegisterRequest + auth_router register
+    schemas with `terms_accepted` (bool) and capture client IP.
+
+0.3 — Confirm User model fields:
+    grep -n "class User\|terms_accepted_at\|consent_ip\|created_at" \
+        backend/contractor_ops/schemas.py
+    Expected:
+    - User class exists. created_at field exists.
+    - terms_accepted_at + consent_ip do NOT exist yet (we add them).
+
+0.4 — 🚨 STOP-GATE: invite_token MUST flow through SSO (security critical).
+
+    VERIFIED 2026-05-08 — there IS a privilege escalation risk:
+    - OnboardingPage L24: reads `inviteToken` from URL params ✓
+    - OnboardingPage L196 + L297: calls `socialAuth(provider, credential)`
+      WITHOUT passing inviteToken ✗
+    - SocialAuthRequest schema (L1748-1751): no invite_token field ✗
+    - social_verify_otp L2067: hardcoded role='project_manager' ✗
+
+    IMPACT: contractor opens WhatsApp invite link, picks Google → user
+    created with role='project_manager' (privilege escalation).
+
+    WITHOUT this fix, REMOVING the PM-only gate is unsafe.
+
+    Required changes (added in PART 2.4 below):
+    a) SocialAuthRequest schema: + invite_token: Optional[str] = None
+    b) social_auth endpoint: if invite_token, validate (db.invites.find_one)
+       and store on session
+    c) social_verify_otp register flow: if session.invite_token, lookup
+       invite, set:
+         role = invite['role']
+         project_id linkage (call existing invite-acceptance helper)
+         company_id from invite if present
+    d) Frontend OnboardingPage L196 + L297: pass inviteToken to socialAuth
+    e) Frontend api.js socialAuth signature: accept inviteToken parameter
+    f) Frontend LoginPage L317 (if SSO from there can hit invite flow):
+       same — pass inviteToken if present
+
+    grep -n "socialAuth\|/auth/social" frontend/src/services/api.js
+    Expected: L721 area — extend the signature with inviteToken param.
+
+    🚨 IF Replit cannot complete (a)-(f) in this batch → DO NOT remove
+    PM-only gates. Better to defer SSO-for-contractors than to
+    open privilege escalation.
+
+0.5 — 🚨 Verify ALL SSO new-user paths reach OnboardingPage with terms checkbox.
+
+    grep -B5 -A15 "registration_required\|new_user\|handleSocialAuthResult" \
+        frontend/src/pages/LoginPage.js \
+        frontend/src/pages/OnboardingPage.js
+    grep -n "tos\|terms\|תנאי השימוש\|מסכים\|מאשר" \
+        frontend/src/pages/OnboardingPage.js \
+        frontend/src/pages/LoginPage.js
+
+    Expected:
+    - LoginPage SSO callback → if backend returns 'registration_required'
+      → frontend redirects user to OnboardingPage (where checkbox lives).
+    - OnboardingPage SSO callback → handles registration_required inline
+      with phone OTP step → must show checkbox INLINE (not redirect).
+
+    If any SSO path creates user WITHOUT going through a screen with
+    the terms checkbox → terms NOT captured → legal compliance gap.
+
+    Audit each path:
+    - LoginPage Google callback → registration_required → redirect to /onboarding?
+    - LoginPage Apple callback → registration_required → redirect to /onboarding?
+    - OnboardingPage Google callback → registration_required → inline OTP step
+    - OnboardingPage Apple callback → registration_required → inline OTP step
+
+    Document the exact branches. PART 5+6 must place the checkbox
+    where each path renders the final OTP confirmation step.
+
+0.6 — Confirm Israeli phone normalization helper exists:
+    grep -n "normalize_israeli_phone" \
+        backend/contractor_ops/onboarding_router.py | head -3
+    Expected: already imported and used. No change needed.
+
+0.6b — 🚨 Verify privacy policy mentions IP storage at signup.
+
+    Before this batch deploys, fetch the privacy policy and check it
+    discloses:
+      - IP address recorded at signup
+      - Purpose: legal compliance (consent evidence)
+      - Retention: indefinite while account active
+      - Deletion: via /legal/data-deletion request
+
+    curl https://app.brikops.com/legal/privacy | grep -i "ip\|כתובת\|פרוטוקול"
+
+    If the policy does NOT mention IP storage → must update the
+    privacy policy text BEFORE this batch deploys. Otherwise we'd
+    be storing user data not disclosed in policy = privacy law risk.
+
+    This is a GO/NO-GO gate. If policy missing → tell Zahi to update
+    /legal/privacy first.
+
+0.7 — Confirm legal pages already exist (verified 2026-05-08):
+    Real URLs to link to:
+      https://app.brikops.com/legal/terms
+      https://app.brikops.com/legal/privacy
+      https://app.brikops.com/legal/data-deletion
+      https://app.brikops.com/accessibility
+
+    The checkbox links to BOTH /legal/terms and /legal/privacy
+    (Israeli law + best practice — both ToS and privacy policy
+    require explicit consent). Use relative paths (/legal/terms,
+    /legal/privacy) since same origin.
+
+    grep -rn "/legal/terms\|/legal/privacy\|/legal/data-deletion" \
+        frontend/src/ | head -5
+    Document the routes that already render these pages. Reuse
+    the same internal route paths.
+
+0.8 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — Backend schemas
+================================================================================
+
+FILE: backend/contractor_ops/schemas.py
+
+LOCATION 1.1 — Add terms fields to User model.
+
+  FIND the User class (probably similar to Task class around L277).
+  ADD two new optional fields:
+
+      terms_accepted_at: Optional[str] = None
+      consent_ip: Optional[str] = None
+
+  Both optional for backward compat with existing user docs (will be
+  backfilled in PART 5).
+
+LOCATION 1.2 — Extend RegisterRequest, VerifyOtpRequest, SocialVerifyOtpRequest.
+
+  Each of these schema classes (used for signup endpoints) ADD:
+
+      terms_accepted: bool = False  # client must send True
+
+  Field is required at the API level (we validate True before creating
+  user). Default False so old clients fail clearly.
+
+================================================================================
+PART 2 — Backend onboarding_router.py: remove PM-only gates
+================================================================================
+
+FILE: backend/contractor_ops/onboarding_router.py
+
+LOCATION 2.1 — Remove 4 hardcoded role-gates.
+
+  At each of L1798, L1851, L1935, L2029, REMOVE the entire if/raise
+  block:
+
+      if existing_user.get('role') != 'project_manager':
+          raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
+
+  After removal, the only access checks remaining are:
+   - user_status (pending_deletion / suspended / pending_pm_approval / rejected)
+   - rate limits
+   - phone OTP verification
+
+  The phone OTP itself is the security anchor — anyone trying to
+  register/link without holding the phone can't pass.
+
+LOCATION 2.2 — Capture terms_accepted + consent_ip in social verify-otp.
+
+  In the social verify-otp register flow (L2057-2073 area where
+  user_doc is built), ADD:
+
+  Validate input:
+      if not body.terms_accepted:
+          raise HTTPException(status_code=400, detail='יש לאשר את תנאי השימוש')
+
+  In the user_doc dict, add:
+      "terms_accepted_at": ts,
+      "consent_ip": client_ip,
+
+  client_ip already resolved at L1988 via _resolve_client_ip(request).
+
+LOCATION 2.3 — Same capture in social link flow (L2024-2055).
+
+  In the link flow, the user already exists. We DON'T overwrite their
+  existing terms_accepted_at if set. Use $setOnInsert-style pattern:
+
+      update_doc = {
+          "$set": {social_id_field: session["social_id"]},
+          "$addToSet": {"auth_methods": {"$each": [session["provider"], "phone"]}},
+      }
+      if not link_user.get("terms_accepted_at"):
+          update_doc["$set"]["terms_accepted_at"] = ts
+          update_doc["$set"]["consent_ip"] = client_ip
+
+  Same pattern: also require body.terms_accepted == True before
+  link.
+
+LOCATION 2.4 — invite_token flow through SSO (CRITICAL SECURITY).
+
+  STEP 0.4 confirmed: today the SSO flow does NOT receive invite_token,
+  and verify-otp hardcodes role='project_manager'. Without fix,
+  removing PM-only gates causes privilege escalation. This section
+  is MANDATORY for the batch.
+
+  (a) backend/contractor_ops/onboarding_router.py — extend SocialAuthRequest:
+
+      class SocialAuthRequest(BaseModel):
+          provider: str = Field(..., pattern="^(google|apple)$")
+          id_token: str
+          apple_name: Optional[str] = None
+          invite_token: Optional[str] = None  # NEW
+
+  (b) social_auth endpoint — validate + store invite_token on session.
+
+      After verifying SSO token (around L1789 area), if body.invite_token:
+          invite = await db.invites.find_one(
+              {'id': body.invite_token, 'status': 'pending'},
+              {'_id': 0}
+          )
+          if not invite:
+              raise HTTPException(status_code=400, detail='הזמנה לא תקפה')
+          if invite.get('expires_at', '') < _now():
+              raise HTTPException(status_code=400, detail='ההזמנה פגה תוקף')
+
+      Then when calling create_social_session, include invite_token in
+      the session payload so verify-otp can use it later.
+
+      ⚠️ EDGE CASE — legacy invites without expires_at field:
+
+         WRONG (would reject legacy invites):
+             if invite.get('expires_at', '') < _now():
+
+         Empty string is `< any ISO timestamp` in Python lexicographic
+         comparison, so old invites without `expires_at` field would
+         wrongly be flagged expired.
+
+         CORRECT:
+             expires_at = invite.get('expires_at')
+             if expires_at and expires_at < _now():
+                 raise HTTPException(status_code=400, detail='ההזמנה פגה תוקף')
+
+         If no expires_at → treat as no expiry. If present → validate.
+         Same pattern in (c) below.
+
+  (c) social_verify_otp register flow — apply invite role/project.
+
+      In the register branch (L2057-2073 area), AFTER the user_doc is
+      built BUT before db.users.insert_one, IF session has invite_token:
+
+          invite = await db.invites.find_one(
+              {'id': session['invite_token'], 'status': 'pending'},
+              {'_id': 0}
+          )
+          if invite:
+              user_doc['role'] = invite['role']
+              # Phone validation: invite.target_phone MUST equal
+              # the phone we OTP-verified. If different → security
+              # error (someone using another's invite).
+              if invite.get('target_phone') and invite['target_phone'] != phone:
+                  raise HTTPException(status_code=400, detail='הטלפון לא תואם להזמנה')
+
+      AFTER db.users.insert_one(user_doc), call the existing
+      invite-acceptance helper to link user to project + company.
+      Look for a function like `_accept_invite_for_user` or similar
+      in the same file (check the existing accept-invite endpoint).
+      Reuse it; do NOT duplicate the linking logic.
+
+      If no helper exists (uncommon), the linking is the same pattern
+      as in /onboarding/accept-invite endpoint — copy the project_membership
+      insert + invite status update + role conflict check.
+
+  (d) backend/contractor_ops/schemas.py — extend SocialAuthRequest if
+      that's where the schema lives. (Most likely it's defined inside
+      onboarding_router.py per (a).)
+
+  (e) frontend/src/services/api.js — extend socialAuth signature:
+
+      socialAuth: async (provider, idToken, appleName = null, inviteToken = null) => {
+          const body = { provider, id_token: idToken };
+          if (appleName) body.apple_name = appleName;
+          if (inviteToken) body.invite_token = inviteToken;
+          const res = await axios.post(`${API}/auth/social`, body);
+          return res.data;
+      }
+
+  (f) frontend/src/pages/OnboardingPage.js L196 + L297 — pass inviteToken:
+
+      const result = await onboardingService.socialAuth('google', response.credential, null, inviteToken);
+      // and similarly for Apple
+      const result = await onboardingService.socialAuth('apple', idToken, appleName, inviteToken);
+
+  (g) frontend/src/pages/LoginPage.js — if LoginPage can also reach
+      invite flow (unlikely but verify), apply same fix. STEP 0.5
+      confirms.
+
+  STOP-GATE: if any of (a)-(f) cannot be completed cleanly, abort
+  this batch and keep PM-only gates. Privilege escalation is worse
+  than missing-feature.
+
+================================================================================
+PART 3 — Backend auth_router.py: PM phone+OTP and email+password registration
+================================================================================
+
+FILE: backend/contractor_ops/auth_router.py
+
+LOCATION 3.1 — Find the phone+OTP register endpoint.
+
+  Likely `register_phone` / `verify_phone_otp` etc. ADD:
+   - validate body.terms_accepted == True before creating user
+   - on user creation, set:
+        terms_accepted_at = now,
+        consent_ip = request client IP
+
+LOCATION 3.2 — Find email+password register endpoint (if exists).
+
+  Same: validate terms_accepted, set terms_accepted_at + consent_ip.
+
+If the register endpoint already enforces some shape, just extend it;
+do NOT change existing validation logic.
+
+================================================================================
+PART 4 — Backend server.py: backfill migration
+================================================================================
+
+FILE: backend/server.py
+
+LOCATION 4.1 — Add a backfill block in the startup section.
+
+  Run ONCE on server boot, idempotent:
+
+      # 2026-05-08: backfill terms_accepted_at for users created
+      # before ToS capture was added. All current users are test
+      # customers (no marketing consent recorded; tracked per Zahi
+      # 2026-05-08). Treat their original signup timestamp as
+      # consent. Idempotent — only updates if field is missing.
+      result = await db.users.update_many(
+          {"terms_accepted_at": {"$exists": False}},
+          [{"$set": {"terms_accepted_at": "$created_at"}}],
+      )
+      logger.info(f"[STARTUP] backfilled terms_accepted_at on {result.modified_count} users")
+
+  Pipeline-style update (`[{...}]`) is required to use `$created_at`
+  as a value reference (MongoDB 4.2+).
+
+DO NOT TOUCH:
+- Other startup migrations.
+- Other indexes / collections.
+
+================================================================================
+PART 5 — Frontend OnboardingPage: terms checkbox
+================================================================================
+
+FILE: frontend/src/pages/OnboardingPage.js
+
+LOCATION 5.1 — Add state for terms checkbox.
+
+  Near other form state (e.g. with phone, code, email):
+
+      const [termsAccepted, setTermsAccepted] = useState(false);
+
+LOCATION 5.2 — Add the checkbox UI ABOVE the submit button(s).
+
+  Insert in each signup branch (renderInviteAccepted, renderInviteLoginNeeded,
+  and any self-signup form). Use a compact pattern:
+
+      <div className="flex items-start gap-2 mb-3">
+        <input
+          type="checkbox"
+          id="tos"
+          checked={termsAccepted}
+          onChange={(e) => setTermsAccepted(e.target.checked)}
+          className="mt-1 w-4 h-4"
+        />
+        <label htmlFor="tos" className="text-xs text-slate-600">
+          קראתי ואני מאשר/ת את{' '}
+          <a href="/legal/terms" target="_blank" rel="noopener noreferrer" className="text-amber-600 underline">
+            תנאי השימוש
+          </a>
+          {' '}ואת{' '}
+          <a href="/legal/privacy" target="_blank" rel="noopener noreferrer" className="text-amber-600 underline">
+            מדיניות הפרטיות
+          </a>
+        </label>
+      </div>
+
+LOCATION 5.3 — Disable submit button until terms accepted.
+
+  In each Submit button's `disabled` prop, AND with `!termsAccepted`:
+
+      disabled={existingDisabledExpr || !termsAccepted}
+
+LOCATION 5.4 — Pass terms_accepted in API calls.
+
+  All registration calls (verifyPhoneOtp, socialVerifyOtp, register, etc.)
+  pass `terms_accepted: termsAccepted` in the body.
+
+  Update frontend/src/services/api.js correspondingly to forward this
+  field.
+
+================================================================================
+PART 6 — Frontend LoginPage: terms checkbox for fresh signups
+================================================================================
+
+FILE: frontend/src/pages/LoginPage.js
+
+LoginPage handles SSO buttons that may trigger registration flow
+(when user doesn't exist yet). The OnboardingPage normally captures
+terms — but if SSO from LoginPage goes directly to register, need a
+similar gate.
+
+LOCATION 6.1 — Add terms checkbox to LoginPage state + UI.
+
+  Same pattern as OnboardingPage. The simplest approach: ALWAYS show
+  the terms checkbox on LoginPage as well, required for ALL register
+  paths. Existing logins (returning users) bypass this — they're
+  already in DB with terms_accepted_at set.
+
+  Note: the SSO callback on LoginPage typically returns
+  registration_required → frontend redirects to OnboardingPage which
+  has the checkbox. So if that's how it works today, LoginPage
+  doesn't need its own checkbox. CHECK during STEP 0.5.
+
+LOCATION 6.2 — IF NOT redirected to OnboardingPage on register:
+  Pass terms_accepted from LoginPage state to socialAuth call.
+
+================================================================================
+PART 7 — Frontend api.js: forward terms_accepted
+================================================================================
+
+FILE: frontend/src/services/api.js
+
+LOCATION 7.1 — Update API calls to include terms_accepted.
+
+  At the various register / verify endpoints (probably ~10 of them),
+  add `terms_accepted` to the body. Most ergonomic: have callers
+  pass it; pass-through in api.js.
+
+================================================================================
+PART 8 — New tests
+================================================================================
+
+FILE: backend/tests/test_unified_auth_consent.py  (NEW, ~80 LOC)
+
+T1 — Social register without terms_accepted → 400 with Hebrew error.
+T2 — Social register with terms_accepted=True → user created with
+     terms_accepted_at and consent_ip set.
+T3 — Simple SSO register WITHOUT invite_token → role defaults to
+     'project_manager'. No invite consumed. Asserts the self-signup
+     path still works after PM-only gates removed.
+T4 — Social link without terms_accepted but user already has
+     terms_accepted_at → succeeds (existing user); fields unchanged.
+T5 — Phone+OTP register without terms_accepted → 400.
+T6 — Email+password register without terms_accepted → 400.
+T7 — Backfill migration: existing user without terms_accepted_at
+     gets backfilled to created_at on startup.
+
+T8 — Invite + SSO success path (NEW — CRITICAL):
+     - Mock pending invite for phone X with role='contractor',
+       project_id=P, company_id=C.
+     - Call /auth/social with invite_token=invite.id.
+     - send-otp + verify-otp with phone X.
+     - Assert: user created with role='contractor' (NOT
+       'project_manager').
+     - Assert: project_membership inserted for project P with
+       company_id=C.
+     - Assert: invite.status updated to 'accepted'.
+
+T9 — Phone mismatch rejected (NEW — CRITICAL SECURITY):
+     - Mock pending invite with target_phone='+972-50-1234567'.
+     - Call SSO + send-otp with DIFFERENT phone '+972-50-9999999'.
+     - On verify-otp, expect 400 with 'הטלפון לא תואם להזמנה'.
+     - Assert: NO user created in db.users.
+     - This is the security anchor — protects against someone
+       forwarding an invite link and claiming it with their own
+       phone. Without this test, a future refactor could silently
+       remove the validation.
+
+T10 — Expired invite rejected (NEW):
+     - Mock invite with expires_at = ISO timestamp 1 hour in past.
+     - Call /auth/social with invite_token.
+     - Expect 400 with 'ההזמנה פגה תוקף'.
+
+T11 — Legacy invite without expires_at field (NEW — bug guard):
+     - Mock invite WITHOUT expires_at field at all.
+     - Call /auth/social with invite_token.
+     - Expect SUCCESS (proceed to OTP step).
+     - Asserts the `if expires_at and ...` pattern, not `if ... < now()`,
+       which would wrongly reject legacy invites.
+
+Use existing AsyncMock fixtures. Mock OTP service to skip actual SMS.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — yarn build (no warnings):
+     cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
+
+V2 — pytest the new + regression suite:
+     cd backend && python -m pytest tests/test_unified_auth_consent.py \
+         tests/test_qc_units_status.py \
+         tests/test_qc_template_upgrade.py \
+         tests/test_contractor_visibility.py -v
+     → all pass.
+
+V3 — grep verification:
+     grep -c "התחברות חברתית זמינה למנהלי פרויקט בלבד" \
+         backend/contractor_ops/onboarding_router.py
+     → 0 (all 4 instances removed).
+
+     grep -c "terms_accepted_at" backend/contractor_ops/schemas.py
+     → ≥ 1 (User model field).
+
+     grep -c "terms_accepted_at\|consent_ip" \
+         backend/contractor_ops/onboarding_router.py
+     → ≥ 4 (set in 2-3 places + validate calls).
+
+     grep -c "termsAccepted\|terms_accepted" \
+         frontend/src/pages/OnboardingPage.js
+     → ≥ 4 (state + checkbox + submit gate + API call).
+
+V4 — Visual smoke deferred to Zahi after deploy:
+
+  Self-signup (PM):
+  a) Open /onboarding (or whatever route).
+  b) Try to register with Google/Apple/phone+OTP/email+password
+     WITHOUT checking the terms checkbox → submit button disabled OR
+     backend rejects with "יש לאשר את תנאי השימוש".
+  c) Check the box → submit succeeds.
+  d) DB shows user has terms_accepted_at + consent_ip set.
+
+  Contractor invite signup:
+  e) PM adds new contractor → WhatsApp invite sent.
+  f) Contractor opens link → arrives at signup page (same as PM).
+  g) Picks Google → completes flow → terms checkbox visible.
+  h) Signs up successfully (no PM-only error).
+
+  Existing user:
+  i) Login as existing user (created before this batch) → no terms
+     prompt shown (already backfilled). Login works as before.
+
+  Cross-method linking:
+  j) Existing PM user previously registered with Google.
+  k) Logout. Login again, this time pick Apple.
+  l) Apple email = same as Google email → "link_required" flow.
+  m) OTP to existing phone → confirm → user now has both google_id
+     + apple_id. Future logins work with either.
+
+  Phone-anchor linking (different SSO emails):
+  n) Existing user registered with Google (gmail).
+  o) Logout. Login with Apple (different email — icloud).
+  p) registration_required → enters same phone → backend matches phone
+     → flow auto-becomes link → OTP confirm → apple_id added.
+  q) Same user.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit (0.1-0.7).
+  - Per-file diff (~7 files).
+  - V1-V3 outputs.
+  - V4 deferred (a-q).
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+
+.local/.commit_message:
+  feat(auth): unified SSO + ToS consent capture
+
+  Two related changes shipped together.
+
+  (1) Open Google/Apple SSO to all roles.
+   Today the social_auth flow is restricted to role='project_manager'
+   via 4 hardcoded checks. Removed all 4 — phone OTP remains the
+   security anchor (anyone trying to register/link without holding
+   the phone can't pass). Contractors invited via WhatsApp can now
+   pick SSO methods on the unified signup page.
+
+  (2) Capture terms-of-service consent.
+   Israeli Spam Law (חוק התקשורת תיקון 40) requires explicit
+   consent for any commercial communication. BrikOps sends only
+   operational notifications (defect assignments, reminders) which
+   are exempt. But ToS itself still needs documented consent.
+
+   Added: User.terms_accepted_at + User.consent_ip fields.
+   Single mandatory checkbox at signup. Backend validates and stores
+   timestamp + IP. Backfill on startup: existing test users get
+   terms_accepted_at = created_at (no marketing consent ever, per
+   Zahi 2026-05-08).
+
+   No marketing consent flow — explicit decision: BrikOps will never
+   send promotional emails.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 audit (0.1-0.7).
+2. PART 1 — schemas.py (User + RegisterRequest fields).
+3. PART 2 — onboarding_router.py: remove gates + capture consent.
+4. PART 3 — auth_router.py: phone+OTP and email+password consent.
+5. PART 4 — server.py: backfill migration.
+6. PART 5-7 — frontend: checkbox + API forwarding.
+7. PART 8 — new tests.
+8. Run V1-V3.
+9. Generate review.txt + .local/.commit_message.
+10. STOP. Zahi reviews.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+7 files revert. PM-only restriction returns. Terms capture lost
+(but backfill data persists — running startup migration with old
+code is harmless because it only $sets when missing).
+
+NO impact on:
+- Existing users (already backfilled).
+- Operational notifications (no change).
+- WhatsApp templates.
+- Pricing / billing.
+- QC, matrix, handover, safety modules.
+- Existing PM logins.
+
+================================================================================
+PACING NOTE — DEPLOY TOMORROW MORNING (NOT TODAY)
+================================================================================
+
+This is the 4th batch in one day:
+  1. P0 contractor visibility (3 prod bugs)
+  2. P1 nav + company-only assignment
+  3. P1 split mgmt panel
+  4. THIS BATCH — unified auth + ToS
+
+Auth changes are HIGH BLAST RADIUS — affect every signup, every
+login, every contractor invite. Recommend:
+  - Replit implements today, returns review.txt today
+  - Zahi reviews tomorrow morning with fresh eyes
+  - Deploy to staging tomorrow
+  - Smoke comprehensive (V4 a-q)
+  - Watch staging 24-48h before prod
+
+Auth bugs are catastrophic (locked-out users, privilege escalation).
+The pacing buffer prevents fatigue-driven mistakes.
+
+================================================================================
+RISK
+================================================================================
+
+- The backfill migration runs on EVERY server startup. Idempotent
+  (only matches docs without terms_accepted_at), but if startup is
+  slow, log line might be noisy. After 1 successful run no docs match
+  → 0 modifications → fast no-op.
+- Terms checkbox blocks NEW signups until accepted. Existing users
+  unaffected. No risk of locked-out current users.
+- Social verify-otp now captures consent_ip — make sure the IP
+  resolution helper handles X-Forwarded-For chains correctly (it
+  already does per existing usage at L1988 area).
+- Legal pages already exist in production (/legal/terms,
+  /legal/privacy, /legal/data-deletion, /accessibility — verified
+  2026-05-08). Links open in new tab via target="_blank" so user
+  doesn't lose signup form state.
+
+================================================================================
+END OF SPEC
+================================================================================

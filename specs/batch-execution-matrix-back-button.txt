@@ -1,0 +1,335 @@
+================================================================================
+HOTFIX FOLLOWUP — Back button in ExecutionMatrixPage
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P3 — UX gap. Per Zahi staging smoke 2026-05-04 of #487/#488/
+                #489/#490 cluster: matrix page has NO way to navigate back.
+                Users land at /execution-matrix and are stuck — must use
+                browser back button or manually edit URL.
+
+Files changed:  1 file
+                  Frontend: pages/ExecutionMatrixPage.js (~10 LOC)
+
+Tests:          None new. UI addition only.
+Backend:        ZERO changes.
+Mobile:         Frontend OTA via Capgo. No native files.
+DB migration:   NONE.
+
+Family:         Followup to #484 Phase 2A (frontend foundation). Closes
+                a navigation gap that was overlooked when ExecutionMatrixPage
+                was created.
+
+================================================================================
+ROOT CAUSE — Zahi's staging smoke 2026-05-04
+================================================================================
+
+After #484 ExecutionMatrixPage shipped (and refined through #485-#490),
+Zahi reports:
+  "אין לי כפתור חזרה במטריצת הביצוע, צריך לחזור לכאן:
+   https://staging.brikops-new.pages.dev/projects/{p}/qc"
+
+The page has only the LayoutGrid icon + title + subtitle in the header
+row — no back arrow, no breadcrumb. User is stuck unless they use
+browser back or manually navigate.
+
+Other QC-tree pages (StageDetailPage, FloorDetailPage, BuildingQCPage)
+all have an ArrowRight back button at the top — visual consistency
+broken on the matrix page.
+
+================================================================================
+DESIGN DECISION
+================================================================================
+
+D1. Add ArrowRight back button at the TOP-RIGHT of the page header
+    (RTL: top-right is the natural "back" position, mirrors other QC
+    pages like StageDetailPage L1602 / BuildingQCPage L214).
+
+D2. Navigation target: `/projects/{projectId}/qc` — the QC home page,
+    where the matrix CTA originates (per #484 PART 9.2).
+
+D3. NOT using a generic `navigate(-1)` (browser back) — that's fragile
+    if the user landed via direct URL (e.g., bookmark, notification).
+    Hardcoded path is more reliable.
+
+D4. Match the visual style of StageDetailPage's back button:
+    - ArrowRight icon (lucide-react)
+    - Plain hover state (no border, just bg color shift)
+    - Touch target ≥44px (py-3 wrapper or equivalent padding)
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify ExecutionMatrixPage current header (per Zahi screenshot
+    + my Read at L91-105):
+    grep -n "מטריצת ביצוע\|LayoutGrid\|max-w-7xl mx-auto" \
+        frontend/src/pages/ExecutionMatrixPage.js
+    # Expected: header at L94-105 — flex row with violet LayoutGrid box +
+    # title + subtitle. No back button.
+
+0.2 — Verify back button pattern in StageDetailPage (canonical reference):
+    grep -n "ArrowRight\|navigate.*projects.*qc\|onClick=.*navigate" \
+        frontend/src/pages/StageDetailPage.js | head -5
+    # Expected: ArrowRight icon used in goBack header button (verified
+    # in #482 spec — L1601-1603 area).
+
+0.3 — Verify lucide-react ArrowRight already imported in
+    ExecutionMatrixPage:
+    grep -n "ArrowRight" frontend/src/pages/ExecutionMatrixPage.js
+    # Expected: 0 hits (need to ADD to existing lucide-react import).
+
+0.4 — Verify useNavigate hook:
+    grep -n "useNavigate\|useParams" \
+        frontend/src/pages/ExecutionMatrixPage.js
+    # Expected: only `useParams` imported (L2). Need to ADD `useNavigate`.
+
+0.5 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — Add useNavigate hook + ArrowRight icon
+================================================================================
+
+FILE: frontend/src/pages/ExecutionMatrixPage.js
+------------------------------------------------
+
+LOCATION 1.1 — Update imports (L1-3):
+
+   FIND:
+       import React, { useMemo } from 'react';
+       import { useParams } from 'react-router-dom';
+       import { Loader2, AlertCircle, LayoutGrid } from 'lucide-react';
+
+   REPLACE WITH:
+       import React, { useMemo } from 'react';
+       import { useParams, useNavigate } from 'react-router-dom';
+       import { Loader2, AlertCircle, LayoutGrid, ArrowRight } from 'lucide-react';
+
+LOCATION 1.2 — Add navigate hook inside component (after useParams):
+
+   FIND (L9-11):
+       export default function ExecutionMatrixPage() {
+         const { projectId } = useParams();
+         const { data, loading, error, refresh } = useMatrixData(projectId);
+
+   REPLACE WITH:
+       export default function ExecutionMatrixPage() {
+         const { projectId } = useParams();
+         const navigate = useNavigate();
+         const { data, loading, error, refresh } = useMatrixData(projectId);
+
+================================================================================
+PART 2 — Add back button to header row
+================================================================================
+
+LOCATION 2.1 — Update the header div (L94-105):
+
+   FIND:
+       <div className="flex items-center gap-3 mb-4">
+         <div className="p-2 bg-violet-100 rounded-lg">
+           <LayoutGrid className="w-5 h-5 text-violet-700" />
+         </div>
+         <div className="flex-1 min-w-0">
+           <h1 className="text-lg sm:text-xl font-bold text-slate-900">מטריצת ביצוע</h1>
+           <p className="text-xs text-slate-500 mt-0.5">
+             {buildingCount > 0 && `${buildingCount} מבנים • `}
+             {units.length} דירות • {stages.length} שלבים
+           </p>
+         </div>
+       </div>
+
+   REPLACE WITH:
+       <div className="flex items-center gap-3 mb-4">
+         <button
+           onClick={() => navigate(`/projects/${projectId}/qc`)}
+           className="p-2 hover:bg-slate-100 active:bg-slate-200 rounded-lg transition-colors"
+           aria-label="חזרה לבקרת ביצוע"
+         >
+           <ArrowRight className="w-5 h-5 text-slate-600" />
+         </button>
+         <div className="p-2 bg-violet-100 rounded-lg">
+           <LayoutGrid className="w-5 h-5 text-violet-700" />
+         </div>
+         <div className="flex-1 min-w-0">
+           <h1 className="text-lg sm:text-xl font-bold text-slate-900">מטריצת ביצוע</h1>
+           <p className="text-xs text-slate-500 mt-0.5">
+             {buildingCount > 0 && `${buildingCount} מבנים • `}
+             {units.length} דירות • {stages.length} שלבים
+           </p>
+         </div>
+       </div>
+
+   IMPORTANT — back button placement:
+   - FIRST element in the header (in RTL: rightmost — natural "back" position).
+   - `p-2` matches the visual size of the LayoutGrid icon container.
+   - `hover:bg-slate-100 active:bg-slate-200` for touch + mouse feedback.
+   - `aria-label="חזרה לבקרת ביצוע"` for screen reader users.
+   - Touch target: p-2 + 20px icon = 36px area, but the interactive
+     `<button>` wrapper is wide enough — combined with the rounded-lg
+     hover background = comfortable tap zone. (StageDetailPage uses
+     same `p-1.5` pattern at L1664 — we use `p-2` for slightly larger
+     target since this is a top-level navigation.)
+
+LOCATION 2.2 — Apply the same back button to the loading state (L48-60):
+
+   FIND:
+       if (loading) {
+         return (
+           <div className="min-h-screen bg-slate-50 p-4 sm:p-6" dir="rtl">
+             <div className="max-w-7xl mx-auto">
+               <div className="bg-white rounded-xl border border-slate-200 p-6">
+                 <div className="flex items-center justify-center gap-2 text-slate-500">
+                   <Loader2 className="w-5 h-5 animate-spin" />
+                   <span className="text-sm">טוען מטריצה...</span>
+                 </div>
+               </div>
+             </div>
+           </div>
+         );
+       }
+
+   ADD a back button at the top-right BEFORE the loader card:
+
+       if (loading) {
+         return (
+           <div className="min-h-screen bg-slate-50 p-4 sm:p-6" dir="rtl">
+             <div className="max-w-7xl mx-auto">
+               <button
+                 onClick={() => navigate(`/projects/${projectId}/qc`)}
+                 className="p-2 hover:bg-slate-100 active:bg-slate-200 rounded-lg transition-colors mb-3 inline-flex"
+                 aria-label="חזרה לבקרת ביצוע"
+               >
+                 <ArrowRight className="w-5 h-5 text-slate-600" />
+               </button>
+               <div className="bg-white rounded-xl border border-slate-200 p-6">
+                 <div className="flex items-center justify-center gap-2 text-slate-500">
+                   <Loader2 className="w-5 h-5 animate-spin" />
+                   <span className="text-sm">טוען מטריצה...</span>
+                 </div>
+               </div>
+             </div>
+           </div>
+         );
+       }
+
+   IMPORTANT — back button MUST be available in loading state too. If
+   API is slow, user should still be able to escape.
+
+LOCATION 2.3 — Apply the same back button to the error state (L63-85):
+
+   Add the same `<button>` block right after `<div className="max-w-7xl
+   mx-auto">` opening tag in the error branch — before the red error card.
+
+DO NOT TOUCH:
+- StatusLegend.
+- MatrixListView / MatrixGridView render.
+- floorsById, buildingCount, buildingsById memos.
+- Any data fetching logic.
+- Stage rendering, unit rendering.
+- Other pages or components.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 2 — useNavigate + ArrowRight imported:
+   grep -c "useNavigate\|ArrowRight" frontend/src/pages/ExecutionMatrixPage.js
+   → ≥ 4 (1 import per item + ≥1 use per item, counted across both states)
+
+VERIFY 3 — Back button click target present:
+   grep -c "navigate.*projects.*qc" frontend/src/pages/ExecutionMatrixPage.js
+   → ≥ 3 (1 in main render + 1 in loading + 1 in error state)
+
+VERIFY 4 — aria-label for screen readers:
+   grep -c "חזרה לבקרת ביצוע" frontend/src/pages/ExecutionMatrixPage.js
+   → ≥ 3
+
+VERIFY 5 — Backend regression (no backend touched):
+   cd backend && python -m pytest tests/test_execution_matrix.py -q
+   → 14 passed (unchanged from #489)
+
+VERIFY 6 — Visual smoke (Zahi runs after deploy to staging):
+
+   Default render:
+   a) Login → /projects/{p}/execution-matrix.
+   b) TOP-RIGHT of page header: ArrowRight icon (חץ ימינה — RTL natural "back").
+   c) Click button → navigates to /projects/{p}/qc (QC home).
+   d) Hover (desktop): bg-slate-100 background appears.
+   e) Active (mobile tap): bg-slate-200 background flash.
+
+   Loading state:
+   f) Refresh page → during the brief loading spinner, the back button
+      is still visible top-right. Click it → navigates back even before
+      data loads.
+
+   Error state:
+   g) (Optional, hard to reproduce) — login as contractor, navigate to
+      /execution-matrix → 403 error state shows back button + "נסה שוב"
+      side by side.
+
+   Mobile (375px):
+   h) Back button is full-touch-target friendly. No layout overlap with
+      LayoutGrid icon to its left.
+
+   Accessibility:
+   i) Tab key focuses the button → press Enter → navigates back.
+   j) Screen reader announces "חזרה לבקרת ביצוע".
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (1 file, ~15 LOC total — accounting for 3 states)
+  - VERIFY 1-5 outputs
+  - VERIFY 6 deferred-to-Zahi note (10 scenarios a-j)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(matrix): add back button to ExecutionMatrixPage header
+
+  Followup to #484 Phase 2A foundation. Discovered during Zahi's
+  staging smoke 2026-05-04 of the #491+#489+#490 cluster: the
+  matrix page had no way to navigate back to /qc — users were
+  stuck unless they used browser back or manually edited the URL.
+
+  Added ArrowRight back button to the top-right of the header
+  (RTL natural "back" position), navigating to /projects/{p}/qc.
+  Same pattern as StageDetailPage / BuildingQCPage / FloorDetailPage.
+
+  Button is also rendered in the loading and error states so users
+  can escape even if the API is slow or returns 403.
+
+  ~15 LOC, single file. No backend, no tests, no shared component
+  refactor. ARIA-label for accessibility ("חזרה לבקרת ביצוע").
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (4 greps)
+2. PART 1 — useNavigate hook + ArrowRight icon imports (~3 LOC)
+3. PART 2 — Back button JSX in main + loading + error states (~12 LOC)
+4. Run VERIFY 1-5
+5. Generate review.txt + .local/.commit_message
+6. STOP. Zahi reviews. Then he runs:
+     git checkout staging && ./deploy.sh --stag
+   ⚠️ COMMIT ON `staging` BRANCH.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+1 file revert. Back button disappears. Users back to "stuck on matrix
+page" UX. NO impact on data, sort, MatrixCell, MatrixListView,
+MatrixGridView, backend, or any other functionality.
+
+================================================================================
+END OF SPEC
+================================================================================

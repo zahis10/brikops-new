@@ -1,0 +1,193 @@
+================================================================================
+ADDENDUM #1 to BATCH #500 (Phase 2D-1 — Filters + Saved Views)
+================================================================================
+Date:           2026-05-05
+For:            Replit Agent
+Re:             Task plan T001-T009 produced 2026-05-05
+Action:         3 mandatory updates before T002 starts
+Source:         2 independent reviewers (Cowork + secondary code-review chat)
+                surfaced the same 3 gaps — high-signal correction.
+
+The original spec was edited inline 2026-05-05 ~19:05 with these 3 fixes.
+Replit's task plan was generated from the PRE-edit version. Re-read the
+spec file from staging HEAD before continuing.
+
+Spec file:      specs/batch-execution-matrix-phase-2d-1-filters-saved-views.txt
+                (774 lines after the edits, was 719)
+
+================================================================================
+GAP 1 — STEP 0 missing 0.6 (FAB conflict pre-flight grep)
+================================================================================
+
+Replit's plan listed 6 sub-greps for STEP 0. The updated spec has 7.
+
+ADD this as STEP 0.6 (the original 0.6 was renumbered to 0.7):
+
+  0.6 — Verify FAB position won't conflict with existing fixed UI on mobile:
+        grep -rn "position: fixed\|position:fixed\|className=.*fixed.*bottom" \
+            frontend/src/components/ frontend/src/layouts/ frontend/src/pages/ \
+            2>/dev/null | grep -i "bottom\|nav\|tab\|footer" | head -10
+        Expected:
+          - Identify any existing fixed-bottom elements on the matrix page
+          - If none found: current FAB position is fine
+          - If found: adjust FAB `bottom` offset to clear that element
+            (e.g. bottom: calc(56px + env(safe-area-inset-bottom) + 16px))
+        Document finding in review.txt STEP 0 audit.
+
+Why: FAB is fixed at left:16px, bottom:16px. If BrikOps has a bottom nav
+on the matrix layout shell, FAB would overlap. 30-second grep prevents
+a prod surprise.
+
+Update T001: 6 sub-greps → 7 sub-greps.
+
+================================================================================
+GAP 2 — T002 missing 2 tests (T6 sentinel + T7 reset)
+================================================================================
+
+Replit's plan listed 5 tests (T1-T5). The updated spec has 7.
+
+ADD as T6 and T7 in useMatrixFilters.test.js:
+
+  T6. empty-value sentinel boundary conversion:
+      - When loading a saved view where backend has stage_status_filters
+        with "" → frontend internally maps to '__empty__' for checkbox
+        matching
+      - When saving (currentFilterPayload), '__empty__' → "" before
+        sending to backend
+      - Round-trip preserves semantics: "user chose to filter for blank"
+      Example assertions:
+        const hook = renderHook(...).result.current;
+        hook.toggleStageStatus('stage_plaster', '__empty__');
+        expect(hook.currentFilterPayload.stage_status_filters.stage_plaster)
+          .toEqual([""]);
+        hook.loadSavedView({ filters: { stage_status_filters: {
+          stage_plaster: [""] }}});
+        expect(hook.filters.stage_status_filters.stage_plaster)
+          .toEqual(['__empty__']);
+
+  T7. reset() clears every filter section to defaults:
+      - Apply filters in ≥4 sections (building, apartment, status, tag)
+      - Call reset()
+      - Expect filters to equal initial empty state:
+          building_ids=[], unit_ids=[], apartment_search='',
+          stage_status_filters={}, tag_value_filters={}, search_text=''
+      - Expect activeCount.total === 0
+
+Why T6: catches sentinel-leak regressions. The sentinel is internal-only;
+if it ever leaks to the backend payload or fails to be restored on load,
+saved views break silently. This is a high-leverage correctness test.
+
+Why T7: state cleanup is fundamental — without an explicit test, future
+changes to filter state shape can leave stale fields after reset.
+
+Update T002: 5 tests → 7 tests. LOC: ~80 → ~110.
+
+================================================================================
+GAP 3 — Saved-view delete UI must ship in 2D-1, not deferred
+================================================================================
+
+Replit's plan said: "Q2 Delete-saved-view UI deferred to 2D-2 ✓".
+
+The UPDATED spec PART 3 includes a minimal delete UI (~5 LOC). The Q2
+"Open Question" was changed to:
+
+  Q2. DECIDED 2026-05-05 (Replit feedback adopted): include minimal "×"
+      button on each pill (PART 3 above, ~5 LOC). No confirm dialog
+      (cheap to recreate views). Without this, users accumulate stale
+      views → support load. Worth the 5 LOC.
+      DECIDED: include in 2D-1.
+
+The pill markup (in MatrixFilterDrawer.js, saved-views row):
+
+  <span className="view-pill" onClick={() => onLoadSavedView(view)}>
+    {view.title}
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onDeleteSavedView(view.id); }}
+      className="ml-1 text-xs opacity-60 hover:opacity-100"
+      aria-label={`מחק תצוגה ${view.title}`}
+    >×</button>
+  </span>
+
+Behavior:
+  - Click pill body (not on ×) → load view
+  - Click × → call onDeleteSavedView(view.id) → matrixService.deleteSavedView
+    → refresh list → pill disappears
+  - NO confirm dialog (saved views are easy to recreate)
+  - e.stopPropagation() prevents the click from also triggering load
+
+Why include in 2D-1 (the original Replit review made this case):
+  - Without delete, every accidental save → permanent clutter
+  - Users will request manual deletes via support
+  - Cost: 5 LOC + 1 service method (already in T007 as deleteSavedView)
+  - Spec already wired the prop signature: onDeleteSavedView in PART 3
+
+Update T004:
+  - Add delete-pill markup as documented above
+  - Wire onDeleteSavedView prop already declared in T004's prop list
+  - matrixService.deleteSavedView is already in T007 — no change there
+
+================================================================================
+SPEC DRIFTS APPROVED (Replit's D1-D3)
+================================================================================
+
+D1. Backend update endpoint is `PATCH` not `PUT` — verified at
+    execution_matrix_router.py:561 (`@router.patch`). Frontend uses PATCH.
+    APPROVED.
+
+D2. STATUS_CONFIG path is `frontend/src/components/matrix/STATUS_CONFIG.js`
+    not `frontend/src/constants/`. Verified — no `constants/STATUS_CONFIG.js`
+    exists. Use the actual path. APPROVED.
+
+D3. MatrixSavedViewFilters has `floor_ids` and `unit_ids` fields the hook
+    doesn't currently produce. Pydantic Optional[] handles missing fields
+    correctly. Send only the 5 fields the hook produces. APPROVED.
+
+================================================================================
+WHAT'S NOT CHANGING
+================================================================================
+
+The following from Replit's plan are correct as written:
+
+  - T002 hook API surface
+  - T003 MatrixFilterSection 5-mode design
+  - T004 drawer Radix Dialog + RTL right-anchor + group dividers logic
+  - T005 SavedViewSaveDialog as Radix modal-in-modal
+  - T006 FAB position (after STEP 0.6 grep validates no conflict)
+  - T007 service methods (4 methods: list/create/update/delete)
+  - T008 ExecutionMatrixPage wiring (replace units → filteredUnits)
+  - T009 VERIFY 1-8 + review.txt + commit_message + present_asset
+
+Other open question decisions also stand:
+  Q1 Radix modal-in-modal ✓
+  Q3 expand/collapse-all → 2D-2 ✓
+  Q4 swipe-to-close → 2D-2 ✓
+  Q5 URL params → 2E ✓
+  Q6 "(ריק)" not default-checked ✓
+
+================================================================================
+FINAL HEADCOUNT (revised)
+================================================================================
+
+Files:    6 NEW frontend, 2 EDIT frontend (unchanged)
+LOC:      ~625 frontend (was ~620 — +5 for delete UI)
+Tests:    7 frontend logic tests (was 5 — +2 for sentinel + reset)
+STEP 0:   7 sub-greps (was 6 — +1 for FAB conflict)
+
+Backend:  ZERO LOC changes. Saved-views CRUD already at #483 L518+.
+
+================================================================================
+ACTION FOR REPLIT
+================================================================================
+
+1. Re-read `specs/batch-execution-matrix-phase-2d-1-filters-saved-views.txt`
+   from staging HEAD (the inline edits are already there).
+2. Update task plan:
+   - T001: 6 → 7 sub-greps
+   - T002: 5 → 7 tests
+   - T004: include 5 LOC delete-pill markup
+3. Confirm refreshed plan back, then proceed to T002.
+
+================================================================================
+END OF ADDENDUM
+================================================================================

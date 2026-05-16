@@ -1,0 +1,510 @@
+================================================================================
+BATCH 5 — UX BUG PACK (4 bugs from S6 manual smoke testing)
+================================================================================
+Date:           2026-04-28
+Branch:         staging
+Severity:       Frontend polish — accumulated user-visible issues
+Estimated:      45-60 min Replit work + 1 architect review iteration
+Files changed:  ~3 (all frontend)
+================================================================================
+
+WHY
+---
+4 bugs surfaced during Zahi's manual smoke test of S6 (2026-04-26). Real-user
+friction. Easy to fix individually but accumulating. Group as one batch.
+
+  Bug #1 — Closed defects have no "פתח מחדש" (reopen) button.
+            Backend supports it (endpoint /api/tasks/{id}/reopen exists,
+            tested in S6 test_billing_checkout_rejects_founder_yearly path),
+            but the frontend never exposed a UI button.
+
+  Bug #2 — Status sync stale-list bug.
+            After PM closes a defect via the management panel on TaskDetailPage,
+            navigating back to the project tasks list shows the defect as
+            "פתוח" (open). Page refresh fixes it. The list cache is stale.
+
+  Bug #3 — Company dropdown inside UserDrawer escapes the drawer.
+            When opening the contractor profile editor (UserDrawer) and
+            clicking the company select, the dropdown options panel renders
+            on top of the page background but visually escapes the drawer's
+            visual boundary. Likely a z-index or Portal mounting issue.
+
+  Bug #4 — "Add new company" flow doesn't require trade.
+            QuickAddCompanyModal lets the user save a company without
+            picking a trade. Trade is currently optional in the payload.
+            Required to be set everywhere a company is created (during
+            team-member-add flow + standalone add-company flow + new defect
+            modal flow if applicable).
+
+CRITICAL
+--------
+All 4 are pure frontend changes. No backend changes. No DB migrations.
+No new endpoints. All endpoints already exist and are wired.
+
+================================================================================
+STEP 0 — Pre-flight (verify the codebase pointers below match)
+================================================================================
+0.1 — Reopen endpoint exists in service:
+   grep -n "reopenTask" frontend/src/services/api.js
+   Expected: at least 1 hit (line ~536 in current code)
+
+0.2 — Roles check helper:
+   grep -n "currentUserRole\|user.role\|role ===" frontend/src/pages/TaskDetailPage.js | head -5
+   Confirm what variable holds the current user's role + that values
+   like 'project_manager' and 'management_team' are checked elsewhere
+   for similar gating.
+
+0.3 — UserDrawer dropdown library:
+   grep -n "Select\|@radix-ui/react-select\|useFloating" frontend/src/components/UserDrawer.js | head -10
+   Confirm whether the company select uses Radix Select (Portal-aware) or
+   a plain <select> / custom component. The fix for #3 depends on this.
+
+   ⚠️ DECISION TREE on Bug #3:
+     - If finding is plain `<select>` (browser native) → STOP. Native <select>
+       opens via the OS picker and visually CANNOT escape the modal.
+       Document the finding in review.txt under "Bug #3 — INVESTIGATION
+       INCONCLUSIVE" and ask Zahi for a screenshot of where the dropdown
+       is escaping. Skip Bug #3 in this batch; the other 3 still ship.
+     - If finding is custom Select / Radix Select / Headless UI → proceed
+       with the Portal/z-index fix per the Bug #3 section below.
+
+0.4 — Verify `canManage` definition in TaskDetailPage.js (for Bug #1):
+   grep -n "canManage" frontend/src/pages/TaskDetailPage.js | head -10
+   Trace the definition. Document what roles `canManage` actually covers.
+
+   ⚠️ DECISION TREE on Bug #1 authority gate:
+     - If canManage already covers (PM ∪ management_team ∪ super_admin ∪
+       billing_admin) → just gate with `taskIsClosed && canManage`
+       (one condition, simple).
+     - If canManage is narrower → gate with `taskIsClosed && (canManage ||
+       currentUserRole === 'project_manager' || currentUserRole ===
+       'management_team')`. Document the explicit roles you added.
+
+0.5 — Verify how `loadTasks` is declared in ProjectTasksPage.js (for Bug #2):
+   grep -n "const loadTasks\|function loadTasks\|loadTasks =\s*(use" \
+       frontend/src/pages/ProjectTasksPage.js
+   Document whether `loadTasks` is wrapped in `useCallback` or is a plain
+   function recreated on every render.
+
+   ⚠️ DECISION TREE on Bug #2:
+     - If loadTasks IS already useCallback → safe to put it in deps OR
+       just call it inside the effect without deps.
+     - If loadTasks is NOT useCallback → DO NOT put `loadTasks` in
+       useEffect deps (would create infinite re-render loop).
+       Either:
+         (a) Wrap loadTasks in useCallback first, OR
+         (b) Use `[location.key]` as the only dep and call loadTasks()
+             inside the effect body.
+       Spec recommends (b) — it's the smaller change and matches the
+       existing code style.
+
+If anything materially differs from the spec assumptions, flag inline and
+ask Zahi before proceeding.
+
+================================================================================
+SCOPE
+================================================================================
+
+IN SCOPE
+--------
+File 1: frontend/src/pages/TaskDetailPage.js
+  - Bug #1: Add "פתח מחדש" button visible when `taskIsClosed && canManage`
+            AND user role is in ('project_manager', 'management_team')
+            (or super_admin / billing_admin if existing canManage already
+            covers them).
+
+File 2: frontend/src/pages/ProjectTasksPage.js
+  - Bug #2: Refetch the tasks list when the page regains focus / when
+            navigated back to it after a task was closed elsewhere.
+
+File 3: frontend/src/components/UserDrawer.js
+  - Bug #3: Fix the company dropdown so it stays within the drawer's
+            visual stack (or at least visually-contained within an overlay
+            with z-index >= drawer's z-index).
+
+File 4: frontend/src/components/QuickAddCompanyModal.js
+  - Bug #4: Make `trade` required (UI marker + canSave validation).
+            Also audit: any other place that creates a company via
+            `projectCompanyService.create(...)` and either pass or
+            require `trade`.
+
+OUT OF SCOPE
+------------
+- Backend (no changes — reopen endpoint already exists, tasks list query
+  already returns the canonical status, project_companies.create already
+  accepts an optional `trade` field).
+- Mobile-specific layouts (the bugs are present on web — mobile is the
+  same React build, fix flows there too).
+- Any additional features.
+
+================================================================================
+BUG #1 — Add "פתח מחדש" button on closed defects
+================================================================================
+
+LOCATION
+--------
+frontend/src/pages/TaskDetailPage.js, around line 1086-1097.
+
+CURRENT CODE (the close button block — visible only when NOT closed):
+
+    {!taskIsClosed && (
+      <div className="mt-4 pt-3 border-t border-amber-200">
+        <Button
+          onClick={() => setShowForceCloseModal(true)}
+          variant="outline"
+          className="w-full border-red-300 text-red-600 hover:bg-red-50 gap-2"
+        >
+          <XCircle className="w-4 h-4" />
+          סגור ליקוי
+        </Button>
+      </div>
+    )}
+
+REQUIRED CHANGE
+---------------
+Add a SIBLING block that shows a REOPEN button when the defect IS closed
+AND the user has authority to reopen.
+
+Authority for reopen (per Zahi 2026-04-28):
+   - PM (role === 'project_manager')
+   - management_team (role === 'management_team')
+   - super_admin / billing_admin
+
+How to gate it depends on STEP 0.4 finding:
+   - If `canManage` covers all 4 roles above → use `taskIsClosed && canManage`
+   - Otherwise → expand explicitly:
+     `taskIsClosed && (canManage || ['project_manager','management_team'].includes(currentUserRole))`
+
+Suggested replacement around line 1086-1097 (assuming canManage covers all
+required roles — adjust per STEP 0.4):
+
+    {!taskIsClosed && (
+      <div className="mt-4 pt-3 border-t border-amber-200">
+        <Button
+          onClick={() => setShowForceCloseModal(true)}
+          variant="outline"
+          className="w-full border-red-300 text-red-600 hover:bg-red-50 gap-2"
+        >
+          <XCircle className="w-4 h-4" />
+          סגור ליקוי
+        </Button>
+      </div>
+    )}
+
+    {taskIsClosed && canManage && (
+      <div className="mt-4 pt-3 border-t border-amber-200">
+        <Button
+          onClick={handleReopenTask}
+          variant="outline"
+          disabled={reopening}
+          className="w-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 gap-2"
+        >
+          {reopening ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+          {reopening ? 'פותח מחדש...' : 'פתח מחדש'}
+        </Button>
+      </div>
+    )}
+
+ADD STATE + HANDLER (near the other useState/handlers in the page):
+
+    const [reopening, setReopening] = useState(false);
+
+    const handleReopenTask = async () => {
+      if (!window.confirm('לפתוח את הליקוי מחדש?')) return;
+      setReopening(true);
+      try {
+        await taskService.reopenTask(task.id);
+        toast.success('הליקוי נפתח מחדש');
+        // Refetch the task to update local state
+        const refreshed = await taskService.getTaskById(task.id);
+        // (use whatever existing state-updater the page already uses;
+        //  if the page has fetchTask() helper, call that instead)
+        setTask(refreshed);
+      } catch (err) {
+        toast.error(err.response?.data?.detail || 'שגיאה בפתיחת הליקוי מחדש');
+      } finally {
+        setReopening(false);
+      }
+    };
+
+ADD IMPORT (top of file):
+
+    import { RotateCcw } from 'lucide-react';   // alongside XCircle, Loader2
+
+VERIFY
+------
+- A closed defect viewed by a PM shows a green "פתח מחדש" button.
+- Clicking it shows a confirm dialog, on confirm calls /api/tasks/{id}/reopen.
+- Toast on success/failure.
+- After success, the task locally goes back to status='reopened'
+  (per backend logic), the close button reappears, the reopen button hides.
+
+================================================================================
+BUG #2 — Tasks list shows stale "open" status after close
+================================================================================
+
+LOCATION
+--------
+frontend/src/pages/ProjectTasksPage.js — the tasks list page.
+
+CONTEXT (Zahi confirmed 2026-04-28):
+   "אחרי סגירה הרשימה לא רעננה ומראה עדיין 'פתוח'"
+   (After closing, the list isn't refreshed and still shows 'open')
+
+ROOT CAUSE (most likely)
+   The page caches `tasks` state on mount and doesn't refetch when the user
+   navigates BACK to it from TaskDetailPage. React Router doesn't unmount
+   the parent route when navigating to a child route in some patterns, so
+   when navigating back the list state is whatever it was before.
+
+FIX (recommended — combine location.key + window focus, no infinite loops)
+
+   Use `location.key` (NOT `location.pathname`). The `key` changes on EVERY
+   navigation including back-navigation to the same path. `pathname` would
+   miss navigations like /tasks/Y → /tasks (pathname changes here, OK) but
+   would fail to retrigger on programmatic re-navigation to the same route.
+
+   Implementation (per STEP 0.5 finding):
+
+     If loadTasks IS already useCallback:
+        const location = useLocation();
+        useEffect(() => {
+          loadTasks();
+          const onFocus = () => loadTasks();
+          window.addEventListener('focus', onFocus);
+          document.addEventListener('visibilitychange', onFocus);
+          return () => {
+            window.removeEventListener('focus', onFocus);
+            document.removeEventListener('visibilitychange', onFocus);
+          };
+        }, [location.key, loadTasks]);
+
+     If loadTasks is NOT useCallback (avoid infinite loop):
+        const location = useLocation();
+        useEffect(() => {
+          loadTasks();   // call directly inside, NOT in deps
+          const onFocus = () => loadTasks();
+          window.addEventListener('focus', onFocus);
+          document.addEventListener('visibilitychange', onFocus);
+          return () => {
+            window.removeEventListener('focus', onFocus);
+            document.removeEventListener('visibilitychange', onFocus);
+          };
+          // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [location.key]);
+
+   Why both location.key AND focus listener:
+     - location.key catches the in-app navigation back to the list.
+     - focus + visibilitychange catch the case of user switching to another
+       browser tab (or device sleep) and coming back — also a refresh trigger.
+
+   Option B (fallback if Option A causes problems): sessionStorage dirty flag.
+     After close in TaskDetailPage, set sessionStorage.setItem('tasks_dirty',
+     '1'). On ProjectTasksPage mount, check + clear + refetch if set.
+     Use this only if Option A breaks something.
+
+VERIFY
+------
+- Open a defect in the list → close it → navigate back → the defect shows
+  the correct closed status without a manual page refresh.
+- Reopen flow (Bug #1) similarly: after reopen, navigate back → the defect
+  shows the correct status.
+
+================================================================================
+BUG #3 — Company dropdown escapes UserDrawer
+================================================================================
+
+LOCATION
+--------
+frontend/src/components/UserDrawer.js — the contractor profile drawer.
+
+CONTEXT
+   When the drawer is open and the user clicks the "בחר חברה" select, the
+   dropdown's options panel renders ABOVE/OUTSIDE the drawer's visual area.
+   It overlaps the page background (or other modals) instead of staying
+   "inside" the drawer.
+
+INVESTIGATION
+   First, identify what library/component the company dropdown uses:
+     grep -nE "Select|<select|RadixSelect|Listbox|Popover" \
+         frontend/src/components/UserDrawer.js
+   Likely candidates and fixes:
+
+   (a) Plain <select> (browser native):
+       Native <select> opens via the OS picker — should never "escape".
+       If THIS is the case, the visual report is misleading; ask Zahi for
+       a screenshot.
+
+   (b) Custom <Select> component (in frontend/src/components/ui/):
+       Check for a Portal that mounts outside the drawer. The fix is to
+       either (i) ensure the Portal target has z-index higher than the
+       drawer overlay, or (ii) mount the dropdown inside the drawer's
+       Portal (so it inherits the same stacking context).
+
+   (c) Radix Select via @radix-ui/react-select:
+       Radix uses a Portal by default. Wrap the SelectContent like:
+         <SelectPrimitive.Portal container={drawerRef.current}>
+           ...
+         </SelectPrimitive.Portal>
+       OR set `position="popper"` and rely on the Portal landing on body.
+       If z-index is the issue, add `z-[10000]` to the SelectContent's
+       className (drawer is likely z-[9999]).
+
+   (d) Headless UI Listbox / Combobox:
+       Wrap with a higher-z-index container or use the `Transition`
+       wrapper with a fixed-position popper.
+
+REQUIRED FIX
+   - Make the dropdown options panel render on top of the drawer overlay
+     and visually contained within (or aligned to) the input that triggered
+     it — without overflowing onto the page underneath.
+   - Acceptance criteria: dropdown is keyboard-navigable, click-outside
+     closes it (without closing the drawer), and visually appears to be
+     "part of" the drawer.
+
+VERIFY
+------
+- Open the drawer, click the company select, dropdown appears properly
+  positioned and visually contained (no leakage to the page background).
+- Keyboard navigation works (Tab, Esc).
+- Click outside the dropdown: it closes; the drawer stays open.
+
+================================================================================
+BUG #4 — Trade required when adding a new company
+================================================================================
+
+LOCATION
+--------
+File 1: frontend/src/components/QuickAddCompanyModal.js — currently
+        treats `trade` as optional (line 16: `useState('')`, line 43:
+        `if (tradeValue) payload.trade = tradeValue;`)
+
+File 2: any other place that calls `projectCompanyService.create(...)`.
+        Audit:
+           grep -rn "projectCompanyService.create" frontend/src/
+        Each call site that allows the user to NOT specify trade should
+        be tightened.
+
+REQUIRED CHANGES
+----------------
+
+File 1 — QuickAddCompanyModal.js:
+
+  Change 1 (line ~32 — canSave validation):
+     OLD: const canSave = trimmedName.length > 0 && !saving;
+     NEW: const canSave = trimmedName.length > 0 && tradeValue && !saving;
+
+  Change 2 (line ~107 — label):
+     OLD: <label className="...">תחום</label>
+     NEW: <label className="...">תחום <span className="text-red-500">*</span></label>
+
+  Change 3 (line ~43 — payload):
+     OLD: if (tradeValue) payload.trade = tradeValue;
+     NEW: payload.trade = tradeValue;
+
+  Change 4 (optional but cleaner — add explicit error if user clicks save
+  with empty trade despite canSave being false):
+     In handleSave, before setSaving(true):
+       if (!tradeValue) {
+         toast.error('יש לבחור תחום');
+         return;
+       }
+
+File 2 — Other call sites:
+   For each caller, ensure their UI also requires trade before calling
+   `projectCompanyService.create({ ..., trade })`. If a caller historically
+   defaulted to no trade (e.g. the standalone Companies admin page), apply
+   the same UI marker + validation pattern.
+
+VERIFY
+------
+- Open the QuickAddCompanyModal, fill name, leave trade empty → "שמור" button
+  is disabled.
+- Pick a trade → button enables → save succeeds → company created with
+  `trade` set.
+- Open the same flow from "הוספת איש צוות" → same behavior.
+- Open the same flow from any standalone "הוסף חברה" entrypoint → same behavior.
+
+================================================================================
+VERIFY (whole batch)
+================================================================================
+
+1. Frontend build:
+   cd frontend && yarn build
+   Must succeed, no NEW warnings.
+
+2. Bug #1 grep:
+   grep -nE "פתח מחדש|reopenTask" frontend/src/pages/TaskDetailPage.js
+   Expected: at least 2 hits (button label + handler call).
+
+3. Bug #2 grep:
+   grep -nE "location\.key|window\.addEventListener.*focus|visibilitychange" \
+       frontend/src/pages/ProjectTasksPage.js
+   Expected: at least 1 hit showing the new useEffect with location.key
+   and/or focus listener.
+
+   AND verify NO infinite loop risk:
+   grep -nE "useEffect.*loadTasks.*\[.*loadTasks" frontend/src/pages/ProjectTasksPage.js
+   Expected: ZERO hits UNLESS loadTasks is wrapped in useCallback (per
+   STEP 0.5 finding). If loadTasks is plain function and `loadTasks` is in
+   deps array → REJECT, that's the infinite loop bug.
+
+4. Bug #3: visual check only — Replit cannot test this without a browser.
+   Document the change made + the library identified in STEP 0.3.
+   Zahi will verify visually on staging.
+
+   IF STEP 0.3 found plain `<select>` and Bug #3 was skipped → review.txt
+   must include a "Bug #3 — DEFERRED" section explaining why and asking
+   for screenshot.
+
+5. Bug #4 grep — TIGHT (no false positives):
+   grep -n "canSave.*tradeValue\|tradeValue.*canSave" \
+       frontend/src/components/QuickAddCompanyModal.js
+   Expected: at least 1 hit showing tradeValue is part of the canSave
+   expression.
+
+   grep -n "if (tradeValue) payload.trade" \
+       frontend/src/components/QuickAddCompanyModal.js
+   Expected: ZERO hits (the `if` guard was removed because trade is now
+   required and always sent).
+
+   grep -n "תחום.*\*\|אסטריסק" frontend/src/components/QuickAddCompanyModal.js
+   Expected: at least 1 hit showing the required-asterisk on the trade label.
+
+================================================================================
+DELIVERABLES
+================================================================================
+review.txt with:
+  - Rollback SHA (git rev-parse HEAD)
+  - Full diffs of each modified file
+  - VERIFY 1 + 2 + 3 + 5 outputs (4 is visual, document the approach)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(ux): batch 5 — reopen button + tasks list refresh + drawer dropdown z-index + company trade required
+
+STEPS
+-----
+1. Run STEP 0 (3 small verifications).
+2. Apply Bug #1 fix in TaskDetailPage.js.
+3. Apply Bug #2 fix in ProjectTasksPage.js.
+4. Apply Bug #3 fix in UserDrawer.js (per investigation finding).
+5. Apply Bug #4 fix in QuickAddCompanyModal.js + any other call site.
+6. Run VERIFY 1-5.
+7. Generate review.txt.
+8. Write .local/.commit_message.
+9. STOP. No commit, no push, no deploy. Zahi runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+All 4 fixes are independent and additive. If any one fails post-deploy:
+   git revert <commit-sha>
+   ./deploy.sh --prod
+
+Or for one specific bug only — revert just the relevant file diff.
+
+================================================================================
+END OF SPEC
+================================================================================

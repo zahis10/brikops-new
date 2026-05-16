@@ -1,0 +1,368 @@
+================================================================================
+HOTFIX FOLLOWUP TO #480 — StageDetailPage + FloorDetailPage→Stage click
+preserve ?from=qc through deep QC navigation
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — UX bug in production today. Discovered 2026-05-04 during
+                staging smoke of #480. #480 fixed the Floor round-trip but
+                missed the Stage layer (one level deeper).
+
+Files changed:  2 files (both frontend page extends)
+                  Frontend: frontend/src/pages/FloorDetailPage.js (~5 LOC)
+                  Frontend: frontend/src/pages/StageDetailPage.js (~10 LOC)
+
+Tests:          NO new test (pure UI navigation flow). VERIFY 4 visual
+                smoke covers it.
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+DB migration:   NONE.
+
+Family:         Followup to #480 (and great-grandchild of Batch 5K #451).
+
+================================================================================
+BUG REPRODUCTION (Zahi 2026-05-04 staging smoke)
+================================================================================
+
+Real navigation chain on staging.brikops-new.pages.dev:
+
+  Step 1:  /projects/{p}/qc                                         ✅ start
+           ↓ click building
+  Step 2:  /projects/{p}/buildings/{b}/qc?from=qc                   ✅ from=qc
+           ↓ click floor (#480 fixed this)
+  Step 3:  /projects/{p}/floors/{f}?from=qc                         ✅ from=qc
+           ↓ click STAGE card (floor-scope, e.g. stage_waterproof)
+  Step 4:  /projects/{p}/qc/floors/{f}/run/{r}/stage/{s}            ❌ from=qc DROPPED
+           ↓ click back arrow (StageDetailPage)
+  Step 5:  /projects/{p}/floors/{f}                                 ❌ from=qc DROPPED
+           ↓ click back arrow (FloorDetailPage — 5K + #480 logic)
+  Step 6:  /projects/{p}/buildings/{b}/qc                           ❌ no from=qc
+           ↓ click back arrow (BuildingQCPage handleBack — 5K)
+  Step 7:  /projects/{p}/buildings/{b}                              ❌ WRONG
+
+Expected at Step 7: `/projects/{p}/qc` (return to QC home).
+
+Root cause — `?from=qc` is dropped at TWO transitions:
+  - Step 3 → 4: FloorDetailPage's stage card click (floor-scope) does NOT
+    propagate `?from=qc` to the stage URL
+  - Step 4 → 5: StageDetailPage's back-nav does NOT propagate `?from=qc`
+    to the floor URL
+
+Once dropped at Step 4, the chain back through #480 + 5K can't recover —
+they need `?from=qc` in the URL to do their job.
+
+Verification on staging (Zahi 2026-05-04):
+  - Code from #480 is correct and matches spec exactly (verified via
+    `git show 2ae0e6c -- frontend/src/pages/BuildingQCPage.js
+     frontend/src/pages/FloorDetailPage.js`).
+  - 5K's handleBack in BuildingQCPage IS reading `?from=qc` correctly
+    (verified via grep).
+  - The bug ONLY appears when user goes DEEPER than the floor page
+    (i.e., into a stage). The Floor round-trip alone works fine.
+
+================================================================================
+DESIGN DECISIONS
+================================================================================
+
+D1. Param naming — keep `from=qc` (existing convention from 5K + #480).
+
+D2. Param propagation — explicit, identical pattern to #480.
+
+D3. Backwards compat — direct URL entries (no `?from=qc`) keep working.
+    User landing at `/qc/floors/{f}/run/{r}/stage/{s}` directly (no
+    `?from=qc`) → back navigates to `/projects/{p}/floors/{f}` (no
+    param), Floor's existing back behavior handles it.
+
+D4. Scope — DO NOT touch BuildingQCPage's handleBack (5K work) OR
+    FloorDetailPage's existing back-nav (#480 work). Only ADD:
+    - FloorDetailPage stage card onClick: propagate `?from=qc` to stage URL
+    - StageDetailPage back arrow onClick: propagate `?from=qc` to floor URL
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+⚠️ NOTE on stale local checkout — Cowork's mac repo may be out of date.
+   Replit MUST run STEP 0 greps on the workspace that's actually being
+   deployed (Replit's repo, after `git pull`). Spec line numbers are
+   approximate; STEP 0 verifies actual code anchors.
+
+0.1 — Locate the stage card onClick navigation in FloorDetailPage:
+    grep -n "navigate.*qc/floors\|navigate.*\\\${floorId}.*run\|navigate.*\\\${floor.*}.*stage\|navigate.*qc.*stage" \
+        frontend/src/pages/FloorDetailPage.js
+    # Expected: 1 hit on the floor-scope stage card click navigation.
+    # The URL pattern goes to: /projects/{p}/qc/floors/{f}/run/{r}/stage/{s}
+    # OR to /projects/{p}/qc/floors/{f}/run/{r}  (some intermediate URL).
+    # Document the exact pattern.
+
+0.2 — Confirm useSearchParams + fromParam are already imported in
+    FloorDetailPage (added by #480):
+    grep -n "useSearchParams\|fromParam" frontend/src/pages/FloorDetailPage.js
+    # Expected (per #480 commit 2ae0e6c):
+    #   1 hit on "useSearchParams" in the import line
+    #   1 hit on "const [searchParams] = useSearchParams();"
+    #   1 hit on "const fromParam = searchParams.get('from');"
+    # If MISSING (#480 didn't fully deploy) — STOP and report.
+
+0.3 — Locate StageDetailPage back-nav button:
+    grep -n "ArrowRight\|navigate.*floors/\\\${\|handleBack\|onClick.*navigate.*projects" \
+        frontend/src/pages/StageDetailPage.js | head -15
+    # Expected: 1 back-button click that calls navigate to one of:
+    #   /projects/{p}/floors/{f}
+    #   /projects/{p}/buildings/{b}/floors/{f}
+    #   /projects/{p}/qc/floors/{f}
+    # Document the EXACT URL pattern used.
+    # Likely an ArrowRight icon-button at top of the page.
+
+0.4 — Verify useSearchParams is imported in StageDetailPage:
+    grep -n "useSearchParams\|from 'react-router-dom'" \
+        frontend/src/pages/StageDetailPage.js | head -5
+    # If useSearchParams is NOT imported, add it to the destructure of
+    # 'react-router-dom'.
+
+0.5 — Confirm there's NO existing `?from=qc` reading in StageDetailPage:
+    grep -n "from === 'qc'\|fromParam\|from=qc" \
+        frontend/src/pages/StageDetailPage.js
+    # Expected: 0 hits. If anything found — investigate before edit.
+
+0.6 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — FloorDetailPage stage card onClick propagates `?from=qc`
+================================================================================
+
+FILE: frontend/src/pages/FloorDetailPage.js
+--------------------------------------------
+
+CONTEXT — `useSearchParams` + `fromParam` are already imported and computed
+in this file (added by #480 commit 2ae0e6c). Reuse the existing `fromParam`
+variable.
+
+LOCATION 1.1 — Find the stage card onClick (per STEP 0.1):
+
+   The exact location depends on the file's stage-rendering logic. Look
+   for code that navigates to a URL like:
+       `/projects/${projectId}/qc/floors/${floorId}/run/${runId}/stage/${stage.id}`
+   OR similar pattern with `qc/floors/.../run/.../stage/...`.
+
+   FIND (approximate — STEP 0.1 confirms exact line):
+       onClick={() => navigate(`/projects/${projectId}/qc/floors/${floorId}/run/${runId}/stage/${stage.id}`)}
+
+   REPLACE WITH:
+       onClick={() => {
+         const url = `/projects/${projectId}/qc/floors/${floorId}/run/${runId}/stage/${stage.id}`;
+         const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+         navigate(withFrom);
+       }}
+
+   IMPORTANT — only forward `?from=qc` when the user CAME FROM /qc
+   (i.e., current URL has `?from=qc`). Direct entries keep clean URLs.
+
+   IF THE STAGE URL PATTERN IS DIFFERENT (e.g., the click sets state
+   instead of navigating directly, or there's an intermediate
+   /qc/floors/{f}/run/{r} URL): apply the same `?from=qc` propagation
+   to that navigate call instead. The rule: any navigate() that ends
+   up at a `/qc/.../stage/` URL must propagate `?from=qc` when present.
+
+LOCATION 1.2 — IF there are multiple stage navigation points (e.g.,
+   one for floor-scope stages and one for unit-scope stages — the
+   latter goes to /qc/units?stage_id=X already fixed by #480), apply
+   the same fix to ALL of them. Defensive check:
+       grep -n "navigate.*qc/floors\|navigate.*qc/units" \
+           frontend/src/pages/FloorDetailPage.js
+
+DO NOT TOUCH:
+- The existing #480 unit-scope stage click (already propagates `&from=qc`).
+- The existing #480 back-nav (already preserves `?from=qc`).
+- Any state, useEffect, or data fetching.
+
+================================================================================
+PART 2 — StageDetailPage back-nav propagates `?from=qc` to floor URL
+================================================================================
+
+FILE: frontend/src/pages/StageDetailPage.js
+--------------------------------------------
+
+LOCATION 2.1 — Add `useSearchParams` import IF not already imported:
+
+   FIND the react-router-dom import line (top of file). Add
+   `useSearchParams` to the destructure if not there.
+
+LOCATION 2.2 — Get the URL `from` param inside the component:
+
+   ADD (near other hooks like useNavigate, useParams):
+       const [searchParams] = useSearchParams();
+       const fromParam = searchParams.get('from');
+
+LOCATION 2.3 — Update the back-nav button onClick (per STEP 0.3):
+
+   FIND (approximate — STEP 0.3 confirms exact pattern). Examples of
+   what it might look like:
+
+       <button onClick={() => navigate(`/projects/${projectId}/floors/${floorId}`)} ...>
+           <ArrowRight ... />
+       </button>
+
+   OR
+
+       const handleBack = () => navigate(`/projects/${projectId}/floors/${floorId}`);
+       ...
+       <button onClick={handleBack} ...>...</button>
+
+   REPLACE WITH (inline pattern):
+       <button onClick={() => {
+         const url = `/projects/${projectId}/floors/${floorId}`;
+         const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+         navigate(withFrom);
+       }} ...>
+
+   OR REPLACE WITH (handleBack pattern):
+       const handleBack = useCallback(() => {
+         const url = `/projects/${projectId}/floors/${floorId}`;
+         const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+         navigate(withFrom);
+       }, [navigate, projectId, floorId, fromParam]);
+
+   IMPORTANT — match the EXISTING code style (inline vs handleBack). If
+   StageDetailPage already uses handleBack (similar to BuildingQCPage's
+   5K pattern), wrap with useCallback. Otherwise inline.
+
+   ALSO: IF the back-nav target is something OTHER than `/projects/{p}/floors/{f}`
+   (e.g., it goes directly to the run page or building page), the EXACT
+   URL pattern might differ. The rule: ANY back-nav from StageDetailPage
+   that lands inside the QC tree should propagate `?from=qc`. STEP 0.3
+   documents the exact pattern; adapt the fix to match.
+
+DO NOT TOUCH:
+- Stage data rendering, items, audit block, override dialog.
+- Any state, useEffect, or data fetching.
+- Approve / reject / submit / reopen / override flows.
+- Other components or pages.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 2 — `useSearchParams` imported in StageDetailPage:
+   grep -c "useSearchParams" frontend/src/pages/StageDetailPage.js
+   → ≥ 2 (1 import + ≥1 use)
+
+VERIFY 3 — `from=qc` propagation in StageDetailPage:
+   grep -c "fromParam === 'qc'\|from=qc" \
+       frontend/src/pages/StageDetailPage.js
+   → ≥ 1
+
+VERIFY 4 — `from=qc` propagation in FloorDetailPage stage click
+   (#480 already added 1 for unit-scope; this batch adds for floor-scope):
+   grep -c "fromParam === 'qc'\|from=qc" \
+       frontend/src/pages/FloorDetailPage.js
+   → ≥ 3 (1 in floor-click from #480 + 1 in back-nav from #480 +
+           1 in unit-scope click from #480 + 1 in floor-scope stage click NEW)
+   NOTE: count target depends on how many spots existed before this batch.
+   The target is "≥ count_before + 1". Document what STEP 0 found.
+
+VERIFY 5 — No regression on existing tests:
+   cd backend && python -m pytest tests/test_qc_override_close.py \
+       tests/test_qc_units_status.py -v
+   → all pass (backend untouched)
+
+VERIFY 6 — Visual smoke (Zahi runs after deploy to staging):
+
+   Round-trip test (the bug):
+   a) Login as super_admin.
+   b) Navigate to /projects/{p}/qc — QC home.
+   c) Click any building → URL `/projects/{p}/buildings/{b}/qc?from=qc` ✅
+   d) Click any floor card → URL `/projects/{p}/floors/{f}?from=qc` ✅
+   e) Click any FLOOR-SCOPE stage card → URL
+      `/projects/{p}/qc/floors/{f}/run/{r}/stage/{s}?from=qc` ← NEW ✅
+      (was without `?from=qc` before this batch)
+   f) Click back arrow on StageDetailPage → URL
+      `/projects/{p}/floors/{f}?from=qc` ← NEW ✅
+   g) Click back arrow on FloorDetailPage → URL
+      `/projects/{p}/buildings/{b}/qc?from=qc` ✅ (from #480)
+   h) Click back arrow on BuildingQCPage → URL
+      `/projects/{p}/qc` ✅ (from 5K)
+
+   Negative — direct entry (no from=qc):
+   i) Navigate directly to a stage URL (no `?from=qc`).
+   j) Click back → goes to `/projects/{p}/floors/{f}` (no param) ✅
+   k) Click back from floor → existing behavior (per #480 — without
+      `?from=qc` goes to /buildings/{b}/qc clean) ✅
+
+   Mobile (375px): nav buttons still tappable, no overflow.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top, including:
+    • Verified location of FloorDetailPage's floor-scope stage navigation
+    • Verified location of StageDetailPage's back nav
+    • Confirmed #480's `useSearchParams` + `fromParam` already exist in
+      FloorDetailPage (don't re-add)
+  - Per-file diff (2 files, ~10 LOC total)
+  - VERIFY 1-5 outputs
+  - VERIFY 6 deferred-to-Zahi note (11 scenarios a-k)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(nav): preserve ?from=qc through Stage layer (followup to #480)
+
+  Discovered 2026-05-04 staging smoke. #480 fixed the floor round-trip
+  but the Stage page (one level deeper) was not covered:
+
+   - Step 3→4: FloorDetailPage's floor-scope stage card click did NOT
+     propagate ?from=qc to the stage URL.
+   - Step 4→5: StageDetailPage's back-nav did NOT propagate ?from=qc
+     to the floor URL.
+
+  Once ?from=qc was dropped at the Stage transition, the rest of the
+  chain (#480 floor back-nav + 5K BuildingQC handleBack) had nothing
+  to read, so the user landed at /buildings/{b} instead of /qc.
+
+  Fix: 2 files, ~10 LOC.
+   - FloorDetailPage: floor-scope stage card click propagates `?from=qc`
+     when current URL has it.
+   - StageDetailPage: back-nav button propagates `?from=qc` to floor URL
+     when current URL has it.
+
+  Direct entries (no ?from=qc) preserve existing behavior. No backend
+  changes. No new tests (pure navigation flow — covered by V6 visual
+  smoke).
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.5 greps, paste output to top of review.txt)
+2. PART 1 — FloorDetailPage floor-scope stage click forwarding (~5 LOC)
+3. PART 2 — StageDetailPage useSearchParams + back-nav preservation (~10 LOC)
+4. Run VERIFY 1-5
+5. Generate review.txt + .local/.commit_message
+6. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+2 files revert. Bug returns: deep navigation (qc → building → floor →
+stage → back x4) ends at /buildings/{b} instead of /qc. No data loss;
+pure UX regression.
+
+NO impact on:
+- 5K work (BuildingQCPage handleBack untouched)
+- #480 work (Floor round-trip fix untouched)
+- Direct-entry navigation flows
+- Other QC, handover, or project pages
+- Backend
+- Override flow / audit block / badges (#478 / #479 / #481)
+
+================================================================================
+END OF SPEC
+================================================================================

@@ -1,0 +1,408 @@
+================================================================================
+BATCH 510 — Billing banner project-aware (suppress on projects where user is contractor/viewer) (P1)
+================================================================================
+Date:           2026-05-09
+Branch:         staging  (NOT main)
+Severity:       P1 — UX bug. Contractors invited to projects of OTHER orgs
+                see a misleading "התשלום פג תוקף — מצב צפייה בלבד" banner
+                because the banner reads the LOGGED-IN USER's org billing,
+                not the CURRENT PROJECT's org billing. Confusing — may make
+                contractors think the project they were invited to is broken
+                when in fact the OTHER org pays and the project is fine.
+Files changed:  1 frontend (no backend changes)
+                  Frontend: frontend/src/components/TrialBanner.js
+                  (~15 lines added: useEffect to fetch project membership +
+                   1 new state + 1 new early-return check)
+Pre-flight:     The bug is per-user, not per-project. Banner uses
+                useBilling() which fetches /billing/me (user's own org).
+                When user is contractor in Project A (paid by Org A) but
+                also PM in Project B (own Org B, expired), entering
+                Project A still triggers the banner because user.role=
+                project_manager and their org_billing is read_only.
+
+                Discovery: prod test 2026-05-09 — Zahi as user "צחי שמי"
+                with Project 808 (PM, expired org) + Project 810
+                (contractor, other org paid). Banner showed on BOTH.
+
+                Backend `/api/projects/{id}` already returns `my_role`
+                for any user with read access (contractor/viewer included)
+                — confirmed projects_router.py:374-396. So frontend-only
+                fix is viable: extract projectId from URL, fetch project,
+                read my_role, suppress banner if contractor/viewer.
+
+CONTEXT
+-------
+Current code (TrialBanner.js):
+
+  L41: if (AUTH_PAGES.includes(location.pathname)) return null;
+  L42: if (PROJECTS_LIST_PAGES.includes(location.pathname)) return null;
+  L43: if (!user || loading || !billing) return null;
+  L45: const isSuperAdmin = user.platform_role === 'super_admin';
+  L46: if (isSuperAdmin) return null;
+  L48: const roleDisplay = billing.role_display || user.role;
+  L49: if (NON_BILLING_ROLES.includes(roleDisplay) || NON_BILLING_ROLES.includes(user.role)) return null;
+
+The role check at L49 uses `roleDisplay` (from billing.role_display, which
+is the user's role in their OWN ORG) and `user.role` (platform-level role,
+not project-level). Neither reflects "what's my role in the project I'm
+currently looking at?"
+
+For Zahi's case:
+  - user.role = 'project_manager' (he's PM somewhere, his platform role)
+  - billing.role_display = 'owner' or 'project_manager' (he owns his org)
+  - Neither is 'contractor', so L49 doesn't return null
+  - Banner renders based on billing.read_only = true (his own org expired)
+
+What we want:
+  - When viewing Project A where Zahi is contractor → suppress banner
+    (he can't pay for someone else's org anyway)
+  - When viewing Project B where Zahi is PM (his own org) → show banner
+    (his org is expired, he needs to renew)
+
+PHASED FIX SCOPE — this batch only:
+  - Suppress banner when user is `contractor` or `viewer` in CURRENT
+    project. Fixes the most common false-positive (the contractor case).
+  - **Phase 1 = triage, Phase 2 = the real fix.** The deeper architectural
+    correction is to read the CURRENT project's org subscription rather
+    than the logged-in user's org — that handles ALL edge cases (contractor
+    cross-org, PM cross-org, viewer cross-org, etc.). Phase 1 covers the
+    most common ~90% of confusion (contractor cross-org) and ships fast.
+
+Out of scope (Phase 2 — track as follow-up batch):
+  - Banner reads currentProject.org.subscription_status instead of
+    user.org.subscription_status. Handles: user is PM in someone else's
+    org's project where their org pays but user's own org is expired.
+    Edge case; ship Phase 1 first to unblock contractors today, do the
+    architectural fix when there's bandwidth.
+
+Known optimization (defer — also Phase 2):
+  - This batch adds 1 axios call to /api/projects/{id} per project-page
+    visit (TrialBanner fetches my_role independently from
+    ProjectControlPage's own fetch of the same endpoint). Duplicate
+    fetch — wasteful, ~5–10 ms per page, but not broken (browser cache
+    will dedupe most of it within session).
+  - Future: bubble my_role up via a shared "current project context"
+    so banner reads from cached state. Defer until measurable.
+
+STEP 0 — MANDATORY PRE-FLIGHT
+=============================
+Before editing, Replit MUST run all 4 greps:
+
+  # 1. TrialBanner role check at L48-49
+  git fetch origin staging
+  git show origin/staging:frontend/src/components/TrialBanner.js | sed -n '48,49p'
+  # EXPECT:
+  #     const roleDisplay = billing.role_display || user.role;
+  #     if (NON_BILLING_ROLES.includes(roleDisplay) || NON_BILLING_ROLES.includes(user.role)) return null;
+
+  # 2. NON_BILLING_ROLES const at L30
+  git show origin/staging:frontend/src/components/TrialBanner.js | sed -n '30p'
+  # EXPECT:
+  #     const NON_BILLING_ROLES = ['management_team', 'contractor', 'viewer', 'site_manager', 'execution_engineer', 'safety_assistant'];
+
+  # 3. Early returns at L41-43
+  git show origin/staging:frontend/src/components/TrialBanner.js | sed -n '41,43p'
+  # EXPECT:
+  #     if (AUTH_PAGES.includes(location.pathname)) return null;
+  #     if (PROJECTS_LIST_PAGES.includes(location.pathname)) return null;
+  #     if (!user || loading || !billing) return null;
+
+  # 4. Backend confirms /api/projects/{id} returns my_role to contractors
+  git show origin/staging:backend/contractor_ops/projects_router.py | sed -n '374,398p'
+  # EXPECT: GET /projects/{project_id} populates `proj['my_role']` from
+  # project_memberships for non-super-admin users. Contractor-allowed.
+
+  # 5. Verify project IDs in BrikOps are UUID format (precondition for
+  # the regex /^\/projects\/([a-f0-9-]{36})/). Per CLAUDE.md convention,
+  # all IDs are str UUID via str(uuid.uuid4()) — never ObjectId, never
+  # short codes. This grep should confirm UUID-style IDs in routes.
+  grep -rn "project_id\|projectId" backend/contractor_ops/projects_router.py | head -10
+  # EXPECT: usages reference str project_id consistent with UUID format.
+  # Spot-check by querying any pending invite or project on prod:
+  #   curl -s https://api.brikops.com/api/invites/<id>/info | jq .project_id
+  #   should look like "e8d91c22-875f-4396-b6cc-7dafb31ddfcf" (uuid4).
+  # If any non-UUID project ID found → STOP. The regex would silently
+  # fail (currentProjectRole stays null, banner falls back to current
+  # buggy behavior — no regression but the fix doesn't apply to those
+  # projects).
+
+If ANY pre-flight returns different content → STOP and report.
+
+PART 1 — FRONTEND (1 file)
+==========================
+
+FILE 1 of 1: frontend/src/components/TrialBanner.js
+----------------------------------------------------
+
+LOCATION 1.1 — Imports: add useEffect, useState (already imported), axios,
+                 and useAuth's token + BACKEND_URL.
+
+   CURRENT (L1-7):
+       import React, { useState } from 'react';
+       import { useLocation, useNavigate } from 'react-router-dom';
+       import { useAuth } from '../contexts/AuthContext';
+       import { useBilling } from '../contexts/BillingContext';
+       import { Clock, AlertTriangle, X } from 'lucide-react';
+       import { toast } from 'sonner';
+       import { buildOrgBillingUrl } from '../utils/billingHub';
+
+   REPLACE WITH:
+       import React, { useState, useEffect } from 'react';
+       import axios from 'axios';
+       import { useLocation, useNavigate } from 'react-router-dom';
+       import { useAuth } from '../contexts/AuthContext';
+       import { useBilling } from '../contexts/BillingContext';
+       import { Clock, AlertTriangle, X } from 'lucide-react';
+       import { toast } from 'sonner';
+       import { buildOrgBillingUrl } from '../utils/billingHub';
+       import { BACKEND_URL } from '../services/api';
+
+LOCATION 1.2 — Inside TrialBanner component, after `const { user } = useAuth();`
+                 (L33), pull token too. Then add new useState +
+                 useEffect to track current project's user role.
+
+   CURRENT (L32-43):
+       const TrialBanner = () => {
+         const { user } = useAuth();
+         const { billing, loading, isReadOnly, isOwner, canManageBilling, isOrgPm, setShowPaywall } = useBilling();
+         const location = useLocation();
+         const navigate = useNavigate();
+         const [dismissed, setDismissed] = useState(() => {
+           try { return sessionStorage.getItem('trial_banner_dismissed') === 'true'; } catch { return false; }
+         });
+
+         if (AUTH_PAGES.includes(location.pathname)) return null;
+         if (PROJECTS_LIST_PAGES.includes(location.pathname)) return null;
+         if (!user || loading || !billing) return null;
+
+   REPLACE WITH:
+       const TrialBanner = () => {
+         const { user, token } = useAuth();
+         const { billing, loading, isReadOnly, isOwner, canManageBilling, isOrgPm, setShowPaywall } = useBilling();
+         const location = useLocation();
+         const navigate = useNavigate();
+         const [dismissed, setDismissed] = useState(() => {
+           try { return sessionStorage.getItem('trial_banner_dismissed') === 'true'; } catch { return false; }
+         });
+
+         // 2026-05-09 — Track user's role in the CURRENT project (when on a
+         // project page). Banner suppresses for contractor/viewer because
+         // they can't pay for the project's owning org anyway. Fixes a
+         // false-positive where contractor in Project A (paid by Org A)
+         // saw expired banner just because their OWN org's subscription
+         // was expired — confusing, made them think Project A was broken.
+         const projectMatch = location.pathname.match(/^\/projects\/([a-f0-9-]{36})/);
+         const projectId = projectMatch ? projectMatch[1] : null;
+         const [currentProjectRole, setCurrentProjectRole] = useState(null);
+
+         useEffect(() => {
+           if (!projectId || !token) {
+             setCurrentProjectRole(null);
+             return;
+           }
+           let cancelled = false;
+           axios.get(`${BACKEND_URL}/api/projects/${projectId}`, {
+             headers: { Authorization: `Bearer ${token}` },
+           })
+             .then(res => {
+               if (!cancelled) setCurrentProjectRole(res.data?.my_role || null);
+             })
+             .catch(() => {
+               if (!cancelled) setCurrentProjectRole(null);
+             });
+           return () => { cancelled = true; };
+         }, [projectId, token]);
+
+         if (AUTH_PAGES.includes(location.pathname)) return null;
+         if (PROJECTS_LIST_PAGES.includes(location.pathname)) return null;
+         if (!user || loading || !billing) return null;
+
+LOCATION 1.3 — Add early return for contractor/viewer in current project,
+                 right after the existing role check at L49.
+
+   CURRENT (L48-49):
+       const roleDisplay = billing.role_display || user.role;
+       if (NON_BILLING_ROLES.includes(roleDisplay) || NON_BILLING_ROLES.includes(user.role)) return null;
+
+   REPLACE WITH:
+       const roleDisplay = billing.role_display || user.role;
+       if (NON_BILLING_ROLES.includes(roleDisplay) || NON_BILLING_ROLES.includes(user.role)) return null;
+
+       // 2026-05-09 — Suppress banner if user is contractor/viewer in the
+       // current project (regardless of their global user.role). Fixes
+       // false-positive seen on prod 2026-05-09 — user "צחי שמי" with
+       // own-org expired (Project 808) was contractor in Project 810
+       // (other org paid). Banner showed on both projects; this hides it
+       // for the contractor case where the user can't take action anyway.
+       if (currentProjectRole === 'contractor' || currentProjectRole === 'viewer') return null;
+
+NOTES on LOCATION 1.2 + 1.3 combined:
+  - The new useEffect runs on every projectId/token change (rare —
+    typically once per project visit). One axios call per project page
+    visit; lightweight (~2KB response, cached by browser if URL matches).
+  - State lives in the banner component; doesn't pollute global context.
+  - cancelled flag prevents stale state writes if user navigates fast.
+  - When user navigates from /projects/A to /projects/B → useEffect
+    fires again with new projectId → role updates correctly.
+  - When user navigates from /projects/A to /admin → projectId becomes
+    null → currentProjectRole reset to null → banner uses default behavior
+    (driven by user.role / billing.role_display) — same as before fix.
+  - useEffect runs BEFORE the early returns at L41-43 (because hooks must
+    not be called conditionally per React rules). The early returns at
+    L41-43 are still hit if location is in AUTH_PAGES etc., and the
+    useEffect's fetch is harmless (returns 404 or whatever — caught).
+
+DO NOT TOUCH
+============
+- ❌ Do NOT modify the backend. /api/projects/{id} already returns
+     my_role for contractors and viewers per
+     projects_router.py:389. No backend changes needed.
+- ❌ Do NOT change the existing role check at L49. The new check is
+     ADDITIVE (a tighter contractor-suppress for project pages).
+- ❌ Do NOT add a new BillingContext field. Banner-local state is
+     sufficient. Adding to BillingContext would propagate state we
+     don't need elsewhere.
+- ❌ Do NOT add new dependencies (libraries). axios is already imported
+     across the codebase; useEffect is stdlib React.
+- ❌ Do NOT add Phase 2 logic (PM-in-other-org's-project). Out of scope;
+     defer to follow-up batch.
+- ❌ Do NOT remove the `dismissed` localStorage logic. Trial banner UX
+     for owners stays unchanged.
+
+GLOBAL VERIFY
+=============
+VERIFY 1 — Lint
+    cd frontend && CI=true npm run lint 2>&1 | tail -10
+    EXPECT: no new errors. New deps: useEffect (already used in pattern),
+    axios (already used), token from useAuth (already exposed). No new
+    react-hooks/exhaustive-deps warnings.
+
+VERIFY 2 — Build
+    cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
+        REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com \
+        yarn build 2>&1 | tail -20
+    EXPECT: "Compiled successfully" or with warnings only. No errors.
+
+VERIFY 3 — Manual smoke on staging (after deploy)
+    Setup:
+      a. Need 2 users + 2 orgs + 2 projects for clean repro.
+      b. User U1 owns Org O1 (subscription EXPIRED).
+      c. User U2 owns Org O2 (subscription ACTIVE).
+      d. Project P1 in Org O1.
+      e. Project P2 in Org O2.
+      f. U1 invited as CONTRACTOR to P2 (other org's project).
+
+    Test cases:
+      A. Login as U1 → /projects → no banner (PROJECTS_LIST_PAGES).
+      B. U1 → /projects/{P1}/control (own org's project, expired) →
+         BANNER SHOWS ✅ (U1 is PM/owner, his org is expired).
+      C. U1 → /projects/{P2}/tasks (other org's project, U1 is contractor) →
+         BANNER HIDDEN ✅ (the fix). Pre-fix this would have shown banner.
+      D. U1 → /admin/* or /handover-billing → BANNER SHOWS ✅
+         (no projectId in URL, falls back to user.role behavior — owner
+         of expired org).
+
+    Regression on existing flows:
+      E. Login as U2 (active org) → no banner anywhere. ✅
+      F. Login as super_admin → no banner anywhere. ✅
+      G. Login as a NON_BILLING_ROLES user (e.g. management_team in own
+         org) → no banner. ✅
+
+    On prod, Zahi can repro with his accounts: enter Project 810 (he's
+    contractor) → expect NO banner; enter Project 808 (he's PM, his org
+    expired) → expect banner.
+
+VERIFY 4 — Bundle inspection
+    grep -oE "currentProjectRole|onb-invitelanding-terms" frontend/build/static/js/main.*.js | sort | uniq -c | head -5
+    EXPECT: at least one currentProjectRole occurrence (the React state
+    name might be minified; alternative grep:
+        grep -oE 'projects/\(\?:\[a-f' frontend/build/static/js/main.*.js
+    which finds the regex pattern in the bundle).
+
+DELIVERABLES
+============
+review.txt with:
+  - Rollback SHA (origin/staging HEAD before this commit, currently 61b4d6f)
+  - Per-file diff (single file: TrialBanner.js, ~15 lines added across
+    LOCATION 1.1, 1.2, 1.3)
+  - STEP 0 grep outputs at top (all 4)
+  - VERIFY 1 (lint), VERIFY 2 (build), VERIFY 4 (bundle) outputs
+  - VERIFY 3 manual smoke deferred to Zahi
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(billing): suppress payment banner when user is contractor/viewer in current project
+
+  Bug discovered on prod 2026-05-09: contractors invited to projects
+  of OTHER orgs saw misleading "התשלום פג תוקף" banner.
+
+  Root cause: TrialBanner uses /billing/me (user's own org status).
+  When user.role is project_manager (because user owns their own org)
+  but membership in CURRENT project is contractor, the role-based
+  early-return at L49 doesn't fire — banner renders driven by user's
+  own-org expiry, even though the current project is owned by a
+  paying org and is fully accessible.
+
+  Fix: extract projectId from URL, fetch /api/projects/{id} to read
+  user's project_memberships role for THIS project, suppress banner
+  when role is contractor or viewer. Frontend-only — backend already
+  returns my_role for contractors per projects_router.py:389.
+
+  Out of scope (Phase 2): show banner based on the current project's
+  org subscription rather than user's. Edge case for PMs in
+  cross-org projects; defer.
+
+STEPS
+=====
+1. Run STEP 0 pre-flight (4 greps). Paste outputs at top of review.txt.
+   If any line numbers drifted → STOP and report.
+2. Edit TrialBanner.js LOCATION 1.1 (imports, +2 lines).
+3. Edit TrialBanner.js LOCATION 1.2 (useState + useEffect, +20 lines).
+4. Edit TrialBanner.js LOCATION 1.3 (early return, +8 lines incl comment).
+5. Run VERIFY 1 (lint). Paste output.
+6. Run VERIFY 2 (build). Paste output.
+7. Run VERIFY 4 (bundle inspection). Paste output.
+8. Generate review.txt.
+9. Write .local/.commit_message per template above.
+10. STOP. Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+    Do NOT run ./deploy.sh, ./ship.sh, git commit, or git push.
+
+ROLLBACK
+========
+git revert <commit-sha>
+git checkout staging && ./deploy.sh --stag
+
+Risk: very low. Banner-local state, additive logic. Worst case: extra
+axios call per project page visit (one-time per project). No backend,
+no schema, no migration. Rolls back cleanly.
+
+DEPLOY PACING
+=============
+This is NOT auth-area; the 24h soak rule from CLAUDE.md doesn't apply.
+Standard cadence: review → staging → quick smoke → prod. ~30 min total.
+
+But — this is the THIRD UI-impacting deploy today (505-hotfix this
+morning, 506+506-hotfix afternoon, this banner fix evening). Different
+blast radii (auth vs billing-banner) but all touch user-visible UI.
+
+Recommended cadence:
+  1. Approve spec → Replit edits → review.txt → Zahi approves
+  2. Deploy staging → quick build/lint smoke (~30 min watch)
+  3. Deploy prod
+  4. Real-user verify: Zahi enters Project 810 (he's contractor, other
+     org pays) → expect NO banner; enters Project 808 (he's PM, his
+     org expired) → expect banner.
+  5. Then actually stop for the day.
+
+Phase 2 follow-up (track for next session):
+  - Spec the architectural fix: banner driven by currentProject.org
+    subscription, not user.org. Handles all edge cases. Backend may
+    need a banner-status endpoint accessible to contractors (today
+    /billing/project/{id} 403s for contractor/viewer), or extend
+    /billing/me with `?project_id=X` query param to return per-project
+    context. Decision in next session.
+
+================================================================================
+END OF SPEC
+================================================================================

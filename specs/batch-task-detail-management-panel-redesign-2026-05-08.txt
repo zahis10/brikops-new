@@ -1,0 +1,510 @@
+================================================================================
+P1 — TaskDetailPage management panel: split company + contractor dropdowns
+================================================================================
+Date:           2026-05-08 (after P1 #contractor_nav_company_only deployed)
+Branch:         staging  (NOT main)
+Severity:       P1 — UX cleanup. Reported by Zahi 2026-05-08:
+                "שהכל יהיה ברור וחלק" — current dropdown mixes
+                contractors and "🏢 X — כל החברה" options under one
+                "קבלן" header, plus generic "קבלן משויך" fallback
+                instead of actual contractor name.
+
+Files changed:  1 frontend file (+ 1 backend small fallback fix)
+                  frontend/src/pages/TaskDetailPage.js  (~50 LOC)
+                  backend/contractor_ops/tasks_router.py (+3 LOC)
+
+Tests:          NO new tests (UI restructure). VERIFY visual smoke.
+
+Mobile:         Frontend OTA via Capgo. No native files.
+DB migration:   NONE.
+
+Family:         Standalone P1. No coupling to other batches.
+Reference:      Mirrors NewDefectModal.js L888-922 (existing
+                company/contractor dual-dropdown pattern).
+
+================================================================================
+TWO BUGS, ONE BATCH
+================================================================================
+
+BUG A — Mixed dropdown is confusing:
+  Today the management panel "קבלן" dropdown lists in one bag:
+    - לא שויך
+    - Specific contractors (WUyoughong, צחי שמי, ...)
+    - "🏢 X — כל החברה" company-only options (P1 batch from earlier)
+    - Legacy contact_name fallbacks
+  PMs don't intuitively understand the company-only option is mixed
+  in with specific contractors. The dropdown is also labeled "קבלן"
+  but emits company assignments — semantic mismatch.
+
+  Fix: split into two dropdowns matching NewDefectModal.js pattern:
+    1. "חברה" — picks project_company. Sets task.company_id.
+    2. "קבלן ספציפי" — filtered by selected company. Sets
+       task.assignee_id. Disabled when no company picked.
+
+BUG B — Display shows "קבלן משויך" generic instead of actual name:
+  Backend returns task.assignee_name correctly when the assignee has
+  a project_membership with user_name OR a users.name field set
+  (tasks_router.py L526-530). But for users with empty user_name AND
+  empty users.name (legacy / phone-only contractors), it returns ''
+  and frontend falls through to "קבלן משויך".
+
+  Fix (small backend addition): if user.name is empty, fall back to
+  user.phone or user.email so display shows SOMETHING identifying.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+⚠️ Replit MUST run STEP 0 on workspace post-`git pull`. Spec line numbers
+are approximate.
+
+0.1 — Confirm NewDefectModal pattern still works (reference impl):
+    grep -n "label=\"חברה\"\|label=\"קבלן מבצע\"\|filteredCompanies\|setContractors" \
+        frontend/src/components/NewDefectModal.js
+    Expected hits:
+    - L888 SelectField label="חברה"
+    - L914 SelectField label="קבלן מבצע"
+    - L271-289 contractor filter useEffect by companyId
+    - L274 filter on (m.company_id === companyId || m.user_company_id === companyId)
+    Confirm this pattern works in production today.
+
+0.2 — Confirm current TaskDetailPage state (post P1 dropdown batch):
+    grep -n "companyOnlyOptions\|contactFallbacks\|assignableContractors\|InlineSelect\|handleAssignContractor" \
+        frontend/src/pages/TaskDetailPage.js
+    Expected (post-P1):
+    - L1085-1104 area: assignableContractors, companyOnlyOptions, contactFallbacks
+    - L1110-1132 area: InlineSelect with labelled "קבלן"
+    - L639-699 handleAssignContractor (3 modes: __contact__, null, user_id)
+
+0.3 — Confirm backend already returns task.assignee_name + assignee_company_name:
+    grep -n "task_data\['assignee_name'\]\|task_data\['assignee_company_name'\]" \
+        backend/contractor_ops/tasks_router.py
+    Expected: L530, L536 in get_task. Already exists.
+
+0.4 — Confirm InlineSelect supports `disabled` prop:
+    grep -n "disabled\s*=\|InlineSelect" frontend/src/components/InlineSelect.js
+    OR find the InlineSelect import path and verify it accepts disabled.
+
+0.5 — Confirm projectCompanies loads for management (no scope expansion needed):
+    grep -n "projectCompanies\|projectCompanyService" \
+        frontend/src/pages/TaskDetailPage.js
+    Expected: L240 area inside MGMT branch. Same pattern as projectContractors.
+
+0.6 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — Backend: assignee_name fallback to phone/email
+================================================================================
+
+FILE: backend/contractor_ops/tasks_router.py
+--------------------------------------------
+
+LOCATION 1.1 — extend the assignee_name lookup at L527-530.
+
+  FIND:
+      a_name = assignee_mem.get('user_name', '')
+      if not a_name:
+          a_user = await db.users.find_one({'id': task['assignee_id']}, {'_id': 0, 'name': 1})
+          a_name = a_user.get('name', '') if a_user else ''
+      task_data['assignee_name'] = a_name
+
+  REPLACE WITH:
+      a_name = assignee_mem.get('user_name', '')
+      if not a_name:
+          a_user = await db.users.find_one(
+              {'id': task['assignee_id']},
+              {'_id': 0, 'name': 1, 'phone': 1, 'email': 1}
+          )
+          if a_user:
+              a_name = (a_user.get('name') or '').strip() \
+                  or (a_user.get('phone') or '').strip() \
+                  or (a_user.get('email') or '').strip()
+      task_data['assignee_name'] = a_name
+
+  Now if name is missing, falls back to phone (most identifying for
+  Israeli contractors), then email. Display still useful even for
+  legacy users without `name` set.
+
+DO NOT TOUCH:
+- The assignee_company_name lookup at L531-536 (works fine).
+- The L520 if task.get('assignee_id') guard.
+- Any other endpoint or field.
+
+================================================================================
+PART 2 — Frontend: split management panel into 2 dropdowns
+================================================================================
+
+FILE: frontend/src/pages/TaskDetailPage.js
+------------------------------------------
+
+LOCATION 2.1 — Add handleAssignCompany handler (after handleAssignContractor
+~L699, before getCompanyName ~L701):
+
+  ADD:
+      const handleAssignCompany = async (newCompanyId) => {
+          // Standalone company assignment. Independent from contractor.
+          // Mirrors NewDefectModal.js L890 handleCompanyChange pattern.
+          // If contractor is currently assigned and doesn't belong to the
+          // new company, the contractor is cleared automatically.
+          setSavingField('company');
+          try {
+              const currentAssignee = task?.assignee_id;
+              let nextAssignee = currentAssignee;
+              if (currentAssignee) {
+                  const contractor = projectContractors.find(
+                      c => c.user_id === currentAssignee
+                  );
+                  const contractorCompany = contractor?.company_id || contractor?.user_company_id;
+                  if (contractorCompany !== newCompanyId) {
+                      nextAssignee = null;  // contractor doesn't belong here
+                  }
+              }
+              const assigneeWasCleared = !!currentAssignee && nextAssignee === null;
+              await taskService.update(id, {
+                  company_id: newCompanyId || null,
+                  assignee_id: nextAssignee || null,
+              });
+              // Smart toast — be explicit when assignee gets cleared so
+              // PM doesn't wonder "where did the contractor go".
+              if (!newCompanyId) {
+                  toast.success('שיוך חברה הוסר');
+              } else if (assigneeWasCleared) {
+                  toast.success('חברה שויכה. הקבלן הוסר כי לא שייך לחברה החדשה.');
+              } else {
+                  toast.success('חברה שויכה בהצלחה');
+              }
+              await loadTask();
+          } catch (err) {
+              toast.error('שיוך חברה נכשל');
+          } finally {
+              setSavingField(null);
+          }
+      };
+
+LOCATION 2.2 — Replace the assignment options block at L1071-1132
+              (the entire current "קבלן" InlineSelect including
+              companyOnlyOptions / contactFallbacks).
+
+  REPLACE WITH (a SINGLE block emitting TWO dropdowns):
+
+      <div>
+          <label className="text-xs font-medium text-slate-500 mb-1 block">חברה</label>
+          {(() => {
+              if (projectCompanies.length === 0) {
+                  return (
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-center space-y-1.5">
+                          <p className="text-xs text-amber-800 font-medium">אין חברות בפרויקט</p>
+                          <button
+                              onClick={() => navigate(`/projects/${task.project_id}/control?tab=companies`)}
+                              className="text-xs text-amber-700 underline hover:text-amber-900"
+                          >
+                              הוסף חברה
+                          </button>
+                      </div>
+                  );
+              }
+              return (
+                  <InlineSelect
+                      value={task.company_id || ''}
+                      options={[
+                          { value: '', label: 'לא שויך' },
+                          ...projectCompanies
+                              .filter(pc => pc.name)
+                              .map(pc => ({ value: pc.id, label: `🏢 ${pc.name}` })),
+                      ]}
+                      onChange={handleAssignCompany}
+                      disabled={taskIsClosed || savingField !== null}
+                      label={savingField === 'company' ? 'שומר...' : (
+                          task.company_id
+                              ? `🏢 ${task.company_name || projectCompanies.find(pc => pc.id === task.company_id)?.name || 'חברה משויכת'}`
+                              : 'לא שויך'
+                      )}
+                  />
+              );
+          })()}
+      </div>
+
+      <div>
+          <label className="text-xs font-medium text-slate-500 mb-1 block">קבלן ספציפי</label>
+          {(() => {
+              const filteredContractors = task.company_id
+                  ? projectContractors.filter(c =>
+                      c.role === 'contractor' &&
+                      (c.company_id === task.company_id || c.user_company_id === task.company_id)
+                  )
+                  : [];
+              if (!task.company_id) {
+                  return (
+                      <p className="text-xs text-slate-400 px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+                          בחר חברה תחילה
+                      </p>
+                  );
+              }
+              if (filteredContractors.length === 0) {
+                  return (
+                      <p className="text-xs text-amber-600 px-3 py-2 bg-amber-50 rounded-lg border border-amber-100">
+                          אין קבלנים רשומים בחברה זו
+                      </p>
+                  );
+              }
+              return (
+                  <InlineSelect
+                      value={task.assignee_id || ''}
+                      options={[
+                          { value: '', label: 'לא שויך (כל החברה)' },
+                          ...filteredContractors.map(c => ({
+                              value: c.user_id,
+                              label: c.user_name || c.user_id,
+                          })),
+                      ]}
+                      onChange={handleAssignContractor}
+                      disabled={taskIsClosed || savingField !== null}
+                      label={savingField === 'assignee' ? 'שומר...' : (
+                          task.assignee_id
+                              ? (task.assignee_name
+                                  || projectContractors.find(c => c.user_id === task.assignee_id)?.user_name
+                                  || 'קבלן משויך')
+                              : 'לא שויך (כל החברה)'
+                      )}
+                  />
+              );
+          })()}
+      </div>
+
+LOCATION 2.3 — Trim handleAssignContractor.
+
+  The existing handler at L635-699 has 3 branches:
+   - `__contact__<id>` (company-only, no specific user)
+   - null (clear)
+   - user_id (specific contractor + auto-fill company)
+
+  Now that company is its own dropdown, the `__contact__` branch is
+  not reachable from the new UI. KEEP it for backward compat (it's
+  still a valid taskService.update payload), but no longer triggered
+  by user actions in TaskDetailPage.
+
+  Adjust: when user picks a contractor (user_id branch L663-699), do
+  NOT change task.company_id if it differs from contractor's company.
+  Instead, REJECT silently and let the user reset company first.
+
+  FIND (around L665-668):
+      const companyId = contractor.user_company_id || contractor.company_id;
+      if (!companyId) {
+          toast.error('לא נמצאה חברה עבור הקבלן');
+          return;
+      }
+
+  REPLACE WITH:
+      const companyId = contractor.user_company_id || contractor.company_id;
+      if (!companyId) {
+          toast.error('לא נמצאה חברה עבור הקבלן');
+          return;
+      }
+      // Defensive: contractor's company must match task.company_id (UI
+      // already filters this list — but guard against race).
+      if (task.company_id && task.company_id !== companyId) {
+          toast.error('הקבלן לא משויך לחברה הנבחרת');
+          return;
+      }
+
+  Rest of handleAssignContractor stays as-is.
+
+LOCATION 2.4 — Verify projectContractors filter has `role === 'contractor'`.
+
+  The new filter at LOCATION 2.2 uses:
+      c.role === 'contractor' && (c.company_id === task.company_id || ...)
+
+  Confirm projectContractors is set from members.filter(m => m.role === 'contractor')
+  at L258 (existing). It already only has contractors. The redundant
+  `c.role === 'contractor'` check is defensive.
+
+DO NOT TOUCH:
+- handleStatusChange / handleUpdateField (status, urgency, category dropdowns).
+- handleAssignContractor's main user_id flow (L671-699 — assign API call).
+- The "no companies" empty state at L1080 (now triggered earlier in
+  the new חברה dropdown).
+- 4-grid layout of management panel — replace 1 of 4 cells with 2
+  stacked elements (חברה + קבלן). Adjust grid if needed (e.g.
+  grid-cols-2 → first 3 fields normal, last "shrink to 1 cell"
+  containing both stacked).
+- The שיוך card above the management panel (L1000-1021) — it already
+  shows חברה + קבלן rows correctly using task.company_name +
+  task.assignee_name. PART 1 backend fallback fixes any "לא שויך"
+  edge cases there too.
+- Force close button.
+- Other components (NewDefectModal, ContractorDashboard).
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — yarn build (no new warnings):
+     cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
+
+V2 — pytest task tests (regression):
+     cd backend && python -m pytest tests/test_qc_units_status.py \
+         tests/test_qc_template_upgrade.py \
+         tests/test_contractor_visibility.py -v
+     → all pass.
+
+V3 — grep verification:
+     grep -c "handleAssignCompany" frontend/src/pages/TaskDetailPage.js
+     → ≥ 1.
+
+     grep -c "filteredContractors" frontend/src/pages/TaskDetailPage.js
+     → ≥ 1.
+
+     grep -c "companyOnlyOptions\|contactFallbacks" \
+         frontend/src/pages/TaskDetailPage.js
+     → 0 (both removed).
+
+     grep -c "user.get('phone')\|a_user.get('phone')" \
+         backend/contractor_ops/tasks_router.py
+     → ≥ 1.
+
+V4 — Visual smoke deferred to Zahi after deploy.
+
+  Setup test (using staging or prod with WUyoughong):
+  a) Login as PM. Open a defect.
+  b) Verify management panel shows 4 fields:
+     - סטטוס + דחיפות (existing)
+     - תחום (existing)
+     - חברה (NEW)
+     - קבלן ספציפי (NEW, was "קבלן")
+
+  Bug A — clean dropdown:
+  c) "חברה" dropdown options:
+     - "לא שויך"
+     - "🏢 גמרים"
+     - "🏢 מטלפרס"
+     - ...one per project_company
+     NO contractors mixed in.
+  d) "קבלן ספציפי" dropdown when no company picked:
+     - shows placeholder text "בחר חברה תחילה" (disabled)
+  e) Pick "🏢 גמרים" in חברה dropdown.
+     Toast "חברה שויכה בהצלחה". Page refreshes.
+     "חברה" label = "🏢 גמרים".
+  f) "קבלן ספציפי" dropdown now active. Options:
+     - "לא שויך (כל החברה)"
+     - WUyoughong (only contractors of גמרים)
+  g) Pick WUyoughong. Toast "קבלן שויך בהצלחה".
+     "קבלן ספציפי" label = "WUyoughong" (NOT "קבלן משויך").
+
+  Bug B — display fixed:
+  h) שיוך card above panel shows:
+     "חברה: גמרים"
+     "קבלן: WUyoughong"
+     (was: "קבלן משויך" generic before)
+
+  Edge case — change company:
+  i) From state of (g), change "חברה" to "🏢 מטלפרס".
+     Toast "חברה שויכה בהצלחה".
+     If WUyoughong was the assignee but isn't in מטלפרס:
+       - Backend clears assignee_id (handleAssignCompany logic).
+       - "קבלן ספציפי" returns to "לא שויך (כל החברה)".
+
+  Edge case — clear company:
+  j) Pick "לא שויך" in חברה.
+     Both company_id and assignee_id cleared.
+     Toast "שיוך חברה הוסר".
+
+  Regression — submit proof:
+  k) From state where חברה=גמרים, no specific assignee → contractor in
+     גמרים opens defect → proof card visible (P0 flow).
+  l) Submit proof → status advances to pending_manager_approval.
+  m) PM approves → defect closes.
+
+  Regression — WhatsApp:
+  n) When assignee_id is set explicitly (e.g. WUyoughong) → he gets
+     WhatsApp on defect_assigned event.
+  o) When only company_id is set (assignee_id=null) → no specific
+     person gets WhatsApp (current behavior — unchanged).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (0.1-0.5 grep outputs).
+  - Per-file diff (1 backend + 1 frontend, ~55 LOC).
+  - V1-V3 outputs.
+  - V4 deferred-to-Zahi note (scenarios a-o).
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+
+.local/.commit_message:
+  refactor(task-detail): split management panel into company + contractor
+
+  Reported by Zahi 2026-05-08 — current management panel mixes
+  specific contractors and "🏢 X — כל החברה" company-only options
+  under one "קבלן" dropdown, which is confusing. Plus the assignee
+  display falls through to a generic "קבלן משויך" label when
+  user.name is empty.
+
+  This batch:
+   - Splits the management panel "קבלן" cell into two dropdowns:
+     "חברה" (lists project_companies) and "קבלן ספציפי" (filtered
+     to the selected company's contractors).
+   - Mirrors the existing NewDefectModal.js dual-dropdown pattern
+     for UX consistency.
+   - Backend assignee_name resolver falls back to phone/email when
+     name is empty — fixes the "קבלן משויך" generic display.
+
+  No backend schema changes. No new endpoints. The existing
+  taskService.update endpoint handles both flows. handleAssignContractor
+  user_id branch unchanged for backward compat. companyOnlyOptions
+  and contactFallbacks (added in last P1) removed — superseded by the
+  separate חברה dropdown.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (greps 0.1-0.5; output at top of review.txt).
+2. PART 1 — backend assignee_name fallback to phone/email.
+3. PART 2.1 — handleAssignCompany handler.
+4. PART 2.2 — replace management panel "קבלן" cell with two dropdowns.
+5. PART 2.3 — trim handleAssignContractor (defensive guard).
+6. Run V1-V3.
+7. Generate review.txt + .local/.commit_message.
+8. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+2 files revert. Old confusing dropdown returns. No data corruption —
+pure UI restructure + backend fallback expansion.
+
+NO impact on:
+- NewDefectModal (unchanged — already uses the dual-dropdown pattern
+  this batch copies).
+- WhatsApp / notifications.
+- assignee_id / company_id values in DB.
+- QC, matrix, handover, safety modules.
+
+================================================================================
+RISK
+================================================================================
+
+- The new layout adds one dropdown row to management panel, growing
+  vertical height by ~40px on mobile. Acceptable.
+- handleAssignCompany clears assignee when contractor doesn't match
+  new company. The toast message explicitly mentions this case
+  ("חברה שויכה. הקבלן הוסר כי לא שייך לחברה החדשה.") so PM is not
+  confused (added 2026-05-08 review).
+- Race protection: both dropdowns disabled during any save
+  (savingField !== null). Prevents PM from triggering both updates
+  in rapid succession (added 2026-05-08 review).
+- If projectCompanies is large (>20), the חברה dropdown gets long.
+  Future polish: searchable select.
+- Phone fallback in PART 1 backend may expose a contractor's phone
+  number to peer contractors who view the same defect (when name and
+  email are empty). Acceptable in Israeli construction context where
+  phone numbers are commonly shared between trade partners. If
+  stricter privacy is desired in the future, gate the phone fallback
+  to MGMT_ROLES only and use '—' for non-mgmt viewers.
+
+================================================================================
+END OF SPEC
+================================================================================

@@ -1,0 +1,430 @@
+================================================================================
+P0 HOTFIX — contractor proof flow open to all company members
+================================================================================
+Date:           2026-05-07
+Branch:         staging  (NOT main)
+Severity:       P0 — production bug. Contractors can't close defects assigned
+                to their company unless they are the specific assignee.
+                Reported by Zahi 2026-05-07 with logs from WUyoughong's phone.
+
+Files changed:  2 backend + 1 frontend
+                  backend/contractor_ops/tasks_router.py    (+8 / -2 LOC)
+                  backend/contractor_ops/router.py          (+15 LOC, helper)
+                  frontend/src/pages/TaskDetailPage.js      (+2 / -1 LOC)
+
+Tests:          1 new backend test
+                  backend/tests/test_contractor_proof_company.py
+
+Mobile:         Frontend OTA via Capgo. No native files.
+DB migration:   NONE.
+
+Family:         Standalone P0. No coupling to other batches.
+
+================================================================================
+THE BUG (verified from production logs)
+================================================================================
+
+Backend log lines from WUyoughong (user_id=f19a0407-...) opening defects on
+plot 810:
+
+  [GET_TASK] task_id=8b503b73... user_id=f19a0407...
+    membership_role=contractor user_role=contractor
+    is_contractor=True is_assignee=False is_company_member=True
+    assignee_id=None task_company_id=e5b18eea-... (גמרים)
+
+  [GET_TASK] task_id=4f3ad4cb... user_id=f19a0407...
+    membership_role=contractor user_role=contractor
+    is_contractor=True is_assignee=False is_company_member=True
+    assignee_id=None task_company_id=e5b18eea-...
+
+The contractor sees the defects (because is_company_member=True), but the
+defects have no specific assignee_id. Frontend gates the proof upload card
+on `isAssignee`, which is False here, so the card never renders.
+
+Even if frontend rendered the card, the backend /contractor-proof endpoint
+at L863 also requires `assignee_id == user.id` and would reject with 404.
+
+Same bug pattern across the company: any contractor in the assigned
+company can SEE the defect but none can submit proof unless one of them
+is also the explicit assignee.
+
+================================================================================
+THE FIX (minimum delta)
+================================================================================
+
+Open the proof flow to anyone in the assigned company. Three small changes:
+
+  1. Backend GET /tasks/{id} returns the existing `is_company_member`
+     boolean to frontend (L500 already computes it for the access guard
+     at L491; just include it in task_data).
+
+  2. Backend POST /tasks/{id}/contractor-proof at L863 relaxes the gate:
+     accept if assignee OR company_member (not strictly assignee).
+
+  3. Frontend TaskDetailPage L786 widens showContractorProof:
+     `isAssignee || isCompanyMember` instead of `isAssignee`.
+
+Out of scope for this batch (separate batches if Zahi wants them):
+  - Admin/PM can submit proof.
+  - Management panel collapsed dropdown.
+  - assignee_id reassignment when a non-assignee submits proof.
+  - WhatsApp / reminders changes — STILL go to assignee only. No change.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+⚠️ Replit MUST run STEP 0 on workspace post-`git pull`. Spec line numbers
+are approximate.
+
+0.1 — Confirm backend access guard at GET /tasks/{id} computes
+      is_company_member:
+    grep -n "is_company_member" backend/contractor_ops/tasks_router.py
+    Expected: L482, L483, L488, L490, L491, L500-area —
+      computation block at L482-489, used at L491 for access guard,
+      used at L500 to compute user_project_role.
+      NOT yet returned in task_data response.
+
+0.2 — Confirm contractor_proof endpoint guard:
+    grep -n "Only contractors can submit proof\|הליקוי לא נמצא" \
+        backend/contractor_ops/tasks_router.py
+    Expected: L862 (Only contractors), L864 (הליקוי לא נמצא — assignee
+    check). The L864 check is what we relax.
+
+0.3 — Confirm frontend gate:
+    grep -n "showContractorProof\s*=\|isAssignee\s*=" \
+        frontend/src/pages/TaskDetailPage.js
+    Expected:
+      L235: const isAssignee = task?.assignee_id === user?.id;
+      L786: const showContractorProof = isContractor && isAssignee && ...
+      L787: const showProofLocked = isContractor && isAssignee && ...
+
+0.4 — Confirm no other consumers of `isAssignee` rely on strict equality:
+    grep -n "isAssignee" frontend/src/pages/TaskDetailPage.js
+    Expected: L235 (definition), L786, L787 (usages above), and possibly
+    a few other places. Each usage must be reviewed: does it apply only
+    to the explicit assignee, or to any company member?
+
+    For this batch:
+      - L786 (showContractorProof) → broaden to (isAssignee || isCompanyMember).
+      - L787 (showProofLocked — locks the card when status is
+        pending_manager_approval/closed) → ALSO broaden, otherwise
+        company-member contractors will see an empty space when the
+        flow is locked. Same condition expansion applies.
+      - Any OTHER usage (e.g., conditionally rendering "your defect"
+        labels, navigation hints) → KEEP strict isAssignee. Not broadened.
+
+    Document each usage in review.txt with the decision.
+
+0.5 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — Backend helper for company membership check
+================================================================================
+
+FILE: backend/contractor_ops/router.py
+--------------------------------------
+
+Locate _get_contractor_trade_key (around L66). ADD a new helper:
+
+  async def _is_user_in_task_company(db, user_id: str, task: dict) -> bool:
+      """True if user_id has a project_membership in the task's project
+      whose company_id matches task.company_id.
+
+      Used to broaden access to contractor flows (e.g., proof upload)
+      to all members of the assigned company, not just the specific
+      assignee_id. Returns False if task has no company_id.
+      """
+      task_company_id = task.get('company_id')
+      if not task_company_id:
+          return False
+      mem = await db.project_memberships.find_one(
+          {'user_id': user_id, 'project_id': task['project_id']},
+          {'_id': 0, 'company_id': 1},
+      )
+      if not mem:
+          return False
+      return mem.get('company_id') == task_company_id
+
+DO NOT TOUCH:
+- _get_contractor_trade_key, _trades_match (unchanged).
+- _get_project_role, _get_project_membership (unchanged).
+- MANAGEMENT_ROLES.
+
+================================================================================
+PART 2 — tasks_router.py: return is_company_member + relax proof guard
+================================================================================
+
+FILE: backend/contractor_ops/tasks_router.py
+--------------------------------------------
+
+LOCATION 2.1 — Update import (around L8):
+
+  FIND:
+      from .router import (
+          _check_project_access, _get_project_membership, _get_project_role,
+          _get_contractor_trade_key, _trades_match,
+          ...
+      )
+
+  ADD `_is_user_in_task_company`:
+      from .router import (
+          _check_project_access, _get_project_membership, _get_project_role,
+          _get_contractor_trade_key, _trades_match,
+          _is_user_in_task_company,
+          ...
+      )
+
+LOCATION 2.2 — Return is_company_member in GET /tasks/{id} response.
+
+  At L500 (the user_project_role line), add a sibling line that exposes
+  is_company_member to the frontend.
+
+  FIND (around L500-501):
+      task_data['user_project_role'] = membership['role'] if membership['role'] != 'none' else ('contractor' if (is_assignee or is_company_member) else 'none')
+      task_data['user_project_sub_role'] = membership.get('sub_role')
+
+  REPLACE WITH:
+      task_data['user_project_role'] = membership['role'] if membership['role'] != 'none' else ('contractor' if (is_assignee or is_company_member) else 'none')
+      task_data['user_project_sub_role'] = membership.get('sub_role')
+      task_data['is_company_member'] = is_company_member
+
+  is_company_member is already computed earlier in the function (around
+  L482-489). We just expose it.
+
+LOCATION 2.3 — Relax /contractor-proof guard at L863-864.
+
+  FIND (around L860-867):
+      project_role = await _get_project_role(user, task['project_id'])
+      if project_role != 'contractor' and user['role'] != 'contractor':
+          raise HTTPException(status_code=403, detail='Only contractors can submit proof')
+      if task.get('assignee_id') != user['id']:
+          raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
+      trade_key = await _get_contractor_trade_key(db, user['id'], task['project_id'])
+      if not _trades_match(task.get('category'), trade_key):
+          raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
+
+  REPLACE WITH:
+      project_role = await _get_project_role(user, task['project_id'])
+      if project_role != 'contractor' and user['role'] != 'contractor':
+          raise HTTPException(status_code=403, detail='Only contractors can submit proof')
+      is_assignee = task.get('assignee_id') == user['id']
+      is_company_member = await _is_user_in_task_company(db, user['id'], task)
+      if not (is_assignee or is_company_member):
+          raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
+      trade_key = await _get_contractor_trade_key(db, user['id'], task['project_id'])
+      if not _trades_match(task.get('category'), trade_key):
+          raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
+
+  The trade_match check stays — a contractor whose trade doesn't match
+  the defect category still gets blocked, regardless of assignee/company
+  status. (This is existing behavior; we don't change it.)
+
+LOCATION 2.4 — DO NOT TOUCH:
+- The status update logic below L867 (still bumps to
+  pending_manager_approval — same flow as before).
+- The notification dispatch (still goes to PM, no contractor changes).
+- assignee_id is NEVER changed by this endpoint. The assignee stays
+  the same regardless of who uploaded the proof. Per Zahi: "אם לא
+  מורכב להעביר על הקבלן שסגר — שיישאר על קבלן ישן". We chose simpler.
+- Any other endpoint (force_close, approve, reject, reopen). All keep
+  their current strict assignee-or-management gates.
+
+================================================================================
+PART 3 — Frontend widen showContractorProof + showProofLocked
+================================================================================
+
+FILE: frontend/src/pages/TaskDetailPage.js
+------------------------------------------
+
+LOCATION 3.1 — Add isCompanyMember computed (after L235, around L236).
+
+  FIND:
+      const isAssignee = task?.assignee_id === user?.id;
+      const canManage = isManagement;
+
+  REPLACE WITH:
+      const isAssignee = task?.assignee_id === user?.id;
+      // FIX 2026-05-07: broaden proof flow to all members of the
+      // assigned company, not just the specific assignee. Backend
+      // returns is_company_member on /tasks/{id} response.
+      const isCompanyMember = task?.is_company_member === true;
+      const canManage = isManagement;
+
+LOCATION 3.2 — Widen the gate at L786-787.
+
+  FIND:
+      const showContractorProof = isContractor && isAssignee && proofAllowedStatuses.includes(task.status);
+      const showProofLocked = isContractor && isAssignee && proofLockedStatuses.includes(task.status);
+
+  REPLACE WITH:
+      const canSubmitProof = isContractor && (isAssignee || isCompanyMember);
+      const showContractorProof = canSubmitProof && proofAllowedStatuses.includes(task.status);
+      const showProofLocked = canSubmitProof && proofLockedStatuses.includes(task.status);
+
+  Both flags now follow the same broadened rule. The card text /
+  styling / submit handler stay unchanged.
+
+DO NOT TOUCH:
+- Other usages of isAssignee (e.g. in attachments filters L779-780,
+  in conditional WhatsApp button L885, in assignment card text L1015).
+  Those stay strict — they refer to the specific assignee.
+- handleProofFileChange / handleProofAnnotationSave / handleSubmitProof
+  (the actual submission flow). Unchanged — backend now allows the
+  request; frontend already had the right code path.
+- proofAllowedStatuses / proofLockedStatuses (unchanged).
+
+================================================================================
+PART 4 — New backend test
+================================================================================
+
+FILE: backend/tests/test_contractor_proof_company.py  (NEW, ~80 LOC)
+--------------------------------------------------------------------
+
+T1 — _is_user_in_task_company unit tests:
+     - returns True when user's project_membership.company_id matches
+       task.company_id.
+     - returns False when company_id differs.
+     - returns False when user has no membership.
+     - returns False when task.company_id is None.
+
+T2 — POST /contractor-proof accepts company member who is NOT assignee:
+     Mock contractor user (membership role='contractor', company_id=A).
+     Mock task (assignee_id=other_contractor, company_id=A, category in
+     contractor's trade). Call POST /contractor-proof. Assert 200.
+     Assert status advanced to pending_manager_approval.
+     Assert task.assignee_id is UNCHANGED (still other_contractor).
+
+T3 — POST /contractor-proof rejects contractor in different company:
+     Mock contractor (membership role='contractor', company_id=A). Mock
+     task (assignee_id=other, company_id=B). Call POST. Assert 404.
+
+T4 — GET /tasks/{id} returns is_company_member=true for company member:
+     Mock the same setup as T2. Call GET. Assert response includes
+     is_company_member=True.
+
+T5 — Regression: assignee with matching trade still works (sanity):
+     Mock contractor as assignee. Call POST. Assert 200.
+
+Use existing fixture pattern from test_qc_template_upgrade.py /
+test_contractor_proof_subroles.py. Mock db with AsyncMock; mock storage
+service to skip actual upload.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — yarn build passes (no new warnings).
+     cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
+
+V2 — pytest the new test:
+     cd backend && python -m pytest tests/test_contractor_proof_company.py -v
+     → all pass (T1-T5).
+
+V3 — pytest task suite (regression):
+     cd backend && python -m pytest tests/test_qc_units_status.py \
+         tests/test_qc_template_upgrade.py -v
+     → all pass.
+
+V4 — grep verification:
+     grep -c "_is_user_in_task_company" backend/contractor_ops/router.py
+     → ≥ 1 (definition).
+
+     grep -c "_is_user_in_task_company" backend/contractor_ops/tasks_router.py
+     → ≥ 2 (1 import + ≥1 use).
+
+     grep -c "isCompanyMember" frontend/src/pages/TaskDetailPage.js
+     → ≥ 2 (1 definition + ≥1 use).
+
+     grep -c "is_company_member" backend/contractor_ops/tasks_router.py
+     → existing count + 1 (the new task_data assignment at L500-area).
+
+V5 — Visual smoke deferred to Zahi after deploy.
+
+  Phase A (staging — easy reproducer if demo data is available):
+  a) Login as super_admin in staging.
+  b) Find a project with a contractor company that has 2+ contractors,
+     and a defect with assignee_id matching ONE of them.
+  c) Logout, login as the OTHER contractor (same company, NOT assignee).
+  d) Navigate to the defect's /tasks/{id}.
+  e) ✅ Yellow "צלם הוכחת תיקון" card visible (was hidden before fix).
+  f) Take photo, click "שלח לאישור".
+  g) ✅ POST /tasks/{id}/contractor-proof returns 200.
+  h) ✅ task.status advances to 'pending_manager_approval'.
+  i) ✅ task.assignee_id UNCHANGED (still the original assignee).
+  j) Login as PM, ✅ approve flow works as before.
+
+  Phase B (production verification):
+  k) Plot 810 → defects 8b503b73 / 4f3ad4cb (the ones from the logs)
+     where assignee_id=None and company=גמרים.
+  l) Have WUyoughong open one of them on his phone.
+  m) ✅ Card now visible.
+  n) ✅ He can submit proof, status advances.
+  o) ✅ a7e94375 (which IS assigned to him) still works (regression).
+  p) ✅ WhatsApp/reminders still go only to the original assignee, not
+     to whoever submitted.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (0.1-0.4 grep outputs).
+  - Per-file diff (3 files, ~25 LOC).
+  - V1-V4 outputs.
+  - V5 deferred-to-Zahi note (scenarios a-p).
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+
+.local/.commit_message:
+  fix(tasks): contractor proof flow open to all company members
+
+  Production bug discovered 2026-05-07 from logs: contractors couldn't
+  submit proof on defects assigned to their company unless they were
+  the specific assignee_id. Many defects in production have
+  company_id set but assignee_id=None, leaving all contractors in the
+  company unable to close them.
+
+  Three small changes:
+   1. New helper _is_user_in_task_company in router.py.
+   2. tasks_router.py — GET /tasks/{id} returns is_company_member;
+      POST /contractor-proof accepts assignee OR company_member.
+   3. TaskDetailPage.js — showContractorProof and showProofLocked
+      gate on isAssignee OR isCompanyMember.
+
+  Out of scope (per Zahi):
+   - Admin/PM submitting proof: separate batch.
+   - Management panel UX changes: separate batch.
+   - assignee_id reassignment when a non-assignee submits: deferred,
+     stays unchanged for simplicity.
+   - WhatsApp/reminders behavior unchanged — still goes to the
+     original assignee only.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (greps 0.1-0.4; output at top of review.txt).
+2. PART 1 — _is_user_in_task_company helper.
+3. PART 2 — tasks_router.py import + L500 + L863.
+4. PART 3 — TaskDetailPage.js isCompanyMember + showContractorProof/Locked.
+5. PART 4 — new test file.
+6. Run V1-V4.
+7. Generate review.txt + .local/.commit_message.
+8. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+3 files revert. Bug returns. No data corruption.
+
+NO impact on:
+- Manager flows (force close, approve, reject, reopen).
+- WhatsApp / notifications.
+- QC, matrix, handover, safety.
+- assignee_id values.
+
+================================================================================
+END OF SPEC
+================================================================================

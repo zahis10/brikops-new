@@ -1,0 +1,438 @@
+================================================================================
+BATCH F-keyboard v2 — PhotoAnnotation viewport-aware canvas (TDZ-SAFE)
+================================================================================
+Date:           2026-05-12
+Branch:         staging  (NOT main)
+Severity:       P3 — UX annoyance on iPhone. Same problem as F-keyboard v1
+                (zoom-in when keyboard pops). v1 BROKE STAGING with a TDZ
+                ReferenceError — this v2 fixes the deps-array choice.
+
+                v1 history:
+                - Spec deferred ESLint choice to Build-mode (Option A
+                  eslint-disable vs Option B add applyDisplayScale to
+                  deps).
+                - Replit chose Option B for cleanliness.
+                - Result: deps array `[imageFile, applyDisplayScale]`
+                  evaluates synchronously when imageFile useEffect is
+                  declared (~L105), but applyDisplayScale const is
+                  declared LATER (~L245). const in Temporal Dead Zone
+                  → ReferenceError at render → "משהו השתבש" error
+                  boundary.
+                - Reverted by Zahi 2026-05-12.
+
+                v2 mandates Option A (eslint-disable + `[imageFile]`
+                deps). The closure inside doLoad captures applyDisplayScale
+                lexically; by the time React commits and runs the
+                effect, applyDisplayScale IS initialized. No TDZ.
+
+Approach:       Frontend-only. Same logic as v1 (extract sizing into
+                useCallback + visualViewport.resize listener). Only
+                difference: deps strategy for the imageFile useEffect.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only:
+                  - frontend/src/components/PhotoAnnotation.js
+                    (~+45 LOC: extract sizing useCallback + new
+                    useEffect + 2-line eslint-disable comment)
+                Total: 1 file. No backend, no DB, no env vars, no
+                new dependencies.
+
+Baseline:       origin/staging HEAD = b619a3c (F.1c, 743 LOC, after
+                the v1 revert).
+
+================================================================================
+ROOT CAUSE OF v1 FAILURE — READ BEFORE TOUCHING DEPS
+================================================================================
+
+JavaScript `const` declarations are subject to TDZ — accessing the
+binding before its declaration line throws ReferenceError.
+
+In React render, declarations execute TOP-TO-BOTTOM:
+  L92-103:  viewport-meta useEffect
+  L105-156: imageFile useEffect with doLoad inside
+  L161:     getLineWidth = useCallback(..., [])
+  L163:     redraw = useCallback(..., [getLineWidth])
+  L245:     applyDisplayScale = useCallback(..., [redraw])   ← LATER
+  L277:     resize useEffect with deps [loaded, applyDisplayScale]
+
+If we add `applyDisplayScale` to the imageFile useEffect's deps array:
+```
+useEffect(() => {
+  ... doLoad uses applyDisplayScale ...
+}, [imageFile, applyDisplayScale]);   ← EVALUATED AT L156
+```
+At L156, applyDisplayScale is in TDZ → ReferenceError → CRASH.
+
+The closure `() => { ... applyDisplayScale() ... }` does NOT throw at
+creation — it just captures the binding name. The deps ARRAY does
+throw because it's a synchronous expression evaluated immediately.
+
+**CORRECT FIX (Option A):**
+```
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [imageFile]);
+```
+
+By the time React runs the effect (post-commit), all const declarations
+above have completed. doLoad can safely call applyDisplayScale.
+
+Why eslint-disable is safe:
+  - applyDisplayScale identity is STABLE (deps chain: getLineWidth[] →
+    redraw[getLineWidth] → applyDisplayScale[redraw]).
+  - The deps chain enforcement remains: each useCallback still validates
+    its OWN deps. If a future maintainer makes redraw unstable,
+    exhaustive-deps will catch that on the redraw line.
+  - The closure captured at render N references applyDisplayScale N.
+    Since applyDisplayScale is stable, render N+1's value is identical
+    — no stale closure issue.
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN F-keyboard v2:
+  ✅ Extract sizing into `applyDisplayScale` useCallback (same as v1).
+  ✅ Image-load doLoad calls `applyDisplayScale()` (same as v1).
+  ✅ NEW useEffect with visualViewport.resize + window.resize listeners
+     (same as v1).
+  ✅ imageFile useEffect deps stay `[imageFile]` with eslint-disable
+     comment (DIFFERENT from v1's `[imageFile, applyDisplayScale]`).
+  ✅ Inline comment explains the eslint suppression rationale and the
+     TDZ trap to prevent future maintainers from "fixing" it back.
+
+OUT of F-keyboard v2:
+  ❌ Reordering getLineWidth + redraw + applyDisplayScale before
+     imageFile useEffect (would be the alternative TDZ-free fix, but
+     moves ~120 LOC unnecessarily — higher merge-conflict risk).
+  ❌ Option B (add applyDisplayScale to deps) — REJECTED, causes TDZ.
+  ❌ RAF throttling — future opt, not v1/v2.
+  ❌ Ref-stable wrapper — not needed (redraw is stable per STEP 0.5).
+
+================================================================================
+STEP 0 — PRE-FLIGHT (5 PASS) — RUN BEFORE EDITING
+================================================================================
+
+1. Confirm origin/staging HEAD = b619a3c (F.1c shipped, v1 reverted):
+   $ git log origin/staging --oneline -5
+   →  Expect: b619a3c at HEAD (or 1-2 commits past it if revert is
+      counted as separate commit — verify by looking at LOC count).
+
+2. Confirm file at 743 LOC (matches F.1c state):
+   $ wc -l frontend/src/components/PhotoAnnotation.js
+   →  Expect: 743.
+   ✓ If >743 → drift detected, possibly v1 remnants.
+
+3. Confirm imageFile useEffect ends with `}, [imageFile]);` at L156:
+   $ grep -n "\}, \[imageFile\]);" \
+       frontend/src/components/PhotoAnnotation.js
+   →  Expect: 1 hit. The current deps array is just `[imageFile]`.
+
+4. Confirm redraw stability chain (same as v1's STEP 0.5):
+   $ grep -A 3 "const redraw = useCallback" ...
+   $ grep -A 3 "const getLineWidth = useCallback" ...
+   →  redraw deps `[getLineWidth]`; getLineWidth deps `[]`. STABLE.
+
+5. Confirm `applyDisplayScale` and `visualViewport` NOT yet present:
+   $ grep -c "applyDisplayScale\|visualViewport" ...
+   →  Expect: 0 (clean baseline after v1 revert).
+
+================================================================================
+LOCATION 1 — Extract applyDisplayScale callback
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: AFTER the `redraw` useCallback closing `}, [getLineWidth]);`
+        (at L243 in F.1c state).
+
+ADD AFTER (identical to v1 LOCATION 1):
+
+  // BATCH F-keyboard (2026-05-12) — recompute canvas display
+  // dimensions based on the current visual viewport. Called on
+  // image load AND on viewport resize (mobile keyboard pop). The
+  // intrinsic canvas resolution (canvas.width / canvas.height)
+  // stays fixed — we only update CSS display size + scaleRef.
+  // After resize, redraw refreshes the bbox cache for hit-testing.
+  const applyDisplayScale = useCallback(() => {
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    if (!canvas || !img) return;
+    const w = canvas.width;
+    const h = canvas.height;
+    if (!w || !h) return;
+    const vv = window.visualViewport;
+    const containerW = vv ? vv.width : window.innerWidth;
+    const containerH = (vv ? vv.height : window.innerHeight) - 120;
+    const displayScale = Math.min(containerW / w, containerH / h, 1);
+    scaleRef.current = displayScale;
+    canvas.style.width = Math.round(w * displayScale) + 'px';
+    canvas.style.height = Math.round(h * displayScale) + 'px';
+    redraw(strokesRef.current);
+  }, [redraw]);
+
+================================================================================
+LOCATION 2 — Image-load useEffect calls applyDisplayScale
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: doLoad async function inside `useEffect(...,[imageFile])`
+        (L105-156 in F.1c state).
+
+BEFORE (the relevant block inside doLoad):
+
+      imgRef.current = img;
+
+      const containerW = window.innerWidth;
+      const containerH = window.innerHeight - 120;
+      const displayScale = Math.min(containerW / w, containerH / h, 1);
+      scaleRef.current = displayScale;
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.width = w;
+      canvas.height = h;
+      canvas.style.width = Math.round(w * displayScale) + 'px';
+      canvas.style.height = Math.round(h * displayScale) + 'px';
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      setLoaded(true);
+
+AFTER:
+
+      imgRef.current = img;
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.width = w;
+      canvas.height = h;
+
+      // BATCH F-keyboard — apply initial scale via the same callback
+      // that listens to viewport resize. Keeps the math in one place.
+      applyDisplayScale();
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      setLoaded(true);
+
+================================================================================
+LOCATION 3 — imageFile useEffect deps: KEEP [imageFile] with eslint-disable
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: the closing line of the imageFile useEffect.
+
+**CRITICAL — DO NOT add applyDisplayScale to this deps array.** It
+would trigger a TDZ ReferenceError because applyDisplayScale is
+declared LATER in the file (LOCATION 1 inserts it AFTER redraw, which
+is after this useEffect).
+
+BEFORE (current F.1c state):
+    return () => {
+      cancelled = true;
+      if (urlRef.current) {
+        URL.revokeObjectURL(urlRef.current);
+        urlRef.current = null;
+      }
+    };
+  }, [imageFile]);
+
+AFTER:
+    return () => {
+      cancelled = true;
+      if (urlRef.current) {
+        URL.revokeObjectURL(urlRef.current);
+        urlRef.current = null;
+      }
+    };
+    // BATCH F-keyboard — DO NOT add applyDisplayScale to deps.
+    //
+    // doLoad uses applyDisplayScale, but the const is declared LATER
+    // in the file (after redraw, which is after this useEffect).
+    // Adding it to the deps array would evaluate the binding at this
+    // line, in TDZ → ReferenceError at first render. v1 of this
+    // batch tried that and crashed staging — reverted 2026-05-12.
+    //
+    // SAFE because: applyDisplayScale identity is STABLE
+    // (deps chain: getLineWidth[] → redraw[getLineWidth] →
+    // applyDisplayScale[redraw]). The closure inside doLoad captures
+    // it lexically; by commit phase all consts are initialized.
+    //
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageFile]);
+
+================================================================================
+LOCATION 4 — visualViewport.resize + window.resize listener useEffect
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: NEW useEffect, AFTER applyDisplayScale (LOCATION 1).
+
+ADD (identical to v1 LOCATION 3):
+
+  // BATCH F-keyboard (2026-05-12) — listen for viewport changes
+  // (mobile keyboard appearance is the primary use case) and
+  // recompute the canvas display scale. Without this, the canvas
+  // keeps its original dimensions and gets clipped behind the
+  // keyboard, appearing zoomed-in.
+  useEffect(() => {
+    if (!loaded) return;
+
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener('resize', applyDisplayScale);
+    }
+    window.addEventListener('resize', applyDisplayScale);
+
+    return () => {
+      if (vv) {
+        vv.removeEventListener('resize', applyDisplayScale);
+      }
+      window.removeEventListener('resize', applyDisplayScale);
+    };
+  }, [loaded, applyDisplayScale]);
+
+Note: this useEffect's deps array CAN include applyDisplayScale because
+this useEffect is declared AFTER applyDisplayScale in source order.
+No TDZ here.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ MAX_CANVAS_SIZE constant (1280).
+- ❌ Image scaling math (the ratio before `canvas.width = w`).
+- ❌ scaleRef itself — same ref, just updated by new callback.
+- ❌ redraw callback body — unchanged.
+- ❌ Touch / mouse handlers.
+- ❌ pendingText overlay, size picker, color picker, T button, Save/Undo.
+- ❌ Viewport-meta useEffect (L92-103).
+- ❌ Drag state (draggingTextRef).
+- ❌ F + F.1a + F.1b + F.1b-hf-1 + F.1c logic — all preserved.
+- ❌ Backend / parent contract / saved JPEGs.
+
+**DO NOT** under any circumstance:
+- Add applyDisplayScale to imageFile useEffect deps.
+- "Fix" the eslint-disable comment by moving applyDisplayScale UP
+  without ALSO moving redraw and getLineWidth (the entire deps chain
+  must be reordered if you want to drop the suppression).
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
+   →  EXIT=0 expected. No ESLint warnings (suppression on that one line).
+
+================================================================================
+VERIFY 2 — TDZ smoke (CRITICAL — repeat-check for v1's exact failure)
+================================================================================
+
+TDZ is a RUNTIME error, not a build-time error. Build will succeed
+even if the deps array references a const-in-TDZ. The error boundary
+fires only when the component renders in a browser.
+
+A curl/grep trick won't catch this:
+  - curl returns initial HTML (pre-React render).
+  - The error fires at React render, after the bundle executes.
+  - The fallback page text "משהו השתבש" (Hebrew) is rendered by
+    React's error boundary at runtime.
+
+Cowork (Replit Agent) side:
+  - Confirm `yarn build` EXIT=0 (proves no syntax / import issue).
+  - Do NOT attempt curl-based TDZ detection — it can't work.
+
+Zahi side (MANDATORY before staging deploy):
+  1. Open the staging URL (or local dev server) in a browser.
+  2. Log in, navigate to a defect, open PhotoAnnotation with a photo.
+  3. If the modal renders normally → TDZ-safe ✓.
+  4. If "משהו השתבש" / "Something went wrong" error boundary fires
+     → TDZ regression → ABORT, revert immediately, do not proceed
+     to other smoke tests.
+
+This is the v1 failure repeat-check. Don't skip.
+
+================================================================================
+VERIFY 3 — File size sanity
+================================================================================
+$ wc -l frontend/src/components/PhotoAnnotation.js
+   →  Expect: ~788 (743 + ~45). Spec scope-creep cap 830.
+
+================================================================================
+VERIFY 4 — grep sanity
+================================================================================
+$ grep -n "applyDisplayScale\|visualViewport" ...
+   →  Expect: ~9 hits (useCallback def + doLoad call + 4 in resize
+     useEffect + 2 comment refs in eslint-disable block + 1 more).
+
+$ grep -n "eslint-disable-next-line react-hooks/exhaustive-deps" ...
+   →  Expect: 1 hit (LOCATION 3, on the imageFile useEffect).
+
+$ grep -n "applyDisplayScale" frontend/src/components/PhotoAnnotation.js | head -1
+   →  First occurrence should be inside the eslint-disable comment
+     block at LOCATION 3 (~L155), explaining why we don't add it to
+     deps. Or the actual declaration at LOCATION 1 (~L245) if comments
+     don't grep. Verify it's NOT in a deps array at L156 or earlier.
+
+================================================================================
+VERIFY 5 — Manual smoke (DEFERRED TO ZAHI)
+================================================================================
+
+**A — TDZ regression check (PRIMARY — NON-NEGOTIABLE):**
+  1. Open the app on iPhone.
+  2. Navigate to a defect → tap "צלם תמונה" → take photo → tap
+     "שימוש בתמונה".
+  EXPECT: PhotoAnnotation modal opens normally. NO "משהו השתבש"
+  error boundary.
+
+  **If A fails → STOP immediately. Do NOT run B-G. Revert from
+  staging. v1's exact failure mode.**
+
+**B — Original zoom bug fix (run ONLY after A passes):**
+  1. Inside the modal, T → tap canvas → keyboard pops.
+  EXPECT: canvas shrinks to fit visible area. Full image visible
+  (smaller), not cropped.
+
+**C — Keyboard cycle:**
+  1. Open keyboard via overlay input.
+  2. Close keyboard (אישור / ביטול).
+  3. Re-open keyboard.
+  EXPECT: canvas resizes smoothly each cycle.
+
+**D — F.1c regression:**
+  1. Add a label. Tap on it.
+  EXPECT: edit overlay opens (F.1c works).
+
+**E — F.1b regression:**
+  1. Add a label. Drag it.
+  EXPECT: drag works (F.1b works).
+
+**F — Save:**
+  1. Add label, save.
+  EXPECT: JPEG uploads at full intrinsic resolution.
+
+**G — Cross-platform:**
+  - Test A + B on iPhone (Capacitor) AND Android.
+  EXPECT: both work.
+
+================================================================================
+RISK
+================================================================================
+Very low after v1 lesson.
+
+- ⚠ The eslint-disable is documented inline so future maintainers
+  don't "fix" it. The comment also points to v1's revert as the
+  cautionary tale.
+- ⚠ Stability of applyDisplayScale relies on redraw + getLineWidth
+  staying with their current deps. If broken, ESLint catches it
+  on those lines.
+- ⚠ Same v1 risks otherwise (Android double-fire, manual zoom,
+  intrinsic resolution unchanged) — all preserved.
+
+Bundle size: zero.
+Performance: identical to v1.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+- Reverts ONLY this batch. F + F.1 series remain shipped.
+- Keyboard zoom annoyance returns. No functional regression.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

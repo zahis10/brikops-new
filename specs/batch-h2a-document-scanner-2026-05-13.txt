@@ -1,0 +1,584 @@
+================================================================================
+BATCH H.2a — iOS/Android Document Scanner (Capacitor plugin)
+================================================================================
+Date:           2026-05-13
+Branch:         staging  (NOT main)
+Severity:       P2 — first of 3 micro-batches in the H.2-Bundle
+                native release. Per Zahi 2026-05-13: split for
+                cleaner code review + per-feature TestFlight
+                validation. All 3 batches will be merged before any
+                App Store/Play Console submission (single review
+                cycle).
+
+                **Sequence:**
+                  - H.2a (this batch) — Document Scanner
+                  - H.2b — Universal Links + App Links
+                  - H.2c — Contact Picker
+
+                Each batch ships OTA-deployable parts to prod as
+                they pass review.txt. Native build via `./ship.sh`
+                happens per batch into TestFlight Internal Testing
+                ONLY (no Apple review). Once all 3 are verified on
+                real devices, ONE bundled submit to App Store /
+                Play Console review.
+
+Approach:       Frontend-only + native plugin install + native sync.
+
+                Plugin choice: **@capacitor-mlkit/document-scanner**
+                (Capawesome family) — actively maintained, MLKit-
+                backed:
+                  - iOS: uses Apple's native VNDocumentCameraViewController
+                    (Vision Kit — already in iOS SDK, no extra pod
+                    weight)
+                  - Android: Google ML Kit Document Scanner (GMS
+                    module auto-downloaded on first scan, minimal
+                    APK delta)
+                  - Capacitor 7.x compatible (BrikOps is on
+                    @capacitor/core ^7.6.1)
+                  - MIT license
+
+                The plugin returns scanned pages as image URIs. The
+                BrikOps wrapper converts each URI to a File object
+                so existing photo flows can consume them.
+
+                Camera permission is **REUSED** — `NSCameraUsageDescription`
+                (iOS) and `<uses-permission android.permission.CAMERA>`
+                (Android) are already declared for existing photo
+                flows. No new permission prompts. Apple reviewers
+                won't see a new permission for this batch — minor
+                wording extension is optional but not in scope.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend (~50 LOC) + native plugin install:
+                  - frontend/package.json (+1 dep)
+                  - frontend/src/components/DocumentScannerButton.jsx
+                    (NEW, ~40 LOC)
+                  - frontend/src/components/NewDefectModal.js (+8 LOC
+                    integration point — render scanner button next
+                    to existing camera trigger)
+                  - frontend/ios/App/Podfile (auto-updated by
+                    `npx cap sync`)
+                  - frontend/android/app/build.gradle (auto-updated
+                    by `npx cap sync`)
+                Total: 3 files manually edited + 2 files auto-updated.
+                NO backend, NO DB, NO env vars.
+
+Baseline:       origin/staging HEAD = post-H.1 + privacy update
+                (commit TBD after privacy ships). PhotoAnnotation +
+                H.1 + privacy policy 7א all preserved.
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN H.2a:
+  ✅ Install `@capacitor-mlkit/document-scanner@^7` via npm.
+  ✅ Run `npx cap sync` to wire native config (Podfile + Gradle).
+  ✅ NEW `DocumentScannerButton.jsx` — wrapper component:
+       - Calls `DocumentScanner.scan()` on tap.
+       - Converts scanned image URIs to File objects (compatible
+         with existing image consumers).
+       - Hidden on web (`Capacitor.isNativePlatform()` guard).
+       - Hebrew label: "סרוק מסמך".
+  ✅ Integration in NewDefectModal — single integration point for
+     this batch. Renders scanner button next to the existing
+     "צלם תמונה" / "בחר מגלריה" buttons. Scanned files push into
+     `images[]` state via existing setImages spread pattern (verified
+     existing handler accepts multi-file in audit).
+
+OUT of H.2a:
+  ❌ Integration in plan upload flows (ProjectPlansPage,
+     UnitPlansPage) — future polish if PMs want to scan paper
+     blueprints. Not blocking.
+  ❌ Integration in defect proof / attachment flows
+     (TaskDetailPage, StageDetailPage). Same — future polish.
+  ❌ Integration in handover flows (HandoverSectionPage,
+     HandoverItemModal). Future.
+  ❌ NSCameraUsageDescription wording extension (current "מצלמה
+     לצילום ליקויים..." is generic enough to cover document
+     scanning. Apple has not historically rejected this scope).
+  ❌ H.2b (Universal Links) — separate spec.
+  ❌ H.2c (Contact Picker) — separate spec.
+  ❌ Apple/Google review submission — happens AFTER all 3
+     batches verified on TestFlight + Internal Testing.
+
+**Single-integration rationale (MINIMAL BY DESIGN):**
+H.2a integrates the scanner in ONE place (NewDefectModal) on
+purpose. This validates:
+  - Plugin install + cap sync flow on both iOS + Android.
+  - File-conversion path (URI → Blob → File).
+  - Integration with the existing `images[]` state pattern.
+  - Web fallback (button hidden when `Capacitor.isNativePlatform()`
+    returns false).
+
+**Expand later, not now.** If the scanner proves valuable in the
+field (PMs report usage), an H.2a-followup batch will add it to:
+  - Plan upload (ProjectPlansPage + UnitPlansPage — useful for
+    scanning paper blueprints).
+  - Defect proof flows (TaskDetailPage Instance B contractor
+    proof — useful for scanning receipts/work-order docs).
+  - Handover flows (HandoverSectionPage + HandoverItemModal —
+    useful for scanning signed forms).
+
+**Decision criterion** for expansion: real PM usage data after
+H.2a ships, NOT theoretical use cases. Don't pre-build for users
+who haven't asked.
+
+================================================================================
+STEP 0 — PRE-FLIGHT (9 PASS)
+================================================================================
+
+1. Confirm baseline (privacy policy shipped, H.1 in prod):
+   $ git log origin/staging --oneline -5
+   →  Expect: privacy policy commit on top of H.1.
+
+2. Confirm Capacitor 7.x:
+   $ grep '@capacitor/core' frontend/package.json
+   →  Expect: `"@capacitor/core": "^7.6.1"` or compatible.
+
+3. Confirm `@capacitor-mlkit/document-scanner` NOT yet installed:
+   $ grep 'document-scanner' frontend/package.json
+   →  Expect: 0 hits. Clean baseline.
+
+4. Confirm DocumentScannerButton.jsx does NOT exist:
+   $ ls frontend/src/components/DocumentScannerButton.jsx
+   →  Expect: file not found.
+
+5. Confirm NewDefectModal has the existing camera/gallery buttons
+   (the integration anchor):
+   $ grep -nA 2 "צלם תמונה\|בחר מגלריה\|cameraTrigger" \
+       frontend/src/components/NewDefectModal.js
+   →  Expect: existing camera button JSX. New scanner button is a
+     sibling.
+
+6. Confirm `images[]` state + `setImages` spread accepts multi-file
+   (verified in earlier audit — Step 0 just re-checks):
+   $ grep -n "setImages(prev => \[\.\.\.prev" \
+       frontend/src/components/NewDefectModal.js
+   →  Expect: ≥1 hit. Scanner output (array of File) plugs in via
+     same pattern.
+
+7. **Cap sync snapshot — REQUIRED procedure:**
+   BEFORE running `npm install` + `npx cap sync`:
+     $ git status
+     $ git diff frontend/ios/App/Podfile > /tmp/podfile-before.diff
+     $ git diff frontend/android/app/build.gradle > /tmp/gradle-before.diff
+   (Capture baseline. If anything is already dirty, investigate first.)
+
+   AFTER running `npm install @capacitor-mlkit/document-scanner@^7`
+   and `npx cap sync`:
+     $ git diff frontend/ios/App/Podfile
+     $ git diff frontend/android/app/build.gradle
+
+   EXPECTED CHANGES:
+     - Podfile: ADD `pod 'CapacitorMlkitDocumentScanner', ...` entry.
+     - build.gradle: ADD a `play-services-mlkit-document-scanner`
+       gradle dep OR a new `capacitor_mlkit_document_scanner` module
+       (depending on plugin packaging).
+
+   UNEXPECTED CHANGES TO INVESTIGATE BEFORE PROCEEDING:
+     - Other plugin version bumps (e.g., Capacitor core).
+     - Project structure changes.
+     - Other Pods auto-bumped.
+
+   If unexpected diff appears → STOP, investigate. Document the diff
+   in review.txt.
+
+8. **Plugin version availability + Capacitor compat
+   (CRITICAL — verify BEFORE install):**
+   $ npm view @capacitor-mlkit/document-scanner versions --json | tail -5
+   →  Confirm a v7.x tag exists.
+
+   $ npm view @capacitor-mlkit/document-scanner peerDependencies
+   →  Confirm peer dep matches BrikOps's `@capacitor/core ^7.6.1`.
+       Expected: peer dep something like `@capacitor/core ^7.0.0`.
+
+   IF v7.x NOT AVAILABLE:
+     - Check latest v6.x via `npm view @capacitor-mlkit/document-scanner@6 version`.
+     - Read plugin README for stated Capacitor compat range.
+     - If v6 supports Capacitor 7 → fall back to `^6`.
+     - If neither v6 nor v7 supports Capacitor 7 → STOP. Try
+       `@capacitor-community/document-scanner` instead, OR escalate
+       to Zahi for plugin choice decision.
+
+   Document chosen version in review.txt with rationale.
+
+9. **Plugin API verification (CRITICAL — verify AFTER install,
+   BEFORE writing/finalizing LOCATION 3 wrapper):**
+   $ cat node_modules/@capacitor-mlkit/document-scanner/dist/esm/definitions.d.ts | head -50
+
+   Confirm the ACTUAL API matches what LOCATION 3 expects:
+     - Method name: `DocumentScanner.scan()` exists?
+       (Could be `scanDocument()` or similar — verify.)
+     - Return shape: `{ scannedImages: string[] }`?
+       (Could be `{ pages: string[] }`, `{ images: string[] }`, or
+       even `{ images: { uri: string }[] }` — verify exact field.)
+     - URI format: returned strings — are they `file://` URIs that
+       work with `fetch(uri)`?
+       (Some plugins return base64 data URIs, some return content://
+       paths that need separate file API calls.)
+     - Cancellation: when user cancels the native UI, does the
+       promise:
+         (a) throw an error? (LOCATION 3 assumes this — catches "cancel")
+         (b) resolve with empty/null? (Different handling needed.)
+       Verify by reading the README or definitions file.
+
+   **DRIFT NOTE:** the spec's LOCATION 3 code was written based on
+   the documented API as of 2026-05-13. If the actual installed
+   version differs, ADJUST LOCATION 3 before implementing. Document
+   any API drift in review.txt.
+
+   Common drift patterns to watch for:
+     - Return shape: rename `scannedImages` → whatever the plugin
+       actually returns.
+     - URI conversion: if plugin returns base64, use
+       `dataURItoBlob` instead of `fetch(uri).then(r => r.blob())`.
+     - Cancellation: if resolve-with-null, replace
+       `if (err?.message?.includes('cancel'))` with
+       `if (!result || !result.scannedImages?.length) return`.
+
+================================================================================
+LOCATION 1 — Install plugin
+================================================================================
+$ cd frontend && npm install --save @capacitor-mlkit/document-scanner@^7
+
+Add `"@capacitor-mlkit/document-scanner": "^7.x.x"` to
+`frontend/package.json` dependencies (exact version chosen by npm).
+
+================================================================================
+LOCATION 2 — Native sync
+================================================================================
+$ cd frontend && npx cap sync
+
+This regenerates iOS Pods + Android module mapping. Auto-updates:
+  - frontend/ios/App/Podfile
+  - frontend/android/app/build.gradle (if applicable)
+  - frontend/ios/App/Pods/ (generated, gitignored typically)
+  - frontend/android/capacitor.settings.gradle
+
+================================================================================
+LOCATION 3 — NEW: DocumentScannerButton.jsx
+================================================================================
+File: frontend/src/components/DocumentScannerButton.jsx (NEW)
+
+  import React, { useCallback } from 'react';
+  import { Camera } from 'lucide-react';
+  import { DocumentScanner } from '@capacitor-mlkit/document-scanner';
+  import { Capacitor } from '@capacitor/core';
+  import { toast } from 'sonner';
+
+  /**
+   * BATCH H.2a (2026-05-13) — wrapper around the native document
+   * scanner. iOS uses VNDocumentCameraViewController (Apple system
+   * Vision Kit). Android uses Google ML Kit Document Scanner.
+   *
+   * Hidden on web (no plugin functionality there).
+   *
+   * Props:
+   *   - onScan: (files: File[]) => void
+   *     Called with the scanned pages as File objects (JPG, one per
+   *     page). Consumer pushes into images[] via existing flow.
+   *   - label?: string (default "סרוק מסמך")
+   *   - className?: string (styling — match the existing
+   *     "צלם תמונה" button)
+   */
+  export default function DocumentScannerButton({
+    onScan,
+    label = 'סרוק מסמך',
+    className = ''
+  }) {
+    const handleClick = useCallback(async () => {
+      if (!Capacitor.isNativePlatform()) {
+        toast.error('סריקת מסמכים זמינה רק באפליקציה');
+        return;
+      }
+
+      try {
+        const result = await DocumentScanner.scan();
+        const uris = result?.scannedImages || [];
+
+        if (uris.length === 0) return; // user cancelled
+
+        // Convert each URI to a File so the existing photo flow can
+        // consume it. Mirrors how a regular camera shot becomes a File.
+        const files = await Promise.all(uris.map(async (uri, i) => {
+          const resp = await fetch(uri);
+          const blob = await resp.blob();
+          return new File(
+            [blob],
+            `scan-${Date.now()}-${i}.jpg`,
+            { type: 'image/jpeg' }
+          );
+        }));
+
+        if (files.length > 0) onScan(files);
+      } catch (err) {
+        // User cancellation tends to throw — silence those.
+        if (err?.message?.toLowerCase?.().includes('cancel')) return;
+        console.error('DocumentScanner error:', err);
+        toast.error('שגיאה בסריקת המסמך');
+      }
+    }, [onScan]);
+
+    // Hide on web — there's no native scanner there.
+    if (!Capacitor.isNativePlatform()) return null;
+
+    return (
+      <button
+        type="button"
+        onClick={handleClick}
+        className={className}
+      >
+        <Camera className="w-4 h-4 ml-1" />
+        {label}
+      </button>
+    );
+  }
+
+Notes:
+- `Capacitor.isNativePlatform()` returns false on web → button hides
+  → no broken UX in the web build.
+- Errors from user cancellation are silenced. Other errors get a
+  Hebrew toast.
+- File naming pattern (`scan-{timestamp}-{index}.jpg`) mirrors the
+  existing convention for annotated photos (e.g., `annotated.jpg`).
+
+================================================================================
+LOCATION 4 — Integration in NewDefectModal
+================================================================================
+File: frontend/src/components/NewDefectModal.js
+
+Anchor: find the existing camera/gallery button area (likely a flex
+row with "צלם תמונה" + "בחר מגלריה" buttons). The exact line varies
+post-H.1 but content anchor is stable.
+
+ADD import (top of file with other component imports):
+  import DocumentScannerButton from './DocumentScannerButton';
+
+INSERT button JSX as a sibling next to the existing camera/gallery
+buttons. The scanner button styling should match the existing
+"בחר מגלריה" button (secondary action):
+
+  {/* BATCH H.2a (2026-05-13) — document scanner. Hidden on web. */}
+  <DocumentScannerButton
+    onScan={(files) => {
+      // BATCH H.2a — push scanned pages into images[] via existing
+      // pattern. originalFile === file for scanner output (no
+      // annotation step yet — just raw scan).
+      const newImages = files.map(f => ({
+        file: f,
+        originalFile: f,
+      }));
+      setImages(prev => [...prev, ...newImages]);
+    }}
+    className="<MATCH_EXISTING_BUTTON_STYLE>"
+  />
+
+Replace `<MATCH_EXISTING_BUTTON_STYLE>` with the className used by
+the adjacent "בחר מגלריה" button (Replit can lift it verbatim — same
+visual weight, secondary action, dashed border or similar based on
+existing pattern).
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ Existing camera button / gallery button JSX. Add as sibling.
+- ❌ Existing `images[]` state shape — scanner output uses the same
+     `{file, originalFile}` shape as camera shots.
+- ❌ PhotoAnnotation flow — scanner output goes directly into
+     `images[]`, NOT through PhotoAnnotation (scanner is for
+     documents, not for drawing on photos).
+- ❌ Single-file vs multi-file existing handlers.
+- ❌ Other 6 PhotoAnnotation consumer sites (TaskDetailPage,
+     StageDetailPage, HandoverSectionPage, HandoverItemModal,
+     NewDefectModal Instance A). They don't get the scanner button
+     in this batch.
+- ❌ NSCameraUsageDescription text — existing wording covers scanner.
+- ❌ AndroidManifest.xml CAMERA permission — already declared.
+- ❌ Backend / parent contract / saved files.
+- ❌ H.1 BulkPlanUploadModal (different feature track).
+- ❌ Privacy Policy 7א — already shipped.
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — Cap sync diff inspection (CRITICAL)
+================================================================================
+After `npx cap sync`, inspect the diff:
+
+$ git diff frontend/ios/App/Podfile
+$ git diff frontend/android/app/build.gradle
+
+EXPECTED:
+- Podfile: 1 new `pod 'CapacitorMlkitDocumentScanner'` (or similar
+  exact name from the plugin) line.
+- build.gradle: 1 new gradle dep OR module reference. May also
+  include a `capacitor_mlkit_document_scanner` project in
+  capacitor.settings.gradle.
+
+If diff includes OTHER changes (e.g., Capacitor core version bump,
+other pods touched) → document them in review.txt. DO NOT silently
+ship unexpected changes.
+
+================================================================================
+VERIFY 3 — grep sanity
+================================================================================
+$ grep -n "document-scanner\|DocumentScanner\|DocumentScannerButton" \
+    frontend/src/ frontend/package.json
+   →  Expect ≥5 hits:
+       - package.json dep entry
+       - DocumentScannerButton.jsx default export + 3 internal refs
+       - NewDefectModal.js import + 1 JSX usage
+
+$ grep -rn "<DocumentScannerButton" frontend/src/
+   →  Expect: 1 hit (only NewDefectModal in this batch).
+
+================================================================================
+VERIFY 4 — Manual smoke
+================================================================================
+
+**Phase A — Web build (OTA-able parts, no native):**
+
+After deploying staging:
+
+  A.1 — Web: open staging in desktop browser → New Defect modal →
+        EXPECT: scanner button HIDDEN (Capacitor.isNativePlatform()
+        returns false). No error, no broken UI. Existing camera +
+        gallery buttons present.
+
+  A.2 — Build: `cd frontend && yarn build` → EXIT=0, no ESLint
+        warnings.
+
+  A.3 — Console: open browser devtools → no errors about missing
+        Capacitor plugin (we expect the import to load fine — only
+        the runtime call fails on web).
+
+**Phase B — Native build (REQUIRES ./ship.sh + TestFlight):**
+
+After Zahi runs `./ship.sh` and installs via TestFlight on iPhone:
+
+  B.1 — iPhone: open New Defect modal.
+        EXPECT: scanner button VISIBLE alongside camera + gallery.
+
+  B.2 — iPhone: tap "סרוק מסמך".
+        EXPECT: native iOS document scanner UI opens (Apple
+        Notes-style camera with edge detection).
+
+  B.3 — iPhone: scan 2 pages → tap Save in scanner UI.
+        EXPECT: scanner closes. 2 image thumbnails appear in the
+        defect form's images[] preview. Both editable like regular
+        photos.
+
+  B.4 — iPhone: scan + tap Cancel in scanner UI.
+        EXPECT: scanner closes. images[] unchanged. No error toast.
+
+  B.5 — Android (via Play Console Internal Testing):
+        Repeat B.1-B.4. ML Kit document scanner downloads model on
+        first use (~1-2 MB delay first time). Subsequent scans
+        instant.
+
+**Note for Smoke B (Zahi):** This is BEFORE App Store / Play
+Console review. TestFlight Internal Testing distribution is
+sufficient. No Apple review needed for internal testers.
+
+================================================================================
+RISK
+================================================================================
+Low-medium. New plugin install — first test of cap-sync flow since
+the last native release.
+
+- ⚠ `npx cap sync` may bump other plugins or Capacitor core.
+  Mitigation: STEP 0.7 snapshot diff catches this. Document any
+  unexpected diff in review.txt before proceeding.
+- ⚠ Plugin maintenance status. `@capacitor-mlkit/document-scanner`
+  is from Capawesome — active monthly cadence. If the v7 tag isn't
+  available, fall back to latest v6 (still Capacitor 7 compatible
+  per docs).
+- ⚠ Android ML Kit model download. ~1-2 MB on first use. No prompt
+  to user, but brief delay on first scan. Acceptable UX.
+- ⚠ Camera permission reuse. If Apple reviewer asks why scanner
+  uses camera permission with existing wording, point to existing
+  scope ("מצלמה לצילום ליקויים, התקדמות בנייה ותיעוד שטח" —
+  document scanning is a form of תיעוד). Future polish: extend
+  string explicitly mentioning "סריקת מסמכים". Not blocking.
+- ⚠ Web fallback. Button hidden, NOT just disabled. Apple historically
+  prefers hidden over disabled for unsupported platforms.
+
+Bundle size: ~500 KB iOS (Vision Kit is system-provided, not embedded);
+~1 MB Android initial APK + ML Kit model on first use.
+Performance: zero impact on existing flows.
+Backend / DB / env: zero touch.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+
+- Removes DocumentScannerButton.jsx file.
+- Removes integration in NewDefectModal.
+- Removes plugin from package.json + lockfile.
+- `npx cap sync` after revert auto-cleans Podfile + build.gradle.
+- Existing camera + gallery flows unchanged.
+- No data lost.
+
+================================================================================
+DEPLOY ORDERING
+================================================================================
+
+**Step 1 — Cowork (Replit) implements:**
+- 4 LOCATIONS above.
+- review.txt + .local/.commit_message.
+- STOP at present_asset.
+
+**Step 2 — Zahi OTA deploys (this batch):**
+- `git checkout staging && git merge main && ./deploy.sh --stag` (staging).
+- Smoke Phase A (web build sanity).
+- `git checkout main && git merge --ff-only staging && ./deploy.sh --prod && git checkout staging` (prod).
+- Privacy Policy 7א already in prod (no re-deploy needed).
+
+**Step 3 — Zahi `./ship.sh` on Mac (native build per batch):**
+- Xcode: Archive → Upload to App Store Connect.
+- App Store Connect: distribute via TestFlight Internal Testing
+  ONLY (no Apple review needed).
+- Install on iPhone via TestFlight app.
+- Smoke Phase B (B.1-B.4 on iPhone).
+- Android Studio: Generate Signed Bundle → Upload to Play Console.
+- Play Console: Internal Testing track → distribute → install on
+  Android device → Smoke B.5.
+
+**Step 4 — DECISION POINT:**
+
+  Option (a) → ALL 3 BATCHES PASS TestFlight + Internal Testing:
+    → Submit for App Store / Play Console review (ONE cycle).
+    → Update App Store Connect Privacy Nutrition Labels.
+
+  Option (b) → ANY batch fails on native:
+    → Fix in a follow-up spec for that batch.
+    → Re-ship that batch only.
+    → Re-test on TestFlight.
+    → Don't submit until all 3 pass.
+
+H.2b spec will be written AFTER H.2a is verified on TestFlight.
+H.2c spec will be written AFTER H.2b is verified on TestFlight.
+
+================================================================================
+NEXT STEPS (after H.2a passes TestFlight + Internal Testing)
+================================================================================
+
+Write H.2b spec (Universal Links + App Links):
+- Extend AASA with applinks block (preserving webcredentials).
+- Create assetlinks.json.
+- Add iOS Associated Domains entitlement (extend existing array).
+- Add Android intent-filter with autoVerify=true.
+- Create DeepLinkHandler component (lives inside BrowserRouter,
+  uses useNavigate).
+- ~30-60 LOC frontend, 2 JSON files, 2 native config edits.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

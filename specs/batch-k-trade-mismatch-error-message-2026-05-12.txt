@@ -1,0 +1,184 @@
+================================================================================
+BATCH K — Clearer error message on trade-mismatch in contractor-proof
+================================================================================
+Date:           2026-05-12
+Branch:         staging  (NOT main)
+Severity:       P3 — UX clarity only. No functional change to access
+                control. Discovered 2026-05-12 by Zahi during Batch J
+                prod testing.
+
+                Scenario: contractor (trade=electrical) tries to submit
+                proof on an old defect with category=other (e.g.
+                plumbing) where they were assigned BEFORE the
+                trade-match rule was enforced. Backend correctly
+                blocks the submission, but the error message
+                "הליקוי לא נמצא" (defect not found) is misleading —
+                the defect IS visible and reachable; it's the trade
+                rule that blocks the action.
+
+                Result: contractor sees an impossible state — they're
+                ON the defect page, but the system says "not found"
+                when they try to act. Better message tells them to
+                contact PM.
+
+Approach:       Backend-only message change. The trade-match check
+                logic is INTENTIONALLY PRESERVED — it enforces the
+                architectural rule that company-bound contractors
+                only act on defects matching their trade.
+
+                Only the wording changes for the trade-mismatch case.
+                The assignee-mismatch case keeps the 404 + "not found"
+                wording (intentional for security — don't leak
+                existence of defects the user isn't assigned to).
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Backend only:
+                  - backend/contractor_ops/tasks_router.py
+                    (~5 LOC: change one error message + add comment)
+                Total: 1 file. No frontend, no DB, no env vars.
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN this batch:
+  ✅ `tasks_router.py:867` (contractor-proof endpoint, trade-mismatch
+     check): change `HTTPException(status_code=404, detail='הליקוי
+     לא נמצא')` to a clearer message + appropriate status code.
+
+OUT of this batch (intentionally preserved):
+  ❌ `tasks_router.py:864` (assignee-mismatch 404). Security wording —
+     don't leak that defects exist if user isn't assigned. UNCHANGED.
+  ❌ The trade-match logic itself (`_trades_match`,
+     `_get_contractor_trade_key`). UNCHANGED — enforces architectural
+     rule per Zahi's confirmation 2026-05-12.
+  ❌ Frontend (no UI changes — the error toast just shows whatever
+     backend returns).
+  ❌ Other 404 "Task not found" / "הליקוי לא נמצא" cases in the file
+     (L478, L546, L585, L750). Separate concerns.
+  ❌ Migration / grandfathering of old defects. The specific old defect
+     Zahi found will be force-closed manually by PM (no code path
+     needed).
+
+================================================================================
+STEP 0 — PRE-FLIGHT (3 PASS)
+================================================================================
+
+1. Confirm trade-match check location at tasks_router.py:863-867:
+   $ sed -n '863,867p' backend/contractor_ops/tasks_router.py
+   →  L863-864: assignee-mismatch 404 (preserved)
+   →  L865-867: trade-mismatch 404 (the one we change)
+   ✓ Two raises at the same indent level. We touch only L867.
+
+2. Confirm `_trades_match` and `_get_contractor_trade_key` exist:
+   $ grep -n "def _trades_match\|def _get_contractor_trade_key" backend/contractor_ops/tasks_router.py
+   →  Both helpers defined in tasks_router.py.
+   ✓ Logic preserved as-is.
+
+3. Confirm no other consumer parses the exact string "הליקוי לא נמצא":
+   $ grep -rn "הליקוי לא נמצא" frontend/src/ backend/
+   →  Backend: 2 raises in tasks_router.py (L864 + L867).
+   →  Frontend: error display passes the backend's `detail` string through
+      to the toast — no string matching.
+   ✓ Safe to change L867's wording.
+
+================================================================================
+LOCATION 1 — tasks_router.py:867 — trade-mismatch error message
+================================================================================
+File: backend/contractor_ops/tasks_router.py
+Lines: 865-867 (inside contractor_proof endpoint)
+
+BEFORE:
+    trade_key = await _get_contractor_trade_key(db, user['id'], task['project_id'])
+    if not _trades_match(task.get('category'), trade_key):
+        raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
+
+AFTER:
+    trade_key = await _get_contractor_trade_key(db, user['id'], task['project_id'])
+    if not _trades_match(task.get('category'), trade_key):
+        # BATCH K (2026-05-12) — clearer error than the misleading
+        # "ליקוי לא נמצא" 404. The defect exists and is reachable;
+        # the contractor's trade just doesn't match the defect's
+        # category (architectural rule: company-bound contractors
+        # only act on defects matching their trade). PM should
+        # reassign or force-close.
+        raise HTTPException(
+            status_code=400,
+            detail='לא ניתן לסגור — הליקוי שייך לקטגוריה אחרת. פנה למנהל.'
+        )
+
+Changes:
+- Status code 404 → 400 (Bad Request — the request itself can't be
+  honored; not "resource missing").
+- Hebrew message: clear about WHY ("שייך לקטגוריה אחרת") and what to do
+  ("פנה למנהל").
+- Comment block documents the WHY for future readers.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ L864 assignee-mismatch 404 — security wording preserved.
+- ❌ `_trades_match` helper logic.
+- ❌ `_get_contractor_trade_key` helper logic.
+- ❌ Other 404 cases in tasks_router.py (L478, L546, L585, L750).
+- ❌ Frontend toast handling.
+- ❌ Backend response shape (still `{detail: '...'}`).
+- ❌ Other endpoints (close-task, manager-decision, etc.).
+
+================================================================================
+VERIFY 1 — Backend import sanity
+================================================================================
+$ cd backend && python -c "from contractor_ops.tasks_router import contractor_proof; print('OK')"
+   →  EXIT=0 expected. No SyntaxError.
+
+================================================================================
+VERIFY 2 — Manual smoke (DEFERRED TO ZAHI on staging or prod)
+================================================================================
+
+A. Reproduce the trade-mismatch error:
+   - Login as a contractor with trade=X (e.g. electrical).
+   - Open a defect where they're assignee BUT category=Y (e.g. plumbing).
+     (Easiest: the specific old defect from Zahi's testing today, or
+     manually assign a cross-trade defect for testing.)
+   - Try to submit proof.
+   EXPECT: toast shows "לא ניתן לסגור — הליקוי שייך לקטגוריה אחרת.
+   פנה למנהל." (not "הליקוי לא נמצא").
+   EXPECT: HTTP 400 (not 404).
+
+B. Regression — assignee-mismatch case (different contractor tries
+   to access a defect they're not assigned to via deep-link):
+   EXPECT: still 404 with "הליקוי לא נמצא" (security wording preserved).
+
+C. Regression — happy path (contractor with matching trade submits
+   proof):
+   EXPECT: defect status → pending_manager_approval as before.
+
+================================================================================
+RISK
+================================================================================
+Very low. Single string + status code change.
+
+- ⚠ Frontend may handle 400 vs 404 differently in some places.
+  Verified: frontend reads `error.response.data.detail` and shows it as
+  a toast (FrontEnd common pattern). Status code differentiation is
+  rare. If any specific UI cares about 404 vs 400 for this endpoint,
+  may need a small follow-up.
+- ⚠ Other clients (mobile app via Capacitor) — same backend, same
+  response shape. Should handle identically.
+- ⚠ Existing toast on the frontend may have a max length — verified
+  new message is shorter than the iOS toast limit (~120 chars).
+
+Bundle impact: zero.
+Backend code size: ~5 LOC net (incl. comment).
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+(Reverts message to "הליקוי לא נמצא" 404. Trade-match rule logic
+unchanged either way.)
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

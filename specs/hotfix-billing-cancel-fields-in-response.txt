@@ -1,0 +1,148 @@
+================================================================================
+HOTFIX — Add cancellation fields to /billing/org/{org_id} response
+================================================================================
+Date:           2026-04-28
+Branch:         staging
+Severity:       P0 — UI shows stale state after cancellation, blocks reactivate
+Files changed:  1 (backend only)
+================================================================================
+
+PROBLEM
+-------
+After a user cancels their subscription via POST /api/billing/org/{id}/cancel,
+the backend correctly updates the DB (verified in MongoDB Atlas):
+    auto_renew: false
+    cancelled_at: <ISO date>
+    cancelled_reason: "...some text..."
+    expires_at: <ISO date>
+
+But when the frontend re-fetches subscription state via GET /api/billing/org/{id},
+the response's `subscription` object DOES NOT include cancelled_at,
+cancelled_reason, or expires_at. So the frontend can't tell the sub was
+cancelled and renders the WRONG state-machine card:
+  - Expected: amber "המנוי בוטל" + "המשך מנוי" button
+  - Actual: green "מנוי פעיל" without cancel button
+
+User impact: nobody can see they cancelled, and nobody can reactivate via UI.
+
+ROOT CAUSE
+----------
+backend/contractor_ops/billing.py:get_billing_for_org() — the function builds
+the subscription dict with a hard-coded list of 16 fields (lines ~1090-1110).
+The 3 new cancellation fields were added to the DB schema in the cancellation v1
+batch but never added to this response builder.
+
+FIX
+---
+Single file: backend/contractor_ops/billing.py
+
+Two locations to update:
+
+LOCATION 1 — synthetic_sub fallback (around line 945-957)
+   For orgs with no real subscription doc, we build a synthetic one. Add the
+   3 new fields with None values so the response shape is consistent.
+
+   Current:
+       synthetic_sub = {
+           'status': 'trialing' if trial_end else 'none',
+           'trial_end_at': trial_end,
+           'paid_until': None,
+           'billing_email': None,
+           'billing_cycle': None,
+           'auto_renew': False,
+           'next_charge_at': None,
+           'grace_until': None,
+           'manual_override': None,
+       }
+
+   Add these 3 lines:
+       'cancelled_at': None,
+       'cancelled_reason': None,
+       'expires_at': None,
+
+LOCATION 2 — subscription response object (around line 1090-1110)
+   The 'subscription' key in the returned dict — append 3 lines so the frontend
+   receives the cancellation state.
+
+   Current:
+       'subscription': {
+           'status': effective_sub.get('status'),
+           'plan_id': effective_sub.get('plan_id'),
+           'plan_locked_until': effective_sub.get('plan_locked_until'),
+           'trial_end_at': effective_sub.get('trial_end_at'),
+           'paid_until': effective_sub.get('paid_until'),
+           'billing_email': effective_sub.get('billing_email'),
+           'total_monthly': total_monthly,
+           'billable_amount': billable_amount,
+           'billable_source': billable_source,
+           'effective_access': access.value,
+           'read_only_reason': reason,
+           'subscription_status': snapshot['subscription_status'],
+           'billing_cycle': snapshot['billing_cycle'],
+           'auto_renew': snapshot['auto_renew'],
+           'next_charge_at': snapshot['next_charge_at'],
+           'grace_until': snapshot['grace_until'],
+       },
+
+   Add these 3 lines (anywhere in the dict, recommend right after auto_renew):
+       'cancelled_at': effective_sub.get('cancelled_at'),
+       'cancelled_reason': effective_sub.get('cancelled_reason'),
+       'expires_at': effective_sub.get('expires_at'),
+
+DO NOT TOUCH
+- Frontend code — reads sub.cancelled_at and sub.expires_at correctly already.
+- The cancel/reactivate endpoints — they correctly write to the DB.
+- compute_subscription_snapshot() — leave as-is, just add the 3 new fields to
+  the response dict separately.
+- Any other file.
+
+VERIFY
+------
+1. Compile:
+   python3 -m compileall backend/contractor_ops/ -q
+
+2. Manual test on dev or staging:
+   a. Pick an org that has been cancelled (cancelled_at field set in MongoDB).
+      For staging, use 715e2420-e4f1-4ebd-81ed-b690e1f7f84d which Zahi just
+      cancelled — it has cancelled_at, cancelled_reason, expires_at set.
+   b. curl with super_admin token:
+        curl -s -H "Authorization: Bearer $TOKEN" \
+            https://api-staging.brikops.com/api/billing/org/715e2420-.../ \
+            | jq '.subscription | {cancelled_at, cancelled_reason, expires_at}'
+      Expected: all 3 fields present with their values (NOT undefined).
+
+3. Visual on staging UI: refresh /billing/org/715e2420-...
+   Expected: amber "המנוי בוטל" card with "המשך מנוי" button.
+
+DELIVERABLES
+------------
+review.txt with:
+  - Rollback SHA
+  - Full diff of backend/contractor_ops/billing.py (should be exactly +6 lines)
+  - VERIFY 1 + 2 outputs (skip 3 — Zahi runs that visually)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(billing): expose cancelled_at/expires_at/cancelled_reason in /billing/org/{id} response
+
+STEPS
+-----
+1. Edit backend/contractor_ops/billing.py — apply the 2 location updates.
+2. Run VERIFY 1 (compile).
+3. Run VERIFY 2 (curl test).
+4. Generate review.txt.
+5. Write .local/.commit_message.
+6. STOP. Zahi runs ./deploy.sh --stag himself.
+
+ROLLBACK
+--------
+git revert <commit-sha>
+./deploy.sh --prod
+
+Backend-only response change. Forward-compatible (adding fields, not breaking
+any existing client). Safe to revert.
+
+================================================================================
+END OF SPEC
+================================================================================

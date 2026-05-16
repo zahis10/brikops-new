@@ -1,0 +1,339 @@
+================================================================================
+BATCH I — P0 HOTFIX: Contractor leaks into management views (security)
+================================================================================
+Date:           2026-05-11
+Branch:         staging  (NOT main)
+Severity:       **P0 — SECURITY / PRIVACY**
+                During Batch G smoke (2026-05-11), Zahi tested as a real
+                contractor user clicking the WhatsApp deep-link to a
+                defect. After viewing the defect, clicking the back
+                arrow landed the contractor on
+                `/projects/{id}/buildings/{id}/defects` — the
+                management-only BuildingDefectsPage.
+
+                **TWO bugs combined cause this:**
+
+                1. **Frontend bug** (TaskDetailPage.js:807-819):
+                   Back button defaults to BuildingDefectsPage if
+                   task has building_id, regardless of user role.
+                   Contractor lands on an admin page.
+
+                2. **Backend bug** (projects_router.py:1397):
+                   `/buildings/{id}/defects-summary` calls
+                   `_check_project_read_access` which contractors
+                   PASS (they're project members). Backend returns
+                   the full building data including all tasks
+                   (`db.tasks.find({'building_id': X})` — no role
+                   filter). Contractor can see colleagues' defects.
+
+                Real-world impact: contractor on plot 808 reached
+                BuildingDefectsPage and saw 3 active defects
+                (filtered by their installer category client-side,
+                but backend returned ALL tasks unfiltered). The page
+                is meant for PMs/management only — never for
+                contractors.
+
+Approach:       (per Zahi 2026-05-11 — Option 1)
+                Contractors going back from a defect deep-linked via
+                WhatsApp should land on **ContractorDashboard** (`/`),
+                NOT on any management view.
+
+                Backend `/buildings/{id}/defects-summary` requires
+                management role (project_manager or management_team).
+                Returns 403 for contractors regardless of project
+                membership.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Backend:
+                  - backend/contractor_ops/projects_router.py
+                    (~6 LOC: replace read_access with management check)
+                Frontend:
+                  - frontend/src/pages/TaskDetailPage.js
+                    (~5 LOC: add isContractor branch in goBack)
+                Total: 2 files, ~11 LOC.
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN this batch:
+  ✅ Backend `/buildings/{building_id}/defects-summary` endpoint —
+     gate by management role using existing `_get_project_role` +
+     `MANAGEMENT_ROLES` helpers.
+  ✅ Frontend TaskDetailPage back button — when `isContractor` is
+     true and no `returnTo`, navigate to `/` (ContractorDashboard).
+
+OUT of this batch (deferred / separate concerns):
+  ❌ Audit of other endpoints using `_check_project_read_access` —
+     L283, L380, L1006, L1202 in projects_router.py. Some may be
+     legitimately permissive (read-only project meta), others may
+     need similar gating. Follow-up audit batch.
+  ❌ Other back-navigation buttons across the app (StageDetailPage,
+     etc.) — Batch C already fixed StageDetailPage. Other pages
+     may have the same anti-pattern but not in scope here.
+  ❌ Auditing whether OTHER PAGES (besides BuildingDefectsPage)
+     allow contractors to see data they shouldn't. Separate audit
+     batch if needed.
+  ❌ Adding a frontend role check on BuildingDefectsPage itself
+     (defense-in-depth). Backend 403 will already block. If we want
+     belt-and-suspenders, follow-up.
+
+================================================================================
+STEP 0 — PRE-FLIGHT (5 checks PASS)
+================================================================================
+
+1. Confirm TaskDetailPage back-button bug at L807-819:
+   $ grep -nA 12 "onClick={() => {" frontend/src/pages/TaskDetailPage.js | grep -A 12 "returnTo = location.state"
+   →  L807-819: back button has 4-branch fallback. The 2nd branch
+      (when task.building_id exists) routes to
+      /projects/.../buildings/.../defects — the admin page.
+   ✓ Bug confirmed.
+
+2. Confirm `isContractor` already declared at TaskDetailPage L234:
+   $ grep -n "isContractor" frontend/src/pages/TaskDetailPage.js | head -3
+   →  L234: const isContractor = projectRole === 'contractor' || user?.role === 'contractor';
+   →  L786-787: showContractorProof / showProofLocked usage
+   ✓ Variable available. No new state, no new imports needed.
+
+3. Confirm backend endpoint role check at L1390-1397:
+   $ grep -nA 5 "building_defects_summary" backend/contractor_ops/projects_router.py
+   →  L1390: @router.get("/buildings/{building_id}/defects-summary")
+   →  L1391: async def building_defects_summary(building_id: str, user: ...):
+   →  L1397: await _check_project_read_access(user, project_id)
+   ✓ Currently uses read_access — too permissive. Contractors pass.
+
+4. Confirm helpers already imported in projects_router.py:
+   $ grep -n "_get_project_role\|MANAGEMENT_ROLES" backend/contractor_ops/projects_router.py
+   →  L10: from contractor_ops.router import _get_project_role, ...
+   →  (need to verify MANAGEMENT_ROLES is also imported; if not, add it)
+   $ grep -n "MANAGEMENT_ROLES" backend/contractor_ops/projects_router.py
+   →  (Replit verifies; if missing, add to existing import line from router)
+   ✓ `_get_project_role` available. MANAGEMENT_ROLES defined in
+     router.py:413 — likely needs import line update if not already
+     present.
+
+5. Confirm backend returns unfiltered task data (the privacy leak):
+   $ sed -n '1425,1430p' backend/contractor_ops/projects_router.py
+   →  L1425-1428: tasks = await db.tasks.find({'building_id': building_id, 'archived': {'$ne': True}}, ...)
+   ✓ Confirmed — `find` query has NO role/assignee filter. Returns
+     ALL tasks in the building. After our fix, contractors get 403
+     before reaching this query, so the unfiltered data is never
+     returned to them.
+
+================================================================================
+LOCATION 1 — Backend: projects_router.py:1397 add management role check
+================================================================================
+File: backend/contractor_ops/projects_router.py
+Lines: 1390-1397 (the building_defects_summary endpoint, near the top
+       of the function body)
+
+If MANAGEMENT_ROLES not yet imported, add to the existing import:
+   from contractor_ops.router import (
+       _get_project_role, _audit, _now, _is_super_admin,
+       _priority_sort_key, logger,
++      MANAGEMENT_ROLES,
+   )
+
+BEFORE (L1390-1397):
+@router.get("/buildings/{building_id}/defects-summary")
+async def building_defects_summary(building_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    building = await db.buildings.find_one({'id': building_id, 'archived': {'$ne': True}}, {'_id': 0})
+    if not building:
+        raise HTTPException(status_code=404, detail='Building not found')
+    project_id = building['project_id']
+    await _check_project_read_access(user, project_id)
+
+AFTER:
+@router.get("/buildings/{building_id}/defects-summary")
+async def building_defects_summary(building_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    building = await db.buildings.find_one({'id': building_id, 'archived': {'$ne': True}}, {'_id': 0})
+    if not building:
+        raise HTTPException(status_code=404, detail='Building not found')
+    project_id = building['project_id']
+
+    # BATCH I (P0 — 2026-05-11): gate by management role.
+    # Previously used _check_project_read_access which contractors PASS
+    # (they're project members). This page returns aggregate data and
+    # is intended for PMs/management only. Contractors get redirected
+    # to ContractorDashboard via the frontend; defense-in-depth here
+    # ensures backend never leaks the data even if someone hand-crafts
+    # the URL.
+    await _check_project_read_access(user, project_id)  # keep — ensures user belongs to project at all
+    project_role = await _get_project_role(user, project_id)
+    if project_role not in MANAGEMENT_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail='רק מנהל פרויקט או צוות ניהול יכולים לצפות בסיכום ליקויי בניין'
+        )
+
+Why both checks:
+- `_check_project_read_access` still useful — ensures user is part of
+  the project at all (some random user with a guessed building_id
+  shouldn't even get to the role check).
+- `_get_project_role` + `MANAGEMENT_ROLES` — narrows to management.
+  Returns 'project_manager' for super admins and org owners (per
+  router.py:372-390), so they retain access automatically.
+
+================================================================================
+LOCATION 2 — Frontend: TaskDetailPage.js:807-819 add isContractor branch
+================================================================================
+File: frontend/src/pages/TaskDetailPage.js
+Lines: 807-819 (the back button onClick handler)
+
+BEFORE:
+          <button
+            onClick={() => {
+              const returnTo = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
+              if (returnTo) {
+                sessionStorage.removeItem(RETURN_TO_KEY);
+                navigate(returnTo);
+              } else if (task?.building_id && task?.project_id) {
+                navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
+              } else if (task?.project_id) {
+                navigate(`/projects/${task.project_id}/control?tab=defects`);
+              } else {
+                navigate('/projects');
+              }
+            }}
+
+AFTER:
+          <button
+            onClick={() => {
+              const returnTo = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
+              if (returnTo) {
+                sessionStorage.removeItem(RETURN_TO_KEY);
+                navigate(returnTo);
+              } else if (isContractor) {
+                // BATCH I (P0 — 2026-05-11): contractors land on their
+                // own dashboard, NOT on management-only BuildingDefectsPage
+                // or ProjectControlPage. `isContractor` is declared at
+                // L234 (projectRole === 'contractor' || user?.role === 'contractor').
+                navigate('/');
+              } else if (task?.building_id && task?.project_id) {
+                navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
+              } else if (task?.project_id) {
+                navigate(`/projects/${task.project_id}/control?tab=defects`);
+              } else {
+                navigate('/projects');
+              }
+            }}
+
+Single new branch inserted between `returnTo` and `building_id` checks.
+Order matters:
+- `returnTo` first → respects an explicit caller hint (used by
+  UnitQCSelectionPage, ContractorDashboard, etc.).
+- `isContractor` second → catches deep-link entries (WA, push, email)
+  for contractor users.
+- Existing fallbacks third → preserved for management users.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ The back button label/styling at L820-828. The existing label
+     selection logic already handles `externalEntry` for the WA-deep-link
+     case. Visual change unnecessary.
+- ❌ `isContractor` declaration at L234. Reuse as-is.
+- ❌ Other places that call `_check_project_read_access` — separate
+     follow-up audit. This batch fixes only the one Zahi reported.
+- ❌ BuildingDefectsPage.js — backend 403 will redirect-via-error
+     handling at its L94-97 already (`if (err?.response?.status === 403)`).
+     No frontend change needed in that file.
+- ❌ ContractorDashboard — destination, no changes needed.
+- ❌ Bell notification logic (Batch G) — preserved.
+- ❌ ProjectControlPage redirect at L3429-3432 — separate concern
+     (it also redirects contractors away, but to `/projects/.../tasks`,
+     not to BuildingDefectsPage).
+
+================================================================================
+VERIFY 1 — Backend import sanity
+================================================================================
+$ cd backend && python -c "from contractor_ops.projects_router import *; print('OK')"
+   →  EXIT=0 expected. No ImportError on MANAGEMENT_ROLES.
+
+================================================================================
+VERIFY 2 — Frontend build
+================================================================================
+$ cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \\
+    REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 3 — Manual smoke (DEFERRED TO ZAHI — CRITICAL p0)
+================================================================================
+
+**A — Contractor WA deep-link flow (THE REPORTED BUG):**
+   1. PM creates a defect, assigns to a real contractor user (the
+      one Zahi tested with).
+   2. Contractor's phone gets WA with deep-link `/tasks/{id}?src=wa`.
+   3. Contractor clicks → opens TaskDetailPage. ✓ existing behavior.
+   4. Contractor clicks **back arrow**.
+   EXPECT: lands on `/` (ContractorDashboard) — sees their own
+   defect list with the open defect highlighted.
+   EXPECT: does NOT land on `/projects/.../buildings/.../defects`.
+
+**B — Backend defense-in-depth (security gate):**
+   1. Contractor opens DevTools / browser and manually navigates to
+      `https://app.brikops.com/projects/{X}/buildings/{Y}/defects`
+      (URL they previously could reach via back button bug).
+   EXPECT: BuildingDefectsPage loads briefly, then 403 from backend.
+   EXPECT: Frontend redirect at L94-97 fires:
+   "אין לך הרשאה לצפות בנתוני בניין זה" → redirect to
+   `/projects/{X}/control?tab=defects` → which then ALSO redirects
+   contractors (existing ProjectControlPage logic at L3429-3432) to
+   `/projects/{X}/tasks`.
+   EXPECT: Contractor NEVER sees building defects data.
+
+C — Management user regression:
+   1. Zahi as PM opens any defect via list click → click back.
+   EXPECT: lands on `/projects/{id}/buildings/{id}/defects` as before.
+   Visual identical to current prod.
+
+D — Regression for returnTo (Batch C / earlier flow):
+   1. Click on a defect from BuildingDefectsPage → opens TaskDetailPage
+      with `location.state.returnTo` set.
+   2. Click back.
+   EXPECT: returns to the prior BuildingDefectsPage URL.
+   Existing flow, MUST not regress.
+
+================================================================================
+RISK
+================================================================================
+Medium-low. P0 priority but very small surface area.
+
+Risk vectors:
+- ⚠ **Org owner / super admin regression** — `_get_project_role` returns
+  'project_manager' for these cases (router.py L373, L387). Both
+  bypass MANAGEMENT_ROLES check (since 'project_manager' IS in the
+  tuple). Verified safe in helper code.
+- ⚠ **Management role typo / drift** — if backend's MANAGEMENT_ROLES
+  ever drifts from ('project_manager', 'management_team'), the check
+  could lock out legitimate users. STEP 0 verified the constant at
+  router.py:413. If extended in future, this endpoint extends naturally.
+- ⚠ **Contractor with mixed role** — a user who is contractor in
+  Project A but PM in Project B. `_get_project_role(user, project_id)`
+  scopes correctly to the specific project. So a PM-in-B opening a
+  building summary for project B passes; same user as contractor-in-A
+  on project A is correctly blocked. No cross-project leakage.
+- ⚠ **Frontend race condition** — if backend deploys after frontend,
+  there's a brief window where the new TaskDetailPage routes to `/`
+  but the BuildingDefectsPage backend still permits contractors.
+  No harm — frontend just bypasses the issue. Reverse order (backend
+  first, frontend lags) also safe — contractor's old back-button
+  takes them to BuildingDefectsPage which 403s and bounces.
+
+Bundle size impact: zero (no new imports).
+Backend code size impact: ~6 LOC.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+(Reverts both fixes. Contractors go back to leaking into management
+page. NOT recommended unless something else breaks.)
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

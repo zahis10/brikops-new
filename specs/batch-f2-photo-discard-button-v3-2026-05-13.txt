@@ -1,0 +1,654 @@
+================================================================================
+BATCH F.2 v3 — Photo annotation: discard button (with onDiscard callback)
+================================================================================
+Date:           2026-05-13
+Branch:         staging  (NOT main)
+Severity:       P3 — UX gap discovered 2026-05-12 by Zahi during F.1
+                staging test. PhotoAnnotation modal has Save + Undo
+                but NO discard. User who takes a photo by mistake is
+                forced to tap Save (uploads anyway).
+
+                Zahi: "צילמתי תמונה, אבל נניח שהתחרטתי ואני רוצה
+                לבטל, אין אפשרות לבטל, חייב ללחוץ רק שמור".
+
+                v1: original spec used `onSave(null, false)` as
+                discard signal. BROKEN — that signal is already used
+                by `handleSave` when user taps Save with zero
+                annotations, and 6 of 7 consumers UPLOAD the raw
+                photo on that signal. v1's discard would have
+                accidentally uploaded the unwanted photo.
+
+                v2: re-spec with updated line numbers (post-F.1+F-keyboard).
+                Still had the v1 bug — same signal collision.
+
+                v3 (THIS): introduces a NEW callback prop `onDiscard`
+                that's distinct from `onSave`. PhotoAnnotation's X
+                button calls `onDiscard` (with confirm guard). Each
+                of the 5 consumers (7 render sites) wires up
+                `onDiscard` to clear the gating state (no upload).
+
+                Architecturally cleaner: separate "save with no
+                annotations" (upload raw) from "discard entirely"
+                (don't upload).
+
+Approach:       Frontend-only. Two halves:
+
+                Half 1: PhotoAnnotation
+                  - Add `onDiscard` prop + `onDiscardRef` (mirror of
+                    `onSave` / `onSaveRef`).
+                  - X button in top toolbar (LEFT side in RTL).
+                  - handleDiscard callback: confirm if strokes exist;
+                    on confirm/no-confirm → call `onDiscardRef.current?.()`
+                    if provided, else fall back to
+                    `onSaveRef.current(null, false)` (backward compat
+                    for any future consumer that forgets to wire
+                    onDiscard).
+
+                Half 2: 5 consumer files (7 render sites)
+                  - Each <PhotoAnnotation> gets a new `onDiscard`
+                    prop that clears the gating state (e.g.
+                    `setPendingFile(null)`).
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only:
+                  - frontend/src/components/PhotoAnnotation.js
+                    (~25 LOC: import + state ref + handler + button)
+                  - frontend/src/pages/TaskDetailPage.js (2 instances)
+                  - frontend/src/pages/StageDetailPage.js (1 instance)
+                  - frontend/src/components/NewDefectModal.js (2 instances)
+                  - frontend/src/pages/HandoverSectionPage.js (1 instance)
+                  - frontend/src/components/handover/HandoverItemModal.js (1 instance)
+                Total: 6 files. No backend, no DB, no env vars, no
+                new dependencies (X icon already in lucide-react).
+                ~+50 LOC net across all files.
+
+Baseline:       origin/staging HEAD = 1aec4fc (F-keyboard v2, 799 LOC
+                PhotoAnnotation).
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN this batch:
+  ✅ `onDiscard` prop on PhotoAnnotation. Optional. If not provided,
+     X falls back to `onSave(null, false)` for safety.
+  ✅ X button in top toolbar (LEFT in RTL).
+  ✅ Confirm dialog only if user has made annotations.
+  ✅ 7 render sites updated with explicit `onDiscard` handler.
+  ✅ Each `onDiscard` handler clears the consumer's gating state —
+     does NOT trigger upload.
+  ✅ NewDefectModal re-annotation path (Instance A) gets explicit
+     `onDiscard` for consistency, even though its existing onSave
+     handler already early-returns on `(null, false)`. Belt + suspenders.
+
+OUT of this batch:
+  ❌ Hardware back-button handling on Android.
+  ❌ Swipe-down-to-dismiss gesture.
+  ❌ Visual differentiation between "discard" and "back" callbacks.
+  ❌ Refactor of "save with no annotations" semantics — current
+     behavior preserved (Save with no strokes still uploads raw).
+     If we ever decide that ALSO shouldn't upload, that's a
+     separate UX batch (different question — does user want raw
+     photo attached?).
+
+================================================================================
+STEP 0 — PRE-FLIGHT (5 PASS)
+================================================================================
+
+1. Confirm origin/staging HEAD = 1aec4fc (F-keyboard v2):
+   $ git log origin/staging --oneline -3
+   →  Expect: 1aec4fc → 62c182a → a6ab26c.
+
+2. Confirm PhotoAnnotation.js at 799 LOC:
+   $ wc -l frontend/src/components/PhotoAnnotation.js
+   →  Expect: 799.
+
+3. Confirm lucide-react import line in PhotoAnnotation:
+   $ grep -n "from 'lucide-react'" frontend/src/components/PhotoAnnotation.js
+   →  Expect: L3 `import { Undo2, Save, Loader2 } from 'lucide-react';`
+
+4. Confirm onSave prop destructure:
+   $ grep -n "const PhotoAnnotation = ({ imageFile, onSave })" \
+       frontend/src/components/PhotoAnnotation.js
+   →  Expect: L28 (or close) — `({ imageFile, onSave })`. Will be
+              extended to `({ imageFile, onSave, onDiscard })`.
+
+5. Confirm all 7 consumer render sites:
+   $ grep -rn "<PhotoAnnotation" frontend/src/
+   →  Expect: 7 hits across 5 files (TaskDetailPage ×2, StageDetailPage ×1,
+              NewDefectModal ×2, HandoverSectionPage ×1, HandoverItemModal ×1).
+   ✓ If different count → STOP, audit needed.
+
+================================================================================
+LOCATION 1 — PhotoAnnotation: import `X` icon
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Line: 3
+
+BEFORE:
+  import { Undo2, Save, Loader2 } from 'lucide-react';
+
+AFTER:
+  import { Undo2, Save, Loader2, X } from 'lucide-react';
+
+================================================================================
+LOCATION 2 — PhotoAnnotation: accept onDiscard prop + ref
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+
+Modify component signature (currently ~L28):
+
+ANCHOR:
+  const PhotoAnnotation = ({ imageFile, onSave }) => {
+
+AFTER:
+  const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
+
+ADD ref next to existing `onSaveRef` (currently around L36 — find
+`const onSaveRef = useRef(onSave);` and add a sibling line):
+
+ANCHOR:
+  const onSaveRef = useRef(onSave);
+
+ADD AFTER:
+  // BATCH F.2 (2026-05-13) — onDiscard is OPTIONAL. If provided,
+  // the X button calls it directly (no upload). If absent, the X
+  // button falls back to onSave(null, false) for backward compat
+  // — though all current 7 render sites pass onDiscard explicitly.
+  const onDiscardRef = useRef(onDiscard);
+
+ADD sync useEffect (find the existing `useEffect(() => {
+onSaveRef.current = onSave; }, [onSave]);` near top and add a sibling):
+
+ANCHOR (find this line — currently around L45):
+  useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+
+ADD AFTER:
+  useEffect(() => { onDiscardRef.current = onDiscard; }, [onDiscard]);
+
+================================================================================
+LOCATION 3 — PhotoAnnotation: handleDiscard callback
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Insert: AFTER `handleUndo` useCallback closing (currently L544-550),
+        BEFORE `handleSave` (L593).
+
+ANCHOR (find handleUndo's closing):
+  const handleUndo = useCallback(() => {
+    setStrokes(prev => {
+      const next = prev.slice(0, -1);
+      redraw(next);
+      return next;
+    });
+  }, [redraw]);
+
+ADD AFTER:
+
+  // BATCH F.2 (2026-05-13) — discard handler. Confirms before
+  // closing if user has made annotations. Prefers onDiscard
+  // callback (no upload); falls back to onSave(null, false) for
+  // backward compat with any consumer that didn't wire onDiscard
+  // (NOTE: as of this batch, all 7 known consumers do).
+  const handleDiscard = useCallback(() => {
+    if (strokesRef.current.length > 0) {
+      if (!window.confirm('לבטל את כל השינויים ולסגור?')) return;
+    }
+    if (onDiscardRef.current) {
+      onDiscardRef.current();
+    } else {
+      // Fallback: legacy abandonment signal. Consumer may interpret
+      // as "upload raw photo" — that's the v1 bug we're fixing here
+      // by adding onDiscard to all known consumers. Future-proof
+      // fallback only.
+      onSaveRef.current(null, false);
+    }
+  }, []);
+
+================================================================================
+LOCATION 4 — PhotoAnnotation: X button in top toolbar
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: top toolbar (L639-669).
+
+ANCHOR (find this block — current toolbar):
+
+  <div className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-700 shrink-0"
+       style={{ position: 'relative', zIndex: 20 }}>
+    <div className="flex items-center gap-2">
+      {COLORS.map(c => ( ... ))}
+      {/* BATCH F (2026-05-12) — text tool toggle. */}
+      <button onClick={(e) => { ... setTool ... }}> T </button>
+    </div>
+  </div>
+
+REPLACE WITH (new sibling div with X — justify-between pushes to
+opposite edges, X lands on visual LEFT in RTL):
+
+  <div className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-700 shrink-0"
+       style={{ position: 'relative', zIndex: 20 }}>
+    <div className="flex items-center gap-2">
+      {COLORS.map(c => ( ... ))}   {/* preserve color buttons */}
+      <button onClick={(e) => { ... setTool ... }}> T </button>  {/* preserve T */}
+    </div>
+
+    {/* BATCH F.2 (2026-05-13) — discard button. Closes the modal
+        without saving. Confirmation only when user has drawn or
+        added text. RTL places this on the visual LEFT, opposite
+        the color/T cluster. */}
+    <button
+      onClick={(e) => { e.stopPropagation(); handleDiscard(); }}
+      aria-label="סגור ללא שמירה"
+      title="סגור ללא שמירה"
+      className="w-8 h-8 rounded-full flex items-center justify-center text-slate-300 hover:bg-slate-700 transition-colors"
+    >
+      <X className="w-5 h-5" />
+    </button>
+  </div>
+
+================================================================================
+LOCATION 5 — TaskDetailPage.js: onDiscard for both instances
+================================================================================
+File: frontend/src/pages/TaskDetailPage.js
+
+Instance A (task attachment, L1842):
+
+BEFORE:
+  {pendingFile && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={pendingFile}
+        onSave={handleAnnotationSave}
+      />
+    </Suspense>
+  )}
+
+AFTER:
+  {pendingFile && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={pendingFile}
+        onSave={handleAnnotationSave}
+        onDiscard={() => setPendingFile(null)}
+      />
+    </Suspense>
+  )}
+
+Instance B (contractor proof, L1855):
+
+BEFORE:
+  {pendingProofFile && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={pendingProofFile}
+        onSave={handleProofAnnotationSave}
+      />
+    </Suspense>
+  )}
+
+AFTER:
+  {pendingProofFile && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={pendingProofFile}
+        onSave={handleProofAnnotationSave}
+        onDiscard={() => setPendingProofFile(null)}
+      />
+    </Suspense>
+  )}
+
+================================================================================
+LOCATION 6 — StageDetailPage.js: onDiscard with paired state cleanup
+================================================================================
+File: frontend/src/pages/StageDetailPage.js
+Line: ~2430
+
+BEFORE:
+  {pendingFile && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={pendingFile}
+        onSave={handleAnnotationSave}
+      />
+    </Suspense>
+  )}
+
+AFTER:
+  {pendingFile && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={pendingFile}
+        onSave={handleAnnotationSave}
+        onDiscard={() => {
+          setPendingFile(null);
+          setPendingItemId(null);
+        }}
+      />
+    </Suspense>
+  )}
+
+Note: StageDetailPage has PAIRED state (`pendingFile` + `pendingItemId`).
+Both must clear together — pendingItemId would be stale otherwise.
+
+================================================================================
+LOCATION 7 — NewDefectModal.js: onDiscard for both instances
+================================================================================
+File: frontend/src/components/NewDefectModal.js
+
+Instance A (re-annotation, L1076):
+
+BEFORE:
+  {annotatingIndex !== null && images[annotatingIndex] && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={images[annotatingIndex].originalFile || images[annotatingIndex].file}
+        onSave={handleAnnotationSave}
+      />
+    </Suspense>
+  )}
+
+AFTER:
+  {annotatingIndex !== null && images[annotatingIndex] && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={images[annotatingIndex].originalFile || images[annotatingIndex].file}
+        onSave={handleAnnotationSave}
+        onDiscard={() => setAnnotatingIndex(null)}
+      />
+    </Suspense>
+  )}
+
+Note: Instance A's existing `handleAnnotationSave` already handles
+`(null, false)` via early-return at L371-374. The new `onDiscard`
+prop is for consistency — explicit > implicit.
+
+Instance B (first-capture, L1089):
+
+BEFORE:
+  {pendingFile && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={pendingFile}
+        onSave={handlePendingAnnotationSave}
+      />
+    </Suspense>
+  )}
+
+AFTER:
+  {pendingFile && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={pendingFile}
+        onSave={handlePendingAnnotationSave}
+        onDiscard={() => setPendingFile(null)}
+      />
+    </Suspense>
+  )}
+
+================================================================================
+LOCATION 8 — HandoverSectionPage.js: onDiscard
+================================================================================
+File: frontend/src/pages/HandoverSectionPage.js
+Line: ~768
+
+BEFORE:
+  {pendingFile && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={pendingFile}
+        onSave={handleAnnotationSave}
+      />
+    </Suspense>
+  )}
+
+AFTER:
+  {pendingFile && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={pendingFile}
+        onSave={handleAnnotationSave}
+        onDiscard={() => setPendingFile(null)}
+      />
+    </Suspense>
+  )}
+
+================================================================================
+LOCATION 9 — HandoverItemModal.js: onDiscard
+================================================================================
+File: frontend/src/components/handover/HandoverItemModal.js
+Line: ~401
+
+BEFORE:
+  {pendingFile && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={pendingFile}
+        onSave={handleAnnotationSave}
+      />
+    </Suspense>
+  )}
+
+AFTER:
+  {pendingFile && (
+    <Suspense fallback={...}>
+      <PhotoAnnotation
+        imageFile={pendingFile}
+        onSave={handleAnnotationSave}
+        onDiscard={() => setPendingFile(null)}
+      />
+    </Suspense>
+  )}
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ Save / Undo buttons (bottom toolbar).
+- ❌ Color picker UI / T button.
+- ❌ Text tool overlay UI (size picker, אישור / ביטול).
+- ❌ Drag/edit/hit-testing logic (F.1b, F.1c, hotfix-1).
+- ❌ Touch handlers, viewport lock, scaleRef math.
+- ❌ F-keyboard applyDisplayScale + resize useEffect.
+- ❌ Existing `hasAnnotations` no-op path in handleSave — its
+     `onSave(null, false)` call STAYS as-is. Save-with-no-strokes
+     still uploads raw photo. ONLY the X button uses onDiscard.
+- ❌ Backend / parent component contract for onSave — same
+     `onSave(file|null, hasAnnotations: bool)` signature.
+- ❌ Existing handleAnnotationSave handlers in each consumer —
+     they stay as-is. We only ADD a new `onDiscard` prop.
+- ❌ Upload logic in any consumer (taskService.uploadAttachment,
+     handleUploadPhotos, etc.) — unchanged.
+- ❌ Existing saved JPEG blobs.
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — File size sanity
+================================================================================
+$ wc -l frontend/src/components/PhotoAnnotation.js
+   →  Expect ~820 (799 + ~25).
+
+$ git diff --stat origin/staging -- frontend/src/pages/TaskDetailPage.js \
+                                    frontend/src/pages/StageDetailPage.js \
+                                    frontend/src/components/NewDefectModal.js \
+                                    frontend/src/pages/HandoverSectionPage.js \
+                                    frontend/src/components/handover/HandoverItemModal.js
+   →  Each consumer file expects +3 to +5 LOC. Total <50 LOC across
+      the 5 consumer files.
+
+================================================================================
+VERIFY 3 — grep sanity
+================================================================================
+$ grep -n "onDiscard" frontend/src/components/PhotoAnnotation.js
+   →  Expect 5 hits: prop destructure + onDiscardRef + sync useEffect
+      + handleDiscard ref read + (maybe) comment refs.
+
+$ grep -rn "onDiscard=" frontend/src/
+   →  Expect 7 hits across 5 consumer files:
+       - TaskDetailPage.js × 2
+       - StageDetailPage.js × 1
+       - NewDefectModal.js × 2
+       - HandoverSectionPage.js × 1
+       - HandoverItemModal.js × 1
+   ✓ Critical: 7 hits = matches the count of <PhotoAnnotation render sites.
+
+$ grep -c "<PhotoAnnotation" frontend/src/pages/*.js frontend/src/components/*.js frontend/src/components/handover/*.js
+   →  Expect 7 total.
+
+================================================================================
+VERIFY 4 — Manual smoke (DEFERRED TO ZAHI)
+================================================================================
+
+**A — Discard from defect-creation flow (NewDefectModal first-capture, PRIMARY):**
+  1. Open new defect modal, tap "צלם תמונה" → take photo.
+  2. PhotoAnnotation opens. Don't draw or add text.
+  3. Tap "X" (top-left in RTL).
+  EXPECT: modal closes immediately, no confirm, no upload, no
+  image added to `images[]`. Back at the form, ready to retake or
+  cancel.
+
+**B — Discard with annotations (PRIMARY — the v1 bug we're fixing):**
+  1. New defect modal → take photo → PhotoAnnotation opens.
+  2. Draw an oval OR add a text label.
+  3. Tap "X".
+  EXPECT: `window.confirm('לבטל את כל השינויים ולסגור?')` dialog.
+  3a. Cancel → modal stays open, annotations intact.
+  3b. OK → modal closes, NO upload, NO image added.
+
+**C — Save still works (regression check):**
+  1. Same flow → take photo → annotate (or not) → tap "שמור".
+  EXPECT: existing Save flow. Photo uploads with/without annotations
+  as today.
+
+**D — Save with no annotations still uploads raw (regression):**
+  1. Take photo → don't draw → tap "שמור" (NOT X).
+  EXPECT: raw photo uploads as today. THIS IS INTENTIONALLY
+  PRESERVED. The new X is the only "true discard" path.
+
+**E — Task attachment flow (TaskDetailPage Instance A):**
+  1. Open a task → tap photo button to attach → take photo →
+     PhotoAnnotation opens.
+  2. Tap X → modal closes, no upload, pendingFile cleared.
+  EXPECT: same flow as A but in the task attach context.
+
+**F — Contractor proof flow (TaskDetailPage Instance B):**
+  1. Open a task as contractor → tap "צלם הוכחה" → PhotoAnnotation.
+  2. Tap X → modal closes, no upload, pendingProofFile cleared.
+
+**G — Stage QC flow (StageDetailPage):**
+  1. Open a stage → tap photo button on a checklist item →
+     PhotoAnnotation.
+  2. Tap X → modal closes, both pendingFile + pendingItemId cleared.
+     The checklist item stays in its previous state (not marked
+     "photographed").
+
+**H — Handover section flow (HandoverSectionPage + HandoverItemModal):**
+  1. Open a handover section → tap photo button on an item →
+     PhotoAnnotation.
+  2. Tap X → modal closes, no upload, photos array unchanged.
+
+**I — Re-annotate existing photo discard (NewDefectModal Instance A):**
+  1. New defect modal with an already-captured photo in thumbnails.
+  2. Tap the annotate (pencil) icon on a thumbnail → PhotoAnnotation
+     opens with the EXISTING photo.
+  3. Tap X (whether or not you've added new strokes).
+  EXPECT: modal closes. The existing photo in `images[]` is
+  UNCHANGED. annotatingIndex cleared.
+
+**J — Discard with keyboard up (F-keyboard regression):**
+  1. T → tap canvas → keyboard pops up.
+  2. Tap X in top toolbar (still visible above keyboard).
+  EXPECT: confirm dialog appears (because adding pendingText with
+  T is considered intent — but the strokes array is technically
+  still empty until commit). Actually: confirm only fires if
+  `strokesRef.current.length > 0`. If user typed but didn't commit,
+  no confirm — closes silently. Document this expected behavior.
+
+**K — Cross-platform:**
+  - Test A + B on iPhone (Capacitor) AND Android.
+  EXPECT: identical behavior.
+
+================================================================================
+RISK
+================================================================================
+Low. Pure additive feature with explicit opt-in per consumer.
+
+- ⚠ The `onDiscard` prop is OPTIONAL with a backward-compat
+  fallback (`onSave(null, false)`). If a future consumer adds
+  PhotoAnnotation without passing onDiscard, the X button still
+  works but falls back to upload-raw (v1 bug). The fallback is
+  intentional to avoid silent breakage in future flows.
+- ⚠ All 7 known render sites are updated in this batch. New
+  render sites added later must explicitly opt-in via onDiscard
+  (developer should be aware).
+- ⚠ The confirm threshold is `strokesRef.current.length > 0`. If
+  user opens text overlay (pendingText set) but hasn't committed,
+  strokes is still empty → discard silently. Acceptable: the user
+  intent is "I want this gone."
+- ⚠ NewDefectModal Instance A's existing onSave handler already
+  has early-return for `(null, false)`. The new onDiscard prop is
+  redundant safety but harmless.
+- ⚠ window.confirm is a native dialog. Different visual per
+  platform (iOS / Android / desktop) but functional. **Known UX
+  consideration:** dialog text is Hebrew (`'לבטל את כל השינויים
+  ולסגור?'`) but native BUTTON LABELS may render in English
+  (Cancel/OK) on iOS Safari + Capacitor, depending on platform
+  localization. Acceptable for v3 shipping. If smoke reveals
+  jarring UX (Hebrew question + English buttons), a custom modal
+  is a ~20-LOC follow-up batch using existing Radix Dialog
+  pattern (see PATTERNS section below).
+
+**FOLLOW-UP IF NEEDED — custom discard confirm (NOT in v3 scope):**
+If real users complain about the English Cancel/OK on the Hebrew
+discard prompt, replace `window.confirm` with an in-component
+modal. Reference pattern from `TaskDetailPage` reopen confirm
+(Radix Dialog with Hebrew אישור/ביטול buttons). Estimated +30 LOC,
+1 file (PhotoAnnotation.js). Should NOT block v3.
+- ⚠ Save semantics unchanged. "Save with no annotations" still
+  uploads raw photo. Only X is the new escape hatch.
+
+Bundle size: zero (X icon already in lucide-react tree).
+Performance: zero impact.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+- Removes X button + onDiscard prop + 7 consumer props.
+- Modal goes back to Save+Undo only.
+- No data lost — existing saves unaffected.
+- F + F.1 + F-keyboard preserved.
+
+================================================================================
+DEPLOY ORDERING
+================================================================================
+F-keyboard v2 at HEAD (1aec4fc). This batch lands cleanly on top:
+- Touches PhotoAnnotation.js (new code, no overlap with F/F.1/F-keyboard)
+- Touches 5 consumer files (additive prop, no overlap)
+- Zero merge conflicts expected.
+
+================================================================================
+DONE WITH PHOTO ANNOTATION POLISH
+================================================================================
+After F.2 ships green, Photo annotation polish complete:
+  - F           ✅ Text labels (white pill, 3 colors, 18px).
+  - F.1a        ✅ Size picker.
+  - F.1b        ✅ Drag-to-move.
+  - F.1b-hf-1   ✅ Bbox cache + 44×44 min touch.
+  - F.1c        ✅ Tap-to-edit (in-session).
+  - F-keyboard  ✅ Viewport-aware canvas.
+  - F.2         ← this batch — discard X button (with proper
+                 consumer-level cleanup).
+
+Remaining backlog (architectural / lower-priority):
+  - Re-editable annotations (persist strokes server-side).
+  - Undo history per stroke.
+  - Delete single label (vs whole-modal discard).
+  - Long-press → context menu.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

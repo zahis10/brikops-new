@@ -1,0 +1,1226 @@
+================================================================================
+BATCH 6B v2 — Stream A v2 follow-up CRITICAL fixes (5 bugs in 1 batch)
+================================================================================
+V2 SUPERSEDES V1 — incorporates Replit pre-flight feedback 2026-05-03:
+  - Fixed dormant check for new users (was permanent-dormancy deadlock)
+  - Added STEP 0 audit for assignee_id coverage (potential silent-drop)
+  - Added STEP 0 verify for _resolve_phone_for_user (already exists)
+  - Added test for archived field missing
+  - Added deployment notes for cooldown timeline post-resume
+
+Date:           2026-05-03
+Branch:         staging  (NOT main)
+Severity:       P1 — Stream A v2 shipped to prod 2026-05-03 with 4 production
+                bugs discovered same day during smoke test on real prod data.
+                Cron-job.org is currently PAUSED to prevent further damage.
+                This batch fixes all 5 bugs (4 reported + 1 verified during
+                investigation).
+Files changed:  3 files
+                  Backend: backend/contractor_ops/reminder_service.py
+                  Frontend: frontend/src/App.js
+                  Tests:   backend/tests/test_reminder_digest.py
+                            (extend existing file, do NOT create new)
+Mobile:         N/A — backend + frontend OTA only.
+
+================================================================================
+CONTEXT — 5 BUGS DISCOVERED IN PROD 2026-05-03
+================================================================================
+
+After Stream A v2 deploy + manual cron trigger, real contractor reported:
+- Got 2 separate WA messages (each saying "1 ליקוי") instead of 1 digest
+  saying "2 ליקויים". The flood Stream A was meant to prevent — STILL HAPPENING.
+- Link in WA opened /projects/{id}/dashboard (PM view), not contractor's view.
+- Project is no longer active but still received reminders.
+
+Plus 2 bugs found during code investigation:
+- Dormant users (>45 days no login) still receive WA — wastes money + spam.
+- User's whatsapp_notifications_enabled toggle in settings is NOT honored by
+  digest path — only by per-defect notification path.
+
+----- BUG A — DIGEST FLOOD BY (project, company) instead of (project, user) -----
+
+Root cause discovered in `send_all_contractor_reminders` (reminder_service.py:458):
+
+  for project in projects:
+      open_tasks = await _db.tasks.find({"project_id": pid, ...company_id...})
+      company_ids = list(set(t["company_id"] for t in open_tasks))
+      for cid in company_ids:
+          result = await send_contractor_reminder(pid, cid, ...)
+
+Then `send_contractor_reminder(project_id, company_id)` queries:
+  tasks = _db.tasks.find({"project_id": pid, "company_id": cid, ...open...})
+
+If a contractor user X has tasks tagged with company_id=A AND company_id=B in
+the same project (common scenario — contractor employed by 2 sub-contracting
+companies on same project), the OUTER loop runs twice for that project:
+  1. send_contractor_reminder(project, A) → finds X → sends "1 ליקוי" (only A's tasks)
+  2. send_contractor_reminder(project, B) → finds X → sends "1 ליקוי" (only B's tasks)
+
+Result: contractor X gets 2 separate messages instead of 1 saying "2 ליקויים".
+
+The pinned test test_send_all_three_projects_three_messages (added in V2 spec)
+specifically tested 3 PROJECTS with same user — passed. It did NOT test the
+same project + multiple companies scenario, which is exactly Bug A.
+
+----- BUG B — ROUTING: contractor → /dashboard instead of ContractorDashboard -----
+
+App.js ProjectsHome wrapper (added in Stream A v2):
+  const ProjectsHome = () => {
+    const { user } = useAuth();
+    const { projectId } = useParams();
+    if (user?.role === 'contractor') {
+      return <ContractorDashboard initialProjectId={projectId} />;
+    }
+    if (projectId) {
+      return <Navigate to={`/projects/${projectId}/dashboard`} replace />;
+    }
+    return <MyProjectsPage />;
+  };
+
+The check `user?.role === 'contractor'` is the literal string 'contractor'.
+
+Verified via schemas.py:40-44 (MembershipRole enum):
+  project_manager / management_team / contractor / viewer
+
+But MembershipRole isn't the only field. Real prod users may have:
+- ManagementSubRole values (schemas.py:32-37): site_manager, execution_engineer,
+  safety_assistant, work_manager, safety_officer (sub-roles under management_team)
+- Or other role variations not exactly equal to 'contractor' literal
+
+When user's role is NOT exactly 'contractor' (e.g. it's a sub-role or a
+different label), the check fails → falls through to PM redirect →
+contractor lands on /projects/{id}/dashboard → wrong view, no defects shown.
+
+Fix: invert the check. PMs/admins get /dashboard, EVERYONE ELSE gets ContractorDashboard.
+Verified PM/admin roles via AccountSettingsPage.js:437:
+  isPmOrOwner = roles.has('project_manager') OR roles.has('owner') OR roles.has('management_team') OR platform_role === 'super_admin'
+
+----- BUG C — INACTIVE PROJECTS STILL SEND REMINDERS -----
+
+Verified in code:
+- ProjectStatus enum (schemas.py:97-101): draft / payment_pending / active / suspended.
+  No 'completed' or 'archived' in enum.
+- Separate boolean field `archived` exists on projects (export_router.py:1259, 1330).
+
+Today's `send_all_contractor_reminders` does NOT filter by status or archived.
+A project that is suspended OR archived still has its open tasks queried, and
+contractors still receive reminders for it.
+
+Per Zahi 2026-05-03: skip BOTH (`status !== 'active'` OR `archived === true`).
+
+----- BUG D — DORMANT USERS (>45 days no login) STILL RECEIVE -----
+
+Verified in code:
+- users.last_login_at field exists (admin_dashboard.py:106-108).
+- Existing churn classification (admin_dashboard.py:18-30): dormant = >30 days.
+- Per Zahi 2026-05-03: use 45 days threshold (not 30) — gives buffer for vacations.
+
+If a user hasn't logged in for >45 days, sending them WA reminders is wasted
+money (no action expected) and noise (they probably won't return mid-cron).
+
+----- BUG E — whatsapp_notifications_enabled TOGGLE IGNORED BY DIGEST -----
+
+Verified in code:
+- users.whatsapp_notifications_enabled field exists (auth_router.py:144,
+  bound to user setting toggle in profile).
+- Per-defect notification path (notification_service.py:408-409) DOES check it
+  and skips if False.
+- Digest path (reminder_service.py) does NOT check it — only checks
+  reminder_preferences (separate, more granular field).
+
+Result: user toggles WA OFF in settings → still gets digest. Zahi reasonably
+expected ONE toggle to silence everything.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify reminder_service.py anchors:
+    grep -n "send_all_contractor_reminders\|send_contractor_reminder\|MAX_MESSAGES_PER_BATCH\|_check_user_reminder_prefs" \
+        backend/contractor_ops/reminder_service.py | head -20
+    # Expected hits:
+    #   line ~63: def _check_user_reminder_prefs(...)
+    #   line ~202: async def send_contractor_reminder(...)
+    #   line ~458: async def send_all_contractor_reminders(...)
+    #   line ~476: result = await send_contractor_reminder(...)
+
+0.2 — Verify Project schema and status values (informational, no edit):
+    grep -n "ProjectStatus\|class Project\|archived" backend/contractor_ops/schemas.py | head -10
+    # Expected: ProjectStatus enum at line 97 with 4 values draft/payment_pending/active/suspended.
+    # `archived` boolean exists on project documents (verified via export_router.py:1259).
+
+0.3 — Verify user fields for dormant + WA toggle:
+    grep -n "last_login_at\|whatsapp_notifications_enabled" backend/contractor_ops/auth_router.py | head -5
+    # Expected:
+    #   auth_router.py:144 — db.users.update_one({...}, {'$set': {'whatsapp_notifications_enabled': enabled}})
+    #   auth_router.py:477 — exposed in /me response
+
+0.4 — Verify App.js ProjectsHome is at the expected location:
+    grep -n "const ProjectsHome\|user?.role === 'contractor'" frontend/src/App.js
+    # Expected:
+    #   line ~143: const ProjectsHome = () => {
+    #   line ~145: if (user?.role === 'contractor') return <ContractorDashboard ... />;
+
+0.5 — Verify existing test file has the multi-project test we'll extend:
+    grep -n "test_send_all_three_projects_three_messages\|def test_" backend/tests/test_reminder_digest.py
+    # Expected: existing 14 test functions including test_send_all_three_projects_three_messages.
+
+0.6 — V2 — Verify _resolve_phone_for_user already exists (no need to create):
+    grep -n "_resolve_phone_for_user\|def _resolve_phone" backend/contractor_ops/reminder_service.py
+    # Expected:
+    #   line ~78: def _resolve_phone_for_user(user: dict) -> Optional[str]:
+    # If NOT found: STOP and report. The new send_contractor_reminder body
+    # depends on this helper.
+
+0.7 — V2 — assignee_id coverage audit (Zahi verified 2026-05-03):
+    Production state at audit time:
+    - Total open tasks: 135
+    - Tasks WITH assignee_id: 135 (100% coverage)
+
+    No backfill migration needed. Spec proceeds with Zahi's company-phone
+    fallback logic (EDIT 1.4 below) for FUTURE-PROOFING — even though current
+    prod data has 100% coverage, future tasks created without an assignee
+    must not silently be dropped from cron.
+
+0.8 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — BACKEND CORE REFACTOR (file 1 of 3)
+================================================================================
+
+FILE 1 of 3: backend/contractor_ops/reminder_service.py
+--------------------------------------------------------
+
+There are 4 logical changes in this file. Apply in this order.
+
+----- EDIT 1.1 — Add helpers at top of file (after existing helpers, around line 95) -----
+
+ADD these constants + helper near the top of the module (after _check_user_reminder_prefs
+function, around line 76 area):
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Stream A v2 follow-up (Batch 6B) 2026-05-03 — eligibility helpers
+    # ─────────────────────────────────────────────────────────────────────
+
+    DORMANT_USER_DAYS = 45  # Per Zahi 2026-05-03 — buffer for vacations.
+
+    def _is_user_dormant(user: dict) -> bool:
+        """User is dormant if their LAST_LOGIN_AT is older than DORMANT_USER_DAYS.
+
+        IMPORTANT V2 fix (Replit feedback 2026-05-03): users who NEVER logged in
+        must NOT be classified as dormant if their account is recent — otherwise
+        we create a deadlock: new contractor invited → never logged in →
+        marked dormant → no WA reminder → never logs in → permanent dormancy.
+
+        Logic:
+        1. If last_login_at exists: dormant iff > DORMANT_USER_DAYS ago.
+        2. If last_login_at missing AND created_at recent (≤ DORMANT_USER_DAYS ago):
+           → NOT dormant (give new user a chance to receive their first reminder).
+        3. If last_login_at missing AND created_at also old (or missing):
+           → dormant (truly inactive, safe to skip).
+        """
+        last_login_iso = user.get('last_login_at')
+        now = datetime.now(timezone.utc)
+
+        if last_login_iso:
+            try:
+                last = datetime.fromisoformat(last_login_iso.replace('Z', '+00:00'))
+                return (now - last).days > DORMANT_USER_DAYS
+            except Exception:
+                pass  # Malformed → fall through to created_at check
+
+        # No (valid) last_login → fallback to created_at
+        created_iso = user.get('created_at')
+        if created_iso:
+            try:
+                created = datetime.fromisoformat(created_iso.replace('Z', '+00:00'))
+                # Recent account → not dormant (new user, give them a chance)
+                return (now - created).days > DORMANT_USER_DAYS
+            except Exception:
+                return True  # Malformed everything → dormant
+
+        return True  # No login + no created_at → safely classify as dormant
+
+    def _user_disabled_whatsapp(user: dict) -> bool:
+        """Honor user's WA toggle in settings (auth_router.py:144).
+        Default True (notifications enabled) if field missing — preserves
+        existing behavior for users created before the toggle was added."""
+        return user.get('whatsapp_notifications_enabled') is False
+
+----- EDIT 1.2 — Refactor send_contractor_reminder to take assignee_id, not company_id -----
+
+The CURRENT signature is:
+    async def send_contractor_reminder(
+        project_id: str,
+        company_id: str,
+        triggered_by: str = "cron",
+        skip_cooldown: bool = False,
+        skip_preferences: bool = False,
+    ) -> dict:
+
+CHANGE the signature + body to:
+    async def send_contractor_reminder(
+        project_id: str,
+        assignee_user_id: str,
+        triggered_by: str = "cron",
+        skip_cooldown: bool = False,
+        skip_preferences: bool = False,
+    ) -> dict:
+
+And the function body must:
+1. Query open tasks for THIS user in THIS project (across ALL companies):
+       open_filter = {"status": {"$nin": list(TERMINAL_TASK_STATUSES)}}
+       tasks = await _db.tasks.find({
+           "project_id": project_id,
+           "assignee_id": assignee_user_id,
+           **open_filter,
+       }, {"_id": 0, "id": 1, "title": 1, "company_id": 1}).to_list(500)
+       if not tasks:
+           return {"status": "skipped", "reason": "no_open_defects"}
+
+2. Resolve user (recipient) — must exist + be eligible:
+       user = await _db.users.find_one({"id": assignee_user_id}, {"_id": 0})
+       if not user:
+           return {"status": "skipped", "reason": "user_not_found"}
+       phone = _resolve_phone_for_user(user)
+       if not phone:
+           return {"status": "skipped", "reason": "no_valid_phone"}
+
+3. Apply 3-tier eligibility:
+       a) WA toggle check:
+          if _user_disabled_whatsapp(user):
+              return {"status": "skipped", "reason": "user_disabled_whatsapp"}
+       b) Dormant user check:
+          if _is_user_dormant(user):
+              return {"status": "skipped", "reason": "user_dormant"}
+       c) Reminder preferences (existing):
+          if not skip_preferences:
+              pref_skip = _check_user_reminder_prefs(user, "contractor_reminder")
+              if pref_skip:
+                  return {"status": "skipped", "reason": pref_skip}
+
+4. Cooldown check (preserve existing logic, but query now per (project, user)):
+       if not skip_cooldown:
+           # NOTE: cooldown query needs adjustment — currently checks by
+           # company_id, must change to user_id for (project, user) semantics.
+           if await _check_cooldown_for_user(project_id, assignee_user_id):
+               return {"status": "skipped", "reason": "cooldown"}
+
+5. Resolve project + org + send digest:
+       project = await _db.projects.find_one({"id": project_id}, {"_id": 0, "name": 1, "org_id": 1})
+       if not project:
+           return {"status": "skipped", "reason": "project_not_found"}
+       org_id = project.get("org_id", "")
+
+       open_count = len(tasks)
+       tpl_name, lang_code = _resolve_digest_template_for_user(user)
+
+       log_entry = {
+           "type": "contractor_reminder_digest",
+           "recipient_user_id": assignee_user_id,
+           "recipient_phone": phone,
+           "project_id": project_id,
+           "org_id": org_id,
+           "open_count": open_count,
+           "message_template": tpl_name,
+           "lang_code": lang_code,
+           "triggered_by": triggered_by,
+       }
+       try:
+           body_params = [
+               {"parameter_name": "name", "text": user.get("name", "קבלן")},
+               {"parameter_name": "count", "text": str(open_count)},
+               {"parameter_name": "project", "text": project.get("name", "")},
+           ]
+           button_params = [{"index": 0, "text": f"{project_id}?src=wa"}]
+           wa_result = await _send_wa_template(
+               phone, tpl_name, body_params,
+               button_params=button_params, lang_code=lang_code
+           )
+           log_entry["status"] = "sent"
+           log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
+           result = {"status": "completed", "results": [{"user_id": assignee_user_id, "status": "sent",
+                     "messages_sent": 1, "open_count": open_count}], "defect_count": open_count}
+       except Exception as e:
+           log_entry["status"] = "failed"
+           log_entry["error_detail"] = str(e)[:500]
+           logger.error(f"[REMINDER:DIGEST] Failed digest to {mask_phone(phone)} for project {project_id}: {e}")
+           result = {"status": "completed", "results": [{"user_id": assignee_user_id, "status": "failed",
+                     "error": str(e)[:200]}], "defect_count": open_count}
+       await _log_reminder(log_entry)
+       await asyncio.sleep(SEND_PACING_SECONDS)
+       return result
+
+REMOVE: all references to company_id from this function. The (project, user)
+aggregation makes company_id irrelevant for the digest — the contractor sees
+all their assignments regardless of which company they're tagged under.
+
+----- EDIT 1.3 — Refactor _check_cooldown to support per-user query -----
+
+Current `_check_cooldown` (around line 160-175) queries by company_id. We need
+the same logic but keyed on user_id. Add a new helper (don't break existing one
+which is still used elsewhere if applicable):
+
+ADD new function near the existing _check_cooldown:
+
+    async def _check_cooldown_for_user(project_id: str, assignee_user_id: str) -> bool:
+        """Cooldown for (project, user) tuple. Looks at recent digest log entries
+        for THIS user in THIS project. Used by Stream A v2+ digest path."""
+        cutoff = (_now_dt() - timedelta(hours=COOLDOWN_HOURS)).isoformat()
+        query = {
+            "type": {"$in": ["contractor_reminder", "contractor_reminder_digest"]},
+            "project_id": project_id,
+            "recipient_user_id": assignee_user_id,
+            "sent_at": {"$gte": cutoff},
+            "status": {"$ne": "failed"},
+        }
+        existing = await _db.reminder_log.find_one(query, {"_id": 0, "id": 1})
+        return existing is not None
+
+The query covers BOTH old log entries (type="contractor_reminder") and new ones
+(type="contractor_reminder_digest"), so cooldown works during the transition.
+
+----- EDIT 1.4 — Refactor send_all_contractor_reminders cron loop -----
+
+The CURRENT cron loop (around line 458-490) iterates by (project, company):
+    projects = await _db.projects.find({}, ...).to_list(500)
+    for project in projects:
+        open_tasks = await _db.tasks.find({"project_id": pid, ..., "company_id" exists})
+        company_ids = list(set(t["company_id"] for t in open_tasks))
+        for cid in company_ids:
+            result = await send_contractor_reminder(pid, cid, triggered_by="cron")
+
+REPLACE with iteration by (project, assignee_user) + project filter + company fallback:
+
+    async def send_all_contractor_reminders() -> dict:
+        summary = {"sent": 0, "skipped": 0, "failed": 0, "projects": []}
+        try:
+            # Bug C fix: skip non-active or archived projects.
+            active_projects = await _db.projects.find({
+                "status": "active",
+                "$or": [{"archived": {"$exists": False}}, {"archived": False}, {"archived": None}],
+            }, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+
+            for project in active_projects:
+                pid = project["id"]
+                summary["projects"].append(pid)
+
+                # Get all open tasks in this project (with company_id, since
+                # we need it for the fallback path below).
+                open_tasks = await _db.tasks.find({
+                    "project_id": pid,
+                    "status": {"$nin": list(TERMINAL_TASK_STATUSES)},
+                }, {"_id": 0, "assignee_id": 1, "company_id": 1}).to_list(2000)
+
+                # Bug A fix: aggregate by (project, assignee_user) — sends ONE
+                # digest per contractor user, regardless of how many companies
+                # their tasks span.
+                assignee_ids = list({t["assignee_id"] for t in open_tasks
+                                     if t.get("assignee_id")})
+
+                # Per Zahi 2026-05-03 — fallback path: tasks with NO assignee_id
+                # but WITH company_id should still notify SOMEONE. We send to the
+                # company's phone if available; otherwise skip silently.
+                # Currently 100% of prod open tasks have assignee_id (verified
+                # 2026-05-03), but this future-proofs the system.
+                orphan_company_ids = list({t["company_id"] for t in open_tasks
+                                            if not t.get("assignee_id")
+                                            and t.get("company_id")})
+
+                # PRIMARY PATH — aggregate by user
+                for aid in assignee_ids:
+                    try:
+                        result = await send_contractor_reminder(
+                            pid, aid, triggered_by="cron", skip_cooldown=False
+                        )
+                        _accumulate_summary(summary, result)
+                    except Exception as e:
+                        logger.error(f"[REMINDER:CRON] Failed for project={pid} user={aid}: {e}")
+                        summary["failed"] += 1
+
+                # FALLBACK PATH — tasks tagged only with company, no person assigned
+                for cid in orphan_company_ids:
+                    try:
+                        result = await send_contractor_reminder_to_company(
+                            pid, cid, triggered_by="cron"
+                        )
+                        _accumulate_summary(summary, result)
+                    except Exception as e:
+                        logger.error(f"[REMINDER:CRON] Company-fallback failed project={pid} company={cid}: {e}")
+                        summary["failed"] += 1
+        except Exception as e:
+            logger.error(f"[REMINDER:CRON] Fatal error in send_all_contractor_reminders: {e}")
+        return summary
+
+
+    def _accumulate_summary(summary: dict, result: dict):
+        """Helper to fold a per-recipient result into the cron summary counter."""
+        status = result.get("status", "")
+        if status == "completed":
+            for r in result.get("results", []):
+                if r.get("status") == "sent":
+                    summary["sent"] += r.get("messages_sent", 1)
+                elif r.get("status") == "failed":
+                    summary["failed"] += 1
+                elif r.get("status") == "skipped":
+                    summary["skipped"] += 1
+        elif status == "skipped":
+            summary["skipped"] += 1
+        else:
+            summary["failed"] += 1
+
+
+    async def send_contractor_reminder_to_company(
+        project_id: str,
+        company_id: str,
+        triggered_by: str = "cron",
+    ) -> dict:
+        """FALLBACK path for tasks without an assignee_id.
+
+        Per Zahi 2026-05-03 — when defects are tagged only with a company (no
+        specific contractor person), we send the digest to the company's main
+        phone. If the company has no phone, skip silently.
+
+        Notes:
+        - Same eligibility rules apply: cooldown (per-company in this case),
+          but dormant + WA-toggle checks are SKIPPED here because there's no
+          single user to evaluate (it's a generic company contact).
+        - Hebrew template only (no preferred_language for an org).
+        """
+        # Get all open tasks for this company in this project that DON'T have
+        # an assignee (otherwise they'd be handled by the user-aggregated path).
+        open_filter = {"status": {"$nin": list(TERMINAL_TASK_STATUSES)}}
+        tasks = await _db.tasks.find({
+            "project_id": project_id,
+            "company_id": company_id,
+            "$or": [{"assignee_id": {"$exists": False}},
+                    {"assignee_id": None}, {"assignee_id": ""}],
+            **open_filter,
+        }, {"_id": 0, "id": 1}).to_list(500)
+        if not tasks:
+            return {"status": "skipped", "reason": "no_open_orphan_defects"}
+
+        company_phone = await _resolve_phone_for_company(company_id)
+        if not company_phone:
+            return {"status": "skipped", "reason": "no_company_phone",
+                    "company_id": company_id}
+
+        # Cooldown — keyed on company_id since there's no user_id here.
+        if await _check_cooldown_for_company(project_id, company_id):
+            return {"status": "skipped", "reason": "cooldown_company",
+                    "company_id": company_id}
+
+        project = await _db.projects.find_one(
+            {"id": project_id}, {"_id": 0, "name": 1, "org_id": 1})
+        if not project:
+            return {"status": "skipped", "reason": "project_not_found"}
+        company = await _db.companies.find_one(
+            {"id": company_id}, {"_id": 0, "name": 1})
+
+        from config import WA_REMINDER_DIGEST_TEMPLATES, WA_REMINDER_DIGEST_DEFAULT_LANG
+        tpl_info = WA_REMINDER_DIGEST_TEMPLATES.get(WA_REMINDER_DIGEST_DEFAULT_LANG)
+        tpl_name = tpl_info["name"]
+        lang_code = tpl_info["lang"]
+
+        log_entry = {
+            "type": "contractor_reminder_digest",
+            "company_id": company_id,
+            "recipient_user_id": None,  # explicit — this is a company fallback
+            "recipient_phone": company_phone,
+            "project_id": project_id,
+            "org_id": project.get("org_id", ""),
+            "open_count": len(tasks),
+            "message_template": tpl_name,
+            "lang_code": lang_code,
+            "triggered_by": triggered_by,
+            "fallback_reason": "no_assignee_id",
+        }
+        try:
+            body_params = [
+                {"parameter_name": "name", "text": (company or {}).get("name", "קבלן")},
+                {"parameter_name": "count", "text": str(len(tasks))},
+                {"parameter_name": "project", "text": project.get("name", "")},
+            ]
+            button_params = [{"index": 0, "text": f"{project_id}?src=wa"}]
+            wa_result = await _send_wa_template(
+                company_phone, tpl_name, body_params,
+                button_params=button_params, lang_code=lang_code
+            )
+            log_entry["status"] = "sent"
+            log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
+            await _log_reminder(log_entry)
+            return {"status": "completed", "results": [{"company_id": company_id,
+                    "status": "sent", "messages_sent": 1, "open_count": len(tasks)}],
+                    "defect_count": len(tasks)}
+        except Exception as e:
+            log_entry["status"] = "failed"
+            log_entry["error_detail"] = str(e)[:500]
+            await _log_reminder(log_entry)
+            logger.error(f"[REMINDER:DIGEST:COMPANY] Failed for project={project_id} company={company_id}: {e}")
+            return {"status": "completed", "results": [{"company_id": company_id,
+                    "status": "failed", "error": str(e)[:200]}], "defect_count": len(tasks)}
+
+
+    async def _check_cooldown_for_company(project_id: str, company_id: str) -> bool:
+        """Cooldown for the company-fallback path."""
+        cutoff = (_now_dt() - timedelta(hours=COOLDOWN_HOURS)).isoformat()
+        existing = await _db.reminder_log.find_one({
+            "type": {"$in": ["contractor_reminder", "contractor_reminder_digest"]},
+            "project_id": project_id,
+            "company_id": company_id,
+            "recipient_user_id": None,  # only fallback entries
+            "sent_at": {"$gte": cutoff},
+            "status": {"$ne": "failed"},
+        }, {"_id": 0, "id": 1})
+        return existing is not None
+
+Notes on the new design:
+- The PRIMARY path (per-user aggregation) handles 100% of current prod data.
+- The FALLBACK path is future-proofing: if a defect is created without an
+  assignee but with a company, the company gets a single digest message.
+- If the company has no phone in the system, the orphan defects are silently
+  skipped (logged, not sent). This is correct — no spam to nowhere.
+- Both paths share the same template, same URL pattern, same Hebrew copy.
+- The company-fallback skips dormant + WA-toggle checks because those
+  apply to USERS, not generic company contacts.
+
+DO NOT TOUCH:
+- Lines 1-95 (imports, dependency setup, helpers up to _check_user_reminder_prefs).
+- _send_wa_template (line 97) — unchanged signature, already takes lang_code.
+- _resolve_digest_template_for_user (added in Stream A v2) — unchanged.
+- send_pm_digest (line ~339-455) — Stream C scope, do NOT touch.
+- send_all_pm_digests (if it exists) — Stream C scope, do NOT touch.
+
+================================================================================
+PART 2 — FRONTEND ROUTING FIX (file 2 of 3)
+================================================================================
+
+FILE 2 of 3: frontend/src/App.js
+-----------------------------------
+
+EDIT 2.1 — Invert the role check in ProjectsHome wrapper (line ~143).
+
+CURRENT (lines 143-147):
+    const ProjectsHome = () => {
+      const { user } = useAuth();
+      const { projectId } = useParams();
+      if (user?.role === 'contractor') {
+        return <ContractorDashboard initialProjectId={projectId} />;
+      }
+      // PMs/admins arriving at /projects/:projectId go to their dashboard.
+      if (projectId) {
+        return <Navigate to={`/projects/${projectId}/dashboard`} replace />;
+      }
+      return <MyProjectsPage />;
+    };
+
+REPLACE WITH:
+    const ProjectsHome = () => {
+      const { user } = useAuth();
+      const { projectId } = useParams();
+      // Bug B fix (Batch 6B 2026-05-03): default to ContractorDashboard for ANY
+      // non-PM/admin role. Previous version checked user?.role === 'contractor'
+      // (literal) which failed for sub-roles (execution_engineer etc.) and other
+      // contractor-equivalent roles in prod data.
+      const PM_OR_ADMIN_ROLES = ['project_manager', 'owner', 'management_team'];
+      const isPmOrAdmin = PM_OR_ADMIN_ROLES.includes(user?.role) ||
+                          user?.platform_role === 'super_admin';
+      if (isPmOrAdmin) {
+        if (projectId) {
+          return <Navigate to={`/projects/${projectId}/dashboard`} replace />;
+        }
+        return <MyProjectsPage />;
+      }
+      // Default: ContractorDashboard for everyone else (contractor, viewer,
+      // execution_engineer, site_manager, safety_assistant, etc.). The dashboard
+      // already filters by assignee_id at backend so each user sees only their
+      // own defects.
+      return <ContractorDashboard initialProjectId={projectId} />;
+    };
+
+DO NOT TOUCH:
+- Line 132 (ProtectedRoute requireSuperAdmin check) — separate logic.
+- All other Routes — they're per-path and unrelated to ProjectsHome.
+
+================================================================================
+PART 3 — TESTS (file 3 of 3 — EXTEND existing file)
+================================================================================
+
+FILE 3 of 3: backend/tests/test_reminder_digest.py
+----------------------------------------------------
+
+DO NOT create a new test file. EXTEND the existing file with 5 new test cases.
+Preserve all 14 existing tests verbatim.
+
+ADD the following test functions at the END of the existing file:
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Batch 6B 2026-05-03 — Stream A v2 follow-up regression tests
+    # ─────────────────────────────────────────────────────────────────────
+
+    def test_digest_aggregates_same_user_across_companies():
+        """Bug A pin: contractor user with 2 tasks in same project but DIFFERENT
+        company_ids must receive ONE digest message saying '2 ליקויים', not 2
+        separate messages each saying '1 ליקוי'."""
+        async def run():
+            mock_db = MagicMock()
+            # Single project, 2 tasks SAME assignee_id but DIFFERENT company_ids
+            mock_db.projects.find.return_value.to_list = AsyncMock(return_value=[
+                {"id": "proj_X", "name": "פרויקט בדיקה"}
+            ])
+            # When tasks.find is called with assignee_id query (new send_contractor_reminder),
+            # return both tasks for that user
+            tasks_for_user = [
+                {"id": "t1", "title": "T1", "assignee_id": "user_1", "company_id": "comp_A"},
+                {"id": "t2", "title": "T2", "assignee_id": "user_1", "company_id": "comp_B"},
+            ]
+            # When tasks.find is called for assignee aggregation (in send_all),
+            # return all tasks
+            assignee_aggregation_result = [
+                {"assignee_id": "user_1"},
+                {"assignee_id": "user_1"},  # duplicates filtered by set()
+            ]
+            call_count = {"n": 0}
+            async def tasks_find_side_effect_to_list(*args, **kwargs):
+                call_count["n"] += 1
+                if call_count["n"] == 1:
+                    return assignee_aggregation_result  # outer loop in send_all
+                return tasks_for_user  # send_contractor_reminder per-user query
+            cursor = MagicMock()
+            cursor.to_list = AsyncMock(side_effect=tasks_find_side_effect_to_list)
+            mock_db.tasks.find = MagicMock(return_value=cursor)
+            mock_db.projects.find_one = AsyncMock(return_value={
+                "id": "proj_X", "name": "פרויקט בדיקה", "org_id": "org_1"
+            })
+            mock_db.users.find_one = AsyncMock(return_value={
+                "id": "user_1", "name": "דני קבלן", "phone_e164": "+972501234567",
+                "preferred_language": "he", "last_login_at": _recent_iso(), "whatsapp_notifications_enabled": True
+            })
+            mock_db.reminder_log.find_one = AsyncMock(return_value=None)
+            mock_db.reminder_log.insert_one = AsyncMock()
+            reminder_service._db = mock_db
+
+            sent_messages = []
+            async def capture_send(phone, name, body_params, button_params=None, lang_code="he"):
+                sent_messages.append({"count": next((p["text"] for p in body_params if p.get("parameter_name") == "count"), None)})
+                return {"success": True, "provider_message_id": f"wamid_{len(sent_messages)}"}
+
+            with patch.object(reminder_service, '_send_wa_template', new=capture_send):
+                result = await reminder_service.send_all_contractor_reminders()
+
+            # CRITICAL: 1 message, count=2 (not 2 messages with count=1)
+            assert len(sent_messages) == 1, \
+                f"Bug A regression: expected 1 aggregated message, got {len(sent_messages)}"
+            assert sent_messages[0]["count"] == "2", \
+                f"Bug A regression: expected count='2' aggregated, got '{sent_messages[0]['count']}'"
+            assert result["sent"] == 1
+        asyncio.run(run())
+
+    def test_digest_skips_inactive_projects():
+        """Bug C pin: projects with status != 'active' OR archived=true are
+        excluded from cron iteration."""
+        async def run():
+            mock_db = MagicMock()
+            mock_cursor = MagicMock()
+            mock_cursor.to_list = AsyncMock(return_value=[])
+            mock_db.projects.find = MagicMock(return_value=mock_cursor)
+            reminder_service._db = mock_db
+            await reminder_service.send_all_contractor_reminders()
+            # Verify the find query filters by status='active' AND archived
+            find_call_args = mock_db.projects.find.call_args
+            query = find_call_args[0][0]
+            assert query.get("status") == "active", \
+                f"Bug C regression: query must filter status='active', got {query}"
+            # Verify archived clause
+            assert "$or" in query, "Bug C regression: query must include $or for archived field"
+            archived_clause = query["$or"]
+            # Should accept: field missing OR false OR null
+            has_missing_check = any("$exists" in c.get("archived", {}) and c["archived"]["$exists"] is False for c in archived_clause)
+            assert has_missing_check or any(c.get("archived") is False for c in archived_clause), \
+                f"Bug C regression: query must accept archived missing/false/null, got {archived_clause}"
+        asyncio.run(run())
+
+    def test_digest_skips_dormant_users_45_days():
+        """Bug D pin: user with last_login_at > 45 days ago is skipped."""
+        async def run():
+            from datetime import datetime, timezone, timedelta
+            old_login = (datetime.now(timezone.utc) - timedelta(days=46)).isoformat()
+            mock_db = MagicMock()
+            mock_db.tasks.find.return_value.to_list = AsyncMock(return_value=[
+                {"id": "t1", "title": "T", "assignee_id": "user_dormant", "company_id": "c1"}
+            ])
+            mock_db.projects.find_one = AsyncMock(return_value={
+                "id": "p1", "name": "P", "org_id": "o1"
+            })
+            mock_db.users.find_one = AsyncMock(return_value={
+                "id": "user_dormant", "name": "Old User", "phone_e164": "+972501234567",
+                "preferred_language": "he", "last_login_at": old_login,
+                "whatsapp_notifications_enabled": True
+            })
+            mock_db.reminder_log.find_one = AsyncMock(return_value=None)
+            mock_db.reminder_log.insert_one = AsyncMock()
+            reminder_service._db = mock_db
+
+            sent_count = {"n": 0}
+            async def capture_send(*args, **kwargs):
+                sent_count["n"] += 1
+                return {"success": True, "provider_message_id": "x"}
+
+            with patch.object(reminder_service, '_send_wa_template', new=capture_send):
+                result = await reminder_service.send_contractor_reminder("p1", "user_dormant", triggered_by="test", skip_cooldown=True)
+
+            assert sent_count["n"] == 0, f"Bug D regression: dormant user should NOT receive WA, got {sent_count['n']} send"
+            assert result["status"] == "skipped"
+            assert result["reason"] == "user_dormant"
+        asyncio.run(run())
+
+    def test_digest_skips_user_who_disabled_whatsapp():
+        """Bug E pin: user with whatsapp_notifications_enabled=False is skipped
+        even by digest path (not just per-defect path)."""
+        async def run():
+            mock_db = MagicMock()
+            mock_db.tasks.find.return_value.to_list = AsyncMock(return_value=[
+                {"id": "t1", "title": "T", "assignee_id": "user_x", "company_id": "c1"}
+            ])
+            mock_db.projects.find_one = AsyncMock(return_value={
+                "id": "p1", "name": "P", "org_id": "o1"
+            })
+            mock_db.users.find_one = AsyncMock(return_value={
+                "id": "user_x", "name": "User", "phone_e164": "+972501234567",
+                "preferred_language": "he", "last_login_at": _recent_iso(),
+                "whatsapp_notifications_enabled": False  # ← THE TOGGLE IS OFF
+            })
+            mock_db.reminder_log.find_one = AsyncMock(return_value=None)
+            mock_db.reminder_log.insert_one = AsyncMock()
+            reminder_service._db = mock_db
+
+            sent_count = {"n": 0}
+            async def capture_send(*args, **kwargs):
+                sent_count["n"] += 1
+                return {"success": True, "provider_message_id": "x"}
+
+            with patch.object(reminder_service, '_send_wa_template', new=capture_send):
+                result = await reminder_service.send_contractor_reminder("p1", "user_x", triggered_by="test", skip_cooldown=True)
+
+            assert sent_count["n"] == 0, f"Bug E regression: user with WA toggle off should NOT receive, got {sent_count['n']} send"
+            assert result["status"] == "skipped"
+            assert result["reason"] == "user_disabled_whatsapp"
+        asyncio.run(run())
+
+    def test_digest_includes_projects_with_archived_field_missing():
+        """V2 — Replit feedback: edge case where the project document does NOT
+        have the 'archived' field at all (older docs). The $or filter must
+        accept this case (treat as 'not archived')."""
+        async def run():
+            mock_db = MagicMock()
+            cursor = MagicMock()
+            cursor.to_list = AsyncMock(return_value=[
+                {"id": "proj_old_no_archived_field", "name": "Legacy"},
+            ])
+            mock_db.projects.find = MagicMock(return_value=cursor)
+            mock_db.tasks.find.return_value.to_list = AsyncMock(return_value=[])
+            reminder_service._db = mock_db
+            await reminder_service.send_all_contractor_reminders()
+            # Verify the find filter was constructed correctly
+            find_call = mock_db.projects.find.call_args
+            query = find_call[0][0]
+            assert "$or" in query, f"V2: query must use $or for archived check, got {query}"
+            archived_or = query["$or"]
+            # Accept: $exists:False OR explicitly False OR explicitly None
+            kinds = set()
+            for clause in archived_or:
+                if "archived" in clause:
+                    val = clause["archived"]
+                    if isinstance(val, dict) and val.get("$exists") is False:
+                        kinds.add("exists_false")
+                    elif val is False:
+                        kinds.add("equals_false")
+                    elif val is None:
+                        kinds.add("equals_null")
+            assert "exists_false" in kinds, f"Must accept missing field, got kinds={kinds}"
+        asyncio.run(run())
+
+
+    def test_dormant_check_new_user_never_logged_in_recent_account():
+        """V2 — Replit feedback: NEW user (no last_login_at, but recent created_at)
+        must NOT be classified as dormant. Otherwise we deadlock — never gets
+        first reminder → never logs in → permanent dormancy."""
+        from datetime import datetime, timezone, timedelta
+        recent_creation = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        new_user = {
+            "id": "u_new",
+            "name": "New Contractor",
+            "created_at": recent_creation,
+            # NOTE: no last_login_at field — simulates fresh invite
+        }
+        assert reminder_service._is_user_dormant(new_user) is False, \
+            "V2 regression: new user (recent created_at, no last_login) MUST NOT be dormant"
+
+
+    def test_dormant_check_old_account_never_logged_in():
+        """V2 — Counter-case: account is ANCIENT but never logged in → dormant."""
+        from datetime import datetime, timezone, timedelta
+        old_creation = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat()
+        abandoned_user = {
+            "id": "u_abandoned",
+            "name": "Never Active",
+            "created_at": old_creation,
+        }
+        assert reminder_service._is_user_dormant(abandoned_user) is True, \
+            "Old account that never logged in → dormant"
+
+
+    def test_orphan_task_falls_back_to_company_phone():
+        """V2 — Per Zahi 2026-05-03: tasks without assignee_id but with a
+        company that has a phone → digest goes to company phone."""
+        async def run():
+            mock_db = MagicMock()
+            # Project list (active)
+            cursor_projects = MagicMock()
+            cursor_projects.to_list = AsyncMock(return_value=[
+                {"id": "proj_X", "name": "Project X"}
+            ])
+            # Tasks: 2 orphans (no assignee_id) + 1 with assignee
+            tasks_for_project = [
+                {"assignee_id": None, "company_id": "comp_X"},  # orphan
+                {"assignee_id": None, "company_id": "comp_X"},  # orphan same co
+                {"assignee_id": "user_1", "company_id": "comp_X"},  # has assignee
+            ]
+            tasks_for_orphan = [
+                {"id": "t_orphan_1"},
+                {"id": "t_orphan_2"},
+            ]
+            tasks_for_user = [
+                {"id": "t_user_1", "title": "T", "assignee_id": "user_1", "company_id": "comp_X"},
+            ]
+            call_count = {"n": 0}
+            async def find_to_list(*args, **kwargs):
+                call_count["n"] += 1
+                # call 1 = aggregation in send_all (assignee_id+company_id)
+                # call 2 = send_contractor_reminder per-user query
+                # call 3 = send_contractor_reminder_to_company orphan query
+                if call_count["n"] == 1:
+                    return tasks_for_project
+                elif call_count["n"] == 2:
+                    return tasks_for_user
+                else:
+                    return tasks_for_orphan
+            cursor = MagicMock()
+            cursor.to_list = AsyncMock(side_effect=find_to_list)
+            mock_db.tasks.find = MagicMock(return_value=cursor)
+            mock_db.projects.find = MagicMock(return_value=cursor_projects)
+            mock_db.projects.find_one = AsyncMock(return_value={
+                "id": "proj_X", "name": "Project X", "org_id": "org_1"
+            })
+            mock_db.users.find_one = AsyncMock(return_value={
+                "id": "user_1", "name": "U", "phone_e164": "+972501111111",
+                "preferred_language": "he", "last_login_at": _recent_iso(),
+                "whatsapp_notifications_enabled": True
+            })
+            mock_db.companies.find_one = AsyncMock(return_value={
+                "id": "comp_X", "name": "חברת חשמל", "phone_e164": "+972502222222"
+            })
+            mock_db.reminder_log.find_one = AsyncMock(return_value=None)
+            mock_db.reminder_log.insert_one = AsyncMock()
+            reminder_service._db = mock_db
+
+            sent_messages = []
+            async def capture_send(phone, name, body_params, button_params=None, lang_code="he"):
+                sent_messages.append({
+                    "phone": phone,
+                    "count": next((p["text"] for p in body_params if p.get("parameter_name") == "count"), None),
+                })
+                return {"success": True, "provider_message_id": f"wamid_{len(sent_messages)}"}
+
+            with patch.object(reminder_service, '_send_wa_template', new=capture_send):
+                result = await reminder_service.send_all_contractor_reminders()
+
+            # Expect 2 sends: 1 to user (1 task), 1 to company (2 orphan tasks)
+            assert len(sent_messages) == 2, \
+                f"Expected 2 sends (1 user + 1 company fallback), got {len(sent_messages)}"
+            phones = sorted(m["phone"] for m in sent_messages)
+            assert "+972501111111" in phones, "Must send to user phone"
+            assert "+972502222222" in phones, "Must send to company phone (fallback)"
+            # Company fallback message should have count=2 (both orphan tasks aggregated)
+            company_msg = next(m for m in sent_messages if m["phone"] == "+972502222222")
+            assert company_msg["count"] == "2", \
+                f"Company fallback must aggregate orphans, got count={company_msg['count']}"
+        asyncio.run(run())
+
+
+    def test_orphan_task_skipped_when_company_has_no_phone():
+        """V2 — Per Zahi 2026-05-03: orphan tasks with company that has NO
+        phone → skip silently (no spam to nowhere)."""
+        async def run():
+            mock_db = MagicMock()
+            mock_db.tasks.find.return_value.to_list = AsyncMock(return_value=[
+                {"id": "t_orphan"}
+            ])
+            mock_db.companies.find_one = AsyncMock(return_value={
+                "id": "comp_no_phone", "name": "חברה ללא טלפון"
+                # NOTE: no phone_e164, no phone fields
+            })
+            reminder_service._db = mock_db
+
+            sent_count = {"n": 0}
+            async def capture_send(*args, **kwargs):
+                sent_count["n"] += 1
+                return {"success": True, "provider_message_id": "x"}
+
+            with patch.object(reminder_service, '_send_wa_template', new=capture_send):
+                result = await reminder_service.send_contractor_reminder_to_company(
+                    "proj_X", "comp_no_phone", triggered_by="test"
+                )
+
+            assert sent_count["n"] == 0, "Must NOT send if company has no phone"
+            assert result["status"] == "skipped"
+            assert result["reason"] == "no_company_phone"
+        asyncio.run(run())
+
+
+    def test_digest_cooldown_now_per_user_not_per_company():
+        """Verify the cooldown query uses recipient_user_id (new per-user
+        semantics) instead of company_id."""
+        async def run():
+            mock_db = MagicMock()
+            # Existing recent log entry for THIS user → cooldown should block
+            recent_iso = (_now_dt() - timedelta(hours=1)).isoformat()
+            mock_db.reminder_log.find_one = AsyncMock(return_value={
+                "id": "rem_existing", "recipient_user_id": "user_x",
+                "sent_at": recent_iso, "status": "sent",
+            })
+            mock_db.tasks.find.return_value.to_list = AsyncMock(return_value=[
+                {"id": "t1", "title": "T", "assignee_id": "user_x", "company_id": "c1"}
+            ])
+            mock_db.projects.find_one = AsyncMock(return_value={
+                "id": "p1", "name": "P", "org_id": "o1"
+            })
+            mock_db.users.find_one = AsyncMock(return_value={
+                "id": "user_x", "name": "U", "phone_e164": "+972501234567",
+                "preferred_language": "he", "last_login_at": _recent_iso(),
+                "whatsapp_notifications_enabled": True
+            })
+            reminder_service._db = mock_db
+            result = await reminder_service.send_contractor_reminder("p1", "user_x", triggered_by="test", skip_cooldown=False)
+            assert result["status"] == "skipped"
+            assert result["reason"] == "cooldown"
+            # Verify the query was per-user
+            cooldown_call = mock_db.reminder_log.find_one.call_args
+            query = cooldown_call[0][0]
+            assert query.get("recipient_user_id") == "user_x", \
+                f"Cooldown must query by recipient_user_id, got {query}"
+        asyncio.run(run())
+
+
+    # Helper for recent ISO string used in tests above
+    def _recent_iso():
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat()
+
+
+    def _now_dt():
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc)
+
+ALSO — UPDATE existing test test_send_all_three_projects_three_messages.
+
+The existing test creates 3 projects but the new send_all_contractor_reminders
+filter requires `status: "active"` on each project. If the test mocks projects
+without `status`, the filter rejects them.
+
+EDIT the existing test_send_all_three_projects_three_messages: ensure the mock
+projects have `status: "active"` and no `archived: True`. If they currently
+look like:
+    [
+        {"id": "proj_A", "name": "מגדלי הים"},
+        {"id": "proj_B", "name": "נחל שורק"},
+        {"id": "proj_C", "name": "הילטון תל אביב"},
+    ]
+
+CHANGE to:
+    [
+        {"id": "proj_A", "name": "מגדלי הים", "status": "active"},
+        {"id": "proj_B", "name": "נחל שורק", "status": "active"},
+        {"id": "proj_C", "name": "הילטון תל אביב", "status": "active"},
+    ]
+
+This preserves the 3-projects-3-messages invariant in the new code.
+
+ALSO update OTHER existing async tests that mock users — add the new fields they
+must have to pass the eligibility checks:
+- `last_login_at`: a recent ISO string
+- `whatsapp_notifications_enabled`: True
+
+(Without these, ALL existing tests would skip at the new eligibility checks
+and fail their assertions about messages being sent.)
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — backend imports cleanly:
+   cd backend && python -c "from contractor_ops import reminder_service; print('OK')"
+
+VERIFY 2 — pytest all 14 existing + 5 new = 19 tests:
+   cd backend && python -m pytest tests/test_reminder_digest.py -v
+   → 19 passed (or close — verify count matches expected)
+
+VERIFY 3 — Bug A regression test specifically passes:
+   cd backend && python -m pytest tests/test_reminder_digest.py::test_digest_aggregates_same_user_across_companies -v
+   → green
+
+VERIFY 4 — Bug C regression test specifically passes:
+   cd backend && python -m pytest tests/test_reminder_digest.py::test_digest_skips_inactive_projects -v
+   → green
+
+VERIFY 5 — Bug D regression test specifically passes:
+   cd backend && python -m pytest tests/test_reminder_digest.py::test_digest_skips_dormant_users_45_days -v
+   → green
+
+VERIFY 6 — Bug E regression test specifically passes:
+   cd backend && python -m pytest tests/test_reminder_digest.py::test_digest_skips_user_who_disabled_whatsapp -v
+   → green
+
+VERIFY 7 — Frontend build succeeds:
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 8 — Frontend route logic inverted:
+   grep -c "PM_OR_ADMIN_ROLES" frontend/src/App.js
+   → at least 1
+
+   grep -c "user?.role === 'contractor'" frontend/src/App.js
+   → 0 (the old literal check is gone)
+
+VERIFY 9 — send_all_contractor_reminders no longer iterates by company_id:
+   grep -c "for cid in company_ids" backend/contractor_ops/reminder_service.py
+   → 0 (the old per-company loop is gone)
+
+   grep -c "for aid in assignee_ids" backend/contractor_ops/reminder_service.py
+   → at least 1 (the new per-user loop)
+
+VERIFY 10 — Cooldown helper for user added:
+   grep -c "_check_cooldown_for_user" backend/contractor_ops/reminder_service.py
+   → at least 2 (1 def + 1 call)
+
+VERIFY 11 — Smoke test in production after deploy (Zahi):
+   a) Resume cron-job.org (was paused as emergency stop).
+   b) Wait for next 08:00 IL natural cron OR manually trigger via curl.
+   c) Verify in MongoDB Atlas:
+      - reminder_log entries with type='contractor_reminder_digest'
+      - For users with multiple tasks in same project, see ONE entry with open_count >= 2 (not multiple entries with open_count=1).
+      - No entries for archived/suspended projects.
+      - No entries for users with whatsapp_notifications_enabled=false.
+      - No entries for users with last_login_at > 45 days ago.
+   d) Real WA reception test: have a contractor with 2+ defects in same project verify they got ONE message saying "X ליקויים" (not multiple).
+   e) Click WA button → verify lands on ContractorDashboard with project pre-selected (not /dashboard).
+
+================================================================================
+DEPLOYMENT NOTES — POST-DEPLOY EXPECTED TIMELINE (V2 — Replit feedback)
+================================================================================
+
+Cron-job.org has been PAUSED since 2026-05-03 to prevent further damage from
+the buggy Stream A v2 that shipped to prod. After this fix deploys to prod,
+expected behavior over the next 24 hours:
+
+Hour 0 — Zahi runs `./deploy.sh --prod`. Backend updates within ~3 min.
+Hour 0+5min — Zahi resumes cron-job.org schedule.
+Hour 0+5-10min — Zahi MAY trigger manual cron via curl to verify behavior
+   immediately. This will:
+   - Skip users in cooldown from the bad messages sent on May 3 (cooldown
+     window 7h, will mostly be exhausted by now).
+   - Send aggregated digest to anyone newly-eligible.
+   - Verify in MongoDB Atlas that reminder_log entries have:
+     * type="contractor_reminder_digest"
+     * recipient_user_id (not recipient_company_id as primary key)
+     * message_template="wa_contractor_reminder_digest_he"
+     * For users with multi-company defects: open_count >= 2 (not 1+1)
+     * No entries for archived/suspended projects
+     * No entries for dormant users (>45 days, with the new-user exception)
+     * No entries for users with whatsapp_notifications_enabled=False
+
+Hour 0+8h (next 08:00 IL natural cron) — Full clean digest cycle. Each
+   contractor with open defects in active projects receives ONE message per
+   project.
+
+If anything looks wrong: pause cron-job.org again and report. The fix is
+contained — rollback via `git revert` is straightforward.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (3 files):
+      * reminder_service.py: ~150 LOC net change (refactor + helpers)
+      * App.js: ~10 LOC change (ProjectsHome wrapper)
+      * test_reminder_digest.py: ~250 LOC added (5 new tests + adjustments to existing)
+  - VERIFY 1-10 outputs (skip 11 — Zahi runs after deploy)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(stream-a): aggregate digest by user, filter inactive projects + dormant + WA off (Batch 6B)
+
+  5 critical bugs in Stream A v2 found in prod 2026-05-03:
+
+  Bug A (CRITICAL) — Cron iterated (project, company) → users with tasks
+  across multiple companies in same project got duplicate messages each
+  saying '1 ליקוי'. Refactored to (project, assignee_user) → ONE digest
+  with aggregated count. Cooldown query also moved to per-user.
+
+  Bug B — App.js role check used literal user?.role === 'contractor', failed
+  for sub-roles + non-literal contractor roles in prod → contractors landed
+  on /projects/:id/dashboard. Inverted check: explicit PM/admin roles redirect,
+  EVERYONE ELSE → ContractorDashboard.
+
+  Bug C — Cron didn't filter inactive projects. Now filters by
+  status='active' AND archived !== true.
+
+  Bug D — Dormant users (>45 days no login) still received WA. Now skipped
+  with reason='user_dormant'.
+
+  Bug E — User's whatsapp_notifications_enabled toggle in settings was
+  honored only by per-defect path, not digest path. Now both paths honor it.
+
+  Tests: 5 new pytest cases pinning each bug + adjustments to existing
+  3-projects test for the new project filter. 19 total tests in
+  test_reminder_digest.py.
+
+  Stream A v2's send_pm_digest path UNCHANGED (Stream C scope).
+  Existing per-defect contractor flow UNCHANGED.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.5 greps, paste output to top of review.txt)
+2. PART 1.1 — Add eligibility helpers + DORMANT_USER_DAYS const
+3. PART 1.2 — Refactor send_contractor_reminder (signature + body)
+4. PART 1.3 — Add _check_cooldown_for_user helper
+5. PART 1.4 — Refactor send_all_contractor_reminders cron loop with project filter
+6. PART 2 — App.js ProjectsHome inversion
+7. PART 3 — Add 5 tests + adjust existing tests for new mock fields
+8. Run VERIFY 1-10
+9. Generate review.txt + .local/.commit_message
+10. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+3 files revert. The reminder_log entries created during the bad window stay
+as historical record (no cleanup needed).
+
+If the new behavior causes WORSE flooding (e.g. somehow a logic error makes
+it send MORE messages), Zahi can pause cron-job.org as emergency stop while
+investigating.
+
+The cooldown change is NEW field semantics in queries. Old reminder_log entries
+with type='contractor_reminder' still get checked by the new query (we use
+$in: [old, new] types). Backward compat preserved.
+
+================================================================================
+END OF SPEC
+================================================================================

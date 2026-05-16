@@ -1,0 +1,742 @@
+================================================================================
+BATCH — PM Override close (manual stage completion with audit)
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P1 — currently blocking a real production PM (mid-construction
+                project, old stages physically done but no in-app documentation
+                → cannot close → project shows 0% complete forever).
+
+Files changed:  4 files (1 backend extend + 1 frontend service + 1 frontend
+                page + 1 NEW backend test)
+                  Backend:  backend/contractor_ops/qc_router.py (~70 LOC)
+                  Frontend: frontend/src/services/api.js (~10 LOC)
+                  Frontend: frontend/src/pages/StageDetailPage.js (~80 LOC)
+                  Tests:    backend/tests/test_qc_override_close.py (NEW, ~120 LOC)
+
+Tests:          REQUIRED. Mirror test_qc_units_status.py mock pattern
+                (AsyncMock + MagicMock on qcr module functions directly).
+                Covers: RBAC enforcement + reason validation + audit metadata.
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+                Touch targets ≥44px (py-3 on confirmation buttons).
+DB migration:   NONE. New `via_override` + `override_reason` fields are
+                added to stage_actors[stage_id] sub-document on demand
+                during override. Existing approved stages are unaffected
+                (those fields stay absent for non-overridden stages).
+
+CLAUDE.md compliance:
+  - "לא לנחש, לבדוק בקוד תמיד" — STEP 0 verifies all helpers + endpoints
+    + RBAC patterns + existing schema fields.
+  - "קבצים חדשים, לא להעמיס קיימים" — explicit decision to APPEND ~70 LOC
+    to qc_router.py rather than create new file. Reason: this is ONE
+    endpoint extending an existing flow (approve/reject/reopen all live in
+    qc_router.py). Creating qc_override_router.py for a single endpoint
+    is overkill. If item-level override or bulk override are added later,
+    revisit and extract to qc_override_router.py at that point.
+  - "Capacitor" — confirmation dialog uses standard `window.confirm` +
+    `window.prompt` pattern (works native + web). Touch target on the
+    override button is py-3.
+
+================================================================================
+CONTEXT — REAL PROBLEM (Zahi 2026-05-04)
+================================================================================
+
+> "יש לי מנהל פרויקט שהתחבר לאפליקציה, אבל הוא כבר סיים את כל השלבים
+>  הראשוניים של יציקת תקרה בלוקים וכדומה, הוא לא יכול באמת לסגור את
+>  הסעיפים."
+
+A PM joined an existing project mid-construction. The early stages
+(יציקת תקרה, בלוקים, etc.) were COMPLETED before the app was deployed.
+Items have no photos, no notes, no documentation in app — but the work
+IS physically done. The current submit/approve flow blocks closure
+because:
+  - submit_stage requires every item to have status (not pending)
+  - submit_stage requires photos on items with required_photo
+  - submit_stage requires notes on failed items
+  - approve_stage only callable when status=pending_review
+
+Result: project shows 0% complete forever. PM cannot use the app for
+oversight.
+
+This batch adds an "Override close" path: the PM can manually mark a
+stage as approved WITHOUT the per-item validation, with full audit trail
+(who, when, reason). Restricted to project_manager role + super_admin.
+Other valid use cases for override:
+  - Documentation uploaded to wrong unit/stage and needs cleanup
+  - Quality issue resolved verbally on-site, no photo taken
+  - Sub-role mismatch (work_manager closed a stage normally requiring
+    safety_officer signoff)
+
+================================================================================
+DESIGN DECISIONS (defaults — Zahi may revise)
+================================================================================
+
+D1. Stage-level only — no item-level or bulk override in MVP. PM Overrides
+    one stage at a time. If multiple stages need closure, PM clicks into
+    each individually. Bulk is a v2 polish.
+
+D2. Auto-mark items as "pass" with override flag — when a stage is
+    overridden, all its items get `status="pass"` + `marked_via_override=true`.
+    This keeps the UI consistent (items show as "תקין"), the audit trail
+    preserved (the override flag is queryable), and aggregate counts
+    sensible. The alternative (leave items as "pending") would create a
+    confusing UI where stage is approved but items appear unmarked.
+
+D3. Reason is mandatory, min 10 chars, max 500 — prevents trivial
+    reasons like "אישור" or "ok". Forces meaningful documentation.
+
+D4. RBAC: project_manager ONLY (membership.role on this project) +
+    super_admin. NOT management_team generally. Override is a powerful
+    action; restricting prevents accidental closures by junior staff.
+    Junior management can still mark items + submit normally.
+
+D5. UI placement: StageDetailPage only in MVP. PM clicks into a stage
+    card, sees an "Override close" button visible only to project_manager
+    + super_admin, click → confirm dialog with reason textarea → submits.
+    Future polish: add badge on FloorDetailPage stage cards showing
+    "via override" + a per-stage quick-action button.
+
+D6. Endpoint URL: POST /qc/run/{run_id}/stage/{stage_id}/override-approve
+    (consistent with existing /approve, /reject, /reopen siblings).
+
+D7. Audit event type: "qc_stage_override_approved" (new event distinct
+    from "qc_approved") — makes querying overrides trivial.
+
+D8. Notification action: "approved_via_override" (new action distinct
+    from "approved") — recipients can be informed, future polish can
+    style notifications differently.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Confirm existing approve_stage endpoint location + helpers:
+    grep -n "approve_stage\|_check_approver_authorization\|_get_project_role\|_is_super_admin\|MANAGEMENT_ROLES\s*=\|_audit\b\|_now\b\|_actor_name\|_stage_label\|_create_qc_notification\|_get_stage_recipients" \
+        backend/contractor_ops/qc_router.py | head -25
+    # Expected:
+    #   line ~2224: @router.post("/run/{run_id}/stage/{stage_id}/approve")
+    #   line ~2225: async def approve_stage(...)
+    #   _check_approver_authorization defined and used
+    #   _get_project_role defined (or imported)
+    #   _is_super_admin defined (or imported)
+    #   MANAGEMENT_ROLES tuple/constant defined
+    #   _audit, _now, _actor_name, _stage_label, _create_qc_notification,
+    #   _get_stage_recipients all callable from qc_router.py.
+    # If _get_project_role is in router.py instead — adapt the import line
+    # to match how approve_stage uses it.
+
+0.2 — Confirm role string for project_manager. The existing membership
+    schema uses literal "project_manager":
+    grep -n "project_manager" backend/contractor_ops/qc_router.py \
+        backend/contractor_ops/schemas.py | head -10
+    # Expected: at least one literal "project_manager" string used in
+    # role comparisons. Confirms our RBAC check uses the same literal.
+
+0.3 — Confirm stage_statuses + stage_actors document shape:
+    grep -n "stage_statuses\|stage_actors" backend/contractor_ops/qc_router.py | head -15
+    # Expected:
+    #   stage_statuses: dict { stage_id: "draft|ready|pending_review|approved|rejected|reopened" }
+    #   stage_actors: dict { stage_id: { approved_by, approved_by_name, approved_at, ... } }
+    # We add 2 new keys under stage_actors[stage_id]:
+    #   via_override: bool
+    #   override_reason: str
+
+0.4 — Confirm qc_items has a `marked_via_override` field is NOT yet used
+    (greenfield):
+    grep -rn "marked_via_override\|via_override" backend/ frontend/src/
+    # Expected: 0 hits. If anything found — STOP and report.
+
+0.5 — Confirm there's a frontend StageDetailPage.js:
+    test -f frontend/src/pages/StageDetailPage.js && echo "EXISTS" || echo "MISSING"
+    # Expected: EXISTS.
+
+0.6 — Confirm api.js qcService structure (where to add the new method):
+    grep -n "export const qcService\|getUnitsStatus\|approveStage\b" \
+        frontend/src/services/api.js | head -10
+    # Expected:
+    #   `qcService` defined as exported const
+    #   Existing methods like getUnitsStatus, approveStage, etc.
+    # Append `overrideApproveStage` method following the same axios pattern.
+
+0.7 — Confirm test infrastructure pattern (mirror test_qc_units_status.py):
+    test -f backend/tests/test_qc_units_status.py && echo "EXISTS" || echo "MISSING"
+    grep -n "AsyncMock\|MagicMock\|patch.object(qcr" backend/tests/test_qc_units_status.py | head -5
+    # Expected: pattern uses AsyncMock + patch.object(qcr, ...). Mirror it.
+
+0.8 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — BACKEND: new endpoint in qc_router.py
+================================================================================
+
+FILE: backend/contractor_ops/qc_router.py
+------------------------------------------
+
+LOCATION 1.1 — Add new Pydantic body model. Place near other body
+   models (e.g. ApproveRejectBody if it exists, OR near the override
+   endpoint we're adding). Search:
+       grep -n "class ApproveRejectBody\|class.*Body.*BaseModel" qc_router.py | head
+   Add the new model adjacent to it, OR at top of file with other
+   schemas, matching local convention:
+
+   ADD:
+       class OverrideApproveBody(BaseModel):
+           """Body for stage override-approve. Reason mandatory."""
+           reason: str = Field(..., min_length=10, max_length=500)
+
+LOCATION 1.2 — Add the endpoint IMMEDIATELY AFTER the existing reject_stage
+   endpoint (or after reopen_stage — pick the natural sibling location).
+   Look around line ~2309 (reject_stage) or ~2646 (reopen_stage).
+
+   ADD:
+       @router.post("/run/{run_id}/stage/{stage_id}/override-approve")
+       async def override_approve_stage(
+           run_id: str,
+           stage_id: str,
+           body: OverrideApproveBody,
+           user: dict = Depends(get_current_user)
+       ):
+           """PM Override — close a stage WITHOUT per-item validation.
+
+           Use case: PM joins existing project mid-construction; old stages
+           physically done but no in-app documentation. Normal submit/approve
+           flow blocks because items have no photos/notes/status.
+
+           Restricted to:
+             - membership.role == 'project_manager' on this project
+             - OR super_admin
+           Junior management_team CANNOT override.
+
+           Side effects:
+             - All items in the stage marked 'pass' with marked_via_override=true
+             - stage_statuses[stage_id] = 'approved'
+             - stage_actors[stage_id] populated with override metadata
+             - Audit log entry: 'qc_stage_override_approved'
+             - Notifications: action='approved_via_override'
+           """
+           db = get_db()
+
+           run = await db.qc_runs.find_one({"id": run_id}, {"_id": 0})
+           if not run:
+               raise HTTPException(status_code=404, detail="QC run not found")
+
+           project_id = run["project_id"]
+
+           # RBAC — project_manager only (membership-scoped) + super_admin
+           role = await _get_project_role(user, project_id)
+           if role != "project_manager" and not _is_super_admin(user):
+               raise HTTPException(
+                   status_code=403,
+                   detail="Override close requires project manager role"
+               )
+
+           reason = (body.reason or "").strip()
+           # Pydantic already validates min/max length, but defensive check:
+           if len(reason) < 10:
+               raise HTTPException(status_code=400, detail="סיבה חייבת להכיל לפחות 10 תווים")
+
+           stage_statuses = run.get("stage_statuses", {})
+           if stage_statuses.get(stage_id) == "approved":
+               raise HTTPException(status_code=400, detail="שלב זה כבר אושר")
+
+           tpl = await _get_template(db, run=run, project_id=project_id)
+           # Verify stage exists in template (defensive)
+           tpl_stage = next((s for s in tpl["stages"] if s["id"] == stage_id), None)
+           if not tpl_stage:
+               raise HTTPException(status_code=404, detail="Stage not found in template")
+
+           actor = _actor_name(user)
+           now = _now()
+
+           # Side effect 1 — mark all items in this stage as pass + override flag
+           await db.qc_items.update_many(
+               {"run_id": run_id, "stage_id": stage_id},
+               {"$set": {
+                   "status": "pass",
+                   "marked_via_override": True,
+                   "updated_by": user["id"],
+                   "updated_at": now,
+               }}
+           )
+
+           # Side effect 2 — stage status + override metadata
+           await db.qc_runs.update_one(
+               {"id": run_id},
+               {"$set": {
+                   f"stage_statuses.{stage_id}": "approved",
+                   f"stage_actors.{stage_id}.approved_by": user["id"],
+                   f"stage_actors.{stage_id}.approved_by_name": actor,
+                   f"stage_actors.{stage_id}.approved_at": now,
+                   f"stage_actors.{stage_id}.via_override": True,
+                   f"stage_actors.{stage_id}.override_reason": reason,
+               }}
+           )
+
+           # Audit — distinct event type for queryability
+           await _audit("qc_stage", stage_id, "qc_stage_override_approved", user["id"], {
+               "run_id": run_id,
+               "floor_id": run.get("floor_id"),
+               "project_id": project_id,
+               "stage_id": stage_id,
+               "override_reason": reason,
+               "actor_name": actor,
+               "stage_label": _stage_label(tpl, stage_id),
+           })
+
+           # Notifications — distinct action so future UIs can style.
+           # AMENDMENT (review feedback 2026-05-04): filter out the PM
+           # who performed the override — no point notifying them of their
+           # own action (annoying + creates phantom notification badges).
+           try:
+               recipients = await _get_stage_recipients(db, project_id, stage_id, "approved")
+               # Self-notification filter — exclude actor from recipients
+               recipients = [r for r in recipients if r.get("user_id") != user["id"]]
+               if recipients:
+                   await _create_qc_notification(
+                       db, recipients,
+                       project_id=project_id, stage_id=stage_id,
+                       floor_id=run.get("floor_id"), building_id=run.get("building_id"),
+                       stage_code=stage_id, stage_label_he=_stage_label(tpl, stage_id),
+                       actor_id=user["id"], actor_name_str=actor,
+                       action="approved_via_override", run_id=run_id,
+                   )
+           except Exception as e:
+               logger.error(f"[QC] Failed to create notifications for override: {e}")
+
+           logger.info(
+               f"[QC] Stage {stage_id} OVERRIDE APPROVED in run {run_id} "
+               f"by user {user['id']}, reason: {reason[:50]}"
+           )
+
+           return {
+               "status": "approved",
+               "stage_id": stage_id,
+               "via_override": True,
+           }
+
+DO NOT TOUCH:
+- Existing approve_stage / reject_stage / submit_stage / reopen_stage —
+  they remain unchanged. Override is a NEW path, not a replacement.
+- _check_approver_authorization — used by normal approve, not by override.
+  Override has its own RBAC (project_manager only).
+- _backfill_missing_items — unchanged.
+- Template editor — unchanged.
+- _get_stage_recipients return shape — unchanged. Override sends the same
+  notification format with a different `action` string.
+
+================================================================================
+PART 2 — FRONTEND SERVICE in api.js
+================================================================================
+
+FILE: frontend/src/services/api.js
+-----------------------------------
+
+LOCATION 2.1 — Inside `qcService = { ... }`, append a new method:
+
+   ADD (place near approveStage if it exists, OR at end of qcService methods):
+       overrideApproveStage: async (runId, stageId, reason) => {
+         const response = await axios.post(
+           `${API}/qc/run/${runId}/stage/${stageId}/override-approve`,
+           { reason },
+           { headers: getAuthHeader() }
+         );
+         return response.data;
+       },
+
+   Match the comma/spacing/indent style of surrounding methods exactly.
+
+================================================================================
+PART 3 — FRONTEND UI in StageDetailPage.js
+================================================================================
+
+FILE: frontend/src/pages/StageDetailPage.js
+--------------------------------------------
+
+LOCATION 3.1 — Add state for the override dialog:
+
+   FIND the existing useState declarations near top of component.
+
+   ADD nearby (e.g. after other dialog state):
+       const [showOverrideDialog, setShowOverrideDialog] = useState(false);
+       const [overrideReason, setOverrideReason] = useState('');
+       const [overrideSubmitting, setOverrideSubmitting] = useState(false);
+
+LOCATION 3.2 — Add a handler function for the override action:
+
+   ADD (place near other action handlers):
+       const handleOverrideApprove = async () => {
+         const reason = (overrideReason || '').trim();
+         if (reason.length < 10) {
+           alert('סיבה חייבת להכיל לפחות 10 תווים');
+           return;
+         }
+         try {
+           setOverrideSubmitting(true);
+           await qcService.overrideApproveStage(runId, stageId, reason);
+           setShowOverrideDialog(false);
+           setOverrideReason('');
+           // Refresh page state — reload stage data
+           await loadStage();  // Use existing loader function name
+         } catch (err) {
+           const msg = err?.response?.data?.detail || 'שגיאה בסגירת השלב';
+           alert(msg);
+         } finally {
+           setOverrideSubmitting(false);
+         }
+       };
+
+   IMPORTANT — match the existing data-loading function name. STEP 0
+   pre-flight identifies whether it's `loadStage`, `fetchData`, etc.
+   Adapt accordingly.
+
+LOCATION 3.3 — Add the UI button + confirmation dialog. Visibility
+   controlled by user role.
+
+   FIND the management actions area (where current "Submit" / "Approve"
+   buttons render — STEP 0 identifies the exact JSX block).
+
+   ADD AFTER existing management buttons (only show if user is PM or super_admin
+   AND stage is not already approved):
+       {/* PM Override close — visible only to project_manager + super_admin */}
+       {(user?.project_role === 'project_manager' || user?.platform_role === 'super_admin') &&
+         currentStageStatus !== 'approved' && (
+         <button
+           type="button"
+           onClick={() => setShowOverrideDialog(true)}
+           className="w-full py-3 px-4 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg text-sm font-medium border border-amber-300 flex items-center justify-center gap-2"
+         >
+           <Shield className="w-4 h-4" />
+           סגור עם override (PM)
+         </button>
+       )}
+
+   ADD inline modal/dialog (not at end of component, in normal-flow JSX):
+       {showOverrideDialog && (
+         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" dir="rtl">
+           <div className="bg-white rounded-xl max-w-md w-full p-5">
+             <h3 className="text-base font-bold mb-2">סגור שלב עם override</h3>
+             <p className="text-sm text-slate-600 mb-3">
+               פעולה זו תסמן את כל פריטי השלב כתקינים ותסגור אותו ללא בדיקת תיעוד.
+               הפעולה תיתועד ב-audit log עם השם שלך והסיבה שתזין.
+             </p>
+             <label className="block text-sm font-medium text-slate-700 mb-1">
+               סיבה (חובה, לפחות 10 תווים):
+             </label>
+             <textarea
+               value={overrideReason}
+               onChange={(e) => setOverrideReason(e.target.value)}
+               rows={4}
+               maxLength={500}
+               placeholder="לדוגמה: שלב הושלם לפני שהאפליקציה הותקנה — תיעוד פיזי קיים בתיק הפרויקט"
+               className="w-full border border-slate-300 rounded-lg px-3 py-3 text-sm text-right"
+             />
+             <div className="text-xs text-slate-500 mt-1">
+               {overrideReason.length}/500 תווים
+             </div>
+             <div className="flex gap-2 mt-4 justify-end">
+               <button
+                 type="button"
+                 onClick={() => { setShowOverrideDialog(false); setOverrideReason(''); }}
+                 className="px-4 py-3 text-sm text-slate-600 hover:bg-slate-100 rounded-lg"
+                 disabled={overrideSubmitting}
+               >
+                 ביטול
+               </button>
+               <button
+                 type="button"
+                 onClick={handleOverrideApprove}
+                 className="px-4 py-3 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50"
+                 disabled={overrideSubmitting || overrideReason.trim().length < 10}
+               >
+                 {overrideSubmitting ? 'סוגר...' : 'סגור עם override'}
+               </button>
+             </div>
+           </div>
+         </div>
+       )}
+
+LOCATION 3.4 — Visual indicator when stage is approved-via-override:
+
+   FIND the stage status badge/header that shows when current stage is
+   "approved" (STEP 0 identifies the location).
+
+   ADD a small additional badge IF `stageActors?.via_override === true`:
+       {stageActors?.via_override && (
+         <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+           <Shield className="w-3 h-3" />
+           אושר ב-override
+         </span>
+       )}
+
+   IMPORTANT — `stageActors` here means the `stage_actors[stage_id]` object
+   from the run response. STEP 0 confirms how the page already accesses it.
+
+DO NOT TOUCH:
+- Item marking UI (each item's pass/fail/photos/notes) — unchanged.
+- Existing Submit / Approve / Reopen / Reject buttons — they remain.
+- The stage status display logic — only an additional badge is added.
+- Photo upload, note input — unchanged.
+- Navigation back, page header — unchanged.
+
+================================================================================
+PART 4 — TESTS (REQUIRED)
+================================================================================
+
+FILE: backend/tests/test_qc_override_close.py (NEW)
+----------------------------------------------------
+
+Mirror test_qc_units_status.py mock pattern. 3 tests minimum:
+
+   """Tests for PM Override close on QC stages."""
+   import asyncio
+   from unittest.mock import AsyncMock, MagicMock, patch
+   from contractor_ops import qc_router as qcr
+
+   def test_override_approve_requires_project_manager_role():
+       """Override blocked for non-PM roles (e.g. management_team)."""
+       async def run():
+           db = MagicMock()
+           db.qc_runs.find_one = AsyncMock(return_value={
+               "id": "run1", "project_id": "p1", "stage_statuses": {}
+           })
+           with patch.object(qcr, "get_db", return_value=db), \
+                patch.object(qcr, "_get_project_role", new=AsyncMock(return_value="management_team")), \
+                patch.object(qcr, "_is_super_admin", return_value=False):
+               from contractor_ops.qc_router import override_approve_stage, OverrideApproveBody
+               from fastapi import HTTPException
+               try:
+                   await override_approve_stage(
+                       "run1", "stage_blocks",
+                       OverrideApproveBody(reason="ten chars at least"),
+                       user={"id": "u1"}
+                   )
+                   assert False, "expected 403"
+               except HTTPException as e:
+                   assert e.status_code == 403
+                   assert "project manager" in str(e.detail).lower()
+       asyncio.run(run())
+
+   def test_override_approve_marks_items_and_stage():
+       """Successful override: items pass+via_override, stage approved+metadata."""
+       async def run():
+           db = MagicMock()
+           db.qc_runs.find_one = AsyncMock(return_value={
+               "id": "run1", "project_id": "p1",
+               "floor_id": "f1", "building_id": "b1",
+               "stage_statuses": {"stage_blocks": "draft"},
+           })
+           db.qc_items.update_many = AsyncMock()
+           db.qc_runs.update_one = AsyncMock()
+           tpl = {"stages": [
+               {"id": "stage_blocks", "title": "בלוקים", "scope": "floor", "items": []},
+           ]}
+           with patch.object(qcr, "get_db", return_value=db), \
+                patch.object(qcr, "_get_project_role", new=AsyncMock(return_value="project_manager")), \
+                patch.object(qcr, "_is_super_admin", return_value=False), \
+                patch.object(qcr, "_get_template", new=AsyncMock(return_value=tpl)), \
+                patch.object(qcr, "_audit", new=AsyncMock()), \
+                patch.object(qcr, "_get_stage_recipients", new=AsyncMock(return_value=[])), \
+                patch.object(qcr, "_create_qc_notification", new=AsyncMock()):
+               from contractor_ops.qc_router import override_approve_stage, OverrideApproveBody
+               result = await override_approve_stage(
+                   "run1", "stage_blocks",
+                   OverrideApproveBody(reason="עבודה בוצעה לפני שהאפליקציה הותקנה"),
+                   user={"id": "pm_user"}
+               )
+               assert result["status"] == "approved"
+               assert result["via_override"] is True
+               # qc_items.update_many called to mark items pass+override
+               db.qc_items.update_many.assert_called_once()
+               args = db.qc_items.update_many.call_args
+               update_doc = args.args[1]["$set"]
+               assert update_doc["status"] == "pass"
+               assert update_doc["marked_via_override"] is True
+               # qc_runs.update_one called with stage_actors override metadata
+               db.qc_runs.update_one.assert_called_once()
+               run_args = db.qc_runs.update_one.call_args
+               run_set = run_args.args[1]["$set"]
+               assert run_set["stage_statuses.stage_blocks"] == "approved"
+               assert run_set["stage_actors.stage_blocks.via_override"] is True
+               assert "override_reason" in str(run_set)
+       asyncio.run(run())
+
+   def test_override_approve_rejects_short_reason():
+       """Reason must be at least 10 chars (Pydantic validates)."""
+       from contractor_ops.qc_router import OverrideApproveBody
+       from pydantic import ValidationError
+       try:
+           OverrideApproveBody(reason="too short")
+           assert False, "expected ValidationError"
+       except ValidationError:
+           pass
+
+NOTE: if the qcr mock harness reveals genuinely missing helpers, document
+explicitly in review.txt per the established escalation procedure. No
+silent skip.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend syntax + import resolution:
+   cd backend && python -c "from contractor_ops.qc_router import override_approve_stage, OverrideApproveBody; print('OK')"
+   → prints OK
+
+VERIFY 2 — Endpoint registered in app.routes:
+   cd backend && python -c "from server import app; \
+       paths = [r.path for r in app.routes]; \
+       assert any('/run/{run_id}/stage/{stage_id}/override-approve' in p for p in paths); \
+       print('OK')"
+   → prints OK
+
+VERIFY 3 — Run new test file:
+   cd backend && python -m pytest tests/test_qc_override_close.py -v
+   → 3 passed
+
+VERIFY 4 — No regression on existing qc tests:
+   cd backend && python -m pytest tests/test_qc_units_status.py -v
+   → 1 passed (unchanged)
+
+VERIFY 5 — Frontend syntax (Babel parse):
+   cd frontend && yarn build
+   → no new warnings or errors
+   (Or fall back to babel parse on the 2 changed JS files.)
+
+VERIFY 6 — qcService method exists:
+   grep -c "overrideApproveStage" frontend/src/services/api.js
+   → ≥ 1
+
+VERIFY 7 — StageDetailPage uses the new method:
+   grep -c "overrideApproveStage\|showOverrideDialog\|via_override" \
+       frontend/src/pages/StageDetailPage.js
+   → ≥ 3
+
+VERIFY 8 — Visual smoke (Zahi runs after deploy to staging):
+
+   Setup:
+   a) Login as super_admin → confirm UI shows the override button on
+      any open stage of any project.
+   b) Optional: create a test user with role='project_manager' on a
+      specific project to verify project-scoped RBAC.
+
+   Successful override:
+   c) Open a stage that is NOT approved (e.g. בלוקים — שורה ראשונה).
+   d) Items show as pending (or partially marked).
+   e) Click "סגור עם override (PM)" button. Dialog opens.
+   f) Try to submit with empty reason → blocked client-side.
+   g) Try to submit with 5-char reason → blocked client-side AND server-side.
+   h) Enter valid reason "עבודה בוצעה לפני שהאפליקציה הותקנה — תיעוד בתיק הפרויקט"
+      and submit. Wait for response.
+   i) Page refreshes. Stage now shows status "אושר" + small badge "אושר ב-override".
+   j) All items now show as "תקין" (pass).
+   k) Reload page. State persists.
+
+   Negative:
+   l) Login as a regular contractor or as management_team without
+      project_manager role → confirm the "סגור עם override" button is NOT
+      visible.
+   m) Manually call POST /qc/run/{run_id}/stage/{stage_id}/override-approve
+      from a contractor session → 403 forbidden.
+
+   Regression:
+   n) Normal approve flow (mark items → submit → approve) still works on
+      another stage. Override is a SEPARATE path.
+   o) Reopen on an override-approved stage works (existing reopen handler
+      doesn't care if via_override).
+   p) Mobile viewport (375px) — dialog renders, all touch targets ≥44px.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Drift summary if any
+  - Per-file diff (4 files: qc_router.py + api.js + StageDetailPage.js + NEW test)
+  - VERIFY 1-7 outputs
+  - VERIFY 8 deferred-to-Zahi note (16 scenarios a-p)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(qc): PM Override close — manual stage completion with audit
+
+  P1 — currently blocking a real production PM. Project joined
+  mid-construction, old stages physically done but no in-app
+  documentation → cannot close → project stuck at 0% complete.
+
+  Adds POST /qc/run/{run_id}/stage/{stage_id}/override-approve
+  endpoint. Restricted to project_manager role + super_admin (NOT
+  management_team broadly — override is a powerful action).
+
+  Side effects on success:
+   - All items in stage marked status=pass + marked_via_override=true
+   - stage_statuses[stage_id] = approved
+   - stage_actors[stage_id] populated with override metadata
+     (via_override, override_reason, approved_by, approved_at)
+   - Audit log entry: qc_stage_override_approved (distinct event type
+     for queryable compliance trail)
+   - Notifications: action='approved_via_override' (distinct from
+     normal approved)
+
+  UI: button + confirmation dialog on StageDetailPage, visible only
+  to PM + super_admin. Reason mandatory (10-500 chars). Confirmation
+  dialog shows what will happen. Stage status badge gains "אושר ב-override"
+  badge when via_override is true.
+
+  Backend: ~70 LOC appended to qc_router.py (extension of existing
+  approve/reject/reopen flow, not a new domain → file extension OK
+  per CLAUDE.md interpretation; revisit if more override variants
+  follow).
+
+  Tests: 3 mock tests covering RBAC enforcement, successful side
+  effects, reason validation.
+
+  Out of scope for MVP (deferred to v2):
+  - Bulk override (close multiple stages at once)
+  - Item-level override (override individual items)
+  - FloorDetailPage badge for override-approved stages
+  - Time-bound overrides (auto-expire if not validated)
+  - Multi-PM approval workflow (override of override)
+  - Reason dropdown with predefined categories — wait for ~30 days of
+    field data, identify common reasons, then add dropdown + "Other"
+    in v2 batch
+  - PM "override history" view — list of all overrides this PM has
+    done across project. Data is already in audit log; UI deferred to
+    Section #471 dashboard polish
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.7 greps, paste output to top of review.txt)
+2. PART 1 — backend qc_router.py extension (body model + endpoint)
+3. PART 2 — frontend api.js qcService method
+4. PART 3 — StageDetailPage.js UI (state + handler + button + dialog + badge)
+5. PART 4 — NEW test file with 3 mock tests
+6. Run VERIFY 1-7
+7. Generate review.txt + .local/.commit_message
+8. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+4 files revert. The override endpoint disappears (404 for any caller).
+The UI button + dialog disappear. Tests file removed.
+
+NO data corruption — stages that were override-approved remain in DB
+with their stage_actors metadata + items with marked_via_override=true.
+Those records remain readable; just no UI to create new ones until the
+batch is re-deployed.
+
+NO impact on:
+- Existing approve / reject / submit / reopen flows (untouched)
+- Template editor (untouched)
+- Item marking flow (untouched)
+- Other QC endpoints (untouched)
+
+================================================================================
+END OF SPEC
+================================================================================

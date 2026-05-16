@@ -1,0 +1,456 @@
+================================================================================
+BATCH — QC UX fixes (3 bugs in 2 files)
+================================================================================
+Date:           2026-05-07
+Branch:         staging  (NOT main)
+Severity:       P2 — UX bugs in production. Discovered by Zahi 2026-05-07
+                during plot 810 walk-through.
+
+Files changed:  2 frontend pages
+                  frontend/src/pages/QCFloorSelectionPage.js (~6 LOC)
+                  frontend/src/pages/UnitQCSelectionPage.js  (~30 LOC)
+
+Tests:          NO new tests (pure UI / navigation flow). VERIFY visual
+                smoke covers it.
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+DB migration:   NONE. No backend changes.
+
+Family:         Standalone QC UX cleanup. Builds on #480 + 5K + #503
+                (all already in prod).
+
+================================================================================
+BUGS BUNDLED IN THIS BATCH
+================================================================================
+
+BUG A — QCFloorSelectionPage layout:
+  Today: "סטטוס ביצוע כללי" block sits at TOP of page, expanded by
+  default. It pushes building cards below the fold.
+  Want: move to BOTTOM of page (after building list), collapsed by
+  default. User expands manually if they want stage breakdown.
+
+BUG B — UnitQCSelectionPage shows aggregated numbers across all stages:
+  Today: title hardcoded "🟫 ריצוף", per-unit count is 1/18 (sum of
+  all stages on that unit).
+  Want: when ?stage_id=X is in URL, filter to that stage only. Title
+  dynamic from API stage_title. Per-unit count reflects ONLY the
+  filtered stage (e.g. 0/1 or 1/1).
+
+BUG C — UnitQCSelectionPage drops ?from=qc:
+  Today: goBack and handleUnitClick both forget ?from=qc. Once
+  dropped, Floor → Building → QC back-chain (#480 + 5K) can't recover.
+  User ends at /projects/{p}/buildings/{b} instead of /projects/{p}/qc.
+  Want: propagate ?from=qc on goBack and on click-into-stage.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+⚠️ Cowork's mac repo may be out of date. Replit MUST run STEP 0 greps
+on the workspace that's actually being deployed (Replit's repo,
+after `git pull`). Spec line numbers are approximate.
+
+0.1 — QCFloorSelectionPage state of the section:
+    grep -n "summaryCollapsed\|qc_summary_collapsed_\|סטטוס ביצוע כללי" \
+        frontend/src/pages/QCFloorSelectionPage.js
+    Expected:
+    - Line ~36-38: useState init reading sessionStorage === '1'
+    - Line ~42-44: useEffect mirroring same logic
+    - Line ~261-300: the section JSX block
+    - Line ~273: literal "סטטוס ביצוע כללי"
+
+0.2 — Confirm no other consumers of summaryCollapsed:
+    grep -rn "summaryCollapsed\|qc_summary_collapsed_" frontend/src/
+    Expected: 0 hits outside QCFloorSelectionPage.js
+
+0.3 — UnitQCSelectionPage current state:
+    grep -n "useSearchParams\|searchParams\|fromParam\|stage_id\|data\.stages\|ריצוף — " \
+        frontend/src/pages/UnitQCSelectionPage.js
+    Expected:
+    - useSearchParams NOT imported (this is the gap)
+    - urlParams = new URLSearchParams(window.location.search) at L57
+      inside handleUnitClick (keep as-is — local read works)
+    - data.stages aggregated at L106-137 (this is the bug)
+    - "ריצוף — " hardcoded at L166
+
+0.4 — Confirm callers of /qc/units always pass stage_id:
+    grep -rn "qc/units" frontend/src/pages/
+    Expected: FloorDetailPage L315 sends ?stage_id=X (per #476).
+    UnitQCSelectionPage L64 has returnTo with same path (no stage_id).
+
+0.5 — Confirm getFloorRun/getUnitRun service methods exist:
+    grep -n "getFloorRun\|getUnitRun" frontend/src/services/api.js
+    Expected: 2 hits.
+
+0.6 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART A — QCFloorSelectionPage: section to bottom + default collapsed
+================================================================================
+
+FILE: frontend/src/pages/QCFloorSelectionPage.js
+------------------------------------------------
+
+A1 — Flip default to collapsed (L36-38).
+
+  BEFORE:
+      const [summaryCollapsed, setSummaryCollapsed] = useState(() => {
+        try { return sessionStorage.getItem(storageKey) === '1'; } catch { return false; }
+      });
+
+  AFTER:
+      const [summaryCollapsed, setSummaryCollapsed] = useState(() => {
+        try { return sessionStorage.getItem(storageKey) !== '0'; } catch { return true; }
+      });
+
+A2 — Same flip on the useEffect mirror (L42-44).
+
+  BEFORE:
+      useEffect(() => {
+        try { setSummaryCollapsed(sessionStorage.getItem(storageKey) === '1'); } catch { setSummaryCollapsed(false); }
+      }, [storageKey]);
+
+  AFTER:
+      useEffect(() => {
+        try { setSummaryCollapsed(sessionStorage.getItem(storageKey) !== '0'); } catch { setSummaryCollapsed(true); }
+      }, [storageKey]);
+
+  Convention preserved: '1' = collapsed, '0' = expanded.
+  Only the default for a missing key flips from expanded → collapsed.
+  Users with existing '0' (expanded) keep expanded. Users with '1' or
+  no key → collapsed.
+
+A3 — Move the section block from top (L261-300) to bottom of building
+     list.
+
+  CUT exact JSX block (entire conditional starting at L261):
+      {execSummary && execSummary.stages && execSummary.stages.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+          ...all toggle button + collapsed body...
+        </div>
+      )}
+
+  PASTE immediately AFTER the closing `</div>` of `<div className="space-y-2">`
+  that wraps the building cards (around L402, after the
+  `{filteredBuildings.length === 0 && ...}` block).
+
+  The section's NEW position is the LAST child of the outer container
+  (the parent `<div>` that holds matrix link + counters + count line +
+  search + building list).
+
+DO NOT TOUCH:
+- Block content / styling / icons / chevron behavior.
+- 4 status counters (בהמתנה / נכשלו / בביצוע / הושלמו). They stay at top.
+- Building/floor count line, search input, building cards.
+- Loading flow of execSummary.
+- sessionStorage key name `qc_summary_collapsed_${projectId}`.
+
+================================================================================
+PART B — UnitQCSelectionPage: stage filter + dynamic title + from=qc
+================================================================================
+
+FILE: frontend/src/pages/UnitQCSelectionPage.js
+------------------------------------------------
+
+B1 — Imports (L1-2).
+
+  BEFORE:
+      import React, { useState, useEffect, useCallback } from 'react';
+      import { useParams, useNavigate } from 'react-router-dom';
+
+  AFTER:
+      import React, { useState, useEffect, useCallback } from 'react';
+      import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+
+B2 — Hooks (after `const navigate = useNavigate();` at ~L22).
+
+  ADD:
+      const [searchParams] = useSearchParams();
+      const fromParam = searchParams.get('from');
+      const stageIdParam = searchParams.get('stage_id');
+
+B3 — Filter stages + dynamic title (replace L106-148 region).
+
+  BEFORE (the relevant pieces):
+      const stages = Array.isArray(data.stages) ? data.stages : [];
+      const floor_name = data.floor_name || '';
+
+      const unitAggMap = new Map();
+      stages.forEach(stage => {
+        (stage.units || []).forEach(u => { ... });
+      });
+
+      const units = Array.from(unitAggMap.values()).map(u => { ... });
+
+  AFTER:
+      const allStages = Array.isArray(data.stages) ? data.stages : [];
+      const floor_name = data.floor_name || '';
+
+      // FIX 2026-05-07: when ?stage_id=X is in URL, filter to ONLY
+      // that stage. Previously aggregated across ALL stages → numbers
+      // didn't match what user saw inside the stage detail page.
+      const stages = stageIdParam
+        ? allStages.filter(s => s.stage_id === stageIdParam)
+        : allStages;
+
+      // Dynamic title from API stage_title. Falls back to first stage
+      // when no filter, or generic label when no stages at all.
+      const currentStageTitle = stages.length > 0
+        ? (stages[0].stage_title || 'בקרת ביצוע')
+        : 'בקרת ביצוע';
+
+      // Aggregate per unit. When filtered to 1 stage this is just
+      // per-stage view (single-element aggregation).
+      const unitAggMap = new Map();
+      stages.forEach(stage => {
+        (stage.units || []).forEach(u => {
+          const existing = unitAggMap.get(u.unit_id);
+          if (!existing) {
+            unitAggMap.set(u.unit_id, {
+              unit_id: u.unit_id,
+              unit_name: u.unit_name,
+              unit_no: u.unit_no,
+              handled_count: u.handled_count || 0,
+              total: u.total || 0,
+              pass_count: u.pass_count || 0,
+              fail_count: u.fail_count || 0,
+              _statuses: [u.status || 'not_started'],
+            });
+          } else {
+            existing.handled_count += u.handled_count || 0;
+            existing.total += u.total || 0;
+            existing.pass_count += u.pass_count || 0;
+            existing.fail_count += u.fail_count || 0;
+            existing._statuses.push(u.status || 'not_started');
+          }
+        });
+      });
+
+      const units = Array.from(unitAggMap.values()).map(u => {
+        const allApproved = u._statuses.length > 0 && u._statuses.every(s => s === 'approved');
+        const anyInProgress = u._statuses.some(s => s === 'in_progress' || s === 'approved');
+        const status = allApproved ? 'approved'
+                     : anyInProgress ? 'in_progress'
+                     : 'not_started';
+        const { _statuses, ...rest } = u;
+        return { ...rest, status };
+      });
+
+  Note: the aggregation logic is UNCHANGED. The fix is the input —
+  `stages` is now filtered before forEach runs.
+
+B4 — Dynamic title in header (L165-167).
+
+  BEFORE:
+      <h1 className="text-base font-bold flex items-center gap-2">
+        🟫 ריצוף — {floor_name}
+      </h1>
+
+  AFTER:
+      <h1 className="text-base font-bold flex items-center gap-2">
+        📋 {currentStageTitle} — {floor_name}
+      </h1>
+
+  Icon swap 🟫 → 📋 — generic clipboard. Per-stage icons require
+  backend to return stage_icon (out of scope for this batch).
+
+B5 — goBack propagates ?from=qc (L76-78).
+
+  BEFORE:
+      const goBack = () => {
+        navigate(`/projects/${projectId}/floors/${floorId}`);
+      };
+
+  AFTER:
+      const goBack = () => {
+        const url = `/projects/${projectId}/floors/${floorId}`;
+        const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+        navigate(withFrom);
+      };
+
+B6 — handleUnitClick propagates ?from=qc to stage URL + state.returnTo
+     (L60-69).
+
+  BEFORE:
+      navigate(
+        `/projects/${projectId}/qc/floors/${floorId}/run/${run.id}/stage/${stageId}`,
+        {
+          state: {
+            returnTo: `/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units`,
+            unitName: unit.unit_name || unit.unit_no,
+            scope: 'unit',
+          }
+        }
+      );
+
+  AFTER:
+      const stageUrl = `/projects/${projectId}/qc/floors/${floorId}/run/${run.id}/stage/${stageId}`;
+      const stageWithFrom = fromParam === 'qc' ? `${stageUrl}?from=qc` : stageUrl;
+      const returnToBase = `/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units`;
+      const returnToWithStage = `${returnToBase}?stage_id=${stageId}`;
+      const returnToFinal = fromParam === 'qc' ? `${returnToWithStage}&from=qc` : returnToWithStage;
+      navigate(
+        stageWithFrom,
+        {
+          state: {
+            returnTo: returnToFinal,
+            unitName: unit.unit_name || unit.unit_no,
+            scope: 'unit',
+          }
+        }
+      );
+
+  Note: stageId comes from the EXISTING urlParams.get('stage_id') at
+  L57-59 — that block stays. The fix uses fromParam from the new
+  useSearchParams hook (B2) for forwarding from=qc.
+
+DO NOT TOUCH:
+- The L57-59 read of stage_id via window.location.search inside
+  handleUnitClick — it works and is local. Don't refactor to use
+  searchParams (would conflict with the new hook).
+- load() / fetch logic.
+- STATUS_CONFIG / STATUS_ICONS objects.
+- UI rendering of unit cards (L186-onwards).
+- Backend (qcService.getUnitsStatus / API contract).
+- FloorDetailPage / StageDetailPage / BuildingQCPage / QCFloorSelectionPage.
+- The state shape (returnTo / unitName / scope) — only the URL strings change.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — yarn build passes (no new warnings).
+     cd frontend && yarn build
+
+V2 — QCFloorSelectionPage section is collapsed by default and lives
+     once at the bottom:
+     grep -c "summaryCollapsed" frontend/src/pages/QCFloorSelectionPage.js
+     → exact count unchanged (still 4 hits — useState, useEffect,
+       click handler, JSX render guard).
+
+     grep -c "סטטוס ביצוע כללי" frontend/src/pages/QCFloorSelectionPage.js
+     → 1 (not duplicated).
+
+     grep -n "!== '0'" frontend/src/pages/QCFloorSelectionPage.js
+     → 2 hits (useState init + useEffect mirror).
+
+V3 — UnitQCSelectionPage hooks added:
+     grep -c "useSearchParams" frontend/src/pages/UnitQCSelectionPage.js
+     → ≥ 2 (1 import + 1 use).
+
+     grep -c "fromParam\|stageIdParam" frontend/src/pages/UnitQCSelectionPage.js
+     → ≥ 5.
+
+     grep -c "ריצוף — " frontend/src/pages/UnitQCSelectionPage.js
+     → 0 (hardcoded title removed).
+
+     grep -c "currentStageTitle" frontend/src/pages/UnitQCSelectionPage.js
+     → ≥ 1 (used in <h1>).
+
+     grep -c "from=qc" frontend/src/pages/UnitQCSelectionPage.js
+     → ≥ 2 (goBack + handleUnitClick).
+
+V4 — No regression on existing tests (no backend touched, but run
+     unit_status tests as defensive sanity):
+     cd backend && python -m pytest tests/test_qc_units_status.py -v
+     → all pass.
+
+V5 — Visual smoke deferred to Zahi after deploy. Scenarios:
+
+  PART A — QCFloorSelectionPage:
+  a) /projects/d41ca1d0.../qc → header + matrix link + counters +
+     count line + search + building list 8/9/10/11 → "סטטוס ביצוע
+     כללי" at BOTTOM, collapsed.
+  b) Click on the collapsed section → expands inline with stage rows.
+  c) Click again → collapses.
+  d) Reload → state persists per session storage in same tab.
+  e) Open in new tab → defaults to collapsed (sessionStorage scoped
+     per tab).
+
+  PART B — UnitQCSelectionPage:
+  f) /projects/{p}/qc → click building → click floor → click "ריצוף"
+     stage card on FloorDetailPage.
+     URL: /buildings/{b}/floors/{f}/qc/units?stage_id=stage_tiling&from=qc
+  g) Page header reads "📋 ריצוף דירה — קומה X" (or whatever the
+     actual stage_title is for that template) — NOT "🟫 ריצוף".
+  h) Each unit row shows X/Y where Y = items in tiling stage only
+     (probably small — 1, 2, or 3). NOT 18.
+  i) Click back arrow → /projects/{p}/floors/{f}?from=qc.
+  j) Click back arrow → /projects/{p}/buildings/{b}/qc?from=qc.
+  k) Click back arrow → /projects/{p}/qc.   ← THE BUG IS FIXED.
+  l) From step f, click into a unit → /qc/floors/{f}/run/{r}/stage/
+     stage_tiling?from=qc → StageDetailPage shows correct stage,
+     items match what was shown outside.
+  m) Click back from StageDetailPage → /floors/{f}?from=qc → chain
+     continues as in (i) (j) (k).
+
+  PART B — direct entry (no params):
+  n) Navigate directly to /buildings/{b}/floors/{f}/qc/units (no
+     stage_id, no from=qc).
+  o) Title falls back to first stage's title (or "בקרת ביצוע").
+  p) Numbers aggregated across all stages (existing behavior).
+  q) Click back → /floors/{f} (clean, no from=qc).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (0.1-0.5 grep outputs).
+  - Per-file diff (2 files, ~36 LOC total).
+  - V1-V4 outputs.
+  - V5 deferred-to-Zahi note (scenarios a-q).
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+
+.local/.commit_message:
+  fix(qc): UX cleanup — section to bottom, stage filter, from=qc preserve
+
+  Three small QC bugs bundled. All discovered 2026-05-07.
+
+  A) QCFloorSelectionPage — "סטטוס ביצוע כללי" was at top, expanded.
+     Pushed building cards below the fold. Moved to bottom of page,
+     default collapsed. Existing users with sessionStorage='0'
+     (explicitly expanded) keep expanded; everyone else → collapsed.
+
+  B) UnitQCSelectionPage — when filtered by ?stage_id=X (the only way
+     this page is reached from FloorDetailPage), aggregated counts
+     across ALL stages, so each unit showed e.g. 1/18 instead of 0/1.
+     Title was hardcoded "🟫 ריצוף" regardless of the stage. Fix:
+     filter data.stages to ONLY the URL stage; use stage_title from
+     API for the header.
+
+  C) UnitQCSelectionPage — goBack + handleUnitClick dropped ?from=qc.
+     Once dropped at this layer, the entire back-chain (Floor → Building
+     → QC home, all set up by #480 + 5K) couldn't recover. User landed
+     at /buildings/{b} instead of /qc. Fix: propagate ?from=qc on both
+     paths, including the state.returnTo for nested navigation.
+
+  No backend changes. No new tests (visual smoke covers it).
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.5 greps; paste outputs at top of review.txt).
+2. PART A — QCFloorSelectionPage edits (~6 LOC).
+3. PART B — UnitQCSelectionPage edits (~30 LOC).
+4. Run V1-V4.
+5. Generate review.txt + .local/.commit_message.
+6. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+2 files revert. All 3 bugs return. No data loss; pure UX regression.
+
+NO impact on:
+- #480, 5K, #503, #601 work (unchanged).
+- Direct-entry navigation flows.
+- Other QC, handover, matrix, or project pages.
+- Backend.
+
+================================================================================
+END OF SPEC
+================================================================================

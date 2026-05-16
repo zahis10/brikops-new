@@ -1,0 +1,687 @@
+================================================================================
+BATCH — Execution Control: Show ALL unit-scope stages on floor view (BUG FIX)
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P1 — Field-blocking bug. PMs adding multiple unit-scope stages
+                via the admin template editor see only the first one in the
+                floor view; all others silently disappear from the UI.
+
+Files changed:  3 files (1 backend extend + 1 frontend service + 1 frontend page)
+                  Backend: backend/contractor_ops/qc_router.py
+                  Frontend: frontend/src/services/api.js (no real change — verify only)
+                  Frontend: frontend/src/pages/FloorDetailPage.js
+
+Tests:          1 small backend test for the new response shape (mock pattern
+                from existing qc tests) — covers regression on the per-stage
+                aggregation. No frontend tests (no test framework wired here).
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+                No new touch surfaces — existing buttons.
+DB migration:   NONE — pure read-side endpoint change.
+
+CRITICAL preservation:
+  ✋ DO NOT TOUCH the admin template editor (admin_router.py:1055-1314).
+     The editor stays exactly as-is — admins continue to add/edit/reorder
+     unit-scope stages and item lists with no behavior change.
+  ✋ DO NOT TOUCH _backfill_missing_items (qc_router.py:378). The propagation
+     mechanism that adds new template items to existing runs already works
+     correctly — verified during root-cause investigation 2026-05-04.
+  ✋ DO NOT TOUCH the floor run / unit run creation logic.
+  ✋ DO NOT TOUCH stage ordering in the template — admin-controlled.
+
+================================================================================
+ROOT CAUSE ANALYSIS (verified during investigation 2026-05-04)
+================================================================================
+
+Symptom (Zahi's report 2026-05-04 morning):
+> "אני מוסיף נושאים חדשים, למשל גז בדירה וכו׳, זה מתעדכן אני רואה בסטטוס
+>  הביצוע, אבל כשאני נכנס לקומה למשל 1 או לא משנה איזה קומה, זה פשוט לא מופיע,
+>  עדיין מופיע לי רק ריצוף דירה במקום כל השאר שהוספתי."
+
+Translation: PM adds new unit-scope stages via admin template editor (e.g.
+"גז בדירה", "אמבטיה", "מטבחים"). The project-level execution-summary view
+counts them correctly. But the floor view (FloorDetailPage) shows only ONE
+hardcoded card titled "ריצוף דירה" — the new stages are invisible.
+
+Root cause — TWO hardcoded layers:
+
+1. Backend (qc_router.py:916-928, get_floor_units_status):
+   ```python
+   unit_stages = [s for s in tpl["stages"] if s.get("scope") == "unit"]
+   tiling_stage = unit_stages[0] if unit_stages else None
+   tiling_stage_id = tiling_stage["id"] if tiling_stage else "stage_tiling"
+   tiling_item_count = len(tiling_stage["items"]) if tiling_stage else 9
+
+   all_items = await db.qc_items.find(
+       {"run_id": {"$in": run_ids}, "stage_id": tiling_stage_id},  # ← ONE STAGE ONLY
+       ...
+   )
+   ```
+   The endpoint fetches qc_items for ONLY the first unit-scope stage. The
+   variable name `tiling_stage` and the fallback ID `"stage_tiling"` reveal
+   this was originally written when there was exactly ONE unit-scope stage
+   (ריצוף). It was never generalized when admin template editor was added.
+
+2. Frontend (FloorDetailPage.js:286-321):
+   ```jsx
+   {unitsStatus && unitsStatus.units && unitsStatus.units.length > 0 && (() => {
+     ...
+     <span>ריצוף דירה</span>  ← HARDCODED LABEL
+     ...
+     {completedUnits}/{totalUnits} דירות הושלמו
+   })()}
+   ```
+   The frontend renders a single button with hardcoded "ריצוף דירה" title,
+   regardless of how many unit-scope stages exist in the template.
+
+Result: even though _backfill_missing_items() correctly propagates new stages
+to all existing unit runs, and the units-status endpoint TRIES to aggregate,
+both layers collapse the result to "the first unit-scope stage" only.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Confirm units-status endpoint location + current shape:
+    grep -n "get_floor_units_status\|/floors/{floor_id}/units-status" \
+        backend/contractor_ops/qc_router.py | head -5
+    # Expected:
+    #   line ~883: @router.get("/floors/{floor_id}/units-status")
+    #   line ~884: async def get_floor_units_status(...)
+
+0.2 — Confirm hardcoded `tiling_stage` + `"stage_tiling"` are still there
+    (these are the lines we replace):
+    grep -n "tiling_stage\|stage_tiling" backend/contractor_ops/qc_router.py
+    # Expected:
+    #   line 226: "id": "stage_tiling",   ← seed template — DO NOT TOUCH
+    #   line 918: tiling_stage = unit_stages[0] if unit_stages else None
+    #   line 919: tiling_stage_id = tiling_stage["id"] if tiling_stage else "stage_tiling"
+    #   line 920: tiling_item_count = len(tiling_stage["items"]) if tiling_stage else 9
+    #   line 926: {"run_id": {"$in": run_ids}, "stage_id": tiling_stage_id},
+    #   line 956: tiling_status = stage_statuses.get(tiling_stage_id, "draft")
+    #   line 1942: "stage_tiling": "🟫",   ← emoji map — leave as-is, may extend later
+    # Lines 918-920, 926, 956 are the TARGET of refactor.
+
+0.3 — Confirm the only consumer of units-status is FloorDetailPage:
+    grep -rn "units-status\|getFloorUnitsStatus" \
+        frontend/src/ backend/ | head -10
+    # Expected:
+    #   frontend/src/services/api.js — getFloorUnitsStatus method
+    #   frontend/src/pages/FloorDetailPage.js — useEffect that calls it
+    #   backend/contractor_ops/qc_router.py — endpoint definition
+    # If found elsewhere — STOP and report.
+
+0.4 — Confirm the hardcoded "ריצוף דירה" block in FloorDetailPage:
+    grep -n "ריצוף דירה\|completedUnits\|unitsStatus.units" \
+        frontend/src/pages/FloorDetailPage.js | head -10
+    # Expected:
+    #   one block around lines 286-321 with hardcoded "ריצוף דירה" label,
+    #   `completedUnits = units.filter(u => u.status === 'approved').length`,
+    #   `totalHandled = units.reduce(...)`, etc.
+
+0.5 — Confirm StageCard component handles scope === 'unit' (the existing
+    "לפי דירות" badge):
+    grep -n "scope === 'unit'\|לפי דירות" \
+        frontend/src/pages/FloorDetailPage.js | head -5
+    # Expected:
+    #   line ~87: {stage.scope === 'unit' && (...לפי דירות...)}
+    #   This branch is currently DEAD CODE because backend filters out
+    #   unit-scope stages from the run response. We will start populating
+    #   stages.scope === 'unit' so this branch finally activates.
+
+0.6 — Confirm template ordering: the existing template loop preserves the
+    `order` field:
+    grep -n -A 1 "tpl\[\"stages\"\]\|sorted.*order\|key.*order" \
+        backend/contractor_ops/qc_router.py | head -20
+    # Note: stages in the template are stored as a list — Python preserves
+    # insertion order. Admin editor saves in the order admin sets. We rely
+    # on iterating `tpl["stages"]` in order.
+
+0.7 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — BACKEND: per-stage aggregation in /floors/{id}/units-status
+================================================================================
+
+FILE: backend/contractor_ops/qc_router.py
+------------------------------------------
+
+LOCATION 1.1 — Replace the entire body of `get_floor_units_status` (lines
+   ~883-981) with a per-stage aggregation. Keep the route decorator and
+   function signature identical.
+
+   FIND the current implementation (between the @router.get decorator
+   at line 883 and the closing `}` of the return at line 981).
+
+   REPLACE WITH:
+
+       @router.get("/floors/{floor_id}/units-status")
+       async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current_user)):
+           """Per-stage rollup of unit-scope progress for a floor.
+
+           Returns a list of unit-scope stages (in template order), each with
+           per-unit breakdown of completion. Replaces the old "tiling-only"
+           behavior that ignored all but the first unit-scope stage.
+
+           Used by FloorDetailPage to render one card per unit-scope stage
+           in the floor's stage grid.
+           """
+           db = get_db()
+
+           floor = await db.floors.find_one({"id": floor_id, "archived": {"$ne": True}}, {"_id": 0})
+           if not floor:
+               raise HTTPException(status_code=404, detail="Floor not found")
+
+           building = await db.buildings.find_one({"id": floor["building_id"], "archived": {"$ne": True}}, {"_id": 0})
+           if not building:
+               raise HTTPException(status_code=404, detail="Building not found")
+
+           project_id = building["project_id"]
+           await _check_qc_access(user, project_id)
+
+           # All units on this floor (sorted by unit_no for stable order)
+           units = await db.units.find(
+               {"floor_id": floor_id, "archived": {"$ne": True}},
+               {"_id": 0}
+           ).to_list(200)
+           units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
+           unit_ids = [u["id"] for u in units]
+
+           # All unit-level qc_runs for these units
+           unit_runs = {}
+           if unit_ids:
+               runs_cursor = db.qc_runs.find(
+                   {"unit_id": {"$in": unit_ids}, "scope": "unit"},
+                   {"_id": 0}
+               )
+               async for r in runs_cursor:
+                   unit_runs[r["unit_id"]] = r
+
+           run_ids = [r["id"] for r in unit_runs.values()]
+
+           # Template — get all unit-scope stages, IN TEMPLATE ORDER
+           tpl = await _get_template(db, project_id=project_id)
+           # AMENDMENT (Replit feedback 2026-05-04): explicit sort by `order`
+           # field instead of relying on Python list insertion order. The
+           # `order` field is admin-controlled via the template editor and
+           # is the authoritative source of stage sequence. Defensive against
+           # any future change to template editor save behavior.
+           unit_stages = sorted(
+               [s for s in tpl["stages"] if s.get("scope") == "unit"],
+               key=lambda s: s.get("order", 999)
+           )
+
+           if not unit_stages:
+               # No unit-scope stages defined — empty response.
+               return {
+                   "floor_id": floor_id,
+                   "floor_name": floor.get("name", ""),
+                   "building_id": building["id"],
+                   "building_name": building.get("name", ""),
+                   "stages": [],
+               }
+
+           unit_stage_ids = [s["id"] for s in unit_stages]
+
+           # Single query — fetch ALL items for ALL unit-scope stages on these runs
+           items_by_run_and_stage = {}  # {(run_id, stage_id): [items]}
+           if run_ids:
+               all_items = await db.qc_items.find(
+                   {"run_id": {"$in": run_ids}, "stage_id": {"$in": unit_stage_ids}},
+                   {"_id": 0, "run_id": 1, "stage_id": 1, "status": 1}
+               ).to_list(50000)
+               for item in all_items:
+                   key = (item["run_id"], item["stage_id"])
+                   items_by_run_and_stage.setdefault(key, []).append(item)
+
+           # Build per-stage rollup, in template order
+           stages_out = []
+           for stage in unit_stages:
+               stage_id = stage["id"]
+               stage_items_count = len(stage.get("items", []))
+
+               units_breakdown = []
+               for unit in units:
+                   uid = unit["id"]
+                   run = unit_runs.get(uid)
+
+                   if not run:
+                       units_breakdown.append({
+                           "unit_id": uid,
+                           "unit_name": unit.get("name", ""),
+                           "unit_no": unit.get("unit_no", ""),
+                           "status": "not_started",
+                           "pass_count": 0,
+                           "fail_count": 0,
+                           "handled_count": 0,
+                           "total": stage_items_count,
+                       })
+                       continue
+
+                   key = (run["id"], stage_id)
+                   stage_items = items_by_run_and_stage.get(key, [])
+                   pass_count = sum(1 for i in stage_items if i.get("status") == "pass")
+                   fail_count = sum(1 for i in stage_items if i.get("status") == "fail")
+                   handled_count = pass_count + fail_count
+
+                   stage_statuses = run.get("stage_statuses", {})
+                   stored_status = stage_statuses.get(stage_id, "draft")
+
+                   if stored_status == "approved":
+                       unit_status = "approved"
+                   elif handled_count > 0 or stored_status not in ("draft", "not_started"):
+                       unit_status = "in_progress"
+                   else:
+                       unit_status = "not_started"
+
+                   units_breakdown.append({
+                       "unit_id": uid,
+                       "unit_name": unit.get("name", ""),
+                       "unit_no": unit.get("unit_no", ""),
+                       "status": unit_status,
+                       "pass_count": pass_count,
+                       "fail_count": fail_count,
+                       "handled_count": handled_count,
+                       "total": stage_items_count,
+                   })
+
+               total_units = len(units)
+               approved_units = sum(1 for u in units_breakdown if u["status"] == "approved")
+               in_progress_units = sum(1 for u in units_breakdown if u["status"] == "in_progress")
+               not_started_units = sum(1 for u in units_breakdown if u["status"] == "not_started")
+
+               total_items_handled = sum(u["handled_count"] for u in units_breakdown)
+               total_items_possible = total_units * stage_items_count
+               pct = int((total_items_handled / total_items_possible) * 100) if total_items_possible > 0 else 0
+
+               stages_out.append({
+                   "stage_id": stage_id,
+                   "stage_title": stage.get("title", ""),
+                   "stage_order": stage.get("order", 0),
+                   "items_per_unit": stage_items_count,
+                   # AMENDMENT (Replit feedback 2026-05-04): is_empty flag
+                   # for stages with no items. Frontend shows a friendly
+                   # "אין פריטי בדיקה" message instead of misleading "0/X".
+                   "is_empty": stage_items_count == 0,
+                   "total_units": total_units,
+                   "approved_units": approved_units,
+                   "in_progress_units": in_progress_units,
+                   "not_started_units": not_started_units,
+                   "total_items_handled": total_items_handled,
+                   "total_items_possible": total_items_possible,
+                   "completion_pct": pct,
+                   "units": units_breakdown,
+               })
+
+           return {
+               "floor_id": floor_id,
+               "floor_name": floor.get("name", ""),
+               "building_id": building["id"],
+               "building_name": building.get("name", ""),
+               "stages": stages_out,
+           }
+
+DO NOT TOUCH (in this same file):
+- The seed template at line 226 (`"id": "stage_tiling"`) — this is data, not
+  logic. The seed template still uses ריצוף as the single default unit stage.
+  Admin can add more.
+- The emoji map at line 1942 (`"stage_tiling": "🟫"`) — leave as-is. Other
+  stages can use a default icon. (Future polish: extend the emoji map for
+  more unit-scope stages — out of scope for this batch.)
+
+VISUAL NOTE FOR REVIEW.TXT (Replit feedback 2026-05-04):
+Replit must explicitly note in review.txt that new unit-scope stages
+(אמבטיה, מטבחים, etc.) will render with the default Home icon — NOT
+with a unique emoji per stage — until the emoji map at qc_router.py:1942
+is extended in a future polish batch. Cards will look slightly less
+visually rich than the existing "ריצוף דירה" card (which has 🟫 in the
+emoji map). This is documented limitation, not a bug.
+- The floor run endpoint (line 570 `get_or_create_floor_run`) — no change.
+  It still returns floor-scope stages only. Unit-scope stages flow through
+  the units-status endpoint.
+- The unit run endpoint (line 713 `get_or_create_unit_run`) — no change.
+- _backfill_missing_items (line 378) — already correct.
+
+================================================================================
+PART 2 — FRONTEND: api.js (verification, likely no change)
+================================================================================
+
+FILE: frontend/src/services/api.js
+-----------------------------------
+
+LOCATION 2.1 — Verify the existing `getFloorUnitsStatus` method (or whatever
+   it's called) just passes through the response. Likely no change needed —
+   the frontend page consumes the response directly.
+
+   Search:
+       grep -n "getFloorUnitsStatus\|units-status\|/floors/.*units-status" \
+           frontend/src/services/api.js
+
+   If the method is a thin wrapper around axios.get — leave it alone.
+   If there's any data transformation that flattened the old shape into
+   `units: []` — REMOVE that transformation so the new `stages: []` shape
+   passes through.
+
+================================================================================
+PART 3 — FRONTEND: FloorDetailPage replace hardcoded ריצוף card with loop
+================================================================================
+
+FILE: frontend/src/pages/FloorDetailPage.js
+--------------------------------------------
+
+LOCATION 3.1 — Replace the hardcoded "ריצוף דירה" rollup block (lines ~286-321).
+
+   FIND the current block:
+       {unitsStatus && unitsStatus.units && unitsStatus.units.length > 0 && (() => {
+         const units = unitsStatus.units;
+         const completedUnits = units.filter(u => u.status === 'approved').length;
+         const totalUnits = units.length;
+         const totalHandled = units.reduce((s, u) => s + u.handled_count, 0);
+         const totalItemsUnit = units.reduce((s, u) => s + u.total, 0);
+         const pct = totalItemsUnit > 0 ? Math.round((totalHandled / totalItemsUnit) * 100) : 0;
+         return (
+           <button
+             onClick={() => navigate(`/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units`)}
+             ...
+           >
+             ...
+             <span>ריצוף דירה</span>
+             ...
+             {completedUnits}/{totalUnits} דירות הושלמו
+             ...
+           </button>
+         );
+       })()}
+
+   REPLACE WITH a loop that renders one card per unit-scope stage, in
+   template order, using the same StageCard pattern as floor-scope:
+
+       {/* Batch execution-control unit-scope-fix — render one card per
+            unit-scope stage from the new units-status response shape.
+            Replaces the old hardcoded "ריצוף דירה" single-card block. */}
+       {unitsStatus && Array.isArray(unitsStatus.stages) && unitsStatus.stages.map(unitStage => {
+         const total = unitStage.total_units || 0;
+         const approved = unitStage.approved_units || 0;
+         const inProgress = unitStage.in_progress_units || 0;
+         const pct = unitStage.completion_pct || 0;
+         const stageBadgeColor =
+           pct === 100 ? 'bg-emerald-400'
+           : pct > 0 ? 'bg-violet-400'
+           : 'bg-slate-200';
+
+         return (
+           <button
+             key={unitStage.stage_id}
+             onClick={() => navigate(`/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units?stage_id=${unitStage.stage_id}`)}
+             className="w-full text-right p-4 rounded-xl border border-violet-200 bg-white hover:border-violet-300 hover:shadow-sm transition-all border-r-4 border-r-violet-400"
+           >
+             <div className="flex items-center justify-between mb-2">
+               <div className="flex items-center gap-2">
+                 <span className="text-sm font-bold text-slate-700">{unitStage.stage_title}</span>
+                 <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
+                   <Home className="w-3 h-3" />
+                   לפי דירות
+                 </span>
+               </div>
+               <ChevronLeft className="w-4 h-4 text-slate-400" />
+             </div>
+             <div className="text-xs text-slate-500 mb-1.5">
+               {/* AMENDMENT (Replit feedback 2026-05-04): show friendly
+                    message for empty stages instead of misleading "0/X". */}
+               {unitStage.is_empty ? (
+                 <span className="text-amber-600">אין פריטי בדיקה — הוסף בתבנית</span>
+               ) : (
+                 <>
+                   {approved}/{total} דירות הושלמו
+                   {inProgress > 0 && ` · ${inProgress} בעבודה`}
+                 </>
+               )}
+             </div>
+             <div className="w-full bg-slate-100 rounded-full h-1.5" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות ${unitStage.stage_title} ${pct}%`}>
+               <div
+                 className={`h-1.5 rounded-full transition-all ${stageBadgeColor}`}
+                 style={{ width: `${pct}%` }}
+               />
+             </div>
+           </button>
+         );
+       })}
+
+   IMPORTANT — keep the existing imports for `Home`, `ChevronLeft`, `navigate`,
+   etc. They're already imported elsewhere in the file. No new imports needed.
+
+LOCATION 3.2 — Defensive cleanup. If `unitsStatus.units` is referenced anywhere
+   else in the file (other than this block), update those references too.
+
+   Search:
+       grep -n "unitsStatus" frontend/src/pages/FloorDetailPage.js
+
+   Expected: 1-2 hits, all in the block we just replaced. If more hits —
+   inspect each and update to `unitsStatus.stages` shape accordingly.
+
+DO NOT TOUCH:
+- The floor-scope stage grid (line ~276): `stages.filter(s => s.scope !== 'unit').map(...)`.
+- The StageCard component itself — its `scope === 'unit'` branch (line 87)
+  was dormant; we keep it untouched. Our new block uses a different render
+  path that mimics the StageCard look but is purpose-built for the units-status
+  response.
+- Navigation logic for floor-scope stages.
+- Any other state, useEffect, or data fetching.
+
+================================================================================
+PART 4 — TESTS (REQUIRED — see escalation procedure)
+================================================================================
+
+AMENDMENT (Replit feedback 2026-05-04): test was originally OPTIONAL.
+Upgraded to **REQUIRED to attempt** — this very bug exists because there
+was no test. Skipping silently perpetuates the gap.
+
+PROCEDURE:
+
+1. Run: `grep -rn "qc_router\|test_qc\|qc_runs\|qc_items" backend/tests/ | head -20`
+2. Read at least ONE existing qc-related test file end-to-end to learn the
+   mock pattern (likely AsyncMock + MagicMock on router functions, mirroring
+   the safety_registration test pattern from #468).
+3. Mirror that pattern. Create `backend/tests/test_qc_units_status.py`
+   (or append to existing qc test file if one exists).
+
+REQUIRED TEST:
+
+       def test_floor_units_status_returns_per_stage_rollup():
+           """Batch execution-control unit-scope-fix — endpoint returns
+           an array of unit-scope stages, not just the first one."""
+           async def run():
+               # Mock template with 3 unit-scope stages + 1 floor-scope
+               tpl = {
+                   "id": "tpl1",
+                   "stages": [
+                       {"id": "stage_floor_blocks", "title": "בלוקים", "scope": "floor", "order": 1, "items": [{"id": "i1"}]},
+                       {"id": "stage_tiling", "title": "ריצוף דירה", "scope": "unit", "order": 8, "items": [{"id": "tl_1"}, {"id": "tl_2"}]},
+                       {"id": "stage_bath", "title": "אמבטיה", "scope": "unit", "order": 9, "items": [{"id": "b1"}]},
+                       {"id": "stage_kitchen", "title": "מטבחים", "scope": "unit", "order": 10, "items": [{"id": "k1"}]},
+                   ],
+               }
+               # Mock 2 units on the floor, 1 unit run with items for
+               # stage_tiling only. Mock _get_template, _check_qc_access,
+               # get_db, db.floors/buildings/units/qc_runs/qc_items as
+               # the existing qc tests do.
+               #
+               # Call get_floor_units_status, assert response has:
+               #   - response["stages"] is a list of length 3 (only unit-scope)
+               #   - response["stages"][0]["stage_id"] == "stage_tiling"     # order=8
+               #   - response["stages"][1]["stage_id"] == "stage_bath"       # order=9
+               #   - response["stages"][2]["stage_id"] == "stage_kitchen"    # order=10
+               #   - Each stage has its own units breakdown (length 2)
+               #   - stage_tiling has aggregated counts from mocked items
+               #   - stage_bath + stage_kitchen show all units as not_started
+               #     (no items in qc_items collection)
+           asyncio.run(run())
+
+ESCALATION (only if test infrastructure is genuinely unworkable):
+
+If after reading existing qc tests, the mock pattern is missing helpers
+that would require building new fixtures from scratch (e.g. no qc_router
+fixture exists at all, no AsyncMock helpers for the qc collections),
+document this explicitly in review.txt:
+
+   "PART 4 — TEST SKIPPED — REASON:
+    Followed escalation procedure. Read [test_file_X.py] for pattern.
+    Pattern is incomplete because [specific reason].
+    Recommended: spec a separate batch to build qc test fixtures.
+    Manual verification path: V9 scenarios a-l cover the user-facing
+    behavior; rollback is git revert (3 files, no data loss)."
+
+This is the ONLY accepted skip path. Without explicit documentation in
+review.txt, the test is REQUIRED. No silent skip. No "too hard, will
+add later" comment. Either the test runs OR the reason is documented.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend syntax + import resolution:
+   cd backend && python -c "from contractor_ops.qc_router import router; print('OK')"
+   → prints OK with no ImportError
+
+VERIFY 2 — Endpoint registered + responds:
+   cd backend && python -c "from server import app; \
+       paths = [r.path for r in app.routes]; \
+       assert any('/floors/{floor_id}/units-status' in p for p in paths); \
+       print('OK')"
+   → prints OK
+
+VERIFY 3 — Hardcoded `tiling_stage` references in get_floor_units_status are
+   GONE (the seed template + emoji map keep their references — those are data):
+   grep -n "tiling_stage[^_]\|tiling_stage_id\|tiling_item_count" \
+       backend/contractor_ops/qc_router.py
+   → 0 matches (only the seed template at line 226 retains "stage_tiling"
+      as a stage ID, which is fine).
+   Actually — easier check:
+   sed -n '880,990p' backend/contractor_ops/qc_router.py | grep -c "tiling"
+   → 0 (the function body must not reference `tiling` anymore)
+
+VERIFY 4 — Backend test passes (if the new test file was created):
+   cd backend && python -m pytest tests/test_qc_units_status.py -v
+   → 1 passed (or skipped with explicit reason)
+
+VERIFY 5 — Frontend syntax (Babel parse):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 6 — Hardcoded "ריצוף דירה" string is GONE from FloorDetailPage:
+   grep -c "ריצוף דירה" frontend/src/pages/FloorDetailPage.js
+   → 0 (the new block uses `unitStage.stage_title` dynamically)
+
+VERIFY 7 — New per-stage loop is in place:
+   grep -c "unitsStatus.stages\|unitsStatus\.stages" frontend/src/pages/FloorDetailPage.js
+   → ≥ 2 (1 conditional check + 1 .map call)
+
+VERIFY 8 — admin template editor untouched:
+   git diff backend/contractor_ops/admin_router.py
+   → no changes
+   git diff frontend/src/pages/AdminQCTemplatesPage.js
+   → no changes
+
+VERIFY 9 — Visual smoke (Zahi runs after deploy to staging):
+
+   Setup (one-time):
+   a) Login as super_admin → navigate to admin QC templates editor.
+   b) Add 2 new unit-scope stages to the active template:
+      - "אמבטיה + אינטרפוץ" with 2 items
+      - "מטבחים" with 1 item
+      (Or use existing template with multiple unit-scope stages.)
+   c) Save the template.
+
+   Verify:
+   d) Navigate to a floor in any project: /projects/{id}/floors/{floor_id}
+   e) Floor view loads. In the stage grid, verify you see:
+      - Floor-scope stages (בלוקים, טיח, חשמל, etc.) — same as before
+      - "ריצוף דירה" card with "X/Y דירות הושלמו" — same as before
+      - "אמבטיה + אינטרפוץ" card — NEW, expected
+      - "מטבחים" card — NEW, expected
+   f) Card order matches template order (admin-controlled — confirm by
+      reordering in admin editor and reloading).
+   g) Click any unit-scope card → navigates to unit selection page (with
+      ?stage_id=... in the URL — useful but not yet consumed by the unit
+      selection page; future polish).
+   h) Mobile viewport (375px DevTools): cards stack normally, no overflow.
+   i) Regression: open a unit (any unit) → unit detail page → confirm the
+      unit's qc data shows ALL unit-scope stages including the new ones.
+      Adding new template stages should propagate via _backfill_missing_items
+      (already-shipped behavior — verify nothing broke).
+   j) Regression: floor-scope stages (בלוקים, טיח) still render correctly
+      with their existing progress.
+   k) Regression: existing "ריצוף דירה" data is preserved — past pass/fail
+      counts on existing units still display.
+   l) Regression: project-level execution-summary view (the entry point
+      with progress bars per stage) still works — counts unchanged.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (greps + outputs)
+  - Per-file diff (3 files: 1 backend large refactor + 1 frontend small + 1 frontend service verify-only)
+  - VERIFY 1-8 outputs
+  - VERIFY 9 deferred-to-Zahi note (12 scenarios a-l covering setup + new behavior + regressions)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(qc): floor view shows ALL unit-scope stages, not just first
+
+  The /floors/{id}/units-status endpoint and FloorDetailPage both had
+  hardcoded "tiling-only" logic — when the admin template editor allowed
+  adding multiple unit-scope stages, only the first one (ריצוף) was
+  visible in the floor view. The other stages silently disappeared
+  from the UI, even though they were correctly persisted in the DB.
+
+  Backend: refactor get_floor_units_status to return per-stage rollups
+  in template order (one query with $in on all unit-scope stage_ids,
+  then group in Python). Response shape changes from {units:[]} to
+  {stages:[{stage_id, stage_title, units:[]}]}. Single consumer
+  (FloorDetailPage); no other code reads this endpoint.
+
+  Frontend: replace the hardcoded "ריצוף דירה" single-card block in
+  FloorDetailPage with a .map over response.stages. Each stage renders
+  its own violet-themed "לפי דירות" card with title from template +
+  its own progress bar.
+
+  Admin template editor untouched. _backfill_missing_items untouched.
+  Floor run / unit run logic untouched. Pure read-side endpoint change.
+
+  P1 — field-blocking bug. PMs adding multi-stage templates were unable
+  to track progress on stages beyond ריצוף.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.6 greps, paste output to top of review.txt)
+2. PART 1 — qc_router.py refactor of get_floor_units_status (lines ~883-981)
+3. PART 2 — verify api.js passes through response unchanged (likely no edit)
+4. PART 3 — FloorDetailPage.js replace lines ~286-321 with per-stage loop
+5. PART 4 — optional 1 backend test (skip with reason if mock setup too involved)
+6. Run VERIFY 1-8
+7. Generate review.txt + .local/.commit_message
+8. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+3 files revert. /floors/{id}/units-status returns to "tiling-only" shape.
+FloorDetailPage shows single hardcoded "ריצוף דירה" card again. The bug
+returns but no data is lost — qc_items, runs, templates all unchanged.
+
+NO impact on:
+- Admin template editor (untouched)
+- Floor run / unit run creation (untouched)
+- Stage propagation via _backfill_missing_items (untouched)
+- Other QC endpoints (untouched)
+
+================================================================================
+END OF SPEC
+================================================================================

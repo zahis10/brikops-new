@@ -1,0 +1,1081 @@
+================================================================================
+BATCH 6A v2 — Contractor reminder digest (multi-language + URL-param routing)
+================================================================================
+Stream A of WhatsApp+Mobile bundle. **V2 supersedes V1 — DO NOT use V1 plan.**
+Date:           2026-05-01
+Branch:         staging  (NOT main)
+Severity:       P1 — Daily WhatsApp flood + broken link. Contractor with 100 open
+                defects gets up to 5 WA messages per project per day. Plus existing
+                template button URL is broken (Zahi confirmed 2026-04-30).
+Files changed:  6 files
+                  Backend: backend/config.py
+                            backend/contractor_ops/reminder_service.py
+                            backend/.env.production.template
+                  Frontend: frontend/src/App.js                       (NEW route)
+                            frontend/src/pages/ContractorDashboard.js (3-line edit)
+                  Tests:    backend/tests/test_reminder_digest.py     (NEW FILE)
+Frontend (V2):  ~10 lines net change in 2 files. Adds route /projects/:projectId
+                (currently 404) so contractor WA digest links land on
+                ContractorDashboard with the project pre-selected in the existing
+                pill-bar selector. Per Zahi 2026-05-01 — existing pill-bar UI at
+                ContractorDashboard.js:365-388 only renders for contractors with
+                2+ projects. URL pre-selection works whether or not pill bar visible.
+Mobile:         N/A — frontend changes ride OTA via Capgo. No ./ship.sh required.
+                Native deep-link handling (Stream B) will later route /projects/:id
+                straight into the app — same URL works in both contexts.
+Multi-project   Confirmed per Zahi 2026-05-01 — contractor in 3 projects across
+behavior:       2 orgs gets 3 separate WA digest messages, one per project. Cron
+                iterates `for project → for company → send digest`. Each project =
+                independent message with its own count + project name + link.
+                Test test_send_all_three_projects_three_messages enforces this.
+Pre-flight:     Existing per-defect template (`WA_REMINDER_TEMPLATE_HE`) IS LEFT
+                INTACT — used by manual "send to contractor" flow when PM opens a
+                single defect (works perfectly per Zahi). This batch ADDS a NEW
+                digest template family (`WA_REMINDER_DIGEST_TEMPLATES` dict) and
+                rewires ONLY the cron path (`send_contractor_reminder`) to use it.
+
+================================================================================
+CONTEXT
+================================================================================
+
+Current behavior (broken):
+- Daily 08:00 IL cron (`scheduler.py:_daily_reminders_job`) calls
+  `send_all_contractor_reminders()` → `send_contractor_reminder()` per
+  (project_id, company_id) pair.
+- For each contractor recipient, the inner loop iterates `tasks[:5]` and sends
+  ONE WA message PER DEFECT (capped at 5). Template = `WA_REMINDER_TEMPLATE_HE`
+  (per-defect, 4 vars: project_name, location, finding, wait_days).
+- Contractor with 100 open defects → up to 5 messages per project per day. With
+  multiple projects → noise that breaks trust.
+- The button URL in the existing template points to a route Zahi confirms is
+  broken in the contractor reminder context.
+
+Desired behavior:
+- ONE digest message per contractor per project per day:
+  "🔔 *תזכורת — BrikOps*
+   שלום {name},
+   יש לך {count} ליקויים פתוחים בפרויקט "{project}"
+   לסגירת הליקויים לחץ על הקישור."
+- Button "פתח את הפרויקט" → `https://app.brikops.com/projects/{project_id}?src=wa`
+- Multi-language: `he` (default) / `en` / `ar` / `zh` selected per recipient via
+  `users.preferred_language`. Fallback: Hebrew if unset.
+- 4 Meta templates submitted 2026-05-01:
+    wa_contractor_reminder_digest_he   (Hebrew, submitted)
+    wa_contractor_reminder_digest_en   (English, submitted)
+    wa_contractor_reminder_digest_ar   (Arabic, submitted)
+    wa_contractor_reminder_digest_zh   (Chinese Simplified, submitted)
+  Approval typically 24-48h per template, run concurrently.
+
+ZAHI WILL ADD ENV VARS TO AWS BACKEND once Meta approves each template. Backend
+must default to the existing Hebrew template if env var is empty (graceful
+degrade — never crash). See VERIFY 4 below.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT (run BEFORE any edit, paste output to top of review.txt)
+================================================================================
+
+0.1 — Verify per-defect template + cron entry point still match spec line numbers:
+    grep -n "WA_REMINDER_TEMPLATE_HE\|MAX_MESSAGES_PER_BATCH\|send_contractor_reminder\|send_all_contractor_reminders" \
+        backend/contractor_ops/reminder_service.py | head -20
+    # Expected hits:
+    #   line 250: from config import WA_REMINDER_TEMPLATE_HE
+    #   line 257: MAX_MESSAGES_PER_BATCH = 5
+    #   line 306: "message_template": WA_REMINDER_TEMPLATE_HE,
+    #   line 320: wa_result = await _send_wa_template(phone, WA_REMINDER_TEMPLATE_HE, ...)
+    #   line 458: async def send_all_contractor_reminders() -> dict:
+    #   line 476: result = await send_contractor_reminder(pid, cid, ...)
+
+0.2 — Verify multi-language infra exists (we mirror this pattern):
+    grep -n "WA_DEFECT_TEMPLATES\|WA_DEFECT_DEFAULT_LANG\|ALLOWED_LANGUAGES" backend/config.py
+    # Expected hits:
+    #   line 80-85: WA_DEFECT_TEMPLATES dict (4 langs)
+    #   line 86: WA_DEFECT_DEFAULT_LANG = 'he'
+    #   line 87: ALLOWED_LANGUAGES = ['he', 'en', 'ar', 'zh']
+
+0.3 — Verify users.preferred_language is a real field (not invented by spec):
+    grep -rn "preferred_language" backend/contractor_ops/schemas.py backend/contractor_ops/auth_router.py \
+        | head -5
+    # Expected hits:
+    #   schemas.py:261: preferred_language: Optional[str] = None
+    #   auth_router.py:122: async def update_my_preferred_language(...)
+    #   auth_router.py:129: db.users.update_one({...}, {'$set': {'preferred_language': lang}})
+
+0.4 — Verify _send_wa_template language hardcoding (the bug we're parameterizing):
+    grep -n "language.*code.*he\|\"language\": {\"code\":" backend/contractor_ops/reminder_service.py
+    # Expected hit at line 129:
+    #   "language": {"code": "he"},
+
+0.5 — Verify NO existing test file for reminder_service (so test_reminder_digest.py is genuinely new):
+    ls backend/tests/test_reminder*.py 2>/dev/null
+    # Expected: empty / no matches
+
+0.6 — V2 — Verify /projects/:projectId route does NOT yet exist (so we know we're
+      truly adding a new one, not duplicating):
+    grep -n 'path="/projects/:projectId"' frontend/src/App.js
+    # Expected: 0 hits. (Existing routes are all /projects/:projectId/<sub>:
+    # /control, /dashboard, /qc, /floors/:floorId, /buildings/.../qc/units,
+    # /qc/floors/.../run/.../stage/..., /safety, /plans/archive, /plans/:planId/history.
+    # None of them is plain /projects/:projectId standalone.)
+
+    grep -n 'path="/projects"' frontend/src/App.js
+    # Expected: 1 hit at line 189 (existing — must NOT be removed).
+
+0.7 — V2 — Verify ContractorDashboard.js current useState pattern at line 111:
+    sed -n '111,113p' frontend/src/pages/ContractorDashboard.js
+    # Expected:
+    #   const [selectedProjectId, setSelectedProjectId] = useState(() => {
+    #     return localStorage.getItem('lastProjectId') || 'all';
+    #   });
+
+    grep -n "useParams\|from 'react-router-dom'" frontend/src/pages/ContractorDashboard.js | head -5
+    # If useParams already imported → just use it; if not → add to existing
+    # react-router-dom import.
+
+0.8 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — BACKEND CONFIG (file 1 of 4)
+================================================================================
+
+FILE 1 of 4: backend/config.py
+-------------------------------
+
+LOCATION 1.1 — line 91 area (after existing WA_REMINDER_TEMPLATE_HE):
+
+   CURRENT (lines 91-92):
+       WA_REMINDER_TEMPLATE_HE = os.environ.get('WA_REMINDER_TEMPLATE_HE', 'brikops_contractor_reminder_he')
+       WA_DIGEST_TEMPLATE_HE = os.environ.get('WA_DIGEST_TEMPLATE_HE', 'brikops_daily_digest_he')
+
+   APPEND IMMEDIATELY AFTER LINE 92 (do not delete the existing 2 lines — they
+   are still in use by the per-defect template flow and PM digest flow):
+
+       # ----- Stream A 2026-05-01 — contractor digest multi-language template family -----
+       # Mirrors WA_DEFECT_TEMPLATES pattern (lines 80-85). One template per language.
+       # Submitted to Meta for approval 2026-05-01:
+       #   he → wa_contractor_reminder_digest_he   (default — Hebrew)
+       #   en → wa_contractor_reminder_digest_en
+       #   ar → wa_contractor_reminder_digest_ar
+       #   zh → wa_contractor_reminder_digest_zh   (language code: zh_CN)
+       # If env var unset, defaults preserve template name (template will simply
+       # fail to send if Meta hasn't approved yet — caught and logged).
+       WA_REMINDER_DIGEST_TEMPLATES = {
+           'he': {'name': os.environ.get('WA_REMINDER_DIGEST_TEMPLATE_HE', 'wa_contractor_reminder_digest_he'), 'lang': 'he'},
+           'en': {'name': os.environ.get('WA_REMINDER_DIGEST_TEMPLATE_EN', 'wa_contractor_reminder_digest_en'), 'lang': 'en'},
+           'ar': {'name': os.environ.get('WA_REMINDER_DIGEST_TEMPLATE_AR', 'wa_contractor_reminder_digest_ar'), 'lang': 'ar'},
+           'zh': {'name': os.environ.get('WA_REMINDER_DIGEST_TEMPLATE_ZH', 'wa_contractor_reminder_digest_zh'), 'lang': 'zh_CN'},
+       }
+       WA_REMINDER_DIGEST_DEFAULT_LANG = 'he'
+
+DO NOT TOUCH:
+- Existing `WA_REMINDER_TEMPLATE_HE` (line 91) — still used by manual per-defect
+  flow if/when invoked. We are NOT deleting it.
+- Existing `WA_DIGEST_TEMPLATE_HE` (line 92) — used by PM digest flow
+  (`send_pm_digest`). Out of scope for Stream A.
+- Existing `WA_DEFECT_TEMPLATES` (lines 80-85) — used by the per-defect "send
+  to contractor" flow (Item 2 in plan; works perfectly per Zahi).
+- Any other env var.
+
+================================================================================
+PART 2 — BACKEND REMINDER SERVICE (file 2 of 4 — the meat)
+================================================================================
+
+FILE 2 of 4: backend/contractor_ops/reminder_service.py
+--------------------------------------------------------
+
+LOCATION 2.1 — line 97 (`_send_wa_template` signature + body):
+
+   CURRENT (line 97):
+       async def _send_wa_template(to_phone: str, template_name: str, body_params: list, button_params: list = None) -> dict:
+
+   REPLACE ENTIRE FUNCTION SIGNATURE with:
+       async def _send_wa_template(to_phone: str, template_name: str, body_params: list, button_params: list = None, lang_code: str = "he") -> dict:
+
+   AND change line 129 inside the same function:
+
+   CURRENT (line 129):
+               "language": {"code": "he"},
+
+   REPLACE WITH:
+               "language": {"code": lang_code},
+
+   No other change to this function. Backwards-compatible: existing callers
+   that don't pass lang_code still get "he" (preserves PM digest + per-defect
+   manual flow behavior).
+
+LOCATION 2.2 — Add helper function. Place IMMEDIATELY BEFORE
+   `async def send_contractor_reminder(` (currently line 202):
+
+   ADD:
+       def _resolve_digest_template_for_user(user: dict) -> tuple:
+           """Pick the digest template (name + lang_code) for a recipient based on
+           users.preferred_language. Mirrors WA_DEFECT_TEMPLATES resolution logic
+           in notification_service.py:189-194.
+
+           Returns (template_name, lang_code). Falls back to Hebrew → English chain.
+           """
+           from config import WA_REMINDER_DIGEST_TEMPLATES, WA_REMINDER_DIGEST_DEFAULT_LANG
+           lang_key = (user or {}).get('preferred_language') or WA_REMINDER_DIGEST_DEFAULT_LANG
+           lang_key = lang_key.lower().strip()
+           tpl_info = WA_REMINDER_DIGEST_TEMPLATES.get(lang_key)
+           if not tpl_info:
+               # First fallback: English (matches notification_service.py pattern)
+               if lang_key != 'en':
+                   logger.info(f"[REMINDER:DIGEST] Lang '{lang_key}' not configured, falling back to en")
+                   tpl_info = WA_REMINDER_DIGEST_TEMPLATES.get('en')
+               # Last-resort fallback: Hebrew default (should always exist)
+               if not tpl_info:
+                   logger.warning(f"[REMINDER:DIGEST] English template missing too, falling back to he")
+                   tpl_info = WA_REMINDER_DIGEST_TEMPLATES.get(WA_REMINDER_DIGEST_DEFAULT_LANG)
+           return (tpl_info['name'], tpl_info['lang'])
+
+LOCATION 2.3 — `send_contractor_reminder` body refactor.
+
+   This is the central change. The function CURRENTLY (lines 202-336) loops
+   over recipients, then INSIDE that loop iterates tasks[:MAX_MESSAGES_PER_BATCH]
+   and sends ONE WA message per task. We change it to send ONE WA digest
+   message per recipient.
+
+   CURRENT (lines 250-336 — full inner block from `from config import` down to
+   the closing `return {"status": "completed", ...}`):
+       from config import WA_REMINDER_TEMPLATE_HE
+
+       if not skip_cooldown:
+           if await _check_cooldown(project_id, "contractor_reminder", company_id=company_id):
+               return {"status": "skipped", "reason": "cooldown", "company_id": company_id}
+
+       results = []
+       MAX_MESSAGES_PER_BATCH = 5
+
+       building_ids = list(set(t.get("building_id") for t in tasks if t.get("building_id")))
+       floor_ids = list(set(t.get("floor_id") for t in tasks if t.get("floor_id")))
+       unit_ids = list(set(t.get("unit_id") for t in tasks if t.get("unit_id")))
+
+       building_map = {}
+       if building_ids:
+           bldgs = await _db.buildings.find({"id": {"$in": building_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(100)
+           building_map = {b["id"]: b.get("name", "") for b in bldgs}
+
+       floor_map = {}
+       if floor_ids:
+           floors = await _db.floors.find({"id": {"$in": floor_ids}}, {"_id": 0, "id": 1, "name": 1, "number": 1}).to_list(200)
+           floor_map = {f["id"]: (f.get("name") or str(f.get("number", ""))) for f in floors}
+
+       unit_map = {}
+       if unit_ids:
+           units = await _db.units.find({"id": {"$in": unit_ids}}, {"_id": 0, "id": 1, "display_label": 1, "name": 1, "unit_no": 1, "number": 1}).to_list(200)
+           unit_map = {u["id"]: (u.get("display_label") or u.get("name") or u.get("unit_no") or str(u.get("number", ""))) for u in units}
+
+       for r in recipients:
+           user = r["user"]
+           phone = r["phone"]
+           user_id = user.get("id", "")
+           user_name = user.get("name", "קבלן")
+
+           if not skip_preferences and not r.get("is_company"):
+               pref_skip = _check_user_reminder_prefs(user, "contractor_reminder")
+               if pref_skip:
+                   logger.info(f"[REMINDER] Skipping contractor reminder for user {user_id}: {pref_skip}")
+                   results.append({"user_id": user_id, "status": "skipped", "reason": pref_skip})
+                   continue
+
+           sent_count = 0
+           for task in tasks[:MAX_MESSAGES_PER_BATCH]:
+               task_id = task.get("id", "")
+               location = _build_location_string(task, building_map, floor_map, unit_map)
+               finding = task.get("title", "ליקוי")
+               wait_days = _calc_wait_days(task)
+
+               log_entry = {
+                   "type": "contractor_reminder",
+                   "company_id": company_id,
+                   "recipient_user_id": user_id,
+                   "recipient_phone": phone,
+                   "project_id": project_id,
+                   "org_id": org_id,
+                   "task_id": task_id,
+                   "message_template": WA_REMINDER_TEMPLATE_HE,
+                   "triggered_by": triggered_by,
+               }
+
+               try:
+                   body_params = [
+                       {"parameter_name": "project_name", "text": project.get("name", "")},
+                       {"parameter_name": "location", "text": location},
+                       {"parameter_name": "finding_description", "text": finding},
+                       {"parameter_name": "wait_days", "text": str(wait_days)},
+                   ]
+                   button_params = [
+                       {"index": 0, "text": f"{task_id}?src=wa"}
+                   ]
+                   wa_result = await _send_wa_template(phone, WA_REMINDER_TEMPLATE_HE, body_params, button_params=button_params)
+                   log_entry["status"] = "sent"
+                   log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
+                   sent_count += 1
+               except Exception as e:
+                   log_entry["status"] = "failed"
+                   log_entry["error_detail"] = str(e)[:500]
+                   results.append({"user_id": user_id, "task_id": task_id, "status": "failed", "error": str(e)[:200]})
+                   logger.error(f"[REMINDER] Failed to send contractor reminder to {mask_phone(phone)} for task {task_id}: {e}")
+
+               await _log_reminder(log_entry)
+               await asyncio.sleep(SEND_PACING_SECONDS)
+
+           if sent_count > 0:
+               results.append({"user_id": user_id, "status": "sent", "messages_sent": sent_count})
+
+       return {"status": "completed", "results": results, "defect_count": len(tasks)}
+
+   REPLACE ENTIRE BLOCK (lines 250-336) WITH:
+       if not skip_cooldown:
+           if await _check_cooldown(project_id, "contractor_reminder", company_id=company_id):
+               return {"status": "skipped", "reason": "cooldown", "company_id": company_id}
+
+       results = []
+       open_count = len(tasks)
+
+       for r in recipients:
+           user = r["user"]
+           phone = r["phone"]
+           user_id = user.get("id", "")
+           user_name = user.get("name", "קבלן")
+
+           if not skip_preferences and not r.get("is_company"):
+               pref_skip = _check_user_reminder_prefs(user, "contractor_reminder")
+               if pref_skip:
+                   logger.info(f"[REMINDER] Skipping contractor reminder for user {user_id}: {pref_skip}")
+                   results.append({"user_id": user_id, "status": "skipped", "reason": pref_skip})
+                   continue
+
+           # Pick template + language for this recipient.
+           # Companies (no preferred_language) fall through to default (he).
+           tpl_name, lang_code = _resolve_digest_template_for_user(user)
+
+           log_entry = {
+               "type": "contractor_reminder_digest",
+               "company_id": company_id,
+               "recipient_user_id": user_id,
+               "recipient_phone": phone,
+               "project_id": project_id,
+               "org_id": org_id,
+               "open_count": open_count,
+               "message_template": tpl_name,
+               "lang_code": lang_code,
+               "triggered_by": triggered_by,
+           }
+
+           try:
+               body_params = [
+                   {"parameter_name": "name", "text": user_name},
+                   {"parameter_name": "count", "text": str(open_count)},
+                   {"parameter_name": "project", "text": project.get("name", "")},
+               ]
+               button_params = [
+                   {"index": 0, "text": f"{project_id}?src=wa"}
+               ]
+               wa_result = await _send_wa_template(
+                   phone, tpl_name, body_params,
+                   button_params=button_params,
+                   lang_code=lang_code,
+               )
+               log_entry["status"] = "sent"
+               log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
+               results.append({"user_id": user_id, "status": "sent", "messages_sent": 1, "open_count": open_count})
+           except Exception as e:
+               log_entry["status"] = "failed"
+               log_entry["error_detail"] = str(e)[:500]
+               results.append({"user_id": user_id, "status": "failed", "error": str(e)[:200]})
+               logger.error(f"[REMINDER:DIGEST] Failed to send digest to {mask_phone(phone)} for project {project_id}: {e}")
+
+           await _log_reminder(log_entry)
+           await asyncio.sleep(SEND_PACING_SECONDS)
+
+       return {"status": "completed", "results": results, "defect_count": open_count}
+
+   What this changes (summary of diff):
+   - REMOVED: `from config import WA_REMINDER_TEMPLATE_HE` (line 250) — replaced
+     by per-recipient `_resolve_digest_template_for_user(user)` call.
+   - REMOVED: `MAX_MESSAGES_PER_BATCH = 5` (line 257) — single digest, no cap needed.
+   - REMOVED: `building_ids` / `floor_ids` / `unit_ids` / `building_map` /
+     `floor_map` / `unit_map` (lines 259-276) — digest does not include
+     per-defect location/floor/unit.
+   - REMOVED: inner `for task in tasks[:MAX_MESSAGES_PER_BATCH]:` loop (was
+     lines 292-331). Only the outer `for r in recipients:` loop remains.
+   - REMOVED: per-task body_params (project_name/location/finding_description/
+     wait_days). Replaced by digest body_params (name/count/project).
+   - REMOVED: per-task button_params text `f"{task_id}?src=wa"`. Replaced by
+     digest button_params text `f"{project_id}?src=wa"` — contractor lands on
+     project page, not on a specific defect.
+   - ADDED: `_resolve_digest_template_for_user(user)` call per recipient.
+   - ADDED: `lang_code=lang_code` kwarg to `_send_wa_template` call.
+   - ADDED: `lang_code` field to `log_entry` for analytics + debugging.
+   - CHANGED: log_entry type "contractor_reminder" → "contractor_reminder_digest"
+     so we can distinguish digest sends from any future per-defect sends.
+
+DO NOT TOUCH:
+- Lines 1-201 (imports, helpers, _send_wa_template up to line 150, helper funcs).
+- Lines 202-249 (function signature, task fetch, recipients resolution, fallback
+  to company phone) — those stay identical.
+- Lines 339+ (`send_pm_digest` and below — separate flow, Stream C scope).
+- `WA_REMINDER_TEMPLATE_HE` constant — stays defined in config.py because the
+  manual per-defect "send to contractor" flow may still use it. Out of scope
+  for Stream A.
+
+================================================================================
+PART 3 — ENV TEMPLATE DOCS (file 3 of 4)
+================================================================================
+
+FILE 3 of 4: backend/.env.production.template
+-----------------------------------------------
+
+LOCATION 3.1 — Append AFTER existing WA_TEMPLATE_INVITE_LANG (line 41).
+
+   APPEND (preserve existing whitespace/structure):
+       # Stream A 2026-05-01 — contractor digest templates (one per language).
+       # Submit each to Meta Business Manager → WhatsApp Manager → Templates.
+       # Approval typically 24-48h. Backend defaults to fallback chain if env unset.
+       WA_REMINDER_DIGEST_TEMPLATE_HE=wa_contractor_reminder_digest_he
+       WA_REMINDER_DIGEST_TEMPLATE_EN=wa_contractor_reminder_digest_en
+       WA_REMINDER_DIGEST_TEMPLATE_AR=wa_contractor_reminder_digest_ar
+       WA_REMINDER_DIGEST_TEMPLATE_ZH=wa_contractor_reminder_digest_zh
+
+DO NOT TOUCH:
+- Any other env var.
+
+================================================================================
+PART 4 — TESTS (file 4 of 4 — NEW FILE)
+================================================================================
+
+FILE 4 of 4: backend/tests/test_reminder_digest.py  (CREATE NEW)
+------------------------------------------------------------------
+
+Create a new pytest file with the following tests. Use existing test patterns
+from `backend/tests/test_billing_v1.py` for fixtures + DB setup.
+
+Required tests (all must pass before review.txt is final):
+
+    """Tests for Stream A — contractor reminder digest refactor."""
+    import pytest
+    from unittest.mock import AsyncMock, patch, MagicMock
+
+    from contractor_ops import reminder_service
+
+
+    # ---------- _resolve_digest_template_for_user ----------
+
+    def test_resolve_template_hebrew_user():
+        """Hebrew user → Hebrew template."""
+        user = {"preferred_language": "he"}
+        name, lang = reminder_service._resolve_digest_template_for_user(user)
+        assert name == "wa_contractor_reminder_digest_he"
+        assert lang == "he"
+
+    def test_resolve_template_english_user():
+        user = {"preferred_language": "en"}
+        name, lang = reminder_service._resolve_digest_template_for_user(user)
+        assert name == "wa_contractor_reminder_digest_en"
+        assert lang == "en"
+
+    def test_resolve_template_arabic_user():
+        user = {"preferred_language": "ar"}
+        name, lang = reminder_service._resolve_digest_template_for_user(user)
+        assert name == "wa_contractor_reminder_digest_ar"
+        assert lang == "ar"
+
+    def test_resolve_template_chinese_user():
+        """Chinese key 'zh' must resolve to lang code 'zh_CN' (Meta requirement)."""
+        user = {"preferred_language": "zh"}
+        name, lang = reminder_service._resolve_digest_template_for_user(user)
+        assert name == "wa_contractor_reminder_digest_zh"
+        assert lang == "zh_CN"
+
+    def test_resolve_template_no_preferred_language_defaults_hebrew():
+        """User without preferred_language field → Hebrew default."""
+        user = {"id": "u1", "name": "קבלן"}
+        name, lang = reminder_service._resolve_digest_template_for_user(user)
+        assert name == "wa_contractor_reminder_digest_he"
+        assert lang == "he"
+
+    def test_resolve_template_company_recipient_defaults_hebrew():
+        """Company fallback recipient (no user object) → Hebrew."""
+        user = {"id": "company_id", "name": "חברה"}  # no preferred_language
+        name, lang = reminder_service._resolve_digest_template_for_user(user)
+        assert lang == "he"
+
+    def test_resolve_template_unknown_language_falls_back_to_english():
+        """Unknown lang code → English fallback (per existing notification_service pattern)."""
+        user = {"preferred_language": "fr"}  # not in WA_REMINDER_DIGEST_TEMPLATES
+        name, lang = reminder_service._resolve_digest_template_for_user(user)
+        assert name == "wa_contractor_reminder_digest_en"
+        assert lang == "en"
+
+    def test_resolve_template_uppercase_language_normalized():
+        """Lang code is normalized to lowercase."""
+        user = {"preferred_language": "AR"}
+        name, lang = reminder_service._resolve_digest_template_for_user(user)
+        assert name == "wa_contractor_reminder_digest_ar"
+
+
+    # ---------- send_contractor_reminder digest behavior ----------
+
+    @pytest.mark.asyncio
+    async def test_digest_sends_one_message_for_many_defects():
+        """100 open defects → exactly 1 WA send per recipient (not 5, not 100)."""
+        # Setup: mock _db with 100 tasks, 1 user recipient
+        mock_db = MagicMock()
+        mock_tasks = [
+            {"id": f"task_{i}", "title": f"ליקוי {i}", "assignee_id": "user_1",
+             "building_id": None, "floor_id": None, "unit_id": None,
+             "created_at": "2026-04-01T00:00:00Z"}
+            for i in range(100)
+        ]
+        mock_db.tasks.find.return_value.to_list = AsyncMock(return_value=mock_tasks)
+        mock_db.projects.find_one = AsyncMock(return_value={
+            "id": "proj_1", "name": "מגדלי הים", "org_id": "org_1"
+        })
+        mock_db.users.find_one = AsyncMock(return_value={
+            "id": "user_1", "name": "דני קבלן",
+            "phone_e164": "+972501234567", "preferred_language": "he"
+        })
+        mock_db.reminder_log.find = MagicMock()
+        mock_db.reminder_log.find.return_value.to_list = AsyncMock(return_value=[])
+        mock_db.reminder_log.insert_one = AsyncMock()
+
+        reminder_service._db = mock_db
+
+        with patch.object(reminder_service, '_send_wa_template', new=AsyncMock(
+            return_value={"success": True, "provider_message_id": "wamid_1"}
+        )) as mock_send:
+            result = await reminder_service.send_contractor_reminder(
+                "proj_1", "comp_1", triggered_by="test", skip_cooldown=True
+            )
+
+        assert mock_send.call_count == 1, \
+            f"Expected exactly 1 WA send for digest, got {mock_send.call_count}"
+        assert result["status"] == "completed"
+        assert result["defect_count"] == 100
+        assert len(result["results"]) == 1
+        assert result["results"][0]["status"] == "sent"
+        assert result["results"][0]["open_count"] == 100
+
+    @pytest.mark.asyncio
+    async def test_digest_button_url_uses_project_id_not_task_id():
+        """Button param must be project_id (not first task_id)."""
+        mock_db = MagicMock()
+        mock_db.tasks.find.return_value.to_list = AsyncMock(return_value=[
+            {"id": "task_1", "title": "T1", "assignee_id": "user_1"},
+            {"id": "task_2", "title": "T2", "assignee_id": "user_1"},
+        ])
+        mock_db.projects.find_one = AsyncMock(return_value={
+            "id": "proj_xyz", "name": "Project", "org_id": "org_1"
+        })
+        mock_db.users.find_one = AsyncMock(return_value={
+            "id": "user_1", "name": "Test", "phone_e164": "+972501234567",
+            "preferred_language": "he"
+        })
+        mock_db.reminder_log.find.return_value.to_list = AsyncMock(return_value=[])
+        mock_db.reminder_log.insert_one = AsyncMock()
+        reminder_service._db = mock_db
+
+        sent_button_params = []
+        async def capture_send(phone, name, body_params, button_params=None, lang_code="he"):
+            sent_button_params.append(button_params)
+            return {"success": True, "provider_message_id": "wamid"}
+
+        with patch.object(reminder_service, '_send_wa_template', new=capture_send):
+            await reminder_service.send_contractor_reminder(
+                "proj_xyz", "comp_1", triggered_by="test", skip_cooldown=True
+            )
+
+        assert len(sent_button_params) == 1
+        assert sent_button_params[0][0]["text"] == "proj_xyz?src=wa", \
+            f"Button URL must point to project, got: {sent_button_params[0][0]['text']}"
+
+    @pytest.mark.asyncio
+    async def test_digest_uses_recipient_preferred_language():
+        """English contractor → English template + lang code 'en'."""
+        mock_db = MagicMock()
+        mock_db.tasks.find.return_value.to_list = AsyncMock(return_value=[
+            {"id": "task_1", "title": "T1", "assignee_id": "user_1"}
+        ])
+        mock_db.projects.find_one = AsyncMock(return_value={
+            "id": "proj_1", "name": "Sea Towers", "org_id": "org_1"
+        })
+        mock_db.users.find_one = AsyncMock(return_value={
+            "id": "user_1", "name": "David", "phone_e164": "+972501234567",
+            "preferred_language": "en"
+        })
+        mock_db.reminder_log.find.return_value.to_list = AsyncMock(return_value=[])
+        mock_db.reminder_log.insert_one = AsyncMock()
+        reminder_service._db = mock_db
+
+        captured = {}
+        async def capture_send(phone, name, body_params, button_params=None, lang_code="he"):
+            captured["template_name"] = name
+            captured["lang_code"] = lang_code
+            return {"success": True, "provider_message_id": "wamid"}
+
+        with patch.object(reminder_service, '_send_wa_template', new=capture_send):
+            await reminder_service.send_contractor_reminder(
+                "proj_1", "comp_1", triggered_by="test", skip_cooldown=True
+            )
+
+        assert captured["template_name"] == "wa_contractor_reminder_digest_en"
+        assert captured["lang_code"] == "en"
+
+    @pytest.mark.asyncio
+    async def test_digest_no_open_defects_skipped():
+        mock_db = MagicMock()
+        mock_db.tasks.find.return_value.to_list = AsyncMock(return_value=[])
+        reminder_service._db = mock_db
+
+        result = await reminder_service.send_contractor_reminder(
+            "proj_1", "comp_1", triggered_by="test", skip_cooldown=True
+        )
+        assert result["status"] == "skipped"
+        assert result["reason"] == "no_open_defects"
+
+    @pytest.mark.asyncio
+    async def test_digest_log_entry_records_open_count_and_lang():
+        """Verify reminder_log gets the digest-specific fields for analytics."""
+        mock_db = MagicMock()
+        mock_db.tasks.find.return_value.to_list = AsyncMock(return_value=[
+            {"id": f"t{i}", "title": "T", "assignee_id": "user_1"} for i in range(7)
+        ])
+        mock_db.projects.find_one = AsyncMock(return_value={
+            "id": "proj_1", "name": "P", "org_id": "org_1"
+        })
+        mock_db.users.find_one = AsyncMock(return_value={
+            "id": "user_1", "name": "U", "phone_e164": "+972501234567",
+            "preferred_language": "ar"
+        })
+        mock_db.reminder_log.find.return_value.to_list = AsyncMock(return_value=[])
+        logged = []
+        async def capture_log(entry):
+            logged.append(entry)
+        mock_db.reminder_log.insert_one = capture_log
+        reminder_service._db = mock_db
+
+        with patch.object(reminder_service, '_send_wa_template', new=AsyncMock(
+            return_value={"success": True, "provider_message_id": "wamid_xyz"}
+        )):
+            await reminder_service.send_contractor_reminder(
+                "proj_1", "comp_1", triggered_by="cron", skip_cooldown=True
+            )
+
+        assert len(logged) == 1
+        log = logged[0]
+        assert log["type"] == "contractor_reminder_digest"
+        assert log["open_count"] == 7
+        assert log["lang_code"] == "ar"
+        assert log["status"] == "sent"
+        assert log["wa_message_id"] == "wamid_xyz"
+
+If existing test fixtures conflict with the mock patterns above, adapt to match.
+The key invariants the tests MUST verify (regardless of fixture style):
+1. 100 defects → 1 WA send (not 5, not 100)
+2. Button URL targets project_id, not task_id
+3. preferred_language=en → English template + lang_code "en"
+4. preferred_language=zh → Chinese template + lang_code "zh_CN" (note: zh, not zh_CN, in dict KEY)
+5. No preferred_language → Hebrew default
+6. Unknown lang → English fallback
+7. Log entry contains open_count + lang_code
+8. V2 — multi-project: 3 projects → 3 distinct WA sends (one per project), NOT
+   aggregated, NOT deduped (test_send_all_three_projects_three_messages below)
+
+V2 ADDITIONAL TEST — multi-project enforcement (add to test_reminder_digest.py):
+
+    @pytest.mark.asyncio
+    # ↑ adapt to asyncio.run() pattern per Finding B if needed
+    async def test_send_all_three_projects_three_messages():
+        """Per Zahi 2026-05-01: contractor in N projects = N separate WA messages.
+        This test PINS the behavior so a future 'optimization' that aggregates
+        projects into one digest will fail the test loudly."""
+        mock_db = MagicMock()
+        # 3 different projects, each with 1 open task assigned to same contractor user
+        mock_db.projects.find.return_value.to_list = AsyncMock(return_value=[
+            {"id": "proj_A", "name": "מגדלי הים"},
+            {"id": "proj_B", "name": "נחל שורק"},
+            {"id": "proj_C", "name": "הילטון תל אביב"},
+        ])
+        # tasks.find called per-project — return 1 task with same assignee + company
+        async def tasks_find_side_effect(query, *args, **kwargs):
+            cursor = MagicMock()
+            cursor.to_list = AsyncMock(return_value=[
+                {"id": f"task_{query.get('project_id')}", "title": "T",
+                 "assignee_id": "contractor_user_1", "company_id": "comp_1",
+                 "building_id": None, "floor_id": None, "unit_id": None,
+                 "created_at": "2026-04-01T00:00:00Z"}
+            ])
+            return cursor
+        # First call (send_all_contractor_reminders open_tasks query)
+        # returns the assignee/company for each project
+        mock_db.tasks.find = MagicMock(side_effect=lambda q, *a, **k:
+            type('C', (), {'to_list': AsyncMock(return_value=[
+                {"id": f"t_{q.get('project_id')}", "title": "T",
+                 "assignee_id": "contractor_user_1", "company_id": "comp_1",
+                 "building_id": None, "floor_id": None, "unit_id": None,
+                 "created_at": "2026-04-01T00:00:00Z"}
+            ])})()
+        )
+        async def projects_find_one(query, *args, **kwargs):
+            for p in [{"id": "proj_A", "name": "מגדלי הים", "org_id": "org_1"},
+                      {"id": "proj_B", "name": "נחל שורק", "org_id": "org_2"},
+                      {"id": "proj_C", "name": "הילטון תל אביב", "org_id": "org_2"}]:
+                if p["id"] == query.get("id"):
+                    return p
+            return None
+        mock_db.projects.find_one = projects_find_one
+        mock_db.users.find_one = AsyncMock(return_value={
+            "id": "contractor_user_1", "name": "דני קבלן",
+            "phone_e164": "+972501234567", "preferred_language": "he"
+        })
+        mock_db.reminder_log.find.return_value.to_list = AsyncMock(return_value=[])
+        mock_db.reminder_log.insert_one = AsyncMock()
+        reminder_service._db = mock_db
+
+        send_calls = []
+        async def capture_send(phone, name, body_params, button_params=None, lang_code="he"):
+            send_calls.append({
+                "project_in_button": button_params[0]["text"],
+                "count_in_body": next((p["text"] for p in body_params if p.get("parameter_name") == "count"), None),
+                "project_in_body": next((p["text"] for p in body_params if p.get("parameter_name") == "project"), None),
+            })
+            return {"success": True, "provider_message_id": f"wamid_{len(send_calls)}"}
+
+        with patch.object(reminder_service, '_send_wa_template', new=capture_send):
+            result = await reminder_service.send_all_contractor_reminders()
+
+        # 3 projects × 1 contractor = 3 messages
+        assert len(send_calls) == 3, \
+            f"Multi-project must send N separate messages, got {len(send_calls)}"
+        # Each message names a distinct project
+        project_names_in_body = {c["project_in_body"] for c in send_calls}
+        assert project_names_in_body == {"מגדלי הים", "נחל שורק", "הילטון תל אביב"}, \
+            f"Each project must appear once in its own message body, got {project_names_in_body}"
+        # Each button URL targets the correct project_id
+        project_ids_in_buttons = {c["project_in_button"] for c in send_calls}
+        assert project_ids_in_buttons == {"proj_A?src=wa", "proj_B?src=wa", "proj_C?src=wa"}, \
+            f"Each button URL targets its own project_id, got {project_ids_in_buttons}"
+
+================================================================================
+PART 5 — V2 FRONTEND (Option B per Zahi 2026-05-01)
+================================================================================
+
+V2 adds Option B: a new route /projects/:projectId that lets a WhatsApp digest
+link land the contractor on ContractorDashboard with the correct project
+pre-selected in the existing pill-bar selector at ContractorDashboard.js:365-388.
+
+The pill-bar UI ALREADY supports multi-project (renders when projects.length > 1
+per line 365). All we need is for the URL to feed the initial selection.
+
+For PMs/admins (non-contractors), /projects/:projectId redirects to
+/projects/:projectId/dashboard (their existing landing page) — no new admin UI.
+
+FILE 5 of 6: frontend/src/App.js
+---------------------------------
+
+LOCATION 5.1 — Add Navigate import IF not already present:
+
+   Find the existing react-router-dom import line near the top:
+       grep -n "from 'react-router-dom'" frontend/src/App.js | head -3
+   IF the destructure does NOT include `Navigate`, add it:
+       import { ..., Navigate, ... } from 'react-router-dom';
+   IF Navigate already imported → no edit. (Likely yes — App.js uses redirects.)
+
+LOCATION 5.2 — Update ProjectsHome wrapper at line 143 to read URL param:
+
+   CURRENT (lines 143-147):
+       const ProjectsHome = () => {
+         const { user } = useAuth();
+         if (user?.role === 'contractor') return <ContractorDashboard />;
+         return <MyProjectsPage />;
+       };
+
+   REPLACE WITH:
+       const ProjectsHome = () => {
+         const { user } = useAuth();
+         const { projectId } = useParams();
+         if (user?.role === 'contractor') {
+           return <ContractorDashboard initialProjectId={projectId} />;
+         }
+         // PMs/admins arriving at /projects/:projectId go to their dashboard.
+         if (projectId) {
+           return <Navigate to={`/projects/${projectId}/dashboard`} replace />;
+         }
+         return <MyProjectsPage />;
+       };
+
+   IMPORTANT: add `useParams` to the existing react-router-dom import at the
+   top of App.js (same line as the other imports). Same applies if `Navigate`
+   isn't already there (LOCATION 5.1).
+
+LOCATION 5.3 — Add new Route for /projects/:projectId IMMEDIATELY AFTER the
+   existing /projects route (line 188-195):
+
+   CURRENT (lines 188-195):
+       <Route
+         path="/projects"
+         element={
+           <ProtectedRoute>
+             <ProjectsHome />
+           </ProtectedRoute>
+         }
+       />
+
+   APPEND IMMEDIATELY AFTER the closing /> on line 195:
+       <Route
+         path="/projects/:projectId"
+         element={
+           <ProtectedRoute>
+             <ProjectsHome />
+           </ProtectedRoute>
+         }
+       />
+
+   React Router v6+ matches static routes BEFORE dynamic routes, so the existing
+   /projects/:projectId/control, /dashboard, /qc, etc. continue to take priority
+   for their specific patterns. Only bare /projects/:projectId (no sub-path)
+   hits this new route.
+
+DO NOT TOUCH:
+- Lines 285+ (existing /projects/:projectId/control, /dashboard, /qc, etc.).
+  React Router v6+ specificity ranking handles disambiguation correctly.
+- MyProjectsPage component (PM/admin view).
+- ContractorDashboard's existing logic — only the prop interface changes.
+- Auth flow, ProtectedRoute, anything else.
+
+FILE 6 of 6: frontend/src/pages/ContractorDashboard.js
+--------------------------------------------------------
+
+LOCATION 6.1 — Update component signature + selectedProjectId initial value to
+   honor the new initialProjectId prop.
+
+   CURRENT (line 105 area + line 111-113):
+       const ContractorDashboard = () => {
+         // ... lots of hooks ...
+         const [selectedProjectId, setSelectedProjectId] = useState(() => {
+           return localStorage.getItem('lastProjectId') || 'all';
+         });
+
+   REPLACE WITH:
+       const ContractorDashboard = ({ initialProjectId } = {}) => {
+         // ... lots of hooks ...
+         const [selectedProjectId, setSelectedProjectId] = useState(() => {
+           // Priority: URL param (from /projects/:projectId) → localStorage → 'all'
+           return initialProjectId || localStorage.getItem('lastProjectId') || 'all';
+         });
+
+   No other change to the component logic — the existing pill bar at lines
+   365-388, the project selector behavior, the localStorage persistence on
+   user-driven selector change — all stay identical.
+
+LOCATION 6.2 — Confirm there is NO regression for direct /projects access
+   (no projectId in URL → initialProjectId is undefined → falls back to
+   localStorage → existing behavior preserved). No code change needed here;
+   this is a behavior assertion that V2 must preserve.
+
+DO NOT TOUCH:
+- The pill bar UI at lines 365-388 — already supports multi-project.
+- The localStorage write side (when user clicks a pill, `lastProjectId` updates).
+  The URL param wins on first render only; subsequent user-driven changes
+  override.
+- Any other ContractorDashboard logic, header, stats, task list rendering.
+- MyProjectsPage or any other contractor-related component.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend imports + tests pass:
+   cd backend && python -c "from contractor_ops import reminder_service; print('OK')"
+   cd backend && pytest tests/test_reminder_digest.py -v
+   → all 14 tests green
+
+VERIFY 2 — `MAX_MESSAGES_PER_BATCH` removed:
+   grep -n "MAX_MESSAGES_PER_BATCH" backend/contractor_ops/reminder_service.py
+   → 0 hits (was 1 at line 257)
+
+VERIFY 3 — Old per-defect template still defined (we did NOT delete it):
+   grep -n "WA_REMINDER_TEMPLATE_HE" backend/config.py
+   → 1 hit at line 91 (untouched)
+
+VERIFY 4 — New digest template dict properly defined with 4 langs:
+   python -c "from backend.config import WA_REMINDER_DIGEST_TEMPLATES; print(list(WA_REMINDER_DIGEST_TEMPLATES.keys()))"
+   → ['he', 'en', 'ar', 'zh']
+
+VERIFY 5 — `_send_wa_template` no longer hardcodes Hebrew:
+   grep -n "language.*code.*\"he\"" backend/contractor_ops/reminder_service.py
+   → 0 hits (was 1 at line 129)
+
+   grep -n "lang_code" backend/contractor_ops/reminder_service.py
+   → at least 4 hits (signature, body, _resolve helper, send_contractor_reminder call)
+
+VERIFY 6 — Cross-cutting regression sweep — make sure we did NOT break any other
+   caller of `_send_wa_template`:
+   grep -rn "_send_wa_template" backend/contractor_ops/
+   → all callers either pass lang_code explicitly OR rely on default "he"
+     (which preserves old behavior). For each match, document KEEP / EDIT-MISSED
+     / NEEDS-REVIEW in review.txt:
+       file:line  | match
+       context    | 3 lines before/after
+       decision   | KEEP / EDIT-MISSED / NEEDS-REVIEW
+       reasoning  | one sentence
+
+VERIFY 7a — V2 — Frontend route added:
+   grep -c 'path="/projects/:projectId"' frontend/src/App.js
+   → must return 1 (was 0 before).
+
+   grep -c 'path="/projects"' frontend/src/App.js
+   → must still return 1 (existing route preserved).
+
+VERIFY 7b — V2 — ProjectsHome accepts URL param + redirects PMs:
+   grep -A 10 "const ProjectsHome = " frontend/src/App.js
+   → shows useParams destructure + Navigate redirect for PMs with projectId.
+
+VERIFY 7c — V2 — ContractorDashboard accepts initialProjectId prop:
+   grep -n "initialProjectId" frontend/src/pages/ContractorDashboard.js
+   → at least 2 hits (signature destructure + useState default).
+
+VERIFY 7d — V2 — Frontend build succeeds:
+   cd frontend && yarn build
+   → no new warnings, no new errors.
+
+VERIFY 7e — V2 — Multi-project enforcement test passes:
+   cd backend && python -m pytest tests/test_reminder_digest.py::test_send_all_three_projects_three_messages -v
+   → green. (Already covered by VERIFY 1 if all tests run, but call out
+     explicitly because this test PINS Zahi's intent: 3 projects = 3 messages.)
+
+VERIFY 8 — DRY-RUN end-to-end (if WHATSAPP_ENABLED=false locally):
+   cd backend && python -c "
+   import asyncio
+   from contractor_ops import reminder_service
+   from unittest.mock import MagicMock, AsyncMock
+   db = MagicMock()
+   db.tasks.find.return_value.to_list = AsyncMock(return_value=[
+       {'id': 't1', 'title': 'X', 'assignee_id': 'u1'}
+   ])
+   db.projects.find_one = AsyncMock(return_value={'id': 'p1', 'name': 'Test', 'org_id': 'o1'})
+   db.users.find_one = AsyncMock(return_value={'id': 'u1', 'name': 'U', 'phone_e164': '+972501234567', 'preferred_language': 'he'})
+   db.reminder_log.find.return_value.to_list = AsyncMock(return_value=[])
+   db.reminder_log.insert_one = AsyncMock()
+   reminder_service._db = db
+   reminder_service._wa_enabled = False  # dry run
+   r = asyncio.run(reminder_service.send_contractor_reminder('p1', 'c1', triggered_by='manual', skip_cooldown=True))
+   print(r)
+   "
+   → output: {'status': 'completed', 'results': [{'user_id': 'u1', 'status': 'sent', 'messages_sent': 1, 'open_count': 1}], 'defect_count': 1}
+
+VERIFY 9 — Behavior smoke (Zahi runs visually on staging, after Meta approves
+   at least Hebrew template + AWS env vars set):
+   a. Trigger cron manually:
+      curl -X POST "https://api-staging.brikops.com/internal/cron/daily-reminders?type=contractor" \
+           -H "X-Cron-Secret: <CRON_SECRET>"
+   b. Verify in MongoDB Atlas: `db.reminder_log.find({type: "contractor_reminder_digest"}).sort({sent_at:-1}).limit(5)`
+      → entries have open_count + lang_code fields, status=sent
+   c. Hebrew contractor with phone receives ONE message per project (not 5),
+      text: "🔔 *תזכורת — BrikOps* / שלום [name], / יש לך [count] ליקויים
+      פתוחים בפרויקט "[project]" / ..."
+   d. V2 — Click button → opens https://app.brikops.com/projects/[project_id]?src=wa
+      → contractor lands on ContractorDashboard with [project_id] pre-selected
+      in pill bar. If contractor has 1 project → no pill bar but data already
+      filtered by backend role-scope. If 2+ projects → pill of THIS project
+      is highlighted active, others greyed; contractor can tap to switch.
+   e. V2 — Multi-project test contractor (manual setup): assign defects in 2
+      different projects to same contractor user → manually trigger cron →
+      verify TWO separate WA messages arrive (one per project), each with
+      its own count + project name + link, AND clicking each link selects
+      the correct project pill in dashboard.
+   f. Send second time within COOLDOWN_HOURS → cooldown skip (existing behavior preserved)
+   g. (Optional, after EN/AR/ZH approvals) Switch test contractor's preferred_language → receive in correct language
+   h. V2 — Verify direct /projects access (no project_id) still works for
+      contractors → ContractorDashboard with localStorage default ('all' or
+      last selected). Existing UX preserved.
+   i. V2 — Verify PM/admin visiting /projects/:project_id (e.g. via copying
+      a contractor link) → redirected to /projects/:project_id/dashboard
+      (PM landing page). No 404, no broken state.
+
+================================================================================
+DELIVERABLES (V2)
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (output of greps 0.1-0.7)
+  - Per-file diff (6 files):
+      * config.py: ~12 lines added (new dict + default const)
+      * reminder_service.py: ~95 lines net change (signature + helper + body refactor)
+      * .env.production.template: 6 lines added
+      * App.js: ~2 lines added (new <Route>) + ~5 lines edited (ProjectsHome wrapper)
+      * ContractorDashboard.js: ~3 lines edited (initialProjectId prop + useState)
+      * tests/test_reminder_digest.py: NEW FILE (~280 lines, 14 tests)
+  - VERIFY 1-8 outputs (skip 9 — Zahi runs visually after Meta approval lands)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(wa,routing): contractor digest + multi-project URL routing (Stream A v2)
+
+  Backend: refactor reminder_service.send_contractor_reminder to send ONE
+  digest WA message per contractor per project per day (was: up to 5
+  per-defect messages). Add WA_REMINDER_DIGEST_TEMPLATES dict mirroring
+  WA_DEFECT_TEMPLATES pattern (he/en/ar/zh). Parameterize _send_wa_template
+  language. New helper _resolve_digest_template_for_user picks template per
+  recipient based on users.preferred_language with EN→HE fallback chain.
+  Button URL targets project_id (contractor lands on dashboard with project
+  pre-selected) instead of task_id. New env vars
+  WA_REMINDER_DIGEST_TEMPLATE_{HE,EN,AR,ZH} to be set in AWS Elastic
+  Beanstalk after Meta approves each template. Existing per-defect
+  WA_REMINDER_TEMPLATE_HE preserved for manual flow.
+
+  Frontend: add /projects/:projectId route. Contractors land on
+  ContractorDashboard with the URL project_id pre-selected in the existing
+  pill-bar selector (ContractorDashboard.js:365-388). PMs/admins arriving at
+  /projects/:projectId redirect to /projects/:projectId/dashboard. Direct
+  /projects access (no projectId) preserves existing localStorage behavior.
+
+  Multi-project: contractor in N projects = N separate WA digest messages,
+  one per project. Test test_send_all_three_projects_three_messages PINS
+  this behavior so a future "optimization" that aggregates across projects
+  fails the test loudly.
+
+  Tests: test_reminder_digest.py with 14 cases covering language resolution,
+  digest behavior, log shape, multi-project enforcement.
+
+================================================================================
+STEPS (V2)
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.7 greps, paste output to top of review.txt)
+2. PART 1 — config.py: add WA_REMINDER_DIGEST_TEMPLATES dict + default const
+3. PART 2 — reminder_service.py: parameterize _send_wa_template, add helper,
+   refactor send_contractor_reminder body
+4. PART 3 — .env.production.template: append 4 new env var lines
+5. PART 5 — V2 frontend: App.js new route + ProjectsHome wrapper update +
+   ContractorDashboard initialProjectId prop
+6. PART 4 — create tests/test_reminder_digest.py with 14 tests (including
+   test_send_all_three_projects_three_messages which pins multi-project intent)
+7. Run VERIFY 1-7 (VERIFY 8 is for Zahi). VERIFY 7d is the frontend yarn build.
+8. Generate review.txt + .local/.commit_message
+9. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+6 files revert. No DB writes happen until cron runs, and even then the only
+"new" data is `type: "contractor_reminder_digest"` log entries which can be
+left in place — they're forward-compatible.
+
+After revert, set `WA_REMINDER_DIGEST_TEMPLATE_*` env vars to empty in AWS to
+avoid confusion. (Not required — code path won't be reached.)
+
+Backwards-compatible signals:
+- If revert AND env vars set AND Meta templates approved, backend silently
+  goes back to per-defect behavior. No customer-visible breakage.
+- Frontend revert removes the /projects/:projectId route — any in-flight WA
+  links sent during the brief V2 window become 404. To mitigate, prefer
+  partial revert (frontend-only revert preserves the route while reverting
+  the backend cron).
+
+================================================================================
+END OF SPEC V2
+================================================================================

@@ -1,0 +1,186 @@
+================================================================================
+BATCH #501 — MatrixCell tooltip: include cell.note on hover
+================================================================================
+Date:           2026-05-05
+Branch:         staging  (NOT main)
+Severity:       P3 — UX polish; saves clicks for reading notes without
+                opening CellEditDialog.
+
+Family:         Followup to #494 (cell editing) + #500 (filters).
+                Discovered during Zahi's #500 staging smoke 2026-05-05:
+                "הייתי רוצה כשאני שם את העכבר הוא יראה לי בנוסף גם את
+                הערה הכתובה בפנים, במקום שאני אצטרך להיכנס פיזית כדי
+                לראות".
+
+Files changed:  1 frontend file, ~5 LOC
+                  Backend:  ZERO LOC
+                  Tests:    NONE (pure title attribute string change)
+
+LOC estimate:   ~5 LOC frontend
+Risk:           P5 — string concat on existing native title attribute.
+                No state, no API, no schema. Native title supports `\n`
+                across all major browsers (Chrome/Safari/Firefox); on
+                mobile it doesn't render at all (no hover) — degrades
+                gracefully to current behavior.
+
+================================================================================
+CONTEXT
+================================================================================
+
+Current tooltip on a STATUS cell (frontend/src/components/matrix/MatrixCell.js
+L36):
+
+  title={cfg.label + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')}
+
+Renders as: "לא בוצע • Super Admin"
+
+User can SEE the status icon but to read the note ("לא תקין", "מחכה
+לאישור", "פגום מהיציקה" וכו׳) they have to click the cell, open
+CellEditDialog, and read the note field. For 30 units × 11 stages,
+this is a lot of clicks if a PM is scanning the project.
+
+Same issue on TAG cells (L18) where the note is invisible until clicked.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify cell.note IS in the /matrix response payload (not derived):
+    grep -n "note" backend/contractor_ops/execution_matrix_router.py | grep -v "footnote\|notebook" | head -10
+    Expected: backend returns `cell.note` field directly via
+    _summarize_cell helper. CellEditDialog already reads + writes it.
+
+0.2 — Verify current tooltip lines (catch line drift if other batches landed):
+    grep -n "title=" frontend/src/components/matrix/MatrixCell.js
+    Expected:
+      L18: title={textValue || 'ללא תגית'}
+      L36: title={cfg.label + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')}
+      L49: title="לא סומן"
+
+0.3 — Output STEP 0 audit at TOP of review.txt.
+
+================================================================================
+PART 1 — Add note to tag-cell tooltip
+================================================================================
+
+FILE: frontend/src/components/matrix/MatrixCell.js
+-----------------------------------------------------
+
+LOCATION 1.1 — L18 tag-cell title:
+
+  FIND:
+      title={textValue || 'ללא תגית'}
+
+  REPLACE WITH:
+      title={(textValue || 'ללא תגית') + (cell?.note ? `\n"${cell.note}"` : '')}
+
+================================================================================
+PART 2 — Add note to status-cell tooltip
+================================================================================
+
+LOCATION 2.1 — L36 status-cell title:
+
+  FIND:
+      title={cfg.label + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')}
+
+  REPLACE WITH:
+      title={
+        cfg.label
+        + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')
+        + (cell?.note ? `\n"${cell.note}"` : '')
+      }
+
+================================================================================
+WHAT'S NOT CHANGING
+================================================================================
+
+- L49 ("לא סומן") empty-cell tooltip — empty cell can't have a note,
+  no change needed.
+- All other props of MatrixCell — onClick, size, isTag, status — unchanged.
+- MatrixGridView, MatrixListView, ExecutionMatrixPage — untouched
+  (MatrixCell is the only consumer of the tooltip).
+- Filter drawer tooltips (#500) — untouched, separate component tree.
+- CellEditDialog (#494) — untouched, still the editor for status + note.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — Frontend syntax (yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors.
+
+V2 — Visual smoke (Zahi after deploy):
+   a) Hover over a status cell that has BOTH a status AND a note set
+      → tooltip shows on 2 lines:
+           "לא בוצע • Super Admin
+            \"לא תקין\""
+   b) Hover over a status cell with status but NO note
+      → tooltip shows 1 line:
+           "לא בוצע • Super Admin"
+      (current behavior preserved — no trailing newline/quote)
+   c) Hover over a tag cell with text and a note
+      → tooltip shows 2 lines:
+           "שוק חופשי
+            \"בעלי 4 חדרים\""
+   d) Hover over an empty cell → tooltip "לא סומן" (unchanged)
+   e) Mobile (no hover): title attribute simply not rendered, no
+      regression vs current behavior.
+
+V3 — No backend / no test changes:
+   git diff --stat backend/
+   → 0 lines diff
+   git diff --stat frontend/src/components/matrix/MatrixGridView.js \
+                   frontend/src/components/matrix/MatrixListView.js \
+                   frontend/src/pages/ExecutionMatrixPage.js
+   → 0 lines diff
+
+V4 — Total diff:
+   git diff --stat frontend/src/components/matrix/MatrixCell.js
+   → ~5 lines changed (2 title strings extended)
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit
+  - Per-file diff (1 file, ~5 LOC)
+  - VERIFY 1, V3, V4 outputs (V2 deferred to Zahi)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(matrix): show cell note in tooltip on hover
+
+  Per Zahi's #500 staging smoke 2026-05-05: when scanning the matrix,
+  PMs need to read cell notes without opening CellEditDialog for each
+  one. Native title attribute already shows status + actor; this batch
+  appends the note (in quotes, on a new line) when present.
+
+  Tag cells get the same treatment — tooltip now shows the full text
+  value + note in quotes.
+
+  ~5 LOC, 1 file. No backend, no tests, pure UI string concat.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (3 greps)
+2. PART 1 — tag-cell tooltip (~1 LOC)
+3. PART 2 — status-cell tooltip (~3 LOC formatting across template literal)
+4. Run V1, V3, V4
+5. Generate review.txt + .local/.commit_message
+6. STOP. Zahi reviews. Then he runs:
+     git checkout staging && git merge main && ./deploy.sh --stag
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+1 file revert. Tooltip returns to current shape. Zero data risk.
+
+================================================================================
+END OF SPEC
+================================================================================

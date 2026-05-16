@@ -1,0 +1,961 @@
+================================================================================
+BATCH H.2-Bundle — Native release: Doc Scanner + Universal/App Links + Contact Picker
+================================================================================
+Date:           2026-05-13
+Branch:         staging  (NOT main)
+Severity:       P2 — three native features bundled into one Apple/
+                Android review cycle. Per ROADMAP L985: "All native
+                changes bundled to avoid multiple App Store/Play
+                Store cycles per Zahi 2026-04-30". Last native
+                release: 2026-05 era ago. Time to ship.
+
+                Three features:
+                **PART 1 — iOS/Android Document Scanner** (H.2 from
+                task #35 second half). Capacitor plugin
+                `@capacitor-mlkit/document-scanner` provides native
+                VNDocumentCameraViewController (iOS) + Google ML Kit
+                Document Scanner (Android). Auto-deskew, multi-page,
+                PDF export. PMs scan handover docs / blueprints
+                without leaving the app.
+
+                **PART 2 — Universal Links (iOS) + App Links (Android)**
+                (Stream B1). When user taps `https://app.brikops.com/
+                tasks/xyz` in WhatsApp / SMS / email — opens NATIVE
+                BrikOps app if installed, else falls back to browser.
+                **THIS IS THE "WhatsApp link → app if installed" fix
+                that Zahi has been asking for.**
+
+                **PART 3 — Contact Picker** (Stream B2). "בחר מאנשי
+                קשר" button in Add Team Member + Add Contractor/
+                Company modals. Uses native iOS/Android contact
+                picker (privacy-preserving — app sees only the
+                picked contact, never the full address book).
+
+Approach:       Frontend + native config. Single ship.sh cycle.
+                Apple review estimated 1-3 days; Google review hours.
+                Test on staging FIRST via Capgo OTA for OTA-able parts
+                (any JS changes); native config requires ./ship.sh
+                rebuild.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend (~160 LOC) + native config + JSON:
+                  - frontend/package.json (+2 deps)
+                  - frontend/ios/App/App/Info.plist (+1 string)
+                  - frontend/ios/App/App/App.entitlements (+1 array entry)
+                  - frontend/android/app/src/main/AndroidManifest.xml
+                    (+1 permission + 1 intent-filter)
+                  - frontend/public/.well-known/apple-app-site-association
+                    (EXTEND with applinks block — preserve webcredentials)
+                  - frontend/public/.well-known/assetlinks.json (NEW)
+                  - frontend/src/App.js (~30 LOC: appUrlOpen listener)
+                  - frontend/src/components/DocumentScannerButton.jsx
+                    (NEW, ~40 LOC)
+                  - frontend/src/components/ContactPickerButton.jsx
+                    (NEW, ~50 LOC)
+                  - 2-3 consumer integration points (Add Team Member +
+                    Add Contractor/Company modals; defect-attach +
+                    plan-upload flows for scanner)
+                Total: ~160 LOC frontend + 4 native config edits + 2
+                JSON files + 2 Capacitor plugin installs + 1 Hebrew
+                permission string.
+
+Baseline:       origin/staging HEAD = post-H.1 (commit TBD after H.1
+                ships to prod). PhotoAnnotation + H.1 all preserved.
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN this batch:
+  ✅ PART 1 — Document Scanner plugin install + JSX wrapper
+     component + integration in plan-upload (for scanning blueprints)
+     and defect-attach (for scanning paper receipts/forms).
+  ✅ PART 2 — Universal Links + App Links via JSON files + native
+     entitlements + JS appUrlOpen listener in App.js.
+  ✅ PART 3 — Contact Picker plugin install + JSX wrapper
+     component + integration in Add Team Member + Add Contractor
+     modals.
+  ✅ Single ship.sh release cycle for all 3.
+  ✅ Hebrew permission strings (NSContactsUsageDescription).
+  ✅ Existing camera permission reused for scanner (no new prompt).
+
+OUT of this batch:
+  ❌ Push notifications (ROADMAP L1041 deferred).
+  ❌ Capacitor offline (P1.4 — not specced yet).
+  ❌ Backend changes — Universal Links route to existing endpoints;
+     scanner uploads via existing endpoints; contact picker only
+     pre-fills frontend form.
+  ❌ New backend APIs (no `/deep-link-resolver` etc.).
+  ❌ Custom contact picker UI — uses native system picker (Apple-
+     reviewer expectation; privacy-preserving).
+  ❌ Custom document scanner UI — uses native iOS/Android scanner
+     UI (Apple Notes-style UX).
+
+================================================================================
+STEP 0 — PRE-FLIGHT (12 PASS — comprehensive)
+================================================================================
+
+1. Confirm H.1 shipped + at HEAD:
+   $ git log origin/staging --oneline -3
+   →  Expect: H.1 commit ("Multi-file plan upload..." or similar)
+      at HEAD.
+
+2. Confirm Capacitor 7.x:
+   $ grep '@capacitor/core' frontend/package.json
+   →  Expect: `"@capacitor/core": "^7.6.1"` (or compatible).
+   ✓ Required for plugin compat.
+
+3. Confirm AASA exists (extending, not creating):
+   $ ls frontend/public/.well-known/apple-app-site-association
+   →  Expect: file exists.
+   $ cat frontend/public/.well-known/apple-app-site-association
+   →  Expect: contains `webcredentials` block for Apple Sign-In with
+      `8FV5CZ886X.com.brikops.app`. **DO NOT REPLACE THIS BLOCK.**
+
+4. Confirm assetlinks.json does NOT exist (creating new):
+   $ ls frontend/public/.well-known/assetlinks.json
+   →  Expect: file NOT found.
+
+5. Confirm App.entitlements current state:
+   $ cat frontend/ios/App/App/App.entitlements
+   →  Expect: contains `associated-domains` array with at least
+      `webcredentials:app.brikops.com`. The new `applinks:` is
+      APPENDED, not replaced.
+
+6. Confirm AndroidManifest current state:
+   $ grep -nA 2 "uses-permission\|intent-filter" \
+       frontend/android/app/src/main/AndroidManifest.xml
+   →  Expect: `CAMERA` + `INTERNET` permissions; single MAIN/LAUNCHER
+      intent-filter. The new READ_CONTACTS + HTTPS App Links
+      intent-filter are NEW additions.
+
+7. Confirm Info.plist current state:
+   $ grep -nA 1 "NSCameraUsageDescription\|NSContactsUsageDescription" \
+       frontend/ios/App/App/Info.plist
+   →  Expect: NSCameraUsageDescription present (~L48-49);
+      NSContactsUsageDescription NOT present.
+
+8. Confirm @capacitor/app already installed (used for appUrlOpen):
+   $ grep '@capacitor/app' frontend/package.json
+   →  Expect: present. (Already used for backButton listener.)
+
+9. Confirm App.js has existing backButton listener (sibling spot for
+   appUrlOpen):
+   $ grep -n "addListener.*backButton\|CapacitorApp.addListener" \
+       frontend/src/App.js
+   →  Expect: ~L573 has `backButton` listener — new appUrlOpen
+      sibling lands here.
+
+10. Confirm no `appUrlOpen` listener exists yet:
+    $ grep -n "appUrlOpen" frontend/src/App.js
+    →  Expect: 0 hits.
+
+11. Confirm CapacitorUpdater config in capacitor.config.json:
+    $ cat frontend/capacitor.config.json
+    →  Expect: existing CapacitorUpdater plugin block. No conflict
+       with new plugins.
+
+12. Confirm bundle ID + team ID:
+    $ grep -i "appId\|com.brikops" frontend/capacitor.config.json
+    →  Expect: `"appId": "com.brikops.app"`.
+    $ cat frontend/public/.well-known/apple-app-site-association | head
+    →  Expect: team ID `8FV5CZ886X` in existing webcredentials.apps.
+
+13. **Determine appUrlOpen navigate pattern (VERIFIED 2026-05-13):**
+    $ grep -n "BrowserRouter\|useNavigate\|history\." frontend/src/App.js
+    →  Found: `BrowserRouter, Routes, Route, Navigate, useLocation,
+       useParams, useSearchParams from 'react-router-dom'` @L2;
+       BrowserRouter wrapping app @L591-606.
+    ✓ Pattern: react-router-dom v6 with BrowserRouter.
+
+    **Implementation choice:** The appUrlOpen listener MUST be
+    registered from INSIDE BrowserRouter to access `useNavigate`.
+    Solution: create a `<DeepLinkHandler>` child component that
+    lives INSIDE BrowserRouter, uses `useNavigate`, and registers
+    the listener in a useEffect. Component renders nothing.
+
+    See updated LOCATION 2.5 below for the concrete pattern.
+
+14. **Verify deepLinkSource / intendedPath auth bounce
+    (VERIFIED 2026-05-13):**
+    $ grep -rn "INTENDED_PATH_KEY\|intendedPath" frontend/src/
+    →  SET in App.js:75 (constant) + L120 (write during protected-
+       route redirect).
+    →  READ in LoginPage.js (5 sites), WaLoginPage.js (1 site),
+       OnboardingPage.js (2 sites). All read+removeItem pattern.
+    ✓ **EXISTING MECHANISM ALREADY HANDLES Universal Links auth
+       bounce.** Flow:
+         1. User taps WhatsApp link → app opens.
+         2. appUrlOpen fires → navigate('/tasks/xyz').
+         3. /tasks/xyz is protected route → ProtectedRoute redirects
+            to /login.
+         4. ProtectedRoute ALREADY sets `intendedPath=/tasks/xyz`
+            + `deepLinkSource=external` (L120-121).
+         5. User logs in → LoginPage reads intendedPath → navigates
+            to /tasks/xyz.
+       NO new auth bounce code needed. Verified by reading the
+       existing flow in ProtectedRoute @L92-124.
+
+15. **Verify multi-file scanner output handling
+    (VERIFIED 2026-05-13):**
+    $ grep -n "setImages\|images\." frontend/src/components/NewDefectModal.js
+    →  L91: `const [images, setImages] = useState([]);`
+    →  L343: `setImages(prev => [...prev, ...newImages]);`
+    ✓ **EXISTING handler ALREADY accepts multi-file via spread.**
+       Scanner output (array of N JPG Files) plugs in naturally:
+         setImages(prev => [...prev,
+           ...scannedFiles.map(f => ({ file: f, originalFile: f }))]);
+       No handler modification needed beyond the integration call.
+
+16. **Cap sync snapshot (PROCEDURAL — Replit must do this):**
+    BEFORE running `npx cap sync`:
+    $ git status
+    $ git diff frontend/ios/App/Podfile
+    $ git diff frontend/android/app/build.gradle
+    (Capture baseline. If anything is already dirty here, investigate
+    before adding new plugins.)
+
+    AFTER running `npx cap sync`:
+    $ git diff frontend/ios/App/Podfile
+    $ git diff frontend/android/app/build.gradle
+
+    EXPECTED CHANGES:
+    - Podfile: 2 new pods (`CapacitorMlkitDocumentScanner`,
+      `CapacitorCommunityContacts`) appear.
+    - build.gradle: 2 new gradle deps.
+
+    UNEXPECTED CHANGES TO INVESTIGATE BEFORE PROCEEDING:
+    - Other plugin version bumps (e.g., Capacitor core bump).
+    - Project structure changes.
+    - Build configuration changes.
+
+    If unexpected diff appears → STOP, investigate. Don't ship a
+    silent version bump.
+
+================================================================================
+PART 1 — Document Scanner
+================================================================================
+
+LOCATION 1.1 — Install plugin
+$ cd frontend && npm install --save @capacitor-mlkit/document-scanner@^7
+
+LOCATION 1.2 — Sync native
+$ npx cap sync
+
+(This auto-updates Podfile + Android build.gradle.)
+
+LOCATION 1.3 — NEW: BrikOps wrapper component
+File: frontend/src/components/DocumentScannerButton.jsx (NEW, ~40 LOC)
+
+  import React, { useCallback } from 'react';
+  import { Camera } from 'lucide-react';
+  import { DocumentScanner } from '@capacitor-mlkit/document-scanner';
+  import { Capacitor } from '@capacitor/core';
+  import { toast } from 'sonner';
+
+  /**
+   * BATCH H.2-Bundle (2026-05-13) — wrapper around the native
+   * document scanner. iOS uses VNDocumentCameraViewController
+   * (Apple system); Android uses Google ML Kit Document Scanner.
+   * Falls back to nothing (button hidden) on web.
+   *
+   * Props:
+   *   - onScan: (files: File[]) => void — called with the
+   *     scanned pages as File objects (converted from native URIs).
+   *   - label: string — button text (default "סרוק מסמך")
+   *   - className: string — wrapper styling
+   */
+  export default function DocumentScannerButton({ onScan, label = 'סרוק מסמך', className = '' }) {
+    const handleClick = useCallback(async () => {
+      if (!Capacitor.isNativePlatform()) {
+        toast.error('סריקת מסמכים זמינה רק באפליקציה');
+        return;
+      }
+      try {
+        const result = await DocumentScanner.scan();
+        const scannedFiles = await Promise.all(
+          (result.scannedImages || []).map(async (uri, i) => {
+            const resp = await fetch(uri);
+            const blob = await resp.blob();
+            return new File([blob], `scan-${Date.now()}-${i}.jpg`, { type: 'image/jpeg' });
+          })
+        );
+        if (scannedFiles.length > 0) onScan(scannedFiles);
+      } catch (err) {
+        if (err.message?.includes('cancel')) return; // user dismissed
+        console.error('DocumentScanner error:', err);
+        toast.error('שגיאה בסריקה');
+      }
+    }, [onScan]);
+
+    if (!Capacitor.isNativePlatform()) return null;
+
+    return (
+      <button onClick={handleClick} className={className}>
+        <Camera className="w-4 h-4" />
+        {label}
+      </button>
+    );
+  }
+
+LOCATION 1.4 — Integration points (defer to follow-up if needed)
+Integrate the scanner button in 2 places (optional in this batch; can
+be follow-up if scope blows up):
+- Plan upload modals (single + bulk) — scan blueprint via camera
+- Defect attach photo button — scan paper receipt/form
+
+For this batch, add to ONE place to validate the plugin works:
+Recommended: NewDefectModal's photo button section. Render
+`<DocumentScannerButton onScan={handleScannedFiles} />` next to the
+existing camera button. `handleScannedFiles` mirrors the existing
+photo handler — sets pendingFile if 1 file, or pushes to `images[]`
+if multiple.
+
+================================================================================
+PART 2 — Universal Links + App Links
+================================================================================
+
+LOCATION 2.1 — Extend apple-app-site-association (NOT replace)
+File: frontend/public/.well-known/apple-app-site-association
+
+CURRENT (preserve):
+  {
+    "webcredentials": {
+      "apps": ["8FV5CZ886X.com.brikops.app"]
+    }
+  }
+
+EXTEND TO:
+  {
+    "webcredentials": {
+      "apps": ["8FV5CZ886X.com.brikops.app"]
+    },
+    "applinks": {
+      "details": [
+        {
+          "appIDs": ["8FV5CZ886X.com.brikops.app"],
+          "components": [
+            { "/": "/projects/*" },
+            { "/": "/tasks/*" },
+            { "/": "/defects/*" },
+            { "/": "/units/*" },
+            { "/": "/floors/*" },
+            { "/": "/stages/*" },
+            { "/": "/auth/*" },
+            { "/": "/org-billing*" },
+            { "/": "/handover*" }
+          ]
+        }
+      ]
+    }
+  }
+
+Adjust path patterns based on actual React Router routes (verify
+during implementation by listing routes in App.js).
+
+LOCATION 2.2 — CREATE Android assetlinks.json
+File: frontend/public/.well-known/assetlinks.json (NEW)
+
+  [
+    {
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "com.brikops.app",
+        "sha256_cert_fingerprints": [
+          "REPLACE_WITH_UPLOAD_CERT_FINGERPRINT",
+          "REPLACE_WITH_PLAY_APP_SIGNING_CERT_FINGERPRINT"
+        ]
+      }
+    }
+  ]
+
+Both fingerprints needed:
+- Upload cert (the keystore used by ship.sh)
+- Play App Signing cert (if Play Signing is enabled — check via
+  Play Console → App integrity → App signing). Two-fingerprint
+  setup handles both before-and-after Play Signing flows.
+
+To get the fingerprints:
+- Upload cert: `keytool -list -v -keystore <upload-keystore.jks>
+  -alias <alias>` (output → SHA-256 line)
+- Play Signing cert: Play Console → App integrity → App signing →
+  "SHA-256 certificate fingerprint" → copy as-is.
+
+LOCATION 2.3 — Add applinks to iOS entitlements
+File: frontend/ios/App/App/App.entitlements
+
+CURRENT (preserve `webcredentials`):
+  <key>com.apple.developer.associated-domains</key>
+  <array>
+    <string>webcredentials:app.brikops.com</string>
+  </array>
+
+EXTEND TO:
+  <key>com.apple.developer.associated-domains</key>
+  <array>
+    <string>webcredentials:app.brikops.com</string>
+    <string>applinks:app.brikops.com</string>
+  </array>
+
+LOCATION 2.4 — Add Android intent-filter for App Links
+File: frontend/android/app/src/main/AndroidManifest.xml
+
+Find the existing `<activity android:name=".MainActivity">` block.
+After the existing MAIN/LAUNCHER intent-filter, ADD:
+
+  <intent-filter android:autoVerify="true">
+    <action android:name="android.intent.action.VIEW" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <category android:name="android.intent.category.BROWSABLE" />
+    <data android:scheme="https" />
+    <data android:host="app.brikops.com" />
+  </intent-filter>
+
+`android:autoVerify="true"` triggers Google's verification of
+assetlinks.json on app install. If assetlinks.json mismatches
+fingerprint → links open in browser (graceful fallback).
+
+LOCATION 2.5 — Add appUrlOpen listener via <DeepLinkHandler> component
+File: frontend/src/App.js
+
+PATTERN (verified by STEP 0.13): App uses `BrowserRouter` (react-
+router-dom v6). The `useNavigate` hook only works in components
+INSIDE BrowserRouter. The appUrlOpen listener must therefore live
+inside a component that's rendered INSIDE BrowserRouter — NOT in
+the top-level App component scope.
+
+**Solution:** create a tiny `<DeepLinkHandler>` component that
+renders nothing but uses `useNavigate` + registers the listener in
+a useEffect. Mount it INSIDE BrowserRouter.
+
+ADD (near top of file, after the existing helper components like
+`NetworkPlaceholder`):
+
+  // BATCH H.2-Bundle (2026-05-13) — Universal Links + App Links.
+  // Lives INSIDE BrowserRouter so it can call useNavigate. When the
+  // OS hands off https://app.brikops.com/<path> to the app (user
+  // tapped a link from WhatsApp/SMS/email + app is installed),
+  // parses the path and navigates via React Router. If app NOT
+  // installed, OS falls back to browser automatically.
+  //
+  // Auth-bounce: protected routes already redirect logged-out
+  // users to /login while storing INTENDED_PATH_KEY +
+  // deepLinkSource='external'. After login, the existing
+  // LoginPage/WaLoginPage/OnboardingPage logic navigates back to
+  // the intended path. No new code needed for that flow.
+  const DeepLinkHandler = () => {
+    const navigate = useNavigate();
+
+    useEffect(() => {
+      const handler = ({ url }) => {
+        try {
+          const u = new URL(url);
+          // Defense in depth — only handle our own domain.
+          // (autoVerify should prevent foreign URLs, but cheap
+          // insurance against future intent-filter conflicts.)
+          if (u.hostname !== 'app.brikops.com') return;
+          const path = u.pathname + (u.search || '') + (u.hash || '');
+          if (!path || path === '/') return;
+          // Mark this navigation as external (used by some pages
+          // like TaskDetailPage:224 to distinguish in-app vs
+          // external entry).
+          try { sessionStorage.setItem('deepLinkSource', 'external'); } catch {}
+          navigate(path);
+        } catch (err) {
+          console.warn('appUrlOpen parse failed:', err);
+        }
+      };
+
+      let listenerHandle;
+      CapacitorApp.addListener('appUrlOpen', handler).then(h => {
+        listenerHandle = h;
+      });
+
+      return () => {
+        if (listenerHandle?.remove) listenerHandle.remove();
+      };
+    }, [navigate]);
+
+    return null;
+  };
+
+Add `useNavigate` to the react-router-dom imports at L2.
+
+THEN mount it INSIDE the existing BrowserRouter (around L591-606):
+
+ANCHOR (find existing):
+  <BrowserRouter>
+    <Routes>
+      ...
+    </Routes>
+  </BrowserRouter>
+
+ADD `<DeepLinkHandler />` as a sibling of `<Routes>`:
+
+  <BrowserRouter>
+    <DeepLinkHandler />
+    <Routes>
+      ...
+    </Routes>
+  </BrowserRouter>
+
+Component renders nothing — just attaches the listener once on
+mount and removes on unmount.
+
+**DO NOT** put the listener inside the existing `backButton`
+useEffect (~L573) — that scope is OUTSIDE BrowserRouter and
+useNavigate would fail there.
+
+================================================================================
+PART 3 — Contact Picker
+================================================================================
+
+LOCATION 3.1 — Install plugin
+$ cd frontend && npm install --save @capacitor-community/contacts@^7
+
+LOCATION 3.2 — Sync native
+$ npx cap sync
+
+LOCATION 3.3 — Add NSContactsUsageDescription to Info.plist
+File: frontend/ios/App/App/Info.plist
+Insert: near other `NS*UsageDescription` strings (~L48 area).
+
+ADD:
+  <key>NSContactsUsageDescription</key>
+  <string>BrikOps לא שולח את אנשי הקשר שלך לשרתי החברה. הגישה משמשת רק כדי לאפשר לך לבחור איש קשר ולהכניס אותו לפרויקט.</string>
+
+(Hebrew text drafted in ROADMAP L1002 — privacy-clear, reviewer-
+friendly. Apple reviewers READ these strings.)
+
+LOCATION 3.4 — Add READ_CONTACTS to AndroidManifest
+File: frontend/android/app/src/main/AndroidManifest.xml
+Insert: with other `<uses-permission>` declarations near top of
+`<manifest>` block.
+
+ADD:
+  <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+Note: Android handles READ_CONTACTS via runtime permission prompt
+(no manifest-time grant). The Capacitor plugin handles the prompt
+flow.
+
+LOCATION 3.5 — NEW: BrikOps wrapper component
+File: frontend/src/components/ContactPickerButton.jsx (NEW, ~50 LOC)
+
+  import React, { useCallback } from 'react';
+  import { Users } from 'lucide-react';
+  import { Contacts } from '@capacitor-community/contacts';
+  import { Capacitor } from '@capacitor/core';
+  import { toast } from 'sonner';
+
+  /**
+   * BATCH H.2-Bundle (2026-05-13) — wrapper around the native
+   * contact picker. iOS uses CNContactPickerViewController;
+   * Android uses ContactsContract picker intent. App never sees
+   * the full address book — only the contact the user picks.
+   *
+   * Props:
+   *   - onPicked: ({ name: string, phone: string }) => void
+   *   - label: string — button text (default "בחר מאנשי קשר")
+   *   - className: string — wrapper styling
+   */
+  export default function ContactPickerButton({ onPicked, label = 'בחר מאנשי קשר', className = '' }) {
+    const handleClick = useCallback(async () => {
+      if (!Capacitor.isNativePlatform()) return; // hidden on web
+      try {
+        // Request permission first (Capacitor plugin auto-handles).
+        const perm = await Contacts.requestPermissions();
+        if (perm.contacts !== 'granted') {
+          // BATCH H.2-Bundle — tell user HOW to fix, not just THAT
+          // it's broken. After first denial, iOS won't re-prompt
+          // — user must enable manually in Settings. Apple
+          // reviewers check this edge case.
+          toast.error(
+            'נדרשת הרשאה לאנשי קשר. ' +
+            'ניתן להפעיל בהגדרות > BrikOps > אנשי קשר.'
+          );
+          return;
+        }
+        const { contact } = await Contacts.pickContact({
+          projection: { name: true, phones: true }
+        });
+        if (!contact) return; // user cancelled
+        const name = contact.name?.display || '';
+        const phone = contact.phones?.[0]?.number || '';
+        onPicked({ name, phone });
+      } catch (err) {
+        if (err.message?.includes('cancel')) return;
+        console.error('ContactPicker error:', err);
+        toast.error('שגיאה בבחירת איש קשר');
+      }
+    }, [onPicked]);
+
+    if (!Capacitor.isNativePlatform()) return null;
+
+    return (
+      <button onClick={handleClick} className={className}>
+        <Users className="w-4 h-4" />
+        {label}
+      </button>
+    );
+  }
+
+LOCATION 3.6 — Integration in 2 modals
+Add `<ContactPickerButton onPicked={...}>` to:
+
+a) "Add Team Member" modal — find by content `הוסף חבר צוות` or
+   similar. `onPicked` pre-fills the `name` and `phone` form fields.
+
+b) "Add Contractor / Company" modal — find by content `הוסף חברה`
+   or similar. Same pre-fill pattern.
+
+Both modals should render the contact picker button next to the
+existing manual-entry name/phone fields, gated by `Capacitor.
+isNativePlatform()` (handled inside the component — returns null
+on web).
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ Existing `webcredentials` block in AASA — preserve for Apple
+     Sign-In.
+- ❌ Existing `associated-domains: webcredentials` entitlement —
+     extend the array, don't replace.
+- ❌ Existing CAMERA permission in AndroidManifest.
+- ❌ Existing INTERNET permission.
+- ❌ Existing MAIN/LAUNCHER intent-filter.
+- ❌ CapacitorUpdater plugin config in capacitor.config.json.
+- ❌ Existing NSCameraUsageDescription / NSPhotoLibraryUsageDescription
+     (camera reused for scanner; no change).
+- ❌ Existing Capacitor plugins (camera, filesystem, share, etc.).
+- ❌ Existing backButton listener in App.js — add sibling, don't
+     replace.
+- ❌ Existing deepLinkSource sessionStorage pattern.
+- ❌ Backend endpoints — Universal Links route to existing routes
+     via React Router; scanner uploads via existing plan/defect
+     APIs; contact picker only pre-fills frontend forms.
+- ❌ React Router routing logic itself — `appUrlOpen` handler
+     dispatches into existing routes; no new routes created.
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — npx cap sync
+================================================================================
+$ cd frontend && npx cap sync
+   →  Expect: registers both new plugins (@capacitor-mlkit/document-
+      scanner + @capacitor-community/contacts) into ios/Podfile +
+      android/build.gradle. EXIT=0.
+
+================================================================================
+VERIFY 3 — JSON files served correctly (post-deploy)
+================================================================================
+After deploying staging frontend:
+$ curl -s https://staging.brikops-new.pages.dev/.well-known/apple-app-site-association
+   →  Expect: JSON with `webcredentials` + `applinks` blocks.
+      Content-Type: application/json (Cloudflare Pages handles).
+
+$ curl -s https://staging.brikops-new.pages.dev/.well-known/assetlinks.json
+   →  Expect: JSON array with delegate_permission + package_name +
+      sha256_cert_fingerprints.
+
+Note: for Universal Links to work on iOS, the AASA must be served
+on the SIGNED prod domain (app.brikops.com). For staging testing,
+Universal Links won't auto-resolve (different domain). Test the JS
+side via `App.openUrl('https://app.brikops.com/tasks/test')` from
+a debug entry, OR ship to prod and use the demo account.
+
+================================================================================
+VERIFY 4 — Native config grep
+================================================================================
+$ grep "@capacitor-mlkit/document-scanner\|@capacitor-community/contacts" \
+    frontend/package.json
+   →  Expect: 2 hits (both deps).
+
+$ grep "applinks:app.brikops.com" frontend/ios/App/App/App.entitlements
+   →  Expect: 1 hit.
+
+$ grep "NSContactsUsageDescription" frontend/ios/App/App/Info.plist
+   →  Expect: 1 hit.
+
+$ grep "READ_CONTACTS" frontend/android/app/src/main/AndroidManifest.xml
+   →  Expect: 1 hit.
+
+$ grep "autoVerify=\"true\"" frontend/android/app/src/main/AndroidManifest.xml
+   →  Expect: 1 hit.
+
+================================================================================
+VERIFY 5 — Manual smoke (DEFERRED TO ZAHI on real devices)
+================================================================================
+
+Pre-conditions:
+- H.2-Bundle shipped to prod (./ship.sh complete, Apple+Android
+  builds approved).
+- App reinstalled on iPhone + Android (existing installs need
+  update for Universal/App Links + new plugins).
+- Demo accounts ready: demo-pm@brikops.com / BrikOpsDemo2026!
+
+**A — Document scanner happy path:**
+  1. Open BrikOps app on iPhone.
+  2. New defect → tap document scanner button.
+  EXPECT: native iOS scanner UI opens (Apple Notes-style camera
+  with edge detection). Capture 2 pages.
+  3. Tap "שמור" in scanner UI.
+  EXPECT: app receives 2 image files. They appear as attachment
+  thumbnails on the defect form.
+  Same on Android — ML Kit document scanner UI.
+
+**B — Universal Links — WhatsApp → app (CRITICAL — the bug fix):**
+  1. On iPhone (with BrikOps app installed), open WhatsApp.
+  2. Have someone send you: https://app.brikops.com/tasks/<id of a
+     real defect>
+  3. Tap the link.
+  EXPECT: BrikOps app opens (not Safari). Routes directly to the
+  task detail page.
+  Repeat on Android (BrikOps app opens, not Chrome).
+
+**C — Universal Links — uninstalled fallback:**
+  1. On a device WITHOUT BrikOps installed, tap the same WhatsApp
+     link.
+  EXPECT: Safari/Chrome opens app.brikops.com/tasks/xyz — the web
+  version. No error, no awkward intermediate page.
+
+**D — Contact picker — Add Team Member:**
+  1. Open BrikOps app → org settings → Add Team Member.
+  2. Tap "בחר מאנשי קשר".
+  EXPECT: iOS — native CNContactPickerViewController opens (system
+  picker, app never sees the address book). Pick a contact.
+  3. Form pre-fills with name + phone.
+  Same on Android.
+
+**E — Contact picker — Add Contractor:**
+  Same flow as D, but in Add Contractor/Company modal.
+
+**F — Permission prompts (FIRST USE):**
+  - Scanner: iOS reuses existing camera permission (no new prompt).
+    Android camera same.
+  - Contact picker: iOS shows "BrikOps Would Like to Access Your
+    Contacts" with our Hebrew rationale. Tap "Allow".
+  - Android: similar runtime prompt.
+
+**G — Cross-platform regression:**
+  - All existing photo / camera / file-pick flows still work.
+  - Apple Sign-In still works (webcredentials block preserved in
+    AASA).
+  - All H.1 multi-file plan upload still works.
+  - All PhotoAnnotation polish still works.
+
+================================================================================
+RISK
+================================================================================
+Medium. Native batch with Apple/Android review cycle. First native
+release in a while = some accumulated drift risk.
+
+- ⚠ AASA extension preserves webcredentials — CRITICAL. If
+  webcredentials block is dropped, Apple Sign-In stops working
+  (Pre-flight #3 + #5 guard this).
+- ⚠ assetlinks.json fingerprints must match the actual signing
+  cert. Wrong fingerprint → Android falls back to browser
+  (graceful but not desired). Pre-flight verify before ship.
+- ⚠ Apple reviewer reads NSContactsUsageDescription Hebrew text.
+  Drafted text emphasizes "we don't send to our servers" —
+  privacy-clear. If reviewer rejects, follow-up wording tweak.
+- ⚠ `appUrlOpen` listener — implementation note about navigate
+  ref placement. Replit may need to choose the cleanest React
+  Router pattern matching existing code style.
+- ⚠ Document scanner ML Kit on Android downloads model on first
+  use (~1-2MB). First scan may have brief delay.
+- ⚠ Contact picker plugin returns ONE contact (not list). Apple
+  reviewer expectation; matches privacy commitment in Hebrew
+  rationale.
+- ⚠ Universal Links require the AASA to be served on the SIGNED
+  prod domain (app.brikops.com). Staging won't auto-resolve;
+  test via prod with demo accounts.
+- ⚠ Bundle size: +2 Capacitor plugins. Estimate: ~500KB iOS, ~1MB
+  Android (ML Kit model gets downloaded post-install on first use).
+  Acceptable.
+- ⚠ Apple review window: 1-3 days expected. Plan accordingly.
+- ⚠ Backend / DB / env / payment / billing: zero touch.
+
+================================================================================
+ROLLBACK
+================================================================================
+Two rollback paths:
+
+**OTA-only (frontend code revert via Capgo):**
+- Revert App.js appUrlOpen listener + 2 new JSX components +
+  consumer integrations.
+- BUT: native code stays installed. JSON files stay published.
+  No harm — listener just won't fire.
+
+**Full native revert (./ship.sh new build):**
+- git revert <bundle-sha>
+- npx cap sync
+- ./ship.sh prod
+- Wait for Apple/Android re-review (~1-3 more days).
+
+Practical: OTA revert is fastest for "feature went wrong" cases.
+Full native revert only if a CRASH or critical regression on the
+native side.
+
+================================================================================
+DEPLOY ORDERING (NATIVE RELEASE FLOW)
+================================================================================
+This is NOT a standard OTA deploy. The flow is:
+
+**Step 1 — Code changes via Replit (standard):**
+  - Replit implements all 9 LOCATIONS above.
+  - review.txt + .local/.commit_message.
+  - Standing rule: STOP at present_asset.
+
+**Step 2 — Zahi runs OTA deploys (frontend JSON + JS):**
+  - `./deploy.sh --stag` (staging)
+  - Smoke OTA-able parts via web (e.g., AASA + assetlinks
+    accessible at /.well-known/, contact picker button SHOWS up
+    correctly on existing installs, scanner button SHOWS up).
+  - The deep-link + scanner + contact picker won't FULLY work
+    until native ship below — but the frontend should not crash.
+
+**Step 3 — Zahi runs ./ship.sh on Mac (native build):**
+  - Opens Xcode (already accessed) — Archive → Upload to App
+    Store Connect.
+  - Opens Android Studio — Generate Signed Bundle → Upload to
+    Play Console.
+
+**Step 3.5 — TestFlight verification BEFORE App Store submission
+       (NEW — critical for Universal Links signed-domain test):**
+  - After uploading to App Store Connect, distribute via TestFlight
+    Internal Testing (Zahi + Eden only — no Apple review needed
+    for internal distribution).
+  - Install via TestFlight on real iPhone.
+  - Run smoke against PROD AASA (signed app, prod domain):
+    * Test B — WhatsApp link → app opens
+    * Test A — Scanner works
+    * Test D — Contact picker works
+    * Test C — Universal Links uninstalled fallback (sign out of
+      TestFlight build temporarily OR test on second device)
+  - ONLY THEN submit for App Store review.
+  - Adds ~30 min. Saves a potential 1-3 day Apple rejection cycle
+    if something fails on signed-domain testing.
+  - Android Play Console equivalent: Internal testing track →
+    self-install → smoke → promote to production.
+
+**Step 4 — Submit for App Store / Play Console review:**
+  - App Store Connect → Submit for Review.
+  - Play Console → Promote internal testing to production review.
+  - Apple: 1-3 days typically.
+  - Google: hours typically.
+
+**Step 5 — Release to production:**
+  - Apple: App Store Connect → Release → Manual or Phased.
+  - Google: Play Console → Production rollout.
+  - Capgo OTA continues to ship subsequent frontend-only updates
+    on top of this native baseline.
+
+**Step 6 — Smoke on real devices after release:**
+  - Re-install / update BrikOps app on iPhone + Android.
+  - Run Smoke A-G.
+  - Confirm WhatsApp deep-link opens app.
+
+================================================================================
+PRE-SUBMIT CHECKLIST (Zahi runs before clicking "Submit for Review")
+================================================================================
+Before clicking "Submit for Review" in App Store Connect:
+
+  ☐ **All 16 STEP 0 checks PASS.**
+  ☐ **TestFlight build tested on real iPhone (Step 3.5).**
+  ☐ **AASA served correctly from app.brikops.com** — verify with:
+      `curl -s https://app.brikops.com/.well-known/apple-app-site-association`
+      Expect: JSON with BOTH `webcredentials` (Apple Sign-In) AND
+      `applinks` (new) blocks. Content-Type: application/json.
+  ☐ **assetlinks.json fingerprints verified** against actual signing
+      keystore + Play App Signing cert (Play Console → App
+      integrity → SHA-256 fingerprint).
+  ☐ **Hebrew NSContactsUsageDescription string reviewed:**
+      "BrikOps לא שולח את אנשי הקשר שלך לשרתי החברה. הגישה משמשת
+      רק כדי לאפשר לך לבחור איש קשר ולהכניס אותו לפרויקט."
+      Emphasizes privacy negative claim ("we don't send") +
+      specific purpose. Apple reviewers READ these strings.
+  ☐ **Screenshots in App Store Connect updated** if any UI changed
+      (no UI changes expected; scanner + contact picker are entry
+      buttons that don't alter baseline screens).
+  ☐ **Universal Links tested with LOGGED-OUT user via TestFlight**
+      (STEP 0.14 — verify intendedPath bounce works for deep-link
+      entry into protected routes).
+
+  ☐ **🔴 Privacy Policy UPDATED at https://brikops.com/privacy**
+      (or wherever the canonical privacy policy lives — verify URL).
+      Apple ALWAYS cross-checks privacy policy against requested
+      permissions. Missing contacts disclosure = automatic rejection.
+
+      **Add to privacy policy (Hebrew + English):**
+
+      **HEBREW:**
+        "אפליקציית BrikOps מציעה אפשרות לבחור אנשי קשר מהמכשיר
+        שלך. כאשר אתה בוחר ליבוא איש קשר, האפליקציה קוראת רק את
+        השם ומספר הטלפון של איש הקשר שבחרת — מבלי לגשת כלל
+        לרשימת אנשי הקשר המלאה. המידע נטען רק כדי למלא שדות
+        בטופס, ולא נשלח לשרתי BrikOps אלא אם אתה בוחר במפורש
+        להוסיף את איש הקשר לפרויקט."
+
+      **ENGLISH:**
+        "The BrikOps mobile app offers an optional contact picker
+        feature. When you choose to pick a contact, BrikOps reads
+        only the selected contact's name and phone number — never
+        accessing your full address book. The picked information
+        is used only to pre-fill form fields and is not transmitted
+        to BrikOps servers unless you explicitly add the contact
+        to a project."
+
+      Publish the privacy policy update BEFORE clicking Submit.
+      Reviewers can verify the URL during review.
+
+  ☐ **🔴 App Store Connect Privacy Nutrition Labels UPDATED:**
+      App Store Connect → My Apps → BrikOps → App Privacy.
+
+      For the Contacts data type, declare:
+        - **Data Type:** Contacts → "Name", "Phone Number"
+        - **Choose ONE of:**
+          a) "Data Not Collected" — RECOMMENDED. Use if the app
+             only pre-fills the form locally and never logs the
+             picked contact to BrikOps backend until user explicitly
+             saves the form. (Matches our Hebrew privacy text +
+             policy claim.)
+          b) "Linked to You" — only if backend logs picked-contact
+             interaction (e.g., audit log). Adds disclosure overhead.
+        - **Purpose:** App Functionality.
+
+      **CRITICAL: all 3 must align:**
+        1. NSContactsUsageDescription Hebrew text claim
+        2. Privacy policy disclosure
+        3. App Store Connect Privacy Nutrition Labels
+      If any mismatch (e.g., string says "we don't send to servers"
+      but Labels say "Linked to You") → Apple rejection. Reviewers
+      cross-reference all three.
+
+      For Documents/Photos (Document Scanner): no new data type
+      needed — already declared under "Photos" or similar from
+      existing camera flow.
+
+If ANY of these 10 items not green → DO NOT SUBMIT.
+Pre-submit failures are cheap to fix. Apple rejection costs 1-3 days.
+
+================================================================================
+NEXT STEPS (after H.2-Bundle ships)
+================================================================================
+Native release window is open — could fold in other backlog items
+if scope-budget allows. But scope creep risk on Apple review.
+
+Recommended: ship H.2-Bundle clean → wait for native to settle →
+then ship next native batch (push notifications? P1.4 offline?)
+when ready, in a subsequent cycle.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

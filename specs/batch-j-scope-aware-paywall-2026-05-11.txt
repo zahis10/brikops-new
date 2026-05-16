@@ -1,0 +1,542 @@
+================================================================================
+BATCH J Phase 1 — Scope-aware paywall (multi-org PM bug, P1 architectural)
+================================================================================
+Date:           2026-05-11
+Branch:         staging  (NOT main)
+Severity:       P1 — Multi-org bug. Real user impact already confirmed:
+                Zahi's contractor test user (also PM/owner in an
+                expired Org A) gets blocked from submitting proof in
+                the contractor project (paid Org B). Bug exists since
+                multi-org membership was introduced; surfaced today.
+                Documented at ROADMAP L659+ since 2026-04-30.
+
+                **Does NOT touch payment processing, PayPlus,
+                GreenInvoice, billing.py charging logic, subscription
+                state writes, or pricing.** Only changes WHICH org's
+                subscription is consulted when checking access.
+
+Approach:       3 paywall layers extract `org_id` from request context
+                and pass it to `get_effective_access`. The function
+                already accepts `org_id` (billing.py:309) — no function
+                signature change. We're wiring the 3 callers that don't
+                pass it yet.
+
+                Feature flag `PAYWALL_SCOPE_AWARE_ENABLED` (default
+                'true', flip to 'false' for instant rollback without
+                redeploy).
+
+                Implementation: lazy lookup — only resolve scope-aware
+                access when the legacy check would BLOCK. Happy path
+                (user has access via primary org) stays fast.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Backend only:
+                  - backend/contractor_ops/billing.py
+                    (~5 LOC: feature flag in get_effective_access)
+                  - backend/contractor_ops/router.py
+                    (~40 LOC: new _resolve_request_org_id helper +
+                     update require_full_access + _check_paywall)
+                  - backend/server.py
+                    (~15 LOC: update paywall_middleware)
+                Total: 3 files, ~60 LOC. No frontend, no DB migrations,
+                no schema changes. Adds 1 env var (PAYWALL_SCOPE_AWARE_ENABLED).
+
+================================================================================
+SAFETY GUARANTEES — what this batch DOES NOT touch
+================================================================================
+
+❌ Payment processing (PayPlus webhooks, charge calls, refunds)
+❌ GreenInvoice integration (invoice creation, sync)
+❌ billing.py charging functions (charge_subscription, etc.)
+❌ Subscription state writes (status='active'/'cancelled'/'expired'
+   — we only READ these, never WRITE)
+❌ Pricing logic, comp accounts, founder plan, manual_override
+❌ Org membership data (we only READ to resolve org_id)
+❌ Frontend (no UI changes, no banner changes)
+
+✅ ONLY changes which org's subscription is consulted when
+   `get_effective_access` is called by the 3 paywall layers.
+
+**If this batch breaks, NO MONEY MOVES. Worst case: a legitimate
+user gets blocked with 402 when they should be allowed (UX issue,
+not financial). Feature flag flip = instant rollback.**
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN this batch (Phase 1 — org_id resolution only):
+  ✅ Helper `_resolve_request_org_id(request, db)` in router.py.
+     Parses URL path and looks up org_id from:
+       - `/api/projects/{project_id}/...` → project.org_id
+       - `/api/tasks/{task_id}/...` → task.project_id → project.org_id
+       - `/api/buildings/{building_id}/...` → building.project_id → project.org_id
+       - `/api/floors/{floor_id}/...` → floor.project_id → project.org_id
+       - `/api/units/{unit_id}/...` → unit.project_id → project.org_id
+     Returns None for paths that don't fit (callers fall back to legacy
+     behavior).
+  ✅ paywall_middleware (server.py:1381): call `get_effective_access(user_id)`
+     first (cheap). If blocked, try `_resolve_request_org_id` + retry with
+     scope. If still blocked → 402.
+  ✅ require_full_access (router.py:447): same lazy retry pattern.
+  ✅ _check_paywall (router.py:467): same lazy retry pattern.
+  ✅ Feature flag PAYWALL_SCOPE_AWARE_ENABLED (default 'true'): when
+     'false', `get_effective_access` IGNORES `org_id` and falls back to
+     legacy `get_user_org`. Instant rollback via env var without redeploy.
+  ✅ Structured logging: every paywall decision logs `user_id`,
+     `resolved_org_id`, `decision`, `path`.
+
+OUT of this batch (Phase 2, separate spec when needed):
+  ❌ Per-project access lock (cancelled project = read-only on that
+     project regardless of org status). ROADMAP L690-708.
+  ❌ Frontend changes (TrialBanner, useBilling project-scoped state).
+  ❌ "סגור פרויקט" UI button.
+  ❌ Audit of which other backend functions also need to be
+     scope-aware. Phase 2 territory.
+
+================================================================================
+STEP 0 — PRE-FLIGHT (5 PASS — actual line numbers verified)
+================================================================================
+
+1. `get_effective_access` already accepts org_id:
+   $ grep -nA 3 "async def get_effective_access" backend/contractor_ops/billing.py
+   →  L309: async def get_effective_access(user_id: str, org_id: Optional[str] = None)
+   →  L310-321: super_admin check → org lookup (legacy if no org_id) → subscription check
+   ✓ Function signature is correct. Logic uses `get_user_org` as fallback when
+     `org_id` not passed — this is the "scope-blind" behavior.
+
+2. Three paywall callers don't pass org_id today:
+   $ grep -n "get_effective_access(user" backend/contractor_ops/router.py backend/server.py
+   →  server.py:1381: access = await get_effective_access(user_id)
+   →  router.py:447: access = await get_effective_access(user['id'])
+   →  router.py:467: access = await get_effective_access(user['id'])
+   ✓ All 3 layers identified. Each needs org_id resolution.
+
+3. Confirmed existing callers DO pass org_id (precedent set):
+   $ grep -n "get_effective_access(" backend/contractor_ops/
+   →  onboarding_router.py:1314: get_effective_access(user_id, project_org_id)
+   →  billing.py:500: get_effective_access(actor_id, org_id)
+   →  billing.py:1228: get_effective_access('', org_id)
+   ✓ Pattern exists in codebase. Our work mirrors this.
+
+4. Confirmed PAYWALL_EXEMPT logic preserves GET exemption:
+   $ grep -nC 2 "PAYWALL_EXEMPT" backend/contractor_ops/router.py
+   →  L456-459: PAYWALL_EXEMPT_PATHS = {'/api/auth/', '/api/billing/', '/api/admin/', '/api/debug/', '/api/updates/feed'}
+   →  L462-466: _check_paywall returns early for GET methods + exempt paths.
+   ✓ Existing exemption logic stays.
+
+5. Confirmed contractor proof endpoint URL pattern:
+   $ grep -n "@router.post.*contractor-proof" backend/contractor_ops/tasks_router.py
+   →  tasks_router.py:848: @router.post("/tasks/{task_id}/contractor-proof")
+   ✓ Hits the `/api/tasks/{tid}/...` pattern in _resolve_request_org_id.
+
+================================================================================
+LOCATION 1 — billing.py: feature flag in get_effective_access
+================================================================================
+File: backend/contractor_ops/billing.py
+Lines: 309-325 (the function body)
+
+BEFORE:
+async def get_effective_access(user_id: str, org_id: Optional[str] = None) -> EffectiveAccess:
+    db = get_db()
+
+    if user_id:
+        sa_doc = await db.users.find_one({'id': user_id}, {'_id': 0, 'platform_role': 1})
+        if sa_doc and sa_doc.get('platform_role') == 'super_admin':
+            return EffectiveAccess.FULL_ACCESS
+
+    if not org_id:
+        org = await get_user_org(user_id)
+        if not org:
+            return EffectiveAccess.READ_ONLY
+        org_id = org['id']
+
+    sub = await get_subscription(org_id)
+    access, _reason = _resolve_access(sub)
+    return access
+
+AFTER:
+async def get_effective_access(user_id: str, org_id: Optional[str] = None) -> EffectiveAccess:
+    db = get_db()
+
+    if user_id:
+        sa_doc = await db.users.find_one({'id': user_id}, {'_id': 0, 'platform_role': 1})
+        if sa_doc and sa_doc.get('platform_role') == 'super_admin':
+            return EffectiveAccess.FULL_ACCESS
+
+    # BATCH J (2026-05-11) — feature flag for instant rollback.
+    # When 'false', ignore caller-provided org_id and use legacy
+    # get_user_org() fallback (scope-blind behavior). Flip via
+    # env var without redeploy.
+    import os
+    if os.environ.get('PAYWALL_SCOPE_AWARE_ENABLED', 'true').lower() != 'true':
+        org_id = None
+
+    if not org_id:
+        org = await get_user_org(user_id)
+        if not org:
+            return EffectiveAccess.READ_ONLY
+        org_id = org['id']
+
+    sub = await get_subscription(org_id)
+    access, _reason = _resolve_access(sub)
+    return access
+
+================================================================================
+LOCATION 2 — router.py: add _resolve_request_org_id helper
+================================================================================
+File: backend/contractor_ops/router.py
+Insert: before the existing `require_full_access` function (around L444)
+
+ADD:
+# BATCH J (2026-05-11) — Scope-aware paywall helper.
+# Resolves the org_id this request is acting on, by parsing the URL
+# path and looking up the relevant entity. Returns None if the path
+# doesn't map to a known scope — callers then fall back to legacy
+# get_user_org behavior (same as today).
+#
+# Lazy DB lookups: at most 2 queries (entity → project_id → org_id).
+# Only called when the legacy access check would otherwise block,
+# so happy-path users incur zero extra latency.
+#
+# Supported patterns:
+#   /api/projects/{pid}/...     — direct project lookup
+#   /api/tasks/{tid}/...        — task → project → org
+#   /api/buildings/{bid}/...    — building → project → org
+#   /api/floors/{fid}/...       — floor → project → org
+#   /api/units/{uid}/...        — unit → project → org
+import re as _re
+
+_ORG_URL_PATTERNS = [
+    (_re.compile(r'^/api/projects/([^/]+)'),  'projects',  'org_id'),
+    (_re.compile(r'^/api/tasks/([^/]+)'),     'tasks',     'project_id'),
+    (_re.compile(r'^/api/buildings/([^/]+)'), 'buildings', 'project_id'),
+    (_re.compile(r'^/api/floors/([^/]+)'),    'floors',    'project_id'),
+    (_re.compile(r'^/api/units/([^/]+)'),     'units',     'project_id'),
+]
+
+async def _resolve_request_org_id(request_path: str, db) -> Optional[str]:
+    """Returns the org_id this request is acting on, or None if not
+    derivable from the URL. Lazy — only called when paywall would
+    otherwise block.
+    """
+    for pattern, collection, field in _ORG_URL_PATTERNS:
+        m = pattern.match(request_path)
+        if not m:
+            continue
+        entity_id = m.group(1)
+        # First-hop lookup
+        entity = await db[collection].find_one(
+            {'id': entity_id}, {'_id': 0, field: 1}
+        )
+        if not entity:
+            return None
+        if field == 'org_id':
+            return entity.get('org_id')
+        # Two-hop: tasks/buildings/floors/units → project → org_id
+        project_id = entity.get('project_id')
+        if not project_id:
+            return None
+        project = await db.projects.find_one(
+            {'id': project_id}, {'_id': 0, 'org_id': 1}
+        )
+        return project.get('org_id') if project else None
+    return None
+
+================================================================================
+LOCATION 3 — router.py: update require_full_access (L446-453)
+================================================================================
+File: backend/contractor_ops/router.py
+Lines: 446-453
+
+BEFORE:
+async def require_full_access(user: dict = Depends(get_current_user)):
+    access = await get_effective_access(user['id'])
+    if access != EffectiveAccess.FULL_ACCESS:
+        raise HTTPException(
+            status_code=402,
+            detail={'detail': PAYWALL_DETAIL, 'code': PAYWALL_CODE},
+        )
+    return user
+
+AFTER:
+async def require_full_access(
+    request: Request,
+    user: dict = Depends(get_current_user)
+):
+    # BATCH J (2026-05-11) — try legacy access first (fast path).
+    access = await get_effective_access(user['id'])
+    if access == EffectiveAccess.FULL_ACCESS:
+        return user
+
+    # Slow path: legacy check would block. Try scope-aware with the
+    # request's resolved org_id before issuing 402.
+    db = get_db()
+    resolved_org_id = await _resolve_request_org_id(request.url.path, db)
+    if resolved_org_id:
+        access = await get_effective_access(user['id'], resolved_org_id)
+        if access == EffectiveAccess.FULL_ACCESS:
+            logger.info(
+                f"[PAYWALL:SCOPED_OK] user={user['id']} path={request.url.path} "
+                f"resolved_org={resolved_org_id} decision=allow"
+            )
+            return user
+
+    logger.info(
+        f"[PAYWALL:BLOCKED] user={user['id']} path={request.url.path} "
+        f"resolved_org={resolved_org_id or 'none'} decision=block"
+    )
+    raise HTTPException(
+        status_code=402,
+        detail={'detail': PAYWALL_DETAIL, 'code': PAYWALL_CODE},
+    )
+
+NOTE: `Request` needs to be imported from `fastapi`. Verify in pre-flight
+that `from fastapi import Request` exists in router.py imports. If not,
+add it.
+
+================================================================================
+LOCATION 4 — router.py: update _check_paywall (L461-472)
+================================================================================
+File: backend/contractor_ops/router.py
+Lines: 461-472
+
+BEFORE:
+async def _check_paywall(request_method: str, request_path: str, user: dict):
+    if request_method == 'GET':
+        return
+    for exempt in PAYWALL_EXEMPT_PATHS:
+        if request_path.startswith(exempt):
+            return
+    access = await get_effective_access(user['id'])
+    if access != EffectiveAccess.FULL_ACCESS:
+        raise HTTPException(
+            status_code=402,
+            detail={'detail': PAYWALL_DETAIL, 'code': PAYWALL_CODE},
+        )
+
+AFTER:
+async def _check_paywall(request_method: str, request_path: str, user: dict):
+    if request_method == 'GET':
+        return
+    for exempt in PAYWALL_EXEMPT_PATHS:
+        if request_path.startswith(exempt):
+            return
+    # BATCH J (2026-05-11) — try legacy access first (fast path).
+    access = await get_effective_access(user['id'])
+    if access == EffectiveAccess.FULL_ACCESS:
+        return
+
+    # Slow path: legacy check would block. Try scope-aware retry.
+    db = get_db()
+    resolved_org_id = await _resolve_request_org_id(request_path, db)
+    if resolved_org_id:
+        access = await get_effective_access(user['id'], resolved_org_id)
+        if access == EffectiveAccess.FULL_ACCESS:
+            logger.info(
+                f"[PAYWALL:SCOPED_OK] user={user['id']} path={request_path} "
+                f"resolved_org={resolved_org_id} decision=allow"
+            )
+            return
+
+    logger.info(
+        f"[PAYWALL:BLOCKED] user={user['id']} path={request_path} "
+        f"resolved_org={resolved_org_id or 'none'} decision=block"
+    )
+    raise HTTPException(
+        status_code=402,
+        detail={'detail': PAYWALL_DETAIL, 'code': PAYWALL_CODE},
+    )
+
+================================================================================
+LOCATION 5 — server.py: update paywall_middleware (L1356-1396)
+================================================================================
+File: backend/server.py
+Lines: 1380-1383 (the specific access check inside the middleware)
+
+BEFORE (the relevant snippet inside middleware):
+                        if not _is_sa:
+                            access = await get_effective_access(user_id)
+                            if access != EffectiveAccess.FULL_ACCESS:
+                                paywall_block = True
+
+AFTER:
+                        if not _is_sa:
+                            # BATCH J (2026-05-11) — try legacy access first (fast path).
+                            access = await get_effective_access(user_id)
+                            if access != EffectiveAccess.FULL_ACCESS:
+                                # Slow path: try scope-aware before blocking.
+                                from contractor_ops.router import _resolve_request_org_id
+                                resolved_org_id = await _resolve_request_org_id(request.url.path, db)
+                                if resolved_org_id:
+                                    access = await get_effective_access(user_id, resolved_org_id)
+                                if access == EffectiveAccess.FULL_ACCESS:
+                                    logger.info(
+                                        f"[PAYWALL:SCOPED_OK] user={user_id} path={request.url.path} "
+                                        f"resolved_org={resolved_org_id} decision=allow"
+                                    )
+                                else:
+                                    logger.info(
+                                        f"[PAYWALL:BLOCKED] user={user_id} path={request.url.path} "
+                                        f"resolved_org={resolved_org_id or 'none'} decision=block"
+                                    )
+                                    paywall_block = True
+
+NOTE: Import is INSIDE the function to avoid circular import at module-load time
+(server.py imports many things from contractor_ops.router; nested import is safe).
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ `get_effective_access` function signature — already has org_id param.
+- ❌ `_resolve_access` helper in billing.py — subscription state logic.
+- ❌ `get_subscription` — subscription read logic.
+- ❌ `get_user_org` — legacy org lookup used as fallback.
+- ❌ Payment processing (PayPlus, GreenInvoice, charge functions).
+- ❌ Subscription state writes (mark_subscription_active, etc.).
+- ❌ Pricing, founder plan, comped, manual_override logic.
+- ❌ PAYWALL_EXEMPT_PATHS / PAYWALL_EXEMPT_PREFIXES — GET exemption preserved.
+- ❌ Frontend (no changes).
+- ❌ DB schema (no migrations).
+- ❌ Existing get_effective_access callers that already pass org_id
+     (onboarding_router.py:1314, billing.py:500/1228) — unchanged.
+
+================================================================================
+VERIFY 1 — Backend import + flag sanity
+================================================================================
+$ cd backend && python -c "from contractor_ops.router import _resolve_request_org_id; from contractor_ops.billing import get_effective_access; import os; os.environ['PAYWALL_SCOPE_AWARE_ENABLED'] = 'true'; print('IMPORT_OK')"
+   →  IMPORT_OK
+   →  EXIT=0
+
+$ cd backend && python -c "from contractor_ops.router import _ORG_URL_PATTERNS; print(len(_ORG_URL_PATTERNS))"
+   →  5
+   →  EXIT=0
+
+================================================================================
+VERIFY 2 — pytest scenarios (6 mandatory — Replit to implement)
+================================================================================
+Per the original spec at ROADMAP L678-684, the following must pass before
+deploy. New test file: `backend/tests/test_scope_aware_paywall.py`.
+
+1. User with 2 orgs (A=expired, B=paid) → POST to project in Org A → 402 ✓
+2. Same user → POST to project in Org B → 200 ✓
+3. User with no orgs → no org_id resolvable → existing fallback (READ_ONLY) ✓
+4. User with 1 org (paid) → no regression vs today (allow) ✓
+5. User with 1 org (expired) → still blocked everywhere (legacy + scope-aware
+   both return READ_ONLY) ✓
+6. Founder plan + comped + manual_override → all preserved (subscription
+   logic unchanged, only org selection logic changed) ✓
+
+Plus 2 new tests specific to this batch:
+7. `_resolve_request_org_id` returns correct org_id for each URL pattern
+   (projects/tasks/buildings/floors/units).
+8. Feature flag PAYWALL_SCOPE_AWARE_ENABLED='false' → behaves like
+   pre-batch (ignores caller-provided org_id).
+
+================================================================================
+VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging or prod)
+================================================================================
+
+**A — THE REPORTED BUG (Zahi's test user):**
+1. Login as the contractor user who is also PM/owner in an expired
+   Org A. They're contractor in paid Org B's project X.
+2. Open a defect assigned to them in Org B's project X.
+3. Click "שלח לאישור מנהל" (submit proof for manager approval).
+EXPECT: defect status changes to `pending_manager_approval`. No 402 error.
+EXPECT NOT: "מנוי פג תוקף" 402 block (THE BUG).
+
+Verify in logs:
+- Look for `[PAYWALL:SCOPED_OK]` line showing resolved_org={Org B's id}
+  decision=allow.
+
+**B — Single-org user regression:**
+1. PM with single paid org → submit any action.
+EXPECT: works as before. Logs may show `[PAYWALL:SCOPED_OK]` even when
+the user has FULL_ACCESS via legacy path (depending on which path the
+middleware took).
+
+**C — Genuinely expired user blocked correctly:**
+1. PM with ONLY an expired org → submit any action.
+EXPECT: 402 block as today. Scope-aware fallback also fails (no
+project in a paid org to resolve to).
+
+**D — Feature flag rollback:**
+1. Flip `PAYWALL_SCOPE_AWARE_ENABLED=false` in AWS Elastic Beanstalk
+   env vars (no redeploy needed — restart workers).
+2. Same multi-org user submits proof.
+EXPECT: 402 block (legacy behavior restored).
+3. Flip back to `true` → behavior restored to scope-aware.
+
+================================================================================
+PERFORMANCE NOTES
+================================================================================
+- Happy path (single-org users, ~95% of traffic): unchanged. Single DB
+  query for subscription, same as today.
+- Slow path (multi-org users hitting paywall): 2 extra DB queries
+  (entity lookup + project lookup). One-time per request. ~5-10ms extra
+  on mobile 4G.
+- Feature flag check: trivial os.environ read, cached per worker.
+- Logging: 1 extra log line per paywall decision. Negligible.
+
+Net impact: imperceptible for most users. Multi-org users who were
+previously blocked entirely now go through correctly (huge UX win,
+no measurable latency cost).
+
+================================================================================
+RISK
+================================================================================
+Medium-low. Backend logic change in 3 paywall layers. Comprehensive
+safety nets:
+
+1. **Feature flag** — instant rollback via env var flip (no redeploy).
+2. **Fast path preserved** — legacy users see zero behavior change.
+3. **Lazy lookup** — slow path only triggers when about to block.
+4. **6 pytest scenarios** — covers regressions before deploy.
+5. **Structured logging** — debug production issues without repro.
+
+Risk vectors:
+- ⚠ Circular import in server.py middleware — mitigated by nested
+  `from contractor_ops.router import _resolve_request_org_id` inside
+  the function (runs at request time, not module load).
+- ⚠ Performance regression on slow path — 2 DB queries per blocked
+  request. Acceptable since today these requests result in 402 anyway
+  (they're already a failure mode).
+- ⚠ URL pattern miss — if a new endpoint URL doesn't match any
+  `_ORG_URL_PATTERNS` entry, falls back to legacy behavior. Same
+  as today. No regression.
+- ⚠ Feature flag misconfiguration — default is 'true' (fix active).
+  If unset, fix active. If set to 'false', behavior = pre-batch.
+  Verified safe with both states.
+
+Bundle / FE impact: zero (no frontend changes).
+Schema / migration: zero.
+Payment processing: zero touch.
+
+================================================================================
+ROLLBACK
+================================================================================
+**Instant (no redeploy):**
+- Set env var `PAYWALL_SCOPE_AWARE_ENABLED=false` in AWS Elastic Beanstalk
+  → restart workers → behavior reverts to pre-batch.
+
+**Full rollback (if needed):**
+- `git revert <commit-sha> && ./deploy.sh --prod`
+- Reverts all 3 layers + helper + feature flag. Behavior identical
+  to pre-batch.
+
+================================================================================
+FOLLOW-UP (Phase 2, separate batch — DOCUMENTED ONLY)
+================================================================================
+Per ROADMAP L690-708:
+- Per-project access lock (project_billing.status='cancelled' → read-only
+  on that project even if org is paid).
+- Frontend banner: "פרויקט סגור — צפייה בלבד" + reopen button.
+- Action button disabled states + tooltip "פרויקט סגור לחיוב".
+- "סגור פרויקט וסיים חיוב" UI.
+
+NOT in this batch. Schedule after Phase 1 stable.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

@@ -1,0 +1,291 @@
+================================================================================
+HOTFIX FOLLOWUP TO #488 — Safety pill in UnitDetailPage + ProjectTasksPage cards
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P3 — UX coverage gap. Per Zahi staging smoke 2026-05-04 of
+                #488: pill renders correctly INSIDE TaskDetailPage but is
+                MISSING from defect cards in list views (UnitDetailPage,
+                ProjectTasksPage). Users have to click into each defect
+                to see safety status — should be visible at a glance.
+
+Files changed:  2 frontend files, ~8 LOC total
+                  Frontend: pages/UnitDetailPage.js (~4 LOC)
+                  Frontend: pages/ProjectTasksPage.js (~4 LOC)
+
+Tests:          None new. Visual change only. Existing 6 tests in
+                test_defect_safety_tag.py guard the schema.
+
+Backend:        ZERO changes. `task.is_safety` already in API response.
+Mobile:         Frontend OTA via Capgo. No native files.
+DB migration:   NONE.
+
+Family:         Followup-3 to #469 (defect "בטיחות" tag). #469 added pill
+                to ProjectControlPage list. #488 added to TaskDetailPage
+                detail. This batch closes UnitDetailPage + ProjectTasksPage
+                lists — last 2 surfaces where the pill was missing.
+
+================================================================================
+ROOT CAUSE — Zahi's staging smoke 2026-05-04
+================================================================================
+
+After #488 deployed, Zahi tested:
+  ✅ Filter "ליקויי בטיחות בלבד" works (BuildingDefectsPage) — perfect
+  ✅ Pill inside TaskDetailPage works — sees "🛡️ בטיחות" near priority chip
+  ❌ NO pill on the defect CARD (in unit's defect list at /units/{id})
+
+Per Zahi: "הייתי מעדיף שגם בחוץ יהיה ככה שכבר מבחוץ אני ידע מה של בטיחות
+מבלי להיכנס לליקוי עצמו".
+
+Inspection of codebase reveals 2 list surfaces still missing the pill:
+  1. UnitDetailPage L321-332 — defect cards inside a unit (Zahi's screenshot)
+  2. ProjectTasksPage L541-554 — defect cards in "כל הליקויים" list
+
+Both render task pills row (StatusPill + CategoryPill + priority + extras)
+but skip is_safety. ProjectControlPage L3913 already has the pill (from #469).
+
+================================================================================
+DESIGN DECISION
+================================================================================
+
+D1. Reuse the existing ProjectControlPage pattern (L3913-3915):
+    {task.is_safety && (
+      <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
+        🛡️ בטיחות
+      </span>
+    )}
+    Same Tailwind, same emoji, same conditional. Visual consistency
+    across all 4 surfaces (ProjectControlPage list, UnitDetailPage list,
+    ProjectTasksPage list, TaskDetailPage detail).
+
+D2. Place the pill INSIDE the existing pills row, immediately AFTER the
+    priority span. Matches the visual order "status → category → priority
+    → safety". Same as the "מסירה" pill placement in UnitDetailPage.
+
+D3. NO change to ProjectControlPage (already has pill from #469).
+    NO change to BuildingDefectsPage (renders unit aggregates, not task
+    cards — out of scope, the unit-level filter from #488 already covers it).
+    NO change to TaskDetailPage (already has pill from #488).
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify the pill pattern from ProjectControlPage L3913-3915:
+    grep -n "is_safety\|🛡️ בטיחות" frontend/src/pages/ProjectControlPage.js
+    # Expected: 4+ hits including the JSX block at L3913.
+    # This is the canonical pattern to mirror.
+
+0.2 — Locate UnitDetailPage card pills row:
+    grep -n "מסירה\|priorityInfo.label\|task.source" \
+        frontend/src/pages/UnitDetailPage.js
+    # Expected: hits around L324-331 — pills row inside the
+    # task.map render. We add the safety pill AFTER the priority span
+    # at L324-326 (BEFORE the "מסירה" pill at L327).
+
+0.3 — Locate ProjectTasksPage card pills row:
+    grep -n "priorityCfg.label\|due_date\|comments_count" \
+        frontend/src/pages/ProjectTasksPage.js
+    # Expected: hits around L543-553 — pills row. We add the safety
+    # pill AFTER the priority span at L543 (BEFORE the due_date / comments).
+
+0.4 — Confirm no duplicate is_safety pills already in either file:
+    grep -c "is_safety" frontend/src/pages/UnitDetailPage.js
+    grep -c "is_safety" frontend/src/pages/ProjectTasksPage.js
+    # Expected: 0 in each (clean slate).
+
+0.5 — Output STEP 0 audit at TOP of review.txt.
+
+================================================================================
+PART 1 — UnitDetailPage: add safety pill in defect card
+================================================================================
+
+FILE: frontend/src/pages/UnitDetailPage.js
+-------------------------------------------
+
+LOCATION 1.1 — Inside the tasks.map render (per STEP 0.2), find the
+   pills row at L321-332:
+
+   FIND:
+       <div className="flex items-center gap-2 mt-2 flex-wrap">
+         <StatusPill status={task.status} label={statusInfo.label} />
+         <CategoryPill>{tCategory(task.category)}</CategoryPill>
+         <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
+           {priorityInfo.label}
+         </span>
+         {task.source && task.source.startsWith('handover_') && (
+           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 border border-amber-200">
+             מסירה
+           </span>
+         )}
+       </div>
+
+   ADD a safety pill IMMEDIATELY AFTER the priority span (before the
+   "מסירה" pill):
+
+       <div className="flex items-center gap-2 mt-2 flex-wrap">
+         <StatusPill status={task.status} label={statusInfo.label} />
+         <CategoryPill>{tCategory(task.category)}</CategoryPill>
+         <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
+           {priorityInfo.label}
+         </span>
+         {task.is_safety && (
+           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
+             🛡️ בטיחות
+           </span>
+         )}
+         {task.source && task.source.startsWith('handover_') && (
+           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 border border-amber-200">
+             מסירה
+           </span>
+         )}
+       </div>
+
+   IMPORTANT — exact same Tailwind classes as ProjectControlPage L3913
+   pattern. Visual consistency is critical.
+
+DO NOT TOUCH:
+- Other parts of the task card (title, description, ChevronDown).
+- Empty state, loading state.
+- Any state, useEffect, or data fetching.
+
+================================================================================
+PART 2 — ProjectTasksPage: add safety pill in defect card
+================================================================================
+
+FILE: frontend/src/pages/ProjectTasksPage.js
+---------------------------------------------
+
+LOCATION 2.1 — Inside the tasks.map render (per STEP 0.3), find the
+   pills row at L541-554:
+
+   FIND:
+       <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
+         <CategoryPill>{tCategory(task.category)}</CategoryPill>
+         <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
+         {task.due_date && (...)}
+         {task.comments_count > 0 && (...)}
+       </div>
+
+   ADD safety pill IMMEDIATELY AFTER the priority span:
+
+       <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
+         <CategoryPill>{tCategory(task.category)}</CategoryPill>
+         <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
+         {task.is_safety && (
+           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
+             🛡️ בטיחות
+           </span>
+         )}
+         {task.due_date && (...)}
+         {task.comments_count > 0 && (...)}
+       </div>
+
+   IMPORTANT — same exact Tailwind classes. Note: parent has `gap-3`
+   instead of `gap-2`, so spacing is slightly larger — pill renders fine.
+
+DO NOT TOUCH:
+- Title, description, status pill above.
+- Other extras (due_date, comments_count, etc.).
+- Loading, empty state, NewDefectModal.
+- Any state or data fetching.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 2 — Both files reference is_safety pill:
+   grep -c "task.is_safety\|🛡️ בטיחות" \
+       frontend/src/pages/UnitDetailPage.js \
+       frontend/src/pages/ProjectTasksPage.js
+   → ≥ 2 in each file (1 conditional + 1 emoji label = 2 hits)
+
+VERIFY 3 — Same Tailwind classes as ProjectControlPage:
+   grep -c "bg-orange-100 text-orange-700 border border-orange-200" \
+       frontend/src/pages/UnitDetailPage.js \
+       frontend/src/pages/ProjectTasksPage.js
+   → ≥ 1 each
+
+VERIFY 4 — Backend regression (none touched):
+   cd backend && python -m pytest tests/test_defect_safety_tag.py -q
+   → 6 passed (unchanged from #488)
+
+VERIFY 5 — Visual smoke (Zahi runs after deploy to staging):
+
+   UnitDetailPage:
+   a) Login → navigate to a unit with at least 1 safety defect
+      (/projects/{p}/units/{u}).
+   b) Inside the unit's defect list, the safety defect card shows the
+      "🛡️ בטיחות" orange pill in the pills row (after priority).
+   c) Non-safety defect cards in the same list — NO pill.
+
+   ProjectTasksPage:
+   d) Navigate to /projects/{p}/tasks (or wherever the global tasks list is).
+   e) Each safety defect card shows "🛡️ בטיחות" pill.
+   f) Non-safety cards have no pill.
+
+   Visual consistency:
+   g) The pill style matches ProjectControlPage list (orange, same size, same emoji).
+
+   Mobile (375px):
+   h) Pill wraps gracefully on narrow viewport (parent has flex-wrap).
+   i) Touch interaction unchanged — tapping the card still navigates to TaskDetailPage.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (2 files, ~8 LOC total)
+  - VERIFY 1-4 outputs
+  - VERIFY 5 deferred-to-Zahi note (9 scenarios a-i)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(defects): safety pill in UnitDetailPage + ProjectTasksPage card lists
+
+  Followup-3 to #469 (#488 staging smoke). Pill rendered in
+  TaskDetailPage detail and ProjectControlPage list, but was missing
+  from UnitDetailPage card list (unit's defect list) and
+  ProjectTasksPage card list. Per Zahi: users want safety status
+  visible at a glance without clicking into each defect.
+
+  Added the same orange "🛡️ בטיחות" pill (matching ProjectControlPage
+  L3913 pattern verbatim) to:
+   - UnitDetailPage L327 — after priority, before "מסירה" pill
+   - ProjectTasksPage L544 — after priority, before due_date
+
+  ~8 LOC, 2 files. Visual consistency across all 4 safety surfaces
+  (ProjectControlPage, UnitDetailPage, ProjectTasksPage list,
+  TaskDetailPage detail). Backend untouched.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (4 greps)
+2. PART 1 — UnitDetailPage pill (~4 LOC)
+3. PART 2 — ProjectTasksPage pill (~4 LOC)
+4. Run VERIFY 1-4
+5. Generate review.txt + .local/.commit_message
+6. STOP. Zahi reviews. Then he runs:
+     git checkout staging && ./deploy.sh --stag
+   ⚠️ COMMIT ON `staging` BRANCH.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+2 files revert. Pill disappears from UnitDetailPage + ProjectTasksPage
+lists. NO impact on ProjectControlPage list (#469), TaskDetailPage
+(#488), filter (#488), or any other safety functionality.
+
+================================================================================
+END OF SPEC
+================================================================================

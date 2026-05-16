@@ -1,0 +1,359 @@
+================================================================================
+BATCH #502-FOLLOWUP — Excel export polish: button label + auto-filter + sort
+================================================================================
+Date:           2026-05-06
+Branch:         staging  (NOT main)
+Severity:       P3 — UX polish + 1 sort bug from Zahi prod test of #502.
+
+Family:         Followup to #502 (xlsx export). All 3 issues found in
+                Zahi's prod smoke 2026-05-06.
+
+Files changed:  3 frontend/backend files
+                  Backend: 1 EDIT (execution_matrix_export.py +1 LOC for
+                                   auto_filter)
+                  Backend: 1 EDIT (execution_matrix_router.py +2 LOC for
+                                   sorted() before passing to build)
+                  Frontend: 1 EDIT (ExecutionMatrixPage.js — button text
+                                    + width)
+                  Tests: NO new tests (bug 3 caught by visual smoke; bug 1+2
+                         purely cosmetic)
+
+LOC estimate:   ~25 LOC frontend+backend total
+                  (~10 LOC for _unit_sort_key hoist + 15 LOC for the
+                   3 actual fixes)
+Risk:           P5 cosmetic + 1 line sort fix. No schema change, no API
+                contract change. Rollback removes 3 small edits.
+
+================================================================================
+THE 3 ISSUES (Zahi prod smoke 2026-05-06)
+================================================================================
+
+ISSUE 1 — Download button doesn't say "Excel"
+  Current: icon-only Download arrow next to ⚙ Settings.
+  Zahi: "כפתור הורדה קיים, לא מספיק מזמין ויפה, וגם אין שום אזכור
+         שזה מוריד אקסל בכלל".
+  Fix: add text label "ייצוא Excel" beside the icon. Compact button
+       styled the same as Settings but with text.
+
+ISSUE 2 — No auto-filter dropdowns on Excel headers
+  Current: header row is bold but has no filter arrows. User can't
+  quickly filter inside Excel itself.
+  Zahi: "אם כבר הוצאנו לאקסל, צריך שלכותרות יהיה כבר אפשרות סינון
+         מובנה של אקסל, חץ כזה שלוחצים עליו ונפתחים כל מיני אפשרויות".
+  Fix: openpyxl supports `ws.auto_filter.ref = ...` — adds Excel-native
+       filter arrows on every header. User then has Excel's full filter
+       UX (select values, sort A-Z, custom filter) for free.
+
+ISSUE 3 — Rows in export are NOT sorted
+  Current: building 8 then 10 (lex), floors 3/4/6/-1/-2/5/8/7/1
+  (random — Mongo natural order from `find()`).
+  Zahi: "צריך להיות ברור, בניין מהנמוך למעלה, אותו דבר לגבי מספור
+         דירות. שים לב למספור, הוא לא מסונכרן כמו שצריך".
+  Fix: apply `_unit_sort_key` to units list before passing to
+       `build_matrix_xlsx`. The helper already exists module-level
+       at execution_matrix_router.py (used by /matrix endpoint, gives
+       6-tuple: building_sort_index → building_name_num → building_name_str
+       → floor_number → unit_no_num → unit_no_str — see #485+#489+#486).
+       Just call `sorted(units, key=lambda u: _unit_sort_key(u, ...))`.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — ⚠️ CRITICAL — `_unit_sort_key` is NESTED inside `get_matrix`
+      (verified L272 on origin/main). Same problem #502 had with
+      `_summarize_cell` before its hoist. The endpoint cannot reach
+      it directly. MUST be hoisted to module level FIRST.
+
+    grep -n "_unit_sort_key" backend/contractor_ops/execution_matrix_router.py
+    Expected output:
+      ~L272:    def _unit_sort_key(u):    ← NESTED (4-space indent)
+      ~LXXX: units.sort(key=_unit_sort_key)  ← single call site
+
+    BLOCKER: hoist `_unit_sort_key` to module level BEFORE attempting
+    PART 1 sort. Place it right after `_summarize_cell` (which is
+    already module-level from #502). 0-behavior-change refactor;
+    same shape, same fields it reads (`u.get("building_id")`,
+    `u.get("floor_id")`, `u.get("unit_no")`, `u.get("sort_index")`).
+
+    If the function uses CLOSURE variables (buildings_dict, floors_dict
+    from get_matrix scope) — convert them to function PARAMETERS.
+    Both endpoints will then pass these explicitly.
+
+    NEW signature should be:
+      def _unit_sort_key(unit, buildings_dict, floors_dict):
+          ...
+
+    get_matrix call site updates:
+      OLD: units.sort(key=_unit_sort_key)
+      NEW: units.sort(key=lambda u: _unit_sort_key(u, buildings, floors))
+
+0.2 — Verify openpyxl auto_filter is supported:
+    grep -n "auto_filter\|sheet.dimensions" \
+        backend/contractor_ops/safety_router.py \
+        backend/contractor_ops/export_router.py
+    Expected: pattern exists somewhere in repo (other Excel exports).
+    If not — `ws.auto_filter.ref = ws.dimensions` works out of the box
+    in openpyxl 3.x (already installed per #502).
+
+0.3 — Verify Download button current location in ExecutionMatrixPage:
+    grep -n "Download\|<button\|aria-label.*ייצוא" \
+        frontend/src/pages/ExecutionMatrixPage.js | head -10
+    Expected: single icon button before/after Settings. Note its
+    className for matching the new text-label version.
+
+0.4 — Output STEP 0 audit at top of review.txt.
+
+================================================================================
+PART 0 — HOIST `_unit_sort_key` to module level (PRECONDITION for PART 1)
+================================================================================
+
+FILE: backend/contractor_ops/execution_matrix_router.py
+
+LOCATION 0.1 — Move `_unit_sort_key` from nested-in-get_matrix (L272) to
+module level. Place it immediately AFTER `_summarize_cell` (which was
+hoisted in #502).
+
+  STEPS:
+  1. Read the nested `def _unit_sort_key(u):` body — note all variables
+     it reads. Likely closure vars: `buildings` (dict) + `floors` (dict).
+     If yes — those become function parameters.
+  2. Move the function out of get_matrix to module level (above
+     `async def get_matrix(...)`).
+  3. Add the parameters to its signature so it's pure:
+       def _unit_sort_key(unit, buildings_dict, floors_dict):
+  4. Update the call site inside `get_matrix`:
+       OLD: units.sort(key=_unit_sort_key)
+       NEW: units.sort(key=lambda u: _unit_sort_key(u, buildings, floors))
+  5. ZERO behavior change. The /matrix endpoint produces identical sort
+     order. Validated by the existing 17 regression tests.
+
+This unblocks BOTH endpoints to share the same canonical sort. Same
+pattern as #502's `_summarize_cell` hoist.
+
+================================================================================
+PART 1 — Sort units in export endpoint
+================================================================================
+
+FILE: backend/contractor_ops/execution_matrix_router.py
+
+LOCATION 1.1 — In the `export_matrix_xlsx` endpoint (added in #502),
+after fetching `units` from DB, sort them BEFORE passing to
+`build_matrix_xlsx`. Insert between unit fetch and the cells_summary line.
+
+  FIND (the units fetch + cells fetch + cells_summary block, before
+        `buf = build_matrix_xlsx(...)`):
+      units = await db.units.find(unit_query, {"_id": 0}).to_list(2000)
+      ...
+      cells_summary = [_summarize_cell(c) for c in cells]
+      buf = build_matrix_xlsx(project, units, stages, cells_summary, ...)
+
+  ADD just BEFORE the `buf = build_matrix_xlsx(...)` call:
+      # Sort units by (building → floor → unit_no), numeric where possible.
+      # Mirrors /matrix endpoint behavior — same 6-tuple from #485+#489+#486.
+      # Uses module-level _unit_sort_key (hoisted in PART 0).
+      units = sorted(
+          units,
+          key=lambda u: _unit_sort_key(u, buildings, floors)
+      )
+
+  Both endpoints (/matrix + /export.xlsx) now share the canonical sort
+  via the module-level `_unit_sort_key`.
+
+================================================================================
+PART 2 — Auto-filter dropdowns on Excel header row
+================================================================================
+
+FILE: backend/contractor_ops/execution_matrix_export.py
+
+LOCATION 2.1 — In `build_matrix_xlsx`, AFTER the data rows are written
+and BEFORE returning `buf`, add 1 line:
+
+  FIND (near end of build_matrix_xlsx, after auto-width loop):
+      buf = BytesIO()
+      wb.save(buf)
+      buf.seek(0)
+      return buf
+
+  CHANGE to insert auto_filter assignment BEFORE the BytesIO save:
+      # Excel-native auto-filter arrows on every header column.
+      # User can sort A-Z / filter by value / custom filter inside Excel.
+      ws.auto_filter.ref = ws.dimensions
+
+      buf = BytesIO()
+      wb.save(buf)
+      buf.seek(0)
+      return buf
+
+`ws.dimensions` returns the bounding range of populated cells (e.g.,
+"A1:O35"). openpyxl applies the filter to row 1 (header row) and
+extends the dropdown range to include all data rows automatically.
+
+================================================================================
+PART 3 — Frontend Download button: add "ייצוא Excel" text label
+================================================================================
+
+FILE: frontend/src/pages/ExecutionMatrixPage.js
+
+LOCATION 3.1 — The current Download icon button (added in #502).
+
+  FIND (the existing icon-only button — based on STEP 0.3 grep):
+      <button
+        type="button"
+        onClick={handleExport}
+        disabled={exporting}
+        className="p-2 rounded-lg hover:bg-slate-100 active:bg-slate-200 transition-colors disabled:opacity-50 min-h-[44px] min-w-[44px] flex items-center justify-center"
+        aria-label="ייצוא לExcel"
+        title="ייצוא לExcel"
+      >
+        {exporting
+          ? <Loader2 className="w-5 h-5 text-slate-600 animate-spin" />
+          : <Download className="w-5 h-5 text-slate-600" />}
+      </button>
+
+  REPLACE with text-label version:
+      <button
+        type="button"
+        onClick={handleExport}
+        disabled={exporting}
+        className="px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-100 active:bg-slate-200 transition-colors disabled:opacity-50 min-h-[44px] flex items-center gap-2 text-sm font-medium text-slate-700"
+        aria-label="ייצוא לExcel"
+        title="ייצוא לExcel"
+      >
+        {exporting
+          ? <Loader2 className="w-4 h-4 animate-spin" />
+          : <Download className="w-4 h-4" />}
+        <span>ייצוא Excel</span>
+      </button>
+
+Style notes:
+  - Keeps `min-h-[44px]` for Capacitor touch target compliance.
+  - Adds `border` + `gap-2` for compact pill appearance.
+  - Icon shrinks 5→4 to balance with text.
+  - Text "ייצוא Excel" — short, immediate clarity.
+  - Same hover/active feedback as before.
+
+================================================================================
+WHAT'S NOT CHANGING
+================================================================================
+
+- All other matrix UI (cell editing, stage management, filter drawer, FAB)
+- Backend endpoint contract — payload shape + response stay identical
+- Schema — no new fields
+- Tests — existing 22 (5 export + 17 matrix) still cover all behavior;
+  sort + auto_filter + button text are visual-smoke verifiable
+- Auth, billing, safety, plans, qc, handover, defects routers
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — Backend tests still pass:
+   cd backend && python -m pytest tests/test_execution_matrix_export.py \
+                                   tests/test_execution_matrix.py -q
+   → 5 + 17 = 22 passed (unchanged, only auto_filter + sort added —
+     T1 already asserts sheet structure but not sort, so existing
+     test won't break)
+
+V2 — Frontend build:
+   cd frontend && yarn build
+   → clean (button text-style change only)
+
+V3 — Diff scope:
+   git diff --stat backend/contractor_ops/execution_matrix_router.py \
+                   backend/contractor_ops/execution_matrix_export.py \
+                   frontend/src/pages/ExecutionMatrixPage.js
+   → 3 files, ~15 LOC total
+
+V4 — Sibling matrix files untouched:
+   git diff --stat frontend/src/components/matrix/ \
+                   frontend/src/hooks/ \
+                   frontend/src/services/matrixService.js
+   → 0 lines diff (no MatrixCell/Drawer/etc/service)
+
+================================================================================
+SMOKE TEST (Zahi after deploy)
+================================================================================
+
+Note: this batch DOES go through staging. Don't skip it.
+
+(a) Hard refresh /execution-matrix.
+(b) Header now shows "[⬇ ייצוא Excel]" button — compact pill with
+    text + icon. More obviously a download CTA than icon-only.
+(c) Click button → spinner inside button → file downloads.
+(d) Open file in Excel/Numbers:
+    - Header row has DROPDOWN ARROWS (auto-filter). Click any arrow
+      → standard Excel filter UI: select values, sort A-Z, etc.
+    - Sort A-Z on building column → 8, 9, 10, 11 (numeric, even though
+      they're strings — the SOURCE order from backend is already correct
+      so user doesn't even have to sort).
+(e) Verify natural order BEFORE clicking any sort:
+    - Building column ascending: 8 → 9 → 10 → 11
+    - Within each building: floor ascending including negative
+      (e.g. -2, -1, 0, 1, 2, 3, ..., 8)
+    - Within each floor: apartment ascending numerically
+    - This is the bug fix from PART 1.
+(f) Mobile (Capgo OTA) — button still tappable, ≥44px height,
+    text wraps if needed but should fit on iPhone width.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit (4 sub-greps)
+  - Per-file diff
+  - V1-V4 outputs
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(matrix): #502 followup — sort export rows + auto_filter + button label
+
+  Three issues from Zahi's prod smoke 2026-05-06:
+
+  1. Rows weren't sorted in the export — Mongo natural order showed
+     buildings 8, 10, 9, 11 and floors -1/-2/3/4/6/7/8 randomly mixed.
+     /matrix endpoint sorted via _unit_sort_key (#485+#489+#486 6-tuple)
+     but /export.xlsx didn't. Apply the same sort before passing units
+     to build_matrix_xlsx. 2 LOC.
+
+  2. Excel headers had no auto-filter arrows — user couldn't sort/filter
+     inside Excel itself. Added `ws.auto_filter.ref = ws.dimensions` to
+     build_matrix_xlsx. 1 LOC. Excel-native UX for free.
+
+  3. Download button was icon-only ("לא מזמין ויפה, לא ברור שזה Excel").
+     Replaced with text-label pill button "[⬇ ייצוא Excel]". ~5 LOC.
+
+  ~15 LOC across 3 files. No backend contract changes, no schema
+  changes, no test changes. Visual + UX polish only.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (4 sub-greps — note the CRITICAL `_unit_sort_key`
+   nested-function blocker in 0.1)
+2. PART 0 — HOIST `_unit_sort_key` to module level (precondition, ~10 LOC)
+3. RUN V1 (`pytest`) — verify 22 still pass after the hoist alone, BEFORE
+   continuing. If any regression — STOP, the hoist broke something.
+4. PART 1 — sort units in export endpoint (~2 LOC)
+5. PART 2 — auto_filter on header (~1 LOC)
+6. PART 3 — button text label (~5 LOC)
+7. Run V1-V4 (must be green)
+8. Generate review.txt + .local/.commit_message
+9. STOP. Zahi reviews. Then he runs:
+     git checkout staging && git merge main && ./deploy.sh --stag
+   ⚠️ COMMIT ON `staging` BRANCH. Then prod after smoke.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+3-file revert. Export returns to icon-only button + unsorted rows + no
+auto_filter. The DB-natural ordering is uglier but functional. Zero
+data risk.
+
+================================================================================
+END OF SPEC — #502 followup polish
+================================================================================

@@ -1,0 +1,662 @@
+================================================================================
+HOTFIX FOLLOWUP TO #495 — Phase 2C polish (unhide visibility + UX clarity)
+================================================================================
+Date:           2026-05-05
+Branch:         staging  (NOT main)
+Severity:       P1 — UX bug discovered during prod test of #495 Phase 2C.
+                Hidden template stages cannot be unhidden because the
+                StageManagementDialog only sees VISIBLE base stages
+                (backend filters them out). User experiences "data loss"
+                from their perspective — column they hid is lost forever
+                until manual DB intervention.
+
+Files changed:  1 backend file + 1 frontend file + 1 test = 3 files, ~20 LOC
+                  Backend: contractor_ops/execution_matrix_router.py (~5 LOC)
+                  Frontend: components/matrix/StageManagementDialog.js (~12 LOC)
+                  Tests: tests/test_execution_matrix.py (~30 LOC, 1 new test)
+
+Tests:          1 NEW test enforcing the full hide → unhide roundtrip
+                AND that cells persist (data integrity guarantee).
+
+Backend:        SMALL change — exposes `template_stages` field in GET /matrix
+                response (all base stages from qc_template, including
+                currently-hidden ones). Required for the dialog to render
+                hidden stages with the unhide toggle.
+
+Mobile:         Frontend OTA via Capgo. No native files.
+DB migration:   NONE.
+
+Family:         Phase 2C polish. Closes #495's discovery gap (my spec
+                missed that `_resolve_visible_stages` filters hidden
+                stages OUT of the response).
+
+================================================================================
+🚨 DATA INTEGRITY GUARANTEE — what this spec verifies
+================================================================================
+
+Per Zahi 2026-05-05: "חייב לוודא שהכל מגובה בdatabase שלא יהיה לנו פאדיחה
+של איבוד מידע זה קריטי."
+
+This batch explicitly verifies (via test + smoke) that the following
+data is NEVER lost:
+
+1. ✅ **Custom stage IDs** — preserved across saves (#495 Bug 1 fix).
+   Cells of existing custom stages stay reachable even after reorder/
+   rename. Tested by `test_update_stages_preserves_existing_custom_ids`
+   in #495.
+
+2. ✅ **Hidden state** — `base_stages_removed` persists across saves
+   (#495 Bug 2 fix). Tested by `test_get_matrix_returns_base_stages_removed`
+   in #495.
+
+3. 🆕 **Hidden stage cells** — cells of a hidden template stage stay
+   in the DB. When unhidden, cells reappear with all their previous
+   data. **NEW test in this batch** to enforce.
+
+4. 🆕 **Template stages list integrity** — the new `template_stages`
+   field returns ALL base stages from qc_template, regardless of hide
+   state. Order and content match the template.
+
+5. ✅ **Stage rename** — when PM updates title of an existing custom
+   stage, ID stays the same → cells stay reachable. Implicit guarantee
+   from #495 Bug 1 fix; explicitly tested in `test_update_stages_preserves_existing_custom_ids`.
+
+What this batch DOES NOT touch (already guaranteed elsewhere):
+  - qc_template / qc_runs / qc_items collections (matrix is independent)
+  - Cell audit history (Phase 2B already snapshots before/after)
+  - Any other matrix endpoint behavior
+
+If ANY of the V8 smoke scenarios shows data going missing, STOP DEPLOY
+immediately and report back.
+
+================================================================================
+ROOT CAUSE — Zahi's prod test 2026-05-05
+================================================================================
+
+After #495 deployed:
+  ✅ PM hides template stage "טיח" → matrix re-renders without "טיח" column.
+     base_stages_removed=["stage_taich"] persists in matrix_config DB.
+  ❌ PM opens StageManagementDialog later → "טיח" NOT shown in section 2.
+     Result: PM cannot toggle "טיח" back to visible. Data appears lost.
+
+WHY: Backend `_resolve_visible_stages` filters out hidden stages BEFORE
+returning the `stages` array:
+
+  for s in tpl.get("stages", []):
+      if s["id"] in base_removed:
+          continue  # ← hidden stages NOT in output
+      base_stages.append({...})
+
+Frontend `StageManagementDialog` does:
+  const initialBase = (stages || []).filter(s => s.source === 'base');
+
+`initialBase` only contains VISIBLE stages. Hidden ones never reach the
+section 2 render → no UI to unhide them.
+
+CRITICAL: The DB data is intact. `base_stages_removed` array is correctly
+saved. Hidden stage's cells are still in `execution_matrix_cells`. The
+issue is purely UI visibility — frontend doesn't have the data to render
+the hidden rows.
+
+This is why we need a separate `template_stages` field (all template
+stages, regardless of hide status).
+
+================================================================================
+DESIGN DECISIONS
+================================================================================
+
+D1. **Backend exposes `template_stages` in /matrix response**
+    Contains ALL base stages from qc_template (including hidden ones).
+    Frontend filters by hide state for visibility, but renders all in
+    the dialog so PM can toggle.
+
+D2. **Frontend reads `template_stages` in dialog, not filtered `stages`**
+    Section 2 of StageManagementDialog uses `data.template_stages` for
+    its base list. The hide state comes from `data.base_stages_removed`
+    (already exposed in #495).
+
+D3. **Section 1 rename: "עמודות מטה-דאטה" → "עמודות מותאמות"**
+    The word "מטה-דאטה" implies metadata only (tag values like
+    "מס' חדרים", "סוג מכירה"). Per Zahi's prod test, this masks the
+    fact that PM can ALSO add status-type columns here (just like
+    template stages, but project-scoped).
+
+D4. **Subtitle clarifies both types**
+    "תגיות (טקסט חופשי) או סטטוסים (6 ערכים — כמו עמודות בקרת ביצוע)"
+    Makes it explicit that PM can add any of the 2 types.
+
+D5. **AddStageForm radio label clarification**
+    "סטטוס (6 ערכים)" → "סטטוס (6 ערכים — כמו עמודות בקרת ביצוע)"
+    Explicitly tells PM that this option creates an execution-control-
+    style column, addressing the "where do I add execution stages"
+    confusion.
+
+D6. **NO change to AddStageForm logic** — the feature is already there
+    (radio button), only labels clarified. PM can add any type today,
+    just unclear from the UX.
+
+================================================================================
+CRITICAL PRESERVATION — DO NOT TOUCH
+================================================================================
+
+✋ Backend `PATCH /stages` handler (intact from #495)
+✋ schemas.py / `MatrixStageCreate.id` (intact from #495)
+✋ Frontend `matrixService` / `useMatrixData` (no changes needed)
+✋ `MatrixListView` / `MatrixGridView` / `MatrixCell` / `CellEditDialog`
+✋ ExecutionMatrixPage settings icon + dialog wiring (already passes
+   `initialBaseRemoved` from #495; only ADDS `templateStages` prop now)
+✋ DB collections — zero migration, zero schema change
+✋ Other QC pages
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify backend `_resolve_visible_stages` filters out hidden stages
+    (root cause confirmation):
+    grep -n "base_removed\|continue\|tpl.get" \
+        backend/contractor_ops/execution_matrix_router.py | head -10
+    # Expected: continue statement skipping hidden stages.
+    # We do NOT change this logic — frontend gets visible-only stages
+    # AS WELL AS the new template_stages list.
+
+0.2 — Verify GET /matrix response shape (post-#495):
+    grep -n "return {" backend/contractor_ops/execution_matrix_router.py | head -5
+    # Find the response dict in get_matrix endpoint.
+    # Already includes (post-#495): stages, units, cells, floors,
+    # buildings, base_stages_removed, permissions, matrix_config_id.
+    # We ADD: template_stages.
+
+0.3 — Verify frontend StageManagementDialog initial state (post-#495):
+    grep -n "initialBase\|initialBaseRemoved" \
+        frontend/src/components/matrix/StageManagementDialog.js
+    # Expected (post-#495):
+    #   const initialBase = stages.filter(s => s.source === 'base');
+    #   useEffect with new Set(initialBaseRemoved)
+    # We REPLACE initialBase with initialAllBaseStages (from new prop).
+
+0.4 — Verify ExecutionMatrixPage passes data.base_stages_removed (post-#495):
+    grep -n "initialBaseRemoved\|StageManagementDialog" \
+        frontend/src/pages/ExecutionMatrixPage.js
+    # Expected (post-#495):
+    #   <StageManagementDialog ... initialBaseRemoved={data?.base_stages_removed || []} />
+    # We ADD: initialAllBaseStages={data?.template_stages || []}
+
+0.5 — Verify existing #495 tests still pass:
+    cd backend && python -m pytest tests/test_execution_matrix.py -q
+    # Expected: 16 passed (from #495). We add 1 new → 17.
+
+0.6 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — Backend: expose `template_stages` in /matrix response
+================================================================================
+
+FILE: backend/contractor_ops/execution_matrix_router.py
+--------------------------------------------------------
+
+LOCATION 1.1 — Inside `get_matrix` endpoint, BEFORE the existing
+   `_resolve_visible_stages` call, build a separate list of ALL
+   template stages (no filter):
+
+   FIND (around the existing logic that builds `stages` via
+   `_resolve_visible_stages`):
+       stages = _resolve_visible_stages(matrix_config, tpl)
+
+   ADD just after this line:
+       # #497 — expose ALL template stages (incl. hidden ones) so the
+       # StageManagementDialog can render them with hide/show toggles.
+       # Note: this is qc_template's stages WITHOUT the hide filter.
+       # Hidden state is communicated separately via base_stages_removed.
+       template_stages = [
+           {
+               "id": s["id"],
+               "title": s.get("title", ""),
+               "type": "status",
+               "order": s.get("order", 0),
+               "source": "base",
+               "scope": s.get("scope"),
+           }
+           for s in tpl.get("stages", [])
+       ]
+
+LOCATION 1.2 — Add `template_stages` to the response dict:
+
+   FIND (response dict at end of get_matrix — has fields from
+   #483/#485/#486/#495):
+       return {
+           "project_id": project_id,
+           "stages": stages,
+           "units": units,
+           "cells": cells_summary,
+           "floors": floors,
+           "buildings": buildings,
+           "base_stages_removed": list(matrix_config.get("base_stages_removed", []) or []),
+           "permissions": {...},
+           "matrix_config_id": matrix_config["id"],
+       }
+
+   ADD `template_stages`:
+       return {
+           "project_id": project_id,
+           "stages": stages,
+           "units": units,
+           "cells": cells_summary,
+           "floors": floors,
+           "buildings": buildings,
+           "base_stages_removed": list(matrix_config.get("base_stages_removed", []) or []),
+           "template_stages": template_stages,           # ← NEW (#497)
+           "permissions": {...},
+           "matrix_config_id": matrix_config["id"],
+       }
+
+   IMPORTANT:
+   - Field name `template_stages` (NOT `all_base_stages` — clearer that
+     it's the source-of-truth from qc_template).
+   - This is purely additive. Existing consumers (matrix render) still
+     use `stages` (the filtered list).
+
+DO NOT TOUCH:
+- `_resolve_visible_stages` logic (the filter that excludes hidden
+  stages remains — `stages` field retains existing semantics).
+- PATCH /stages handler.
+- Any other endpoint.
+
+================================================================================
+PART 2 — Backend test: hide → unhide cells survive
+================================================================================
+
+FILE: backend/tests/test_execution_matrix.py
+---------------------------------------------
+
+LOCATION 2.1 — Add NEW test after the existing `test_get_matrix_returns_base_stages_removed`
+   (from #495):
+
+       async def test_hide_then_unhide_template_stage_preserves_cells():
+           """🚨 CRITICAL — DATA INTEGRITY: cells of a template stage
+           survive a hide → unhide cycle. PM can toggle visibility
+           without ever losing cell data. Verifies template_stages
+           field exposes ALL base stages (not just visible ones).
+
+           Setup: qc_template with 3 base stages ['stage_a', 'stage_b',
+           'stage_c'] + 3 cells (one per stage on unit u1, each with
+           a distinguishable status + note).
+
+           Flow:
+             1. PATCH /stages with base_stages_removed=["stage_b"]
+                → matrix_config saves the hidden ID.
+             2. GET /matrix:
+                  - 'stages'           = [stage_a, stage_c]   (filtered)
+                  - 'template_stages'  = [stage_a, stage_b, stage_c]  (FULL)
+                  - 'base_stages_removed' = ["stage_b"]
+                ✅ This is the new field we expose — must contain all 3
+                stages so dialog can render hidden ones with toggle.
+             3. PATCH /stages with base_stages_removed=[] (un-hide all)
+                → matrix_config clears the hidden ID.
+             4. GET /matrix:
+                  - 'stages' = [stage_a, stage_b, stage_c] (back to all 3)
+                  - cell of stage_b still present in execution_matrix_cells
+                    with original status + note (DATA PRESERVED).
+
+           This guards against:
+             - 'template_stages' being empty/incomplete (only stages_a+c)
+             - cells being deleted on hide
+             - cells being orphaned/duplicated on unhide
+             - selectivity bugs (hiding stage_b also removing stage_a)
+           """
+           # See test_qc_override_close.py for AsyncMock + MagicMock
+           # patterns. db.execution_matrix_cells.find_one is the assert
+           # surface for cell preservation in step 4.
+
+   IMPORTANT:
+   - This test enforces the data integrity guarantee Zahi explicitly asked
+     for. If it fails, deploy MUST stop.
+   - Mirrors the existing AsyncMock + MagicMock pattern from #483/#495 tests.
+
+DO NOT TOUCH:
+- Existing 16 tests from #495.
+
+================================================================================
+PART 3 — Frontend: StageManagementDialog uses template_stages
+================================================================================
+
+FILE: frontend/src/components/matrix/StageManagementDialog.js
+--------------------------------------------------------------
+
+LOCATION 3.1 — Update component props (~3 LOC):
+
+   FIND (post-#495):
+       export default function StageManagementDialog({
+         open, onClose, onSave, stages, initialBaseRemoved = [],
+       }) {
+         const initialBase = (stages || []).filter(s => s.source === 'base');
+         const initialCustom = (stages || []).filter(s => s.source === 'custom');
+
+   REPLACE WITH:
+       export default function StageManagementDialog({
+         open, onClose, onSave, stages, initialBaseRemoved = [],
+         initialAllBaseStages = [],   // ← NEW (#497)
+       }) {
+         // #497 — section 2 must show ALL base stages (including hidden)
+         // so PM can toggle hide/show. Falls back to filtered `stages`
+         // when older response shape (pre-#497).
+         const initialBase = initialAllBaseStages.length > 0
+           ? initialAllBaseStages
+           : (stages || []).filter(s => s.source === 'base');
+         const initialCustom = (stages || []).filter(s => s.source === 'custom');
+
+   IMPORTANT:
+   - Fallback to old behavior when `initialAllBaseStages` is empty.
+     This is defensive — if backend deploys lag, dialog still works
+     (just without unhide ability — same as today).
+   - Once backend deploys, the prop populates and unhide works.
+
+LOCATION 3.2 — Update Section 1 heading (rename + subtitle clarification):
+
+   FIND:
+       <h3 className="text-xs font-bold text-slate-700 mb-2">
+         📋 עמודות מטה-דאטה
+         <span className="text-[10px] font-normal text-slate-500 mr-2">
+           (יוצגו ראשונות, מימין לשמאל)
+         </span>
+       </h3>
+
+   REPLACE WITH:
+       <h3 className="text-xs font-bold text-slate-700 mb-2">
+         📋 עמודות מותאמות
+         <span className="text-[10px] font-normal text-slate-500 mr-2 block sm:inline">
+           תגיות (טקסט חופשי) או סטטוסים (6 ערכים — כמו עמודות בקרת ביצוע)
+         </span>
+       </h3>
+
+   IMPORTANT:
+   - "עמודות מותאמות" instead of "עמודות מטה-דאטה" — clearer that this
+     section accepts both types.
+   - Subtitle wraps to its own line on mobile (`block sm:inline`).
+   - "כמו עמודות בקרת ביצוע" makes the connection explicit for PM.
+
+LOCATION 3.3 — Update Section 2 heading subtitle (small clarity tweak):
+
+   FIND:
+       <h3 className="text-xs font-bold text-slate-700 mb-2">
+         🔨 עמודות בקרת ביצוע
+         <span className="text-[10px] font-normal text-slate-500 mr-2">
+           (מהתבנית — סדר קבוע, אפשר רק להציג/להסתיר)
+         </span>
+       </h3>
+
+   REPLACE WITH:
+       <h3 className="text-xs font-bold text-slate-700 mb-2">
+         🔨 עמודות בקרת ביצוע
+         <span className="text-[10px] font-normal text-slate-500 mr-2 block sm:inline">
+           (מהתבנית — סדר קבוע, אפשר להציג/להסתיר. שלבים מוסתרים יוצגו עמומים)
+         </span>
+       </h3>
+
+   IMPORTANT:
+   - Adds a hint that hidden stages will appear dimmed (matching the
+     StageRow render in `mode="base"`).
+
+DO NOT TOUCH:
+- DndContext / SortableContext logic.
+- AddStageForm props.
+- handleSave / handleAdd / handleDeleteCustom / handleToggleHideBase /
+  handleDragEnd.
+- Footer (save / cancel buttons).
+- useEffect reset block (already correct from #495).
+
+================================================================================
+PART 4 — Frontend: AddStageForm radio label clarification
+================================================================================
+
+FILE: frontend/src/components/matrix/AddStageForm.js
+-----------------------------------------------------
+
+LOCATION 4.1 — Update the status radio label (~1 LOC):
+
+   FIND:
+       <label className="flex items-center gap-1.5 cursor-pointer">
+         <input
+           type="radio"
+           name="stageType"
+           value="status"
+           checked={type === 'status'}
+           onChange={() => setType('status')}
+         />
+         <span>סטטוס (6 ערכים)</span>
+       </label>
+
+   REPLACE WITH:
+       <label className="flex items-center gap-1.5 cursor-pointer">
+         <input
+           type="radio"
+           name="stageType"
+           value="status"
+           checked={type === 'status'}
+           onChange={() => setType('status')}
+         />
+         <span>סטטוס (6 ערכים — כמו עמודות בקרת ביצוע)</span>
+       </label>
+
+   IMPORTANT:
+   - Tells PM "this is what creates a status column like the template
+     ones" — closes the UX confusion gap.
+
+DO NOT TOUCH:
+- The tag radio (already has clear label).
+- title input, submit button, collapsed/expanded state, autoFocus, etc.
+
+================================================================================
+PART 5 — Frontend: ExecutionMatrixPage passes the new prop
+================================================================================
+
+FILE: frontend/src/pages/ExecutionMatrixPage.js
+------------------------------------------------
+
+LOCATION 5.1 — Update the StageManagementDialog render call:
+
+   FIND (post-#495):
+       <StageManagementDialog
+         open={stageManageOpen}
+         onClose={() => setStageManageOpen(false)}
+         onSave={handleSaveStages}
+         stages={stages}
+         initialBaseRemoved={data?.base_stages_removed || []}
+       />
+
+   REPLACE WITH:
+       <StageManagementDialog
+         open={stageManageOpen}
+         onClose={() => setStageManageOpen(false)}
+         onSave={handleSaveStages}
+         stages={stages}
+         initialBaseRemoved={data?.base_stages_removed || []}
+         initialAllBaseStages={data?.template_stages || []}   // ← NEW (#497)
+       />
+
+DO NOT TOUCH:
+- Any other prop.
+- Settings icon (#495).
+- Back button (#492).
+- StatusLegend.
+- MatrixListView / MatrixGridView render.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend syntax + import:
+   cd backend && python -c "from contractor_ops.execution_matrix_router import router; print('OK')"
+   → prints OK
+
+VERIFY 2 — Backend tests pass (16 from #495 + 1 new):
+   cd backend && python -m pytest tests/test_execution_matrix.py -q
+   → 17 passed
+   New test: test_hide_then_unhide_template_stage_preserves_cells
+
+VERIFY 3 — QC regression (none touched):
+   cd backend && python -m pytest tests/test_qc_override_close.py \
+       tests/test_qc_units_status.py -q
+   → 4 passed
+
+VERIFY 4 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 5 — Frontend dialog references template_stages:
+   grep -c "initialAllBaseStages\|template_stages" \
+       frontend/src/components/matrix/StageManagementDialog.js \
+       frontend/src/pages/ExecutionMatrixPage.js
+   → ≥ 4 (decl + usage + page prop pass + fallback comment)
+
+VERIFY 6 — Hebrew label changes:
+   grep -c "עמודות מותאמות\|כמו עמודות בקרת ביצוע" \
+       frontend/src/components/matrix/StageManagementDialog.js \
+       frontend/src/components/matrix/AddStageForm.js
+   → ≥ 3 (heading + status radio + section 2 subtitle)
+
+VERIFY 7 — Visual + data integrity smoke (Zahi runs after deploy to staging):
+
+   Pre-flight setup:
+   a) Login as super_admin → open project with at least 1 template stage
+      and 1 unit. (Use staging demo project.)
+
+   🚨 DATA INTEGRITY CRITICAL TESTS:
+
+   b) UNHIDE FLOW + CELL PERSISTENCE (the main fix):
+      1. Open ExecutionMatrixPage, click a cell of stage "טיח" → fill
+         status="completed", note="test cell". Save dialog.
+      2. Verify cell shows in matrix.
+      3. Open StageManagementDialog (⚙️ icon).
+      4. In section 2 "🔨 עמודות בקרת ביצוע", find "טיח" → click eye →
+         it dims + strikethrough. Save dialog.
+      5. ✅ Matrix now renders WITHOUT "טיח" column.
+      6. Re-open StageManagementDialog.
+      7. ✅ "טיח" appears in section 2 with eye-OFF icon (DATA INTEGRITY:
+         spec line 391 says it MUST appear here, otherwise cells lost).
+      8. Click eye-off → it lights back up. Save dialog.
+      9. ✅ Matrix re-renders WITH "טיח" column.
+      10. Click the cell of "טיח" you originally filled.
+      11. ✅ Status="completed", note="test cell" — DATA PRESERVED.
+      12. ❌ If status is empty / cell missing → STOP, file critical bug.
+
+   c) RENAME PRESERVES CELL DATA (regression of #495 Bug 1):
+      1. Open StageManagementDialog. Add new custom column "סוג מכירה"
+         (type=tag). Save.
+      2. Click cells in "סוג מכירה" → fill 3 of them with values
+         "שוק חופשי", "מחיר משתכן", "ציבורי".
+      3. Open dialog again. Find "סוג מכירה". (Edit feature is out of
+         scope for #497 — verify the row exists with the same id.)
+      4. Drag-reorder this column in section 1.
+      5. Save.
+      6. ✅ Cell values still visible in matrix.
+
+   d) UX CLARITY (Bug 3):
+      1. Open StageManagementDialog.
+      2. Section 1 reads "📋 עמודות מותאמות" with subtitle
+         "תגיות (טקסט חופשי) או סטטוסים (6 ערכים — כמו עמודות בקרת ביצוע)".
+      3. Click "+ הוסף עמודה חדשה" → form expands.
+      4. The status radio reads "סטטוס (6 ערכים — כמו עמודות בקרת ביצוע)".
+      5. Pick status, type "אינסטלציה גמרים", click submit.
+      6. ✅ New row appears in section 1 with type=סטטוס badge.
+      7. Save dialog.
+      8. ✅ Matrix shows new column with 6-status icons (empty / dash
+         in cells until filled).
+
+   e) MOBILE (375px DevTools):
+      1. Open dialog → bottom sheet.
+      2. Repeat step (b)6-9 — drag handle ≥44px works for unhide flow.
+      3. ✅ Subtitle wraps to its own line under the heading.
+
+   Negative regression:
+   f) Hide → save without unhide → matrix correctly hides the column
+      (no regression of the basic hide feature).
+   g) Add custom column → save → matrix shows the new column (no
+      regression of #495 add).
+   h) Delete custom column → save → cells become orphaned (existing
+      Phase 2D cleanup item, NOT a regression).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (3 files: backend router + dialog + page + 1 new test)
+  - VERIFY 1-6 outputs
+  - VERIFY 7 deferred-to-Zahi note (8 scenarios a-h, with explicit
+    DATA INTEGRITY callouts on b and c)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(matrix): Phase 2C polish — unhide visibility + UX clarity
+
+  Closes 2 issues from #495 prod test (Zahi 2026-05-05):
+
+  Bug A (data visibility): Hidden template stages couldn't be
+  unhidden because StageManagementDialog only saw the filtered
+  `stages` array (backend `_resolve_visible_stages` excludes
+  hidden ones). Cells of hidden stages were intact in DB but
+  invisible to the user — looked like data loss.
+
+  Fix: backend now exposes `template_stages` in /matrix response
+  (all base stages from qc_template, regardless of hide state).
+  Dialog uses `template_stages` for section 2, with hide state
+  fed by the existing `base_stages_removed`. Hide → save → reopen
+  → unhide → save → cells reappear with all data intact.
+
+  Bug B (UX clarity): "עמודות מטה-דאטה" naming masked the fact
+  that section 1 also accepts status-type columns (just like
+  template stages). Renamed to "עמודות מותאמות" with subtitle
+  clarifying both types. Status radio in AddStageForm now reads
+  "סטטוס (6 ערכים — כמו עמודות בקרת ביצוע)" so PMs know they
+  can add execution-control-style columns here.
+
+  Tests: NEW test_hide_then_unhide_template_stage_preserves_cells
+  enforces data integrity — cells of hidden stages survive a
+  hide/unhide cycle. Total backend tests: 16 → 17.
+
+  ~20 LOC across 3 files. Backend response field is purely
+  additive (no breaking change). Frontend has a defensive
+  fallback to old behavior if the new field is absent (e.g.,
+  during deploy lag).
+
+  Out of scope: Bug 2 from prod test (auto-color tag values) —
+  separate small batch later.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (5 greps + verify post-#495 state)
+2. PART 1 — Backend: expose template_stages in /matrix response (~5 LOC)
+3. PART 2 — Backend test: hide-unhide-cells preserved (~30 LOC, 1 new test)
+4. PART 3 — Frontend: StageManagementDialog uses initialAllBaseStages (~10 LOC)
+5. PART 4 — Frontend: AddStageForm radio label clarification (~1 LOC)
+6. PART 5 — Frontend: ExecutionMatrixPage passes new prop (~1 LOC)
+7. Run VERIFY 1-6 (all must be green)
+8. Generate review.txt + .local/.commit_message
+9. STOP. Zahi reviews. Then he runs:
+     git checkout staging && git merge main && ./deploy.sh --stag
+   ⚠️ COMMIT ON `staging` BRANCH.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+3 files revert. The unhide UI breaks again, but data is intact in DB.
+PM would need a small followup to restore the unhide flow.
+
+NO impact on:
+- Cell editing (#491/#494)
+- Custom stage IDs / preservation logic (#495 Bug 1 fix)
+- Hidden state persistence (#495 Bug 2 fix)
+- MatrixListView / MatrixGridView / MatrixCell render
+- Sticky columns (#486+#487)
+- Backend (the 5 LOC addition is additive only)
+- Auth, billing, safety routers, plans
+
+================================================================================
+END OF SPEC — PHASE 2C POLISH
+================================================================================

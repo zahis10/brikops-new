@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>BrikOps — Safety Phase 1 v2 (Cemento Parity)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script>
+ tailwind.config = {
+   theme: {
+     extend: {
+       fontFamily: {
+         heebo: ['Heebo', 'system-ui', 'sans-serif'],
+         mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+       },
+       colors: {
+         brik: {
+           50: '#FFF8F0',
+           100: '#FFEBD6',
+           500: '#F97316',
+           600: '#EA580C',
+           700: '#C2410C',
+         },
+       },
+     },
+   },
+ };
+</script>
+<style>
+ body { font-family: 'Heebo', system-ui, sans-serif; }
+ .tab-num { font-variant-numeric: tabular-nums; }
+ .scroll-none::-webkit-scrollbar { display: none; }
+ .phone-frame {
+   width: 390px;
+   height: 844px;
+   border-radius: 46px;
+   background: #0F172A;
+   padding: 10px;
+   box-shadow: 0 25px 50px -12px rgba(0,0,0,0.35), 0 0 0 2px #1E293B;
+ }
+ .phone-inner {
+   width: 100%;
+   height: 100%;
+   border-radius: 38px;
+   overflow: hidden;
+   background: #F1F5F9;
+   position: relative;
+ }
+ .notch {
+   position: absolute;
+   top: 0; left: 50%;
+   transform: translateX(-50%);
+   width: 120px; height: 28px;
+   background: #0F172A;
+   border-bottom-left-radius: 16px;
+   border-bottom-right-radius: 16px;
+   z-index: 50;
+ }
+ .gauge-track { stroke: #E2E8F0; stroke-width: 10; fill: none; }
+ .gauge-fill { stroke-width: 10; fill: none; stroke-linecap: round; transition: stroke-dashoffset 1s; }
+ .severity-pill {
+   display: inline-flex; align-items: center; justify-content: center;
+   width: 18px; height: 18px; font-size: 10px; font-weight: 700;
+   border-radius: 4px; color: white;
+ }
+ .fade-mask {
+   mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
+   -webkit-mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
+ }
+ details > summary { list-style: none; cursor: pointer; }
+ details > summary::-webkit-details-marker { display: none; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+<!-- HERO HEADER -->
+<header class="bg-gradient-to-br from-slate-900 via-slate-800 to-brik-700 text-white">
+ <div class="max-w-[1400px] mx-auto px-6 py-10">
+  <div class="flex items-start justify-between gap-6">
+   <div class="flex-1">
+    <div class="inline-flex items-center gap-2 bg-white/10 border border-white/20 rounded-full px-3 py-1 text-xs font-medium mb-4">
+     <span class="w-1.5 h-1.5 bg-brik-500 rounded-full animate-pulse"></span>
+     <span>BrikOps · Safety Phase 1 · v2 — Cemento Parity Redesign</span>
+    </div>
+    <h1 class="text-4xl font-bold mb-2">בטיחות + יומן עבודה</h1>
+    <p class="text-slate-300 max-w-3xl">מוק-אפ מקצה-לקצה של טאב הבטיחות — בהשראה מסקירה עמוקה של 4 דוחות סמנטו אמיתיים ממתחם הסופרים מגרשים 801/806. כל שדה, כל סטטוס, כל חותך, כל פלט ייצוא — תואם ל-<span class="font-mono text-brik-100">תקנות הבטיחות בעבודה (עבודות בנייה), התשע"ט-2019</span>.</p>
+   </div>
+   <div class="hidden md:flex gap-3">
+    <div class="bg-white/10 border border-white/15 rounded-xl px-5 py-4 text-center">
+     <div class="text-3xl font-bold tab-num">4</div>
+     <div class="text-xs text-slate-300 mt-1">Cemento PDFs נבחנו</div>
+    </div>
+    <div class="bg-white/10 border border-white/15 rounded-xl px-5 py-4 text-center">
+     <div class="text-3xl font-bold tab-num">317</div>
+     <div class="text-xs text-slate-300 mt-1">עמודים נסקרו</div>
+    </div>
+    <div class="bg-brik-500 border border-brik-500 rounded-xl px-5 py-4 text-center">
+     <div class="text-3xl font-bold tab-num">v2</div>
+     <div class="text-xs text-white mt-1">רביזיה לפי משוב</div>
+    </div>
+   </div>
+  </div>
+ </div>
+</header>
+
+<!-- CHANGELOG STRIP -->
+<div class="bg-white border-b border-slate-200">
+ <div class="max-w-[1400px] mx-auto px-6 py-4">
+  <h3 class="text-xs uppercase tracking-wider text-slate-500 mb-2">מה השתנה מ-v1</h3>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+   <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+    <div class="text-xs text-emerald-700 font-semibold">✓ UX Richness</div>
+    <div class="text-sm text-slate-700">Safety Score + 5 כרטיסים · 3 טאבים · רשימה דומה לסמנטו עם סטטוס/חומרה/אחראי/מדווח/תמונות</div>
+   </div>
+   <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+    <div class="text-xs text-emerald-700 font-semibold">✓ Filter System</div>
+    <div class="text-sm text-slate-700">Bottom sheet רב-מימדי — חברה, מקצוע, סוג הדרכה, סטטוס, חומרה, טווח תאריכים</div>
+   </div>
+   <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+    <div class="text-xs text-emerald-700 font-semibold">✓ Data Export Integration</div>
+    <div class="text-sm text-slate-700">3 גיליונות חדשים ב-Full Excel הקיים · "פנקס כללי PDF" חדש · פלט מסונן</div>
+   </div>
+   <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+    <div class="text-xs text-emerald-700 font-semibold">✓ Architecture Collision</div>
+    <div class="text-sm text-slate-700">שימוש חוזר ב-<span class="font-mono">project_companies</span> הקיים · הרחבה בלבד · ללא טבלה כפולה</div>
+   </div>
+  </div>
+ </div>
+</div>
+
+<!-- MAIN CONTENT -->
+<main class="max-w-[1400px] mx-auto px-6 py-10 space-y-16">
+
+<!-- SECTION 1: TAB PLACEMENT -->
+<section>
+ <div class="mb-5">
+  <div class="flex items-center gap-2 mb-2">
+   <span class="bg-brik-500 text-white w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm">1</span>
+   <h2 class="text-2xl font-bold">מיקום הטאב החדש</h2>
+  </div>
+  <p class="text-slate-600">הוספת טאב <b>"בטיחות"</b> כ-Secondary Tab (רמה משנית) ב-<span class="font-mono text-sm">ProjectControlPage</span> — לצד "צוות", "קבלנים וחברות" ו-"ייצוא נתונים" הקיימים.</p>
+ </div>
+ <div class="bg-white border border-slate-200 rounded-2xl p-6">
+  <div class="bg-slate-900 text-white rounded-xl overflow-hidden">
+   <div class="flex items-center gap-2 px-4 py-3 border-b border-slate-700">
+    <div class="flex gap-1.5"><span class="w-3 h-3 rounded-full bg-red-500"></span><span class="w-3 h-3 rounded-full bg-yellow-500"></span><span class="w-3 h-3 rounded-full bg-green-500"></span></div>
+    <span class="text-xs text-slate-400 font-mono mr-3">frontend/src/pages/ProjectControlPage.js — line 80</span>
+   </div>
+   <pre class="p-5 text-xs md:text-sm font-mono text-slate-200 overflow-x-auto leading-relaxed"><span class="text-slate-500">// BEFORE (current production)</span>
+<span class="text-sky-300">const</span> SECONDARY_TABS = [
+  { id: <span class="text-emerald-300">'team'</span>,        label: <span class="text-emerald-300">'צוות'</span>,              icon: Users,    color: <span class="text-emerald-300">'text-blue-600'</span>     },
+  { id: <span class="text-emerald-300">'companies'</span>,   label: <span class="text-emerald-300">'קבלנים וחברות'</span>,      icon: Building2, color: <span class="text-emerald-300">'text-violet-600'</span>   },
+  { id: <span class="text-emerald-300">'data-export'</span>, label: <span class="text-emerald-300">'ייצוא נתונים'</span>,      icon: Package,   color: <span class="text-emerald-300">'text-emerald-600'</span> },
+];
+
+<span class="text-slate-500">// AFTER (Phase 1)</span>
+<span class="text-sky-300">const</span> SECONDARY_TABS = [
+  { id: <span class="text-emerald-300">'team'</span>,        label: <span class="text-emerald-300">'צוות'</span>,              icon: Users,     color: <span class="text-emerald-300">'text-blue-600'</span>    },
+  { id: <span class="text-emerald-300">'companies'</span>,   label: <span class="text-emerald-300">'קבלנים וחברות'</span>,      icon: Building2, color: <span class="text-emerald-300">'text-violet-600'</span>  },
+<span class="bg-emerald-900/60">  { id: <span class="text-emerald-300">'safety'</span>,      label: <span class="text-emerald-300">'בטיחות'</span>,            icon: HardHat,   color: <span class="text-emerald-300">'text-amber-600'</span>,
+    badge: <span class="text-sky-300">'new'</span>, feature_flag: <span class="text-emerald-300">'ENABLE_SAFETY_MODULE'</span> },</span>
+  { id: <span class="text-emerald-300">'data-export'</span>, label: <span class="text-emerald-300">'ייצוא נתונים'</span>,       icon: Package,   color: <span class="text-emerald-300">'text-emerald-600'</span> },
+];</pre>
+  </div>
+  <div class="mt-5 grid grid-cols-2 gap-4 text-sm">
+   <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+    <div class="font-semibold text-emerald-800 mb-1">✓ Isolation</div>
+    <div class="text-slate-700">טאב חדש · תיקיה חדשה (<span class="font-mono text-xs">frontend/src/components/safety/</span>) · Router חדש (<span class="font-mono text-xs">backend/contractor_ops/safety_router.py</span>). אפס שינויים בקבצים קיימים פרט ל-2 שורות ב-SECONDARY_TABS.</div>
+   </div>
+   <div class="bg-amber-50 border border-amber-200 rounded-lg p-3">
+    <div class="font-semibold text-amber-800 mb-1">⚠ Feature Flag</div>
+    <div class="text-slate-700">הכפתור מוצג רק כש-<span class="font-mono text-xs">ENABLE_SAFETY_MODULE=true</span> בסביבה. ברירת מחדל: off בפרודקשן עד QA מאושר.</div>
+   </div>
+  </div>
+ </div>
+</section>
+
+<!-- SECTION 2: SAFETY HOME (RICH) -->
+<section>
+ <div class="mb-5">
+  <div class="flex items-center gap-2 mb-2">
+   <span class="bg-brik-500 text-white w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm">2</span>
+   <h2 class="text-2xl font-bold">מסך הבית של הבטיחות — עם עושר נתונים בסגנון סמנטו</h2>
+  </div>
+  <p class="text-slate-600">Safety Score Gauge (חיקוי של סמנטו) · 5 כרטיסי מדדים · 3 טאבים פנימיים (<b>תיעודים · משימות · כוח אדם</b>) · כל רשומה חושפת סטטוס + חומרה + אחראי + מדווח + תמונות — בדיוק כמו בדו"חות שסקרת.</p>
+ </div>
+
+ <div class="flex flex-wrap gap-6 justify-center">
+
+  <!-- PHONE 1 — HOME WITH GAUGE + CARDS -->
+  <div class="phone-frame">
+   <div class="phone-inner">
+    <div class="notch"></div>
+    <!-- Status bar -->
+    <div class="bg-white pt-7 pb-2 px-5 flex justify-between items-center text-xs text-slate-900 font-medium">
+     <span>9:41</span>
+     <span>●●● ▸▸▸ 100%</span>
+    </div>
+    <!-- Primary header -->
+    <div class="bg-white px-4 pb-3 border-b border-slate-200">
+     <div class="flex items-center gap-2 mb-3">
+      <button class="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center">
+       <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg>
+      </button>
+      <div class="flex-1">
+       <div class="text-[11px] text-slate-500">מגרש · קבלן</div>
+       <div class="text-sm font-bold text-slate-800 truncate">מתחם הסופרים 806 · ארזי הנגב ייזום ובניה</div>
+      </div>
+      <div class="w-8 h-8 rounded-full bg-brik-100 border border-brik-200 flex items-center justify-center">
+       <svg class="w-4 h-4 text-brik-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      </div>
+     </div>
+     <!-- Secondary tabs scroll -->
+     <div class="flex gap-1.5 overflow-x-auto scroll-none">
+      <button class="px-3 py-1.5 rounded-full text-xs bg-slate-100 text-slate-600 font-medium whitespace-nowrap">צוות</button>
+      <button class="px-3 py-1.5 rounded-full text-xs bg-slate-100 text-slate-600 font-medium whitespace-nowrap">קבלנים</button>
+      <button class="px-3 py-1.5 rounded-full text-xs bg-amber-500 text-white font-medium whitespace-nowrap shadow">בטיחות</button>
+      <button class="px-3 py-1.5 rounded-full text-xs bg-slate-100 text-slate-600 font-medium whitespace-nowrap">ייצוא</button>
+     </div>
+    </div>
+
+    <!-- Scroll area -->
+    <div class="overflow-y-auto h-[620px] fade-mask">
+     <!-- Safety Score Gauge -->
+     <div class="bg-gradient-to-br from-white to-slate-50 px-4 pt-4 pb-4 border-b border-slate-200">
+      <div class="flex items-center gap-4">
+       <div class="relative w-[110px] h-[110px]">
+        <svg viewBox="0 0 120 120" class="w-full h-full -rotate-90">
+         <circle cx="60" cy="60" r="50" class="gauge-track"/>
+         <circle cx="60" cy="60" r="50" class="gauge-fill" stroke="#10B981" stroke-dasharray="314" stroke-dashoffset="63"/>
+        </svg>
+        <div class="absolute inset-0 flex flex-col items-center justify-center">
+         <span class="text-[10px] text-slate-500 leading-none">Safety Score</span>
+         <span class="text-3xl font-bold text-emerald-600 tab-num leading-none mt-0.5">80</span>
+         <span class="text-[10px] text-emerald-600 font-semibold">טוב</span>
+        </div>
+       </div>
+       <div class="flex-1 min-w-0">
+        <div class="text-xs text-slate-500 mb-0.5">הציון מחושב מ:</div>
+        <div class="space-y-1 text-[11px] text-slate-700">
+         <div class="flex items-center justify-between"><span>הדרכות תקפות</span><span class="font-semibold text-emerald-600">92%</span></div>
+         <div class="flex items-center justify-between"><span>משימות בזמן</span><span class="font-semibold text-amber-600">76%</span></div>
+         <div class="flex items-center justify-between"><span>בדיקות תקופתיות</span><span class="font-semibold text-emerald-600">100%</span></div>
+         <div class="flex items-center justify-between"><span>ללא ליקויים פתוחים ≥2</span><span class="font-semibold text-rose-600">54%</span></div>
+        </div>
+        <button class="text-[10px] text-brik-600 underline mt-1">הסבר הנוסחה</button>
+       </div>
+      </div>
+     </div>
+
+     <!-- 5 KPI Cards -->
+     <div class="px-4 pt-3 pb-1 bg-white border-b border-slate-200">
+      <div class="grid grid-cols-3 gap-2">
+       <!-- 1 תיעודים -->
+       <div class="bg-slate-50 border border-slate-200 rounded-xl p-2.5">
+        <div class="flex items-center gap-1 mb-1">
+         <svg class="w-3.5 h-3.5 text-sky-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
+         <span class="text-[10px] text-slate-600">תיעודים</span>
+        </div>
+        <div class="text-xl font-bold tab-num text-slate-800">47</div>
+        <div class="text-[10px] text-emerald-600">+5 השבוע</div>
+       </div>
+       <!-- 2 משימות פתוחות -->
+       <div class="bg-rose-50 border border-rose-200 rounded-xl p-2.5">
+        <div class="flex items-center gap-1 mb-1">
+         <svg class="w-3.5 h-3.5 text-rose-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+         <span class="text-[10px] text-slate-600">פתוחות</span>
+        </div>
+        <div class="text-xl font-bold tab-num text-rose-700">8</div>
+        <div class="text-[10px] text-rose-600">2 באיחור</div>
+       </div>
+       <!-- 3 כוח אדם -->
+       <div class="bg-sky-50 border border-sky-200 rounded-xl p-2.5">
+        <div class="flex items-center gap-1 mb-1">
+         <svg class="w-3.5 h-3.5 text-sky-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+         <span class="text-[10px] text-slate-600">כוח אדם</span>
+        </div>
+        <div class="text-xl font-bold tab-num text-slate-800">142</div>
+        <div class="text-[10px] text-slate-500">12 חברות</div>
+       </div>
+       <!-- 4 הדרכות תקפות -->
+       <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5">
+        <div class="flex items-center gap-1 mb-1">
+         <svg class="w-3.5 h-3.5 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+         <span class="text-[10px] text-slate-600">הדרכות</span>
+        </div>
+        <div class="text-xl font-bold tab-num text-emerald-700">131</div>
+        <div class="text-[10px] text-amber-600">7 פגות תוך 30 יום</div>
+       </div>
+       <!-- 5 בדיקות תקופתיות -->
+       <div class="bg-violet-50 border border-violet-200 rounded-xl p-2.5">
+        <div class="flex items-center gap-1 mb-1">
+         <svg class="w-3.5 h-3.5 text-violet-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/></svg>
+         <span class="text-[10px] text-slate-600">בדיקות</span>
+        </div>
+        <div class="text-xl font-bold tab-num text-violet-700">18</div>
+        <div class="text-[10px] text-emerald-600">כולן בתוקף</div>
+       </div>
+       <!-- 6 אירועים -->
+       <div class="bg-amber-50 border border-amber-200 rounded-xl p-2.5">
+        <div class="flex items-center gap-1 mb-1">
+         <svg class="w-3.5 h-3.5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+         <span class="text-[10px] text-slate-600">אירועים</span>
+        </div>
+        <div class="text-xl font-bold tab-num text-amber-700">2</div>
+        <div class="text-[10px] text-slate-500">12 חודשים</div>
+       </div>
+      </div>
+     </div>
+
+     <!-- Internal tabs -->
+     <div class="px-4 pt-3 bg-white sticky top-0 border-b border-slate-200">
+      <div class="flex gap-4 text-sm">
+       <button class="pb-2 font-semibold text-brik-600 border-b-2 border-brik-500">תיעודים <span class="text-[10px] text-slate-500">47</span></button>
+       <button class="pb-2 font-medium text-slate-500">משימות <span class="text-[10px]">8</span></button>
+       <button class="pb-2 font-medium text-slate-500">כוח אדם <span class="text-[10px]">142</span></button>
+      </div>
+     </div>
+
+     <!-- Filter chip row -->
+     <div class="px-4 pt-3 bg-white">
+      <div class="flex gap-1.5 overflow-x-auto scroll-none pb-1">
+       <button class="flex items-center gap-1 px-2.5 py-1 bg-brik-500 text-white rounded-full text-[11px] font-semibold whitespace-nowrap">
+        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>
+        סינון · 3
+       </button>
+       <span class="px-2 py-1 bg-sky-50 text-sky-700 rounded-full text-[11px] border border-sky-200 whitespace-nowrap">מקצוע: בטיחות ✕</span>
+       <span class="px-2 py-1 bg-emerald-50 text-emerald-700 rounded-full text-[11px] border border-emerald-200 whitespace-nowrap">קטגוריה: עבודה בגובה ✕</span>
+       <span class="px-2 py-1 bg-violet-50 text-violet-700 rounded-full text-[11px] border border-violet-200 whitespace-nowrap">30 יום ✕</span>
+       <span class="px-2 py-1 bg-slate-100 text-slate-500 rounded-full text-[11px] whitespace-nowrap">נקה הכל</span>
+      </div>
+     </div>
+
+     <!-- Documentation card 1 -->
+     <div class="px-4 pt-3 space-y-3">
+      <div class="bg-white rounded-2xl border border-slate-200 p-3 shadow-sm">
+       <div class="flex items-start justify-between gap-2 mb-2">
+        <div class="flex-1 min-w-0">
+         <div class="flex items-center gap-1.5 mb-1 flex-wrap">
+          <span class="text-[10px] font-mono text-slate-400">#003</span>
+          <span class="px-1.5 py-0.5 bg-rose-100 text-rose-700 rounded text-[10px] font-bold">תאונה</span>
+          <span class="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded text-[10px] font-bold">עבודה בגובה</span>
+         </div>
+         <p class="text-sm text-slate-800 leading-tight">נפילה מפיגום אקרו — 2 מ׳. עובד DU DONGFENG ביצע הרכבת פיגום.</p>
+        </div>
+        <div class="severity-pill bg-rose-500">3</div>
+       </div>
+       <div class="flex gap-1.5 mb-2">
+        <div class="w-16 h-16 bg-slate-200 rounded-lg flex items-center justify-center">
+         <svg class="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        </div>
+        <div class="w-16 h-16 bg-slate-200 rounded-lg flex items-center justify-center">
+         <svg class="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        </div>
+        <div class="w-16 h-16 bg-slate-100 border border-dashed border-slate-300 rounded-lg flex flex-col items-center justify-center text-slate-500">
+         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
+         <span class="text-[9px] mt-0.5">2 PDF</span>
+        </div>
+       </div>
+       <div class="flex items-center justify-between pt-2 border-t border-slate-100">
+        <div class="flex items-center gap-1.5">
+         <div class="w-6 h-6 bg-amber-400 rounded-full flex items-center justify-center text-[9px] font-bold text-white">עח</div>
+         <div class="text-[11px]">
+          <div class="text-slate-800 font-medium leading-none">עבד חוסין</div>
+          <div class="text-[10px] text-slate-500">ממונה בטיחות</div>
+         </div>
+        </div>
+        <div class="text-[10px] text-slate-500">28.02.2024</div>
+       </div>
+      </div>
+
+      <!-- Documentation card 2 -->
+      <div class="bg-white rounded-2xl border border-slate-200 p-3 shadow-sm">
+       <div class="flex items-start justify-between gap-2 mb-2">
+        <div class="flex-1 min-w-0">
+         <div class="flex items-center gap-1.5 mb-1 flex-wrap">
+          <span class="text-[10px] font-mono text-slate-400">#005</span>
+          <span class="px-1.5 py-0.5 bg-rose-100 text-rose-700 rounded text-[10px] font-bold">אירוע</span>
+          <span class="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded text-[10px] font-bold">חפצים נופלים</span>
+         </div>
+         <p class="text-sm text-slate-800 leading-tight">תבילת דקוקיט נפלה מהעגורן בהרמה לשטח האתר השכן. ממונה הועבר במתארת.</p>
+        </div>
+        <div class="severity-pill bg-amber-500">2</div>
+       </div>
+       <div class="flex gap-1.5 mb-2">
+        <div class="w-16 h-16 bg-slate-200 rounded-lg"></div>
+        <div class="w-16 h-16 bg-slate-200 rounded-lg"></div>
+        <div class="w-16 h-16 bg-slate-100 border border-dashed border-slate-300 rounded-lg flex items-center justify-center text-[10px] text-slate-500">נוהל 009</div>
+       </div>
+       <div class="flex items-center justify-between pt-2 border-t border-slate-100">
+        <div class="flex items-center gap-1.5">
+         <div class="w-6 h-6 bg-amber-400 rounded-full flex items-center justify-center text-[9px] font-bold text-white">עח</div>
+         <div class="text-[11px]"><div class="text-slate-800 font-medium leading-none">עבד חוסין</div><div class="text-[10px] text-slate-500">ממונה בטיחות</div></div>
+        </div>
+        <div class="text-[10px] text-slate-500">24.11.2022</div>
+       </div>
+      </div>
+     </div>
+    </div>
+
+    <!-- FAB -->
+    <div class="absolute bottom-4 left-4 flex flex-col gap-2 items-start">
+     <button class="w-14 h-14 rounded-full bg-brik-500 shadow-2xl flex items-center justify-center text-white hover:bg-brik-600 transition">
+      <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+     </button>
+    </div>
+   </div>
+  </div>
+
+  <!-- PHONE 2 — TASKS (משימות) TAB, rich like Cemento -->
+  <div class="phone-frame">
+   <div class="phone-inner">
+    <div class="notch"></div>
+    <div class="bg-white pt-7 pb-2 px-5 flex justify-between items-center text-xs font-medium"><span>9:41</span><span>●●● ▸▸▸</span></div>
+    <div class="bg-white px-4 pb-2 border-b border-slate-200">
+     <div class="flex items-center gap-2 mb-2">
+      <button class="w-8 h-8"><svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <span class="text-sm font-bold flex-1">בטיחות · משימות</span>
+     </div>
+     <div class="flex gap-4 text-sm">
+      <button class="pb-2 font-medium text-slate-500">תיעודים <span class="text-[10px]">47</span></button>
+      <button class="pb-2 font-semibold text-brik-600 border-b-2 border-brik-500">משימות <span class="text-[10px] text-slate-500">8</span></button>
+      <button class="pb-2 font-medium text-slate-500">כוח אדם <span class="text-[10px]">142</span></button>
+     </div>
+    </div>
+
+    <!-- Filter + stats row -->
+    <div class="bg-slate-50 px-4 py-2 border-b border-slate-200">
+     <div class="flex items-center justify-between text-xs">
+      <div class="flex gap-1">
+       <span class="px-2 py-0.5 bg-rose-500 text-white rounded font-semibold">פתוחות · 6</span>
+       <span class="px-2 py-0.5 bg-emerald-500 text-white rounded font-semibold">סגורות · 2</span>
+      </div>
+      <button class="flex items-center gap-1 text-slate-600"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>סינון</button>
+     </div>
+    </div>
+
+    <div class="overflow-y-auto h-[600px] fade-mask">
+     <!-- Task #1 OPEN, severity 3 -->
+     <div class="p-4 space-y-3">
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+       <div class="flex items-center justify-between px-3 py-2 bg-rose-50 border-b border-rose-100">
+        <div class="flex items-center gap-1.5">
+         <span class="px-1.5 py-0.5 bg-rose-600 text-white rounded text-[10px] font-bold">פתוח</span>
+         <span class="text-[10px] text-slate-500 tab-num">#T-012</span>
+        </div>
+        <div class="flex items-center gap-0.5">
+         <span class="text-[10px] text-slate-500 ml-1">חומרה</span>
+         <span class="severity-pill bg-slate-200 text-slate-500">1</span>
+         <span class="severity-pill bg-slate-200 text-slate-500">2</span>
+         <span class="severity-pill bg-rose-500">3</span>
+        </div>
+       </div>
+       <div class="p-3">
+        <div class="flex items-center gap-1.5 mb-1">
+         <span class="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded text-[10px] font-bold">עבודת חשמל</span>
+         <span class="text-[10px] text-slate-500">· בניין 4 · קומה 0</span>
+        </div>
+        <p class="text-sm font-semibold text-slate-900 leading-snug mb-0.5">סכנת מוות מחשמול — כבלים חיים בשלולית מים</p>
+        <p class="text-xs text-slate-500 leading-snug">חיבור שקוטעים מונחים על הרצפה בתוך שלולית מים. יש מדן בצעור המים.</p>
+
+        <div class="flex gap-1.5 mt-2">
+         <div class="w-14 h-14 bg-slate-200 rounded-lg"></div>
+         <div class="w-14 h-14 bg-slate-200 rounded-lg"></div>
+        </div>
+
+        <div class="mt-2.5 pt-2.5 border-t border-slate-100 space-y-1.5 text-[11px]">
+         <div class="flex items-center justify-between">
+          <span class="text-slate-500">אחראי לביצוע</span>
+          <div class="flex items-center gap-1.5">
+           <div class="w-5 h-5 bg-sky-500 rounded-full flex items-center justify-center text-[8px] font-bold text-white">אש</div>
+           <span class="text-slate-800">אלכס שרעם · מנ"ע 810</span>
+          </div>
+         </div>
+         <div class="flex items-center justify-between">
+          <span class="text-slate-500">מדווח</span>
+          <div class="flex items-center gap-1.5">
+           <div class="w-5 h-5 bg-amber-400 rounded-full flex items-center justify-center text-[8px] font-bold text-white">עח</div>
+           <span class="text-slate-800">עבד חוסין · ממונה בטיחות</span>
+          </div>
+         </div>
+         <div class="flex items-center justify-between">
+          <span class="text-slate-500">דווח · יעד</span>
+          <span class="text-slate-800 tab-num">19.05.2024 · <span class="text-rose-600 font-semibold">באיחור 3 ימים</span></span>
+         </div>
+         <div class="flex items-center justify-between">
+          <span class="text-slate-500">פעולה מתקנת</span>
+          <span class="text-slate-400">—</span>
+         </div>
+        </div>
+
+        <div class="flex gap-1.5 mt-3">
+         <button class="flex-1 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold">סמן כנסגר</button>
+         <button class="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold">הקצה</button>
+         <button class="w-9 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg flex items-center justify-center">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+         </button>
+        </div>
+       </div>
+      </div>
+
+      <!-- Task #2 OPEN severity 2 -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+       <div class="flex items-center justify-between px-3 py-2 bg-rose-50 border-b border-rose-100">
+        <div class="flex items-center gap-1.5">
+         <span class="px-1.5 py-0.5 bg-rose-600 text-white rounded text-[10px] font-bold">פתוח</span>
+         <span class="text-[10px] text-slate-500 tab-num">#T-015</span>
+        </div>
+        <div class="flex items-center gap-0.5">
+         <span class="text-[10px] text-slate-500 ml-1">חומרה</span>
+         <span class="severity-pill bg-slate-200 text-slate-500">1</span>
+         <span class="severity-pill bg-amber-500">2</span>
+         <span class="severity-pill bg-slate-200 text-slate-500">3</span>
+        </div>
+       </div>
+       <div class="p-3">
+        <div class="flex items-center gap-1.5 mb-1">
+         <span class="px-1.5 py-0.5 bg-violet-100 text-violet-800 rounded text-[10px] font-bold">פתחים ברצפה/קיר</span>
+         <span class="text-[10px] text-slate-500">· בניין 13 · ק' 7 · דירה 35</span>
+        </div>
+        <p class="text-sm font-semibold text-slate-900 leading-snug">חסרות זכוכיות במינוגן המרפסת</p>
+        <div class="flex items-center justify-between mt-2 text-[11px]">
+         <div class="flex items-center gap-1.5">
+          <div class="w-5 h-5 bg-violet-500 rounded-full flex items-center justify-center text-[8px] font-bold text-white">יש</div>
+          <span class="text-slate-800">יצחק שיטרית</span>
+         </div>
+         <span class="text-slate-500">יעד: 09.07.2023</span>
+        </div>
+       </div>
+      </div>
+     </div>
+    </div>
+   </div>
+  </div>
+
+  <!-- PHONE 3 — כוח אדם עם תובנות -->
+  <div class="phone-frame">
+   <div class="phone-inner">
+    <div class="notch"></div>
+    <div class="bg-white pt-7 pb-2 px-5 flex justify-between items-center text-xs font-medium"><span>9:41</span><span>●●● ▸▸▸</span></div>
+    <div class="bg-white px-4 pb-2 border-b border-slate-200">
+     <div class="flex items-center gap-2 mb-2">
+      <button class="w-8 h-8"><svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <span class="text-sm font-bold flex-1">בטיחות · כוח אדם</span>
+      <button class="text-xs text-brik-600 font-semibold">+ עובד</button>
+     </div>
+     <div class="flex gap-4 text-sm">
+      <button class="pb-2 font-medium text-slate-500">תיעודים</button>
+      <button class="pb-2 font-medium text-slate-500">משימות</button>
+      <button class="pb-2 font-semibold text-brik-600 border-b-2 border-brik-500">כוח אדם <span class="text-[10px] text-slate-500">142</span></button>
+     </div>
+    </div>
+
+    <!-- Insights strip -->
+    <div class="px-3 pt-3 pb-2 bg-slate-50 border-b border-slate-200">
+     <div class="grid grid-cols-3 gap-2">
+      <div class="bg-white border border-emerald-200 rounded-lg p-2 text-center">
+       <div class="text-[10px] text-slate-500">תקפים</div>
+       <div class="text-lg font-bold text-emerald-700 tab-num leading-none">131</div>
+      </div>
+      <div class="bg-white border border-amber-200 rounded-lg p-2 text-center">
+       <div class="text-[10px] text-slate-500">פגים ב-30 יום</div>
+       <div class="text-lg font-bold text-amber-700 tab-num leading-none">7</div>
+      </div>
+      <div class="bg-white border border-rose-200 rounded-lg p-2 text-center">
+       <div class="text-[10px] text-slate-500">פגו</div>
+       <div class="text-lg font-bold text-rose-700 tab-num leading-none">4</div>
+      </div>
+     </div>
+    </div>
+
+    <!-- Search -->
+    <div class="bg-white px-4 py-2 border-b border-slate-200">
+     <div class="relative">
+      <svg class="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input class="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" placeholder="שם / ת.ז. / חברה" dir="rtl" readonly />
+     </div>
+     <div class="flex gap-1.5 mt-2 overflow-x-auto scroll-none">
+      <span class="px-2 py-0.5 bg-brik-50 text-brik-700 rounded-full text-[11px] border border-brik-200 font-semibold whitespace-nowrap">חברה: ארזי הנגב ✕</span>
+      <span class="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-full text-[11px] border border-amber-200 whitespace-nowrap">סטטוס הדרכה: פג ✕</span>
+     </div>
+    </div>
+
+    <div class="overflow-y-auto h-[540px] fade-mask">
+     <div class="px-3 py-3 space-y-2">
+
+      <!-- Worker 1 EXPANDED -->
+      <details class="bg-white rounded-2xl border border-slate-200 shadow-sm" open>
+       <summary class="p-3 flex items-center gap-3">
+        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-sky-500 to-sky-700 flex items-center justify-center text-white text-sm font-bold shrink-0">FG</div>
+        <div class="flex-1 min-w-0">
+         <div class="flex items-center gap-1">
+          <h4 class="text-sm font-semibold text-slate-900 truncate">FENG GANGJIE</h4>
+          <span class="px-1 py-0 bg-emerald-100 text-emerald-700 rounded text-[9px] font-semibold">תקף</span>
+         </div>
+         <div class="text-[11px] text-slate-500 flex items-center gap-1">
+          <span>ארזי הנגב ייזום</span><span>·</span><span>בטיחות · עבודה בגובה</span>
+         </div>
+         <div class="text-[10px] text-slate-400 font-mono mt-0.5">ת.ז. ****5361</div>
+        </div>
+        <svg class="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+       </summary>
+
+       <div class="border-t border-slate-100 px-3 py-2.5 bg-slate-50">
+        <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] mb-3">
+         <div><span class="text-slate-500">טלפון:</span> <span class="tab-num text-slate-800">050-***-3421</span></div>
+         <div><span class="text-slate-500">תחילת עבודה:</span> <span class="tab-num text-slate-800">16.11.2021</span></div>
+         <div><span class="text-slate-500">מקצוע:</span> <span class="text-slate-800">ברזנט</span></div>
+         <div><span class="text-slate-500">מנהל עבודה:</span> <span class="text-slate-800">יצחק ש.</span></div>
+        </div>
+
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">הדרכות · 4</div>
+        <div class="space-y-1.5">
+         <div class="bg-white rounded-lg border border-emerald-200 p-2 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+           <span class="w-1.5 h-8 bg-emerald-500 rounded-full"></span>
+           <div>
+            <div class="text-xs font-semibold text-slate-800">הדרכת אתר</div>
+            <div class="text-[10px] text-slate-500">הראל שטרית · 30 דק'</div>
+           </div>
+          </div>
+          <div class="text-left">
+           <div class="text-[10px] text-slate-500">תקף עד</div>
+           <div class="text-[11px] font-bold text-emerald-700 tab-num">15.11.2026</div>
+          </div>
+         </div>
+         <div class="bg-white rounded-lg border border-amber-200 p-2 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+           <span class="w-1.5 h-8 bg-amber-500 rounded-full"></span>
+           <div>
+            <div class="text-xs font-semibold text-slate-800">הדרכת סיכונים מקצועיים — ברזנט</div>
+            <div class="text-[10px] text-slate-500">הראל שטרית · 30 דק'</div>
+           </div>
+          </div>
+          <div class="text-left">
+           <div class="text-[10px] text-amber-600 font-semibold">פג בעוד 12 יום</div>
+           <div class="text-[11px] font-bold text-amber-700 tab-num">04.05.2026</div>
+          </div>
+         </div>
+         <div class="bg-white rounded-lg border border-emerald-200 p-2 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+           <span class="w-1.5 h-8 bg-emerald-500 rounded-full"></span>
+           <div>
+            <div class="text-xs font-semibold text-slate-800">עבודה בגובה (תקנה 4)</div>
+            <div class="text-[10px] text-slate-500">מוסד הסמכה · 8 שעות</div>
+           </div>
+          </div>
+          <div class="text-left">
+           <div class="text-[10px] text-slate-500">תקף עד</div>
+           <div class="text-[11px] font-bold text-emerald-700 tab-num">12.03.2028</div>
+          </div>
+         </div>
+        </div>
+
+        <div class="flex gap-1.5 mt-3">
+         <button class="flex-1 py-1.5 bg-brik-500 hover:bg-brik-600 text-white rounded-lg text-xs font-semibold">+ הדרכה</button>
+         <button class="py-1.5 px-3 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-semibold">הוצא PDF אישי</button>
+        </div>
+       </div>
+      </details>
+
+      <!-- Worker 2 collapsed with expiring chip -->
+      <details class="bg-white rounded-2xl border border-slate-200 shadow-sm">
+       <summary class="p-3 flex items-center gap-3">
+        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-rose-500 to-rose-700 flex items-center justify-center text-white text-sm font-bold shrink-0">DD</div>
+        <div class="flex-1 min-w-0">
+         <div class="flex items-center gap-1">
+          <h4 class="text-sm font-semibold text-slate-900 truncate">DU DONGFENG</h4>
+          <span class="px-1 py-0 bg-rose-100 text-rose-700 rounded text-[9px] font-semibold">פג</span>
+         </div>
+         <div class="text-[11px] text-slate-500">ארזי הנגב · פיגומים</div>
+         <div class="text-[10px] text-rose-600 font-semibold mt-0.5">עבודה בגובה פגה לפני 42 יום</div>
+        </div>
+        <svg class="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+       </summary>
+      </details>
+
+      <!-- Worker 3 -->
+      <details class="bg-white rounded-2xl border border-slate-200 shadow-sm">
+       <summary class="p-3 flex items-center gap-3">
+        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-violet-500 to-violet-700 flex items-center justify-center text-white text-sm font-bold shrink-0">FV</div>
+        <div class="flex-1 min-w-0">
+         <div class="flex items-center gap-1">
+          <h4 class="text-sm font-semibold text-slate-900 truncate">FEDORUTSA VADYM</h4>
+          <span class="px-1 py-0 bg-emerald-100 text-emerald-700 rounded text-[9px] font-semibold">תקף</span>
+         </div>
+         <div class="text-[11px] text-slate-500">ארזי הנגב · חשמלאי</div>
+        </div>
+        <svg class="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+       </summary>
+      </details>
+
+     </div>
+    </div>
+   </div>
+  </div>
+ </div>
+</section>
+
+<!-- SECTION 3: FILTER SHEET (NEW) -->
+<section>
+ <div class="mb-5">
+  <div class="flex items-center gap-2 mb-2">
+   <span class="bg-brik-500 text-white w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm">3</span>
+   <h2 class="text-2xl font-bold">מערכת סינון רב-מימדית (חדש)</h2>
+  </div>
+  <p class="text-slate-600">Bottom Sheet בסגנון BottomSheetSelect הקיים (פטרן מוכר של BrikOps). הסינון נשמר ב-URL params → יציב ברענון, מאפשר שיתוף קישור, ומוחל גם על הייצוא.</p>
+ </div>
+ <div class="flex flex-wrap gap-6 justify-center items-start">
+
+  <!-- Filter sheet mock -->
+  <div class="phone-frame">
+   <div class="phone-inner">
+    <div class="notch"></div>
+    <!-- Dimmed background -->
+    <div class="absolute inset-0 bg-black/50"></div>
+    <div class="absolute inset-x-0 bottom-0 bg-white rounded-t-3xl p-4 h-[640px] overflow-y-auto fade-mask">
+     <div class="w-10 h-1 bg-slate-300 rounded-full mx-auto mb-3"></div>
+     <div class="flex items-center justify-between mb-4">
+      <button class="text-xs text-slate-500">נקה הכל</button>
+      <h3 class="text-base font-bold">סינון</h3>
+      <button class="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center">
+       <svg class="w-5 h-5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+     </div>
+
+     <!-- חברה -->
+     <div class="mb-4">
+      <div class="flex items-center justify-between mb-2">
+       <label class="text-xs text-slate-500 font-semibold">חברה / קבלן</label>
+       <span class="text-[10px] text-slate-400">רב-בחירה</span>
+      </div>
+      <div class="flex flex-wrap gap-1.5">
+       <span class="px-2.5 py-1 bg-brik-500 text-white rounded-full text-xs flex items-center gap-1">ארזי הנגב ✓</span>
+       <span class="px-2.5 py-1 bg-brik-500 text-white rounded-full text-xs flex items-center gap-1">אלקטרה ב' ✓</span>
+       <span class="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-full text-xs">דניה סיבוס</span>
+       <span class="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-full text-xs">שיכון ובינוי</span>
+       <span class="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-full text-xs">אחים דונייבסקי</span>
+       <span class="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-full text-xs">+ 7 אחרים</span>
+      </div>
+     </div>
+
+     <!-- מקצוע -->
+     <div class="mb-4">
+      <label class="text-xs text-slate-500 font-semibold block mb-2">מקצוע</label>
+      <div class="flex flex-wrap gap-1.5">
+       <span class="px-2.5 py-1 bg-brik-500 text-white rounded-full text-xs">בטיחות</span>
+       <span class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">חשמל</span>
+       <span class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">אינסטלציה</span>
+       <span class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">גמר</span>
+       <span class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">טפסנות</span>
+       <span class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">ברזנות</span>
+      </div>
+     </div>
+
+     <!-- קטגוריה -->
+     <div class="mb-4">
+      <label class="text-xs text-slate-500 font-semibold block mb-2">קטגוריה (10 מתוקננים)</label>
+      <div class="flex flex-wrap gap-1.5">
+       <span class="px-2.5 py-1 bg-brik-500 text-white rounded-full text-xs">עבודה בגובה</span>
+       <span class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">פיגומים</span>
+       <span class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">עבודת חשמל</span>
+       <span class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">חפצים נופלים</span>
+       <span class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">פתחים ברצפה/קיר</span>
+       <span class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">מגדל הרמה</span>
+       <span class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">חפירות</span>
+       <span class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">+ 3</span>
+      </div>
+     </div>
+
+     <!-- סטטוס + חומרה -->
+     <div class="mb-4 grid grid-cols-2 gap-3">
+      <div>
+       <label class="text-xs text-slate-500 font-semibold block mb-2">סטטוס</label>
+       <div class="flex flex-col gap-1.5">
+        <button class="flex items-center justify-between px-2.5 py-1.5 bg-rose-50 border border-rose-300 rounded-lg text-xs">
+         <span>פתוח</span>
+         <svg class="w-3.5 h-3.5 text-rose-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
+        <button class="flex items-center justify-between px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"><span>סגור</span></button>
+       </div>
+      </div>
+      <div>
+       <label class="text-xs text-slate-500 font-semibold block mb-2">חומרה</label>
+       <div class="flex gap-1">
+        <button class="flex-1 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold">1</button>
+        <button class="flex-1 py-1.5 bg-amber-500 text-white border border-amber-500 rounded-lg text-xs font-bold">2</button>
+        <button class="flex-1 py-1.5 bg-rose-500 text-white border border-rose-500 rounded-lg text-xs font-bold">3</button>
+       </div>
+      </div>
+     </div>
+
+     <!-- תאריך -->
+     <div class="mb-4">
+      <label class="text-xs text-slate-500 font-semibold block mb-2">טווח תאריכים</label>
+      <div class="flex gap-1.5 flex-wrap">
+       <button class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">היום</button>
+       <button class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">7 ימים</button>
+       <button class="px-2.5 py-1 bg-brik-500 text-white rounded-full text-xs font-semibold">30 יום</button>
+       <button class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">90 יום</button>
+       <button class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">שנה</button>
+       <button class="px-2.5 py-1 bg-slate-100 rounded-full text-xs">מותאם</button>
+      </div>
+     </div>
+
+     <!-- מיוחדים -->
+     <div class="mb-4">
+      <label class="text-xs text-slate-500 font-semibold block mb-2">מסננים מיוחדים</label>
+      <div class="space-y-1.5">
+       <label class="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs">
+        <span>רק עם תמונות מצורפות</span>
+        <span class="w-9 h-5 bg-slate-300 rounded-full relative"><span class="w-4 h-4 bg-white rounded-full absolute top-0.5 right-0.5 shadow"></span></span>
+       </label>
+       <label class="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-2 text-xs">
+        <span>באיחור בלבד</span>
+        <span class="w-9 h-5 bg-emerald-500 rounded-full relative"><span class="w-4 h-4 bg-white rounded-full absolute top-0.5 left-0.5 shadow"></span></span>
+       </label>
+       <label class="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs">
+        <span>ללא פעולה מתקנת</span>
+        <span class="w-9 h-5 bg-slate-300 rounded-full relative"><span class="w-4 h-4 bg-white rounded-full absolute top-0.5 right-0.5 shadow"></span></span>
+       </label>
+      </div>
+     </div>
+
+     <button class="w-full py-3 bg-brik-500 hover:bg-brik-600 text-white rounded-xl font-bold text-sm shadow-lg">הצג 23 תוצאות</button>
+    </div>
+   </div>
+  </div>
+
+  <!-- Filter dimension table -->
+  <div class="flex-1 min-w-[360px] max-w-[640px]">
+   <div class="bg-white border border-slate-200 rounded-2xl p-5">
+    <h3 class="font-bold text-slate-900 mb-1">7 ממדי סינון</h3>
+    <p class="text-xs text-slate-500 mb-4">ממומשים כ-Pydantic query params. כל ממד ⇒ index ב-MongoDB. כל שילוב ⇒ URL query string.</p>
+    <div class="space-y-2 text-sm">
+     <div class="flex items-start gap-3 border-b border-slate-100 pb-2">
+      <span class="font-mono text-xs text-brik-600 w-28 shrink-0">company_id[]</span>
+      <div class="flex-1"><b>חברה / קבלן</b> — רב-בחירה · reuse של <span class="font-mono text-xs">project_companies</span> הקיים</div>
+     </div>
+     <div class="flex items-start gap-3 border-b border-slate-100 pb-2">
+      <span class="font-mono text-xs text-brik-600 w-28 shrink-0">profession</span>
+      <div class="flex-1"><b>מקצוע</b> — תואם ל-<span class="font-mono text-xs">tradeService</span> הקיים</div>
+     </div>
+     <div class="flex items-start gap-3 border-b border-slate-100 pb-2">
+      <span class="font-mono text-xs text-brik-600 w-28 shrink-0">category</span>
+      <div class="flex-1"><b>קטגוריה</b> — 10 קטגוריות מתוקננות (seeded)</div>
+     </div>
+     <div class="flex items-start gap-3 border-b border-slate-100 pb-2">
+      <span class="font-mono text-xs text-brik-600 w-28 shrink-0">status</span>
+      <div class="flex-1"><b>סטטוס</b> — open / closed / overdue</div>
+     </div>
+     <div class="flex items-start gap-3 border-b border-slate-100 pb-2">
+      <span class="font-mono text-xs text-brik-600 w-28 shrink-0">severity[]</span>
+      <div class="flex-1"><b>חומרה</b> — 1 / 2 / 3 (אין 0)</div>
+     </div>
+     <div class="flex items-start gap-3 border-b border-slate-100 pb-2">
+      <span class="font-mono text-xs text-brik-600 w-28 shrink-0">date_from/to</span>
+      <div class="flex-1"><b>טווח תאריכים</b> — חיתוכי זמן מוגדרים מראש + Custom</div>
+     </div>
+     <div class="flex items-start gap-3">
+      <span class="font-mono text-xs text-brik-600 w-28 shrink-0">flags[]</span>
+      <div class="flex-1"><b>דגלים</b> — has_photos / overdue / no_corrective_action / expiring_30d</div>
+     </div>
+    </div>
+    <div class="mt-4 bg-slate-900 rounded-lg p-3 text-[11px] font-mono text-slate-200 overflow-x-auto">
+GET /api/safety/{project_id}/documents?<br>
+&nbsp;&nbsp;company_id=abc,def&<br>
+&nbsp;&nbsp;category=height_work&<br>
+&nbsp;&nbsp;severity=2,3&<br>
+&nbsp;&nbsp;status=open&<br>
+&nbsp;&nbsp;date_from=2026-03-22&<br>
+&nbsp;&nbsp;flags=has_photos,overdue
+    </div>
+   </div>
+  </div>
+ </div>
+</section>
+
+<!-- SECTION 4: DATA EXPORT INTEGRATION -->
+<section>
+ <div class="mb-5">
+  <div class="flex items-center gap-2 mb-2">
+   <span class="bg-brik-500 text-white w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm">4</span>
+   <h2 class="text-2xl font-bold">שילוב בטאב "ייצוא נתונים" הקיים</h2>
+  </div>
+  <p class="text-slate-600">הטאב הקיים <span class="font-mono text-sm">ProjectDataExportTab.js</span> נשאר בעינו — 3 החלקים שלו ממשיכים לעבוד (Excel ליקויים, Full Excel 6 גיליונות, ZIP עם polling). נוספות 2 שורות חדשות שמנצלות את אותו הפטרן ואת אותו ה-<span class="font-mono text-sm">dataExportService</span>.</p>
+ </div>
+ <div class="flex flex-wrap gap-6 justify-center">
+
+  <!-- Phone — data export tab EXTENDED -->
+  <div class="phone-frame">
+   <div class="phone-inner">
+    <div class="notch"></div>
+    <div class="bg-white pt-7 pb-2 px-5 flex justify-between items-center text-xs font-medium"><span>9:41</span><span>●●● ▸▸▸</span></div>
+    <div class="bg-white px-4 pb-3 border-b border-slate-200">
+     <div class="flex items-center gap-2 mb-3">
+      <button class="w-8 h-8"><svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <span class="text-sm font-bold flex-1">ייצוא נתונים · מגרש 806</span>
+     </div>
+     <div class="flex gap-1.5">
+      <button class="px-3 py-1.5 rounded-full text-xs bg-slate-100 text-slate-600">צוות</button>
+      <button class="px-3 py-1.5 rounded-full text-xs bg-slate-100 text-slate-600">קבלנים</button>
+      <button class="px-3 py-1.5 rounded-full text-xs bg-slate-100 text-slate-600">בטיחות</button>
+      <button class="px-3 py-1.5 rounded-full text-xs bg-emerald-500 text-white font-semibold">ייצוא</button>
+     </div>
+    </div>
+
+    <div class="overflow-y-auto h-[650px] fade-mask">
+     <div class="p-4 space-y-3">
+
+      <!-- Existing — Excel defects only -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 opacity-70">
+       <div class="flex items-start gap-3">
+        <div class="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center shrink-0">
+         <svg class="w-5 h-5 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <div class="flex-1">
+         <h3 class="font-bold text-sm text-slate-800">ייצוא אקסל (ליקויים בלבד)</h3>
+         <p class="text-[11px] text-slate-500">הפטרן הקיים — ללא שינוי</p>
+        </div>
+       </div>
+      </div>
+
+      <!-- Existing Full Excel — EXTENDED -->
+      <div class="bg-white rounded-xl border-2 border-sky-300 p-4 relative">
+       <div class="absolute -top-2 right-3 bg-sky-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">הורחב</div>
+       <div class="flex items-start gap-3">
+        <div class="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
+         <svg class="w-5 h-5 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <div class="flex-1 min-w-0">
+         <h3 class="font-bold text-sm text-slate-800 mb-1">ייצוא Excel מלא (כל הנתונים)</h3>
+         <p class="text-[11px] text-slate-500 mb-2">6 גיליונות קיימים <b class="text-sky-700">+ 3 חדשים לבטיחות</b> — ליקויים · מסירות · בקרת ביצוע · מבנה · צוות · חברות <b class="text-sky-700">· עובדי בטיחות · הדרכות · אירועי בטיחות</b>.</p>
+         <div class="bg-sky-50 border border-sky-200 rounded-lg p-2 mb-2 text-[10px]">
+          <div class="font-semibold text-sky-700 mb-1">גיליונות חדשים:</div>
+          <div class="flex flex-wrap gap-1">
+           <span class="bg-white border border-sky-200 rounded px-1.5 py-0.5 text-sky-800">ws7 · עובדי בטיחות · 142 שורות</span>
+           <span class="bg-white border border-sky-200 rounded px-1.5 py-0.5 text-sky-800">ws8 · הדרכות · 487 שורות</span>
+           <span class="bg-white border border-sky-200 rounded px-1.5 py-0.5 text-sky-800">ws9 · אירועי בטיחות · 47 שורות</span>
+          </div>
+         </div>
+         <button class="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500 text-white text-xs font-medium rounded-lg">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          הורד Excel מלא
+         </button>
+        </div>
+       </div>
+      </div>
+
+      <!-- NEW — Safety PDF (פנקס כללי) -->
+      <div class="bg-gradient-to-br from-amber-50 to-white rounded-xl border-2 border-brik-300 p-4 relative">
+       <div class="absolute -top-2 right-3 bg-brik-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">חדש</div>
+       <div class="flex items-start gap-3">
+        <div class="w-10 h-10 bg-brik-100 rounded-lg flex items-center justify-center shrink-0">
+         <svg class="w-5 h-5 text-brik-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+        </div>
+        <div class="flex-1">
+         <h3 class="font-bold text-sm text-slate-800 mb-0.5">פנקס כללי PDF (רגולטורי)</h3>
+         <p class="text-[11px] text-slate-500 mb-2">מסמך תואם ל-<span class="font-mono text-[10px]">תקנות הבטיחות, התשע"ט-2019</span> — 9 חלקים סטנדרטיים. מאפשר הדפסה/הצגה למפקח עבודה.</p>
+         <div class="grid grid-cols-2 gap-1 text-[10px] text-slate-700 mb-2">
+          <div>· רישומי זיהוי</div>
+          <div>· בעלי תפקידים</div>
+          <div>· ציוד בבדיקה</div>
+          <div>· בדיקות מנ"ע</div>
+          <div>· מפקח עבודה</div>
+          <div>· בודק מוסמך</div>
+          <div>· אירועים מיוחדים</div>
+          <div>· נספחים</div>
+          <div>· הדרכות עובדים</div>
+         </div>
+         <button class="flex items-center gap-1.5 px-3 py-1.5 bg-brik-500 text-white text-xs font-medium rounded-lg">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/></svg>
+          הפק PDF
+         </button>
+        </div>
+       </div>
+      </div>
+
+      <!-- NEW — Filtered safety export -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4">
+       <div class="flex items-start gap-3">
+        <div class="w-10 h-10 bg-violet-50 rounded-lg flex items-center justify-center shrink-0">
+         <svg class="w-5 h-5 text-violet-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>
+        </div>
+        <div class="flex-1">
+         <h3 class="font-bold text-sm text-slate-800">ייצוא מסונן</h3>
+         <p class="text-[11px] text-slate-500 mb-2">ייצוא שמכבד את הסינון הפעיל כרגע במסך הבטיחות — Excel או PDF · כולל תמונות.</p>
+         <div class="bg-slate-50 rounded-lg p-2 mb-2 text-[10px] text-slate-700">
+          <div class="font-semibold text-slate-600 mb-0.5">סינון פעיל:</div>
+          <div>חברה=ארזי · קטגוריה=גובה · חומרה=2,3 · פתוח · 30 יום</div>
+          <div class="mt-1 text-sky-700 font-semibold">→ 23 רשומות · ~4.2 MB</div>
+         </div>
+         <div class="flex gap-1.5">
+          <button class="flex-1 py-1.5 bg-slate-100 text-slate-800 text-xs font-medium rounded-lg">Excel</button>
+          <button class="flex-1 py-1.5 bg-slate-100 text-slate-800 text-xs font-medium rounded-lg">PDF</button>
+          <button class="flex-1 py-1.5 bg-amber-500 text-white text-xs font-medium rounded-lg">ZIP + תמונות</button>
+         </div>
+        </div>
+       </div>
+      </div>
+
+      <!-- Existing Full ZIP (async) — mentions safety -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4">
+       <div class="flex items-start gap-3">
+        <div class="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center shrink-0">
+         <svg class="w-5 h-5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/></svg>
+        </div>
+        <div class="flex-1">
+         <h3 class="font-bold text-sm text-slate-800">ייצוא מלא (ZIP)</h3>
+         <p class="text-[11px] text-slate-500">הפטרן הקיים <b>+ עכשיו כולל</b> תמונות אירועים, מסמכי הדרכה, חתימות דיגיטליות · async polling</p>
+        </div>
+       </div>
+      </div>
+
+     </div>
+    </div>
+   </div>
+  </div>
+
+  <!-- Integration diff -->
+  <div class="flex-1 min-w-[360px] max-w-[640px]">
+   <div class="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
+    <h3 class="font-bold text-slate-900 mb-2">מה משתנה ב-<span class="font-mono text-sm text-brik-600">ProjectDataExportTab.js</span></h3>
+    <div class="bg-slate-900 rounded-lg p-4 text-xs font-mono text-slate-200 leading-relaxed overflow-x-auto">
+<span class="text-emerald-400">// +2 כרטיסים חדשים · 0 שינויים לכרטיסים הקיימים</span><br>
+<span class="text-emerald-400">// +1 import · safetyExportService (חדש)</span><br>
+<span class="text-emerald-400">// HIT:</span> הרחבת <span class="text-sky-300">exportFullExcel</span><br>
+<span class="text-slate-500">   ב-backend → מוסיף ws7/ws8/ws9</span><br>
+<span class="text-slate-500">   (לא משנה את 6 הקיימים)</span>
+    </div>
+   </div>
+   <div class="bg-white border border-slate-200 rounded-2xl p-5">
+    <h3 class="font-bold text-slate-900 mb-2">מה משתנה ב-<span class="font-mono text-sm text-brik-600">export_router.py</span></h3>
+    <table class="w-full text-sm">
+     <thead>
+      <tr class="border-b border-slate-200">
+       <th class="text-right py-2 font-semibold">גיליון</th>
+       <th class="text-right py-2 font-semibold">שם</th>
+       <th class="text-right py-2 font-semibold">שורות</th>
+       <th class="text-right py-2 font-semibold">סטטוס</th>
+      </tr>
+     </thead>
+     <tbody class="text-xs">
+      <tr class="border-b border-slate-100"><td class="py-1.5 font-mono">ws1-ws6</td><td>ליקויים · מסירות · QC · מבנה · צוות · חברות</td><td>existing</td><td class="text-slate-500">ללא שינוי</td></tr>
+      <tr class="border-b border-slate-100 bg-emerald-50"><td class="py-1.5 font-mono text-emerald-700">+ws7</td><td>עובדי בטיחות</td><td>1/worker</td><td class="text-emerald-700 font-semibold">חדש</td></tr>
+      <tr class="border-b border-slate-100 bg-emerald-50"><td class="py-1.5 font-mono text-emerald-700">+ws8</td><td>הדרכות (תקף עד, מדריך, משך)</td><td>1/training</td><td class="text-emerald-700 font-semibold">חדש</td></tr>
+      <tr class="bg-emerald-50"><td class="py-1.5 font-mono text-emerald-700">+ws9</td><td>אירועים + תיעודים + משימות</td><td>1/event</td><td class="text-emerald-700 font-semibold">חדש</td></tr>
+     </tbody>
+    </table>
+    <p class="text-[11px] text-slate-500 mt-3">כל גיליון מקבל <span class="font-mono">sheet_view.rightToLeft=True</span> · <span class="font-mono">_apply_headers</span> · <span class="font-mono">_set_widths</span> · <span class="font-mono">_set_autofilter</span> — זהה לפטרן הקיים. PII במסונן לפי דגל <span class="font-mono">ENABLE_SAFETY_PII_MASKING</span>.</p>
+   </div>
+  </div>
+ </div>
+</section>
+
+<!-- SECTION 5: ARCHITECTURE COLLISION — project_companies -->
+<section>
+ <div class="mb-5">
+  <div class="flex items-center gap-2 mb-2">
+   <span class="bg-brik-500 text-white w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm">5</span>
+   <h2 class="text-2xl font-bold">פתרון התנגשות ארכיטקטונית: <span class="font-mono text-lg">project_companies</span></h2>
+  </div>
+  <p class="text-slate-600">בסקירה עמוקה הסתבר שקיים כבר ב-BrikOps <span class="font-mono text-sm">project_companies</span> (קבלן רמה-פרויקט) — עם שדות <code>name, trade, contact_name, contact_phone, contact_email</code>. במקום לבנות <span class="font-mono">contractor_companies</span> חדש ולייצר כפילות, <b>נבצע הרחבה בלבד</b>.</p>
+ </div>
+ <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+  <table class="w-full text-sm">
+   <thead>
+    <tr class="bg-slate-900 text-white">
+     <th class="text-right p-3 font-semibold w-1/4">שדה</th>
+     <th class="text-right p-3 font-semibold w-1/4">קיים?</th>
+     <th class="text-right p-3 font-semibold w-1/4">Phase 1</th>
+     <th class="text-right p-3 font-semibold">הערה</th>
+    </tr>
+   </thead>
+   <tbody>
+    <tr class="border-b border-slate-100"><td class="p-3 font-mono text-xs">name</td><td class="p-3 text-emerald-600">✓ קיים</td><td class="p-3 text-slate-400">—</td><td class="p-3 text-xs text-slate-500">ללא שינוי</td></tr>
+    <tr class="border-b border-slate-100"><td class="p-3 font-mono text-xs">trade</td><td class="p-3 text-emerald-600">✓ קיים</td><td class="p-3 text-slate-400">—</td><td class="p-3 text-xs text-slate-500">ללא שינוי</td></tr>
+    <tr class="border-b border-slate-100"><td class="p-3 font-mono text-xs">contact_name / phone / email</td><td class="p-3 text-emerald-600">✓ קיים</td><td class="p-3 text-slate-400">—</td><td class="p-3 text-xs text-slate-500">ללא שינוי</td></tr>
+    <tr class="border-b border-slate-100 bg-amber-50"><td class="p-3 font-mono text-xs">registry_number</td><td class="p-3 text-rose-600">✗ חסר</td><td class="p-3 text-amber-700 font-semibold">+ הוסף (optional)</td><td class="p-3 text-xs text-slate-700">מספר קבלן רשום (רישוי קבלנים). חובה לדוחות רגולציה.</td></tr>
+    <tr class="border-b border-slate-100 bg-amber-50"><td class="p-3 font-mono text-xs">is_placeholder</td><td class="p-3 text-rose-600">✗ חסר</td><td class="p-3 text-amber-700 font-semibold">+ הוסף (default=false)</td><td class="p-3 text-xs text-slate-700">מסמן חברה שנוצרה מהיר מתוך טופס הדרכה (לפני שיש registry_number)</td></tr>
+    <tr class="border-b border-slate-100 bg-amber-50"><td class="p-3 font-mono text-xs">safety_contact_id</td><td class="p-3 text-rose-600">✗ חסר</td><td class="p-3 text-amber-700 font-semibold">+ הוסף (optional)</td><td class="p-3 text-xs text-slate-700">reference למשתמש ש-role=safety_officer של החברה</td></tr>
+    <tr class="border-b border-slate-100 bg-rose-50"><td class="p-3 font-mono text-xs">deleted_at / deleted_by / deletion_reason</td><td class="p-3 text-rose-600">✗ חסר</td><td class="p-3 text-rose-700 font-semibold">+ הוסף (soft-delete)</td><td class="p-3 text-xs text-slate-700">נדרש ל-SOC2 + רגולציה 7 שנים · נוסף לכל הטבלה · migration ל-collection קיים</td></tr>
+    <tr class="bg-rose-50"><td class="p-3 font-mono text-xs">retention_until</td><td class="p-3 text-rose-600">✗ חסר</td><td class="p-3 text-rose-700 font-semibold">+ הוסף (auto = +7y)</td><td class="p-3 text-xs text-slate-700">מחושב ב-insert. שימושי ל-TTL future-phase.</td></tr>
+   </tbody>
+  </table>
+  <div class="p-5 bg-slate-50 border-t border-slate-200">
+   <h4 class="font-semibold mb-2">Migration Plan</h4>
+   <ol class="text-sm space-y-1.5 text-slate-700 list-decimal list-inside">
+    <li>בסיום ההרחבה — 6 שדות חדשים מתווספים ל-schema של <span class="font-mono text-xs">project_companies</span> כ-optional</li>
+    <li>לכל המסמכים הקיימים: <span class="font-mono text-xs">{ $set: { deleted_at: null, retention_until: created_at + 7y } }</span></li>
+    <li>Index חדש: <span class="font-mono text-xs">{ project_id: 1, deleted_at: 1 }</span> — לכל query קיים מתווסף פילטר <span class="font-mono text-xs">deleted_at: null</span></li>
+    <li>קיים <span class="font-mono text-xs">companies_router.py</span> → נוסיף 3 endpoints: <span class="font-mono text-xs">DELETE</span> (soft), <span class="font-mono text-xs">POST /restore</span>, <span class="font-mono text-xs">GET /deleted</span> (admin only)</li>
+    <li>האפליקציה ממשיכה לעבוד על אותו טאב "קבלנים וחברות" הקיים — מחזירה רק מסמכים לא מחוקים</li>
+   </ol>
+  </div>
+ </div>
+</section>
+
+<!-- SECTION 6: ARCHITECTURE DIAGRAM (updated) -->
+<section>
+ <div class="mb-5">
+  <div class="flex items-center gap-2 mb-2">
+   <span class="bg-brik-500 text-white w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm">6</span>
+   <h2 class="text-2xl font-bold">דיאגרמת ארכיטקטורה (מעודכנת)</h2>
+  </div>
+  <p class="text-slate-600">הפרדה חדה בין קיים לחדש. אפס שבירה של קוד ייצור. הרחבה בלבד של 2 קבצים קיימים (<span class="font-mono text-sm">ProjectControlPage.js</span> ב-2 שורות · <span class="font-mono text-sm">export_router.py</span> ב-3 פונקציות עזר).</p>
+ </div>
+ <div class="bg-white border border-slate-200 rounded-2xl p-6">
+  <div class="grid md:grid-cols-2 gap-6">
+
+   <!-- Existing -->
+   <div>
+    <h3 class="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+     <span class="w-2 h-2 rounded-full bg-slate-400"></span> קיים — לא נשבר
+    </h3>
+    <div class="space-y-1.5 text-xs font-mono">
+     <div class="bg-slate-100 rounded p-2">ProjectControlPage.js <span class="text-slate-500">· +2 שורות בלבד ל-SECONDARY_TABS</span></div>
+     <div class="bg-slate-100 rounded p-2">ProjectDataExportTab.js <span class="text-slate-500">· +2 כרטיסים חדשים</span></div>
+     <div class="bg-slate-100 rounded p-2">companies_router.py <span class="text-slate-500">· +3 endpoints soft-delete</span></div>
+     <div class="bg-slate-100 rounded p-2">export_router.py <span class="text-slate-500">· +3 sheet generators (ws7-9)</span></div>
+     <div class="bg-slate-100 rounded p-2">project_companies collection <span class="text-slate-500">· +6 שדות optional</span></div>
+     <div class="bg-slate-100 rounded p-2 text-slate-400">ProjectDefects · QC · Handover · Team · Buildings · Floors · Units — ללא שינוי</div>
+    </div>
+   </div>
+
+   <!-- New -->
+   <div>
+    <h3 class="text-sm font-bold text-brik-600 mb-3 flex items-center gap-2">
+     <span class="w-2 h-2 rounded-full bg-brik-500"></span> חדש — מבודד בתיקייה נפרדת
+    </h3>
+    <div class="space-y-1.5 text-xs font-mono">
+     <div class="bg-brik-50 border border-brik-200 rounded p-2">frontend/src/components/<b>safety/</b>/</div>
+     <div class="bg-brik-50 border border-brik-200 rounded p-2 ps-6">SafetyTab.jsx</div>
+     <div class="bg-brik-50 border border-brik-200 rounded p-2 ps-6">SafetyDashboard.jsx <span class="text-brik-400">· gauge + 6 cards</span></div>
+     <div class="bg-brik-50 border border-brik-200 rounded p-2 ps-6">DocumentationList.jsx · TaskList.jsx</div>
+     <div class="bg-brik-50 border border-brik-200 rounded p-2 ps-6">WorkerDrawer.jsx · TrainingForm.jsx</div>
+     <div class="bg-brik-50 border border-brik-200 rounded p-2 ps-6">SafetyFilterSheet.jsx <span class="text-brik-400">· 7 ממדים</span></div>
+     <div class="bg-brik-50 border border-brik-200 rounded p-2">backend/contractor_ops/<b>safety_router.py</b></div>
+     <div class="bg-brik-50 border border-brik-200 rounded p-2">backend/contractor_ops/safety_pdf.py <span class="text-brik-400">· פנקס כללי</span></div>
+     <div class="bg-brik-50 border border-brik-200 rounded p-2">backend/schemas/safety.py</div>
+     <div class="bg-brik-50 border border-brik-200 rounded p-2">collections: safety_documents · safety_tasks · workers · trainings · equipment_inspections</div>
+    </div>
+   </div>
+  </div>
+ </div>
+</section>
+
+<!-- SECTION 7: SOC2 -->
+<section>
+ <div class="mb-5">
+  <div class="flex items-center gap-2 mb-2">
+   <span class="bg-brik-500 text-white w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm">7</span>
+   <h2 class="text-2xl font-bold">SOC2 + רגולציה</h2>
+  </div>
+  <p class="text-slate-600">כל רשומה, כל שליפה, כל ייצוא מתועדים באופן שמאפשר לבקר לשחזר את מצב המערכת בכל נקודה בזמן.</p>
+ </div>
+ <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+  <table class="w-full text-sm">
+   <thead class="bg-slate-900 text-white">
+    <tr>
+     <th class="text-right p-3 font-semibold">בקרה</th>
+     <th class="text-right p-3 font-semibold">TSC</th>
+     <th class="text-right p-3 font-semibold">יישום ב-Phase 1</th>
+    </tr>
+   </thead>
+   <tbody class="text-xs">
+    <tr class="border-b border-slate-100"><td class="p-3 font-semibold">Access Control</td><td class="p-3 font-mono">CC6.1</td><td class="p-3">require_roles(MANAGEMENT_ROLES) · _check_project_access · sub_role=safety_officer ב-approve · viewer=read-only</td></tr>
+    <tr class="border-b border-slate-100"><td class="p-3 font-semibold">Audit Logging</td><td class="p-3 font-mono">CC7.2</td><td class="p-3">_audit לכל POST/PUT/DELETE · כולל before/after של שדה שהשתנה · נשמר לצמיתות</td></tr>
+    <tr class="border-b border-slate-100"><td class="p-3 font-semibold">PII Protection</td><td class="p-3 font-mono">C1.1</td><td class="p-3">ת.ז. מוצג כ-****XXXX · נשלח בשלמות רק ב-POST · מוצפן במונגו · logs לעולם לא מכילים ת.ז.</td></tr>
+    <tr class="border-b border-slate-100"><td class="p-3 font-semibold">Change Management</td><td class="p-3 font-mono">CC8.1</td><td class="p-3">Feature flag ENABLE_SAFETY_MODULE · Git workflow · QA gate · staging → prod</td></tr>
+    <tr class="border-b border-slate-100"><td class="p-3 font-semibold">Retention & Deletion</td><td class="p-3 font-mono">CC2.1</td><td class="p-3">soft-delete · retention_until = created_at + 7y · hard-delete דחוי ל-Phase 4</td></tr>
+    <tr class="border-b border-slate-100"><td class="p-3 font-semibold">Segregation of Duties</td><td class="p-3 font-mono">CC6.3</td><td class="p-3">safety_assistant יוצר · safety_officer מאשר · approve לא יכול להתבצע ע"י יוצר הרשומה</td></tr>
+    <tr><td class="p-3 font-semibold">Monitoring</td><td class="p-3 font-mono">CC7.3</td><td class="p-3">Sentry חריגות · dashboard נפרד במוצר ל-management · alert על failed approval</td></tr>
+   </tbody>
+  </table>
+ </div>
+</section>
+
+<!-- SECTION 8: DECISIONS FROM ZAHI -->
+<section>
+ <div class="mb-5">
+  <div class="flex items-center gap-2 mb-2">
+   <span class="bg-brik-500 text-white w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm">8</span>
+   <h2 class="text-2xl font-bold">החלטות שטרם התקבלו</h2>
+  </div>
+  <p class="text-slate-600">לפני שחרור הספק ל-Replit, אנא אשר/דחה את הסעיפים הבאים — כל "כן" כאן נועל פרט שלא ניתן לגלגל בלי migration.</p>
+ </div>
+ <div class="space-y-3">
+  <div class="bg-white border border-slate-200 rounded-xl p-4 flex items-start gap-3">
+   <span class="w-7 h-7 bg-amber-100 text-amber-700 rounded-lg flex items-center justify-center font-bold text-sm shrink-0">?</span>
+   <div class="flex-1">
+    <h4 class="font-semibold mb-1">שימוש חוזר ב-<span class="font-mono text-sm">project_companies</span></h4>
+    <p class="text-sm text-slate-600">במקום contractor_companies נפרד — להרחיב את הטבלה הקיימת ב-6 שדות. <b>מומלץ</b> — מונע כפילות נתונים, מסנכרן טאב "קבלנים וחברות" הקיים.</p>
+   </div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-xl p-4 flex items-start gap-3">
+   <span class="w-7 h-7 bg-amber-100 text-amber-700 rounded-lg flex items-center justify-center font-bold text-sm shrink-0">?</span>
+   <div class="flex-1">
+    <h4 class="font-semibold mb-1">Safety Score — להצגה או להסתרה ב-v1?</h4>
+    <p class="text-sm text-slate-600">סמנטו מציגה · הנוסחה פשוטה לדרייב ערך שיווקי. מומלץ <b>כן</b> — עם tooltip "הסבר הנוסחה".</p>
+   </div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-xl p-4 flex items-start gap-3">
+   <span class="w-7 h-7 bg-amber-100 text-amber-700 rounded-lg flex items-center justify-center font-bold text-sm shrink-0">?</span>
+   <div class="flex-1">
+    <h4 class="font-semibold mb-1">"פנקס כללי PDF" — Phase 1 או Phase 2?</h4>
+    <p class="text-sm text-slate-600">מורכב (9 חלקים רגולטוריים + layout אמיתי). בלעדיו — אין ערך רגולטורי מלא מול מפקח עבודה. מומלץ <b>Phase 1 אבל כסעיף אחרון</b>.</p>
+   </div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-xl p-4 flex items-start gap-3">
+   <span class="w-7 h-7 bg-amber-100 text-amber-700 rounded-lg flex items-center justify-center font-bold text-sm shrink-0">?</span>
+   <div class="flex-1">
+    <h4 class="font-semibold mb-1">בדיקות תקופתיות (סעיפים 20/50/84/122/125) — Phase 1?</h4>
+    <p class="text-sm text-slate-600">סמנטו מציגה את זה כחלק מהמערכת. ב-Phase 1 נציג kpi בלבד ("18 בדיקות · כולן בתוקף") ואת הטופס המלא נוסיף ב-Phase 2.</p>
+   </div>
+  </div>
+ </div>
+</section>
+
+<!-- FOOTER -->
+<footer class="pt-8 pb-12">
+ <div class="bg-gradient-to-br from-slate-900 to-brik-700 rounded-2xl p-8 text-white">
+  <h3 class="text-xl font-bold mb-3">הצעד הבא — אישור לפרסום ספק ל-Replit</h3>
+  <div class="grid md:grid-cols-3 gap-4 text-sm">
+   <div class="bg-white/10 rounded-lg p-4 border border-white/15">
+    <div class="font-bold mb-2">מסמכים מעודכנים</div>
+    <ul class="space-y-1 text-slate-200 text-xs">
+     <li>✓ <span class="font-mono">safety-and-worklog-concept.md</span></li>
+     <li>✓ <span class="font-mono">safety-feature-phase-1-spec.md</span></li>
+     <li>✓ <span class="font-mono">safety-phase-1-mockup-v2.html</span> (זה)</li>
+    </ul>
+   </div>
+   <div class="bg-white/10 rounded-lg p-4 border border-white/15">
+    <div class="font-bold mb-2">מה צפוי להשתנות בספק</div>
+    <ul class="space-y-1 text-slate-200 text-xs">
+     <li>→ Task #14 — Filter query params + index</li>
+     <li>→ Task #15 — Filter sheet component</li>
+     <li>→ Task #16 — ws7/ws8/ws9 לייצוא</li>
+     <li>→ Task #17 — PDF generator (פנקס כללי)</li>
+     <li>→ ביטול contractor_companies · reuse</li>
+    </ul>
+   </div>
+   <div class="bg-white/10 rounded-lg p-4 border border-white/15">
+    <div class="font-bold mb-2">ETA</div>
+    <ul class="space-y-1 text-slate-200 text-xs">
+     <li>Phase 1a (foundation) · 2 ימים</li>
+     <li>Phase 1b (routes + filters) · 3 ימים</li>
+     <li>Phase 1c (UI + export) · 3 ימים</li>
+     <li>Phase 1d (PDF + E2E) · 2 ימים</li>
+     <li class="font-bold pt-1 border-t border-white/20 mt-1">סך הכל · 10 ימי עבודה</li>
+    </ul>
+   </div>
+  </div>
+ </div>
+</footer>
+
+</main>
+
+</body>
+</html>

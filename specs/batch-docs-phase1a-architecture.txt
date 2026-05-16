@@ -1,0 +1,359 @@
+================================================================================
+DOCS PHASE 1A — Architecture decision records + refactor backlog + CLAUDE.md
+================================================================================
+Date:           2026-04-29
+Branch:         staging  (NOT main)
+Severity:       MEDIUM — pre-launch documentation work; no code changes,
+                no deploy risk, no user-facing impact.
+Files created:  6-8 new files in /docs/architecture/, /docs/, project root
+                (exact count depends on STEP 0 findings).
+Files modified: 1 — extend existing /CLAUDE.md (don't replace).
+Mobile:         N/A — pure documentation, no code, no UI.
+
+CONTEXT
+-------
+The codebase works. 41 internal testers use it. But several files are
+1500-3680 lines and there's no documentation explaining WHY they look
+the way they do. Future developers (post-revenue hires) will face
+onboarding friction.
+
+This batch is Phase 1A from the Codebase Documentation & Refactor Plan
+at /docs/strategy/codebase-refactor-plan.md (read it first). The plan
+explicitly states:
+  - Documentation BEFORE refactor
+  - No code changes — read-only investigation + writing
+  - One batch, ~3-4 hours
+  - Deliverables: 5-8 ADRs + refactor backlog + extended CLAUDE.md
+
+The principle: a 3000-line file with a clear ADR is easier to onboard
+onto than a 500-line file that's been refactored into 6 files with no
+explanation.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Identify the actual top files (don't trust assumptions in the plan):
+
+    Backend:
+      find backend/contractor_ops backend/services -name "*.py" \
+          | xargs wc -l | sort -rn | head -20
+
+    Frontend pages:
+      find frontend/src/pages -name "*.js" -o -name "*.jsx" \
+          | xargs wc -l | sort -rn | head -20
+
+    Frontend components:
+      find frontend/src/components -name "*.js" -o -name "*.jsx" \
+          | xargs wc -l | sort -rn | head -20
+
+    Files >800 lines are ADR candidates. Document the top 10 in the
+    main README.md.
+
+0.2 — Scan for TODO/FIXME/XXX comments older than 30 days:
+    grep -rn "TODO\|FIXME\|XXX" backend/contractor_ops backend/services \
+        frontend/src --include="*.py" --include="*.js" --include="*.jsx" \
+        | grep -v node_modules | grep -v __pycache__
+
+    These feed the refactor-backlog.md initial population.
+
+0.3 — Read the existing CLAUDE.md at project root:
+    cat /Users/zhysmy/brikops-new/CLAUDE.md
+
+    This file currently documents Zahi's deploy workflow (URLs, native vs
+    OTA rules). It is Zahi-facing operational. The Phase 1A "CLAUDE.md
+    section for Cowork" must be ADDED to this file (not replace it).
+    See PART 4 below.
+
+0.4 — Read existing strategic docs to avoid duplication:
+    ls /Users/zhysmy/brikops-new/docs/strategy/
+    cat /Users/zhysmy/brikops-new/ROADMAP.md | head -60
+
+    The new ADRs complement these — they describe the WHY of specific
+    files/modules, not the WHY of the product or roadmap.
+
+0.5 — Output STEP 0 findings at the TOP of review.txt before any file
+    creation. List the top 20 files (with line counts) and the TODO
+    inventory. If unexpected files emerge (e.g., a 4000-line file we
+    didn't anticipate), flag and ask whether to add an ADR for it.
+
+================================================================================
+PART 1 — docs/architecture/README.md
+================================================================================
+Purpose: Index for all architecture documentation.
+
+Contents:
+- Top 10 largest files in the codebase (with line counts and one-line
+  description of what each does — based on STEP 0.1 findings, not
+  assumptions).
+- Link to each detailed ADR (one per major file/module).
+- Quick conventions list:
+    - Status fields: how `closed` vs `approved` work (after Batch 5C/5F)
+    - IDs: `str(uuid.uuid4())` (string UUIDs, never ObjectId)
+    - Timestamps: `_now()` returns UTC ISO string
+    - Hebrew handling: i18n at `frontend/src/i18n/he.json`, RTL via `dir="rtl"`
+    - Auth: `get_current_user` dependency on every endpoint
+    - Pagination: `{items, total, limit, offset}` envelope
+- Anti-patterns to avoid (with reasons — see Part 4 below for full list)
+- "When in doubt" guidance:
+    - Look at sibling files for convention before inventing
+    - Check `STATUS_BUCKET_EXPANSION` in `tasks_router.py:40` before adding
+      any new status comparison
+    - Check `TERMINAL_TASK_STATUSES` in `constants.py:1` before re-defining
+    - Check `getProjectBackPath` in `utils/navigation.js` before
+      hardcoding back-button targets
+
+Length target: 200-400 lines. Not exhaustive — readable in 10 minutes.
+
+================================================================================
+PART 2 — docs/architecture/adr-XXX-*.md (one per major file)
+================================================================================
+Create one ADR per file identified in STEP 0.1 as >1500 lines. Target:
+5-8 ADRs total. Each ADR follows this structure:
+
+```
+# ADR-NNN — <File or Module Name>
+
+**Status:** Accepted (or Proposed / Superseded)
+**Date:** YYYY-MM-DD
+**File:** path/to/file.ext (LINE_COUNT lines as of date)
+
+## Why this exists
+[1-2 paragraphs: what this file does, why it's not split into smaller files]
+
+## Architectural decisions
+- Decision 1: [name]. Why: [reason]. Trade-off accepted: [trade-off].
+- Decision 2: ...
+
+## Conventions used here
+- [convention 1, e.g. "All endpoints check get_current_user dependency"]
+- [convention 2, e.g. "Status writes use string literals; reads use STATUS_BUCKET_EXPANSION"]
+
+## Natural seams (where to split if/when refactor happens)
+- Seam 1: [function/class/section name and line range]. Could become: [target file].
+- Seam 2: ...
+
+## When to refactor
+- Trigger: [data point that would justify splitting, e.g. "If 60% of bugs in any quarter cluster in this file"]
+- Pre-requisites: [what must be in place first, e.g. "Tests covering the 5 critical flows"]
+
+## Recent changes
+- YYYY-MM-DD (Batch X): [what changed and why]
+- YYYY-MM-DD (Batch Y): ...
+```
+
+Length per ADR: 200-400 lines. Capture the WHY only — not exhaustive
+documentation. The code is the source of truth for HOW; the ADR is the
+source of truth for WHY.
+
+ADR candidates (final list determined by STEP 0.1):
+- ADR-001: ProjectControlPage.js (3680 lines — the project's home page
+  with 7 work-modes. Why state is lifted to parent. Where seams are
+  (CompaniesTab, TeamTab, AddCompanyForm, etc.). Reference recent
+  Batch 5B Companies dedupe + Batch 5C/5F status alignment.)
+- ADR-002: billing_router.py (~2000 lines — why endpoints are co-located,
+  PayPlus integration constraints, GI-failure-doesn't-block-activation
+  pattern, S5a/S7-C webhook idempotency, check_org_billing_role auth model)
+- ADR-003: tasks_router.py (~1500 lines — task lifecycle state machine,
+  why force_close writes 'approved' and approve_proof writes 'closed',
+  STATUS_BUCKET_EXPANSION single source of truth, drift-guard test from 5F)
+- ADR-004: status-system.md (cross-cutting — every status value, where
+  written, where read, the 5C/5F lesson on display vs DB distinction,
+  forbidden patterns)
+- ADR-005: i18n.md (cross-cutting — module-level t() pattern, he.json
+  source of truth, PM/admin forced Hebrew, RTL handling)
+
+If STEP 0.1 finds additional >1500-line files, propose ADRs for them too
+(one per file). If a candidate above turns out to be smaller than expected
+or already well-documented inline, skip its ADR.
+
+================================================================================
+PART 3 — docs/refactor-backlog.md
+================================================================================
+Purpose: Living document of known refactor opportunities.
+
+Format per item:
+```
+## #N — <Short title>
+
+**File(s):** path/to/file.ext:LINE-RANGE
+**Severity:** Low / Medium / High (impact on bugs or onboarding)
+**What's wrong (data, not feeling):** [evidence — bugs in this area,
+batch time, coupling]
+**Proposed fix:** [1-2 sentences]
+**Estimated time:** [hours]
+**Fold into batch X when:** [next-touched suggestion]
+```
+
+Initial items to populate (Cowork should add more based on its codebase
+read):
+
+1. ProjectControlPage.js — extract CompaniesTab to its own file
+   (already has clear scope after Batch 5B Companies state dedupe).
+2. ProjectControlPage.js — extract TeamTab + AddTeamMemberForm.
+3. ProjectControlPage.js — extract DEFECT_STATUS_CONFIG /
+   DEFECT_PRIORITY_CONFIG to a shared constants module.
+4. tasks_router.py — STATUS_BUCKET_EXPANSION + open_statuses +
+   handled_statuses currently live in 2 places (line 40 module-level dict
+   + line 363 function-local lists). Already drift-guarded by test_status_buckets.py
+   (Batch 5F) but consolidating would remove the drift surface entirely.
+5. handover_router.py — local TERMINAL_TASK_STATUSES duplicate was
+   removed in Batch 5C. Audit for any other constants that might still
+   shadow constants.py.
+6. Frontend — STATUS_LABELS map duplication across UnitDetailPage,
+   ProjectTasksPage, ApartmentDashboardPage, ProjectControlPage,
+   StatusPill. After 5C/5F/5G these are aligned, but each page still
+   declares its own copy. Could centralize.
+7. UserDrawer.js — 3 native <select> elements that misrender on Desktop
+   browsers + RTL + position:fixed (the deferred Batch 5D from Task #21).
+8. ProjectControlPage:3770 — in-page לאישור shortcut drops `from=dashboard`
+   query param when clicked (Task #36 follow-up to 5H).
+9. handover_router.py:2336 — $nin missing 'done' (Task #27 from 5C audit).
+10. force_close → aggregation → reopen regression tests (Task #28,
+    BLOCKING LAUNCH per 5C spec).
+
+Plus any TODO/FIXME comments surfaced in STEP 0.2.
+
+Each item should be actionable enough that a future developer (or Cowork
+in a future batch) can pick it up without back-channel context.
+
+================================================================================
+PART 4 — Extend /CLAUDE.md (do NOT replace)
+================================================================================
+The existing CLAUDE.md at project root is Zahi's operational doc (deploy
+workflow, URLs, native vs OTA rules). KEEP IT.
+
+ADD a new section at the BOTTOM of the file titled:
+
+  ## 🤖 Standing instructions for Cowork (read before every batch)
+
+Contents of the new section (target: <100 additional lines):
+
+- Read docs/architecture/README.md before any spec implementation
+  (especially when touching files that have an ADR)
+- STEP 0 mandatory pre-flight grep audit (already standing rule)
+- When touching a file in docs/refactor-backlog.md, propose folding the
+  refactor into the current batch (Boy Scout Rule)
+- Anti-patterns Zahi has flagged repeatedly:
+    - WebkitOverflowScrolling: 'touch' → NEVER USE (iOS freeze)
+    - ObjectId → NEVER USE (string UUIDs only)
+    - now_il() → NEVER USE (UTC only)
+    - console.log with PII → NEVER in production
+    - modal={true} on Radix Dialog → can cause pointer-events: none on body
+    - Photo annotation renders via createPortal → events bubble to parent
+    - Native <select> in RTL + position:fixed drawer → escapes ~600px on
+      Desktop browsers (mobile WebView is fine; use Radix Select for new code)
+    - window.confirm() → ugly in mobile WebView; use Radix Dialog modal
+      instead (reference: TaskDetailPage reopen confirm modal)
+    - Local duplicates of constants → silently shadow imports. Always
+      grep `^<CONST_NAME> = ` before assuming an update cascades.
+- Where to find existing helpers (BEFORE building new ones):
+    - check_org_billing_role (billing_router.py)
+    - send_invoice_email (services/)
+    - getProjectBackPath (utils/navigation.js)
+    - STATUS_BUCKET_EXPANSION (tasks_router.py:40)
+    - TERMINAL_TASK_STATUSES (constants.py:1)
+    - tStatus / tCategory / tPriority (i18n module)
+- Hebrew commit message format Zahi prefers:
+    `fix(<scope>): <one-line summary in present tense, lowercase>`
+- The standing rule: agent NEVER runs `./deploy.sh`, `./ship.sh`,
+  `git commit`, `git push`. Stop at review.txt + .local/.commit_message
+  + present_asset.
+
+If the existing CLAUDE.md ends abruptly (no closing section), add a
+clear `---` separator before the new section. If it ends with a clearly
+final paragraph, add the `---` separator on a new line.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- Any code file under backend/, frontend/src/, backend/services/, etc.
+  This is a documentation-only batch. Zero risk to production behavior.
+- The existing CLAUDE.md content (only ADD a new section at the bottom).
+- ROADMAP.md (the strategic roadmap is Zahi-maintained; ADRs complement it).
+- docs/strategy/* (existing strategic docs).
+- Any test file (no test changes).
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — All target files exist and are non-empty:
+   ls -la docs/architecture/README.md docs/architecture/adr-*.md \
+          docs/refactor-backlog.md
+   wc -l docs/architecture/*.md docs/refactor-backlog.md
+   → All files present, each >50 lines (substantive content).
+
+VERIFY 2 — CLAUDE.md was extended, not replaced:
+   wc -l /CLAUDE.md
+   → original is 62 lines. New file should be ~120-150 lines (added a
+   ~60-90-line Cowork section).
+   grep -c "🌐 כתובות" /CLAUDE.md
+   → must return 1 (original Hebrew section still present).
+   grep -c "🤖 Standing instructions" /CLAUDE.md
+   → must return 1 (new section added).
+
+VERIFY 3 — ADRs follow the template structure:
+   for f in docs/architecture/adr-*.md; do
+     echo "=== $f ==="
+     grep -c "## Why this exists" $f
+     grep -c "## Architectural decisions" $f
+     grep -c "## Conventions used here" $f
+     grep -c "## Natural seams" $f
+     grep -c "## When to refactor" $f
+   done
+   → each section returns 1 for each ADR.
+
+VERIFY 4 — Refactor backlog has at least 10 actionable items:
+   grep -c "^## #" docs/refactor-backlog.md
+   → must return at least 10.
+
+VERIFY 5 — README has all expected sections:
+   grep -c "^## " docs/architecture/README.md
+   → at least 4 sections (Top files / ADRs / Conventions / Anti-patterns).
+
+VERIFY 6 — No code files were modified (regression check):
+   git status --short backend/ frontend/src/
+   → must return empty (no modifications outside docs/ and CLAUDE.md).
+
+================================================================================
+DELIVERABLES
+================================================================================
+review.txt with:
+  - STEP 0 findings at top: top 20 files with line counts, TODO inventory,
+    final ADR list with rationale per inclusion/exclusion
+  - List of created/modified files with line counts
+  - VERIFY 1-6 outputs
+  - Any patterns Cowork noticed during investigation that Zahi should be
+    aware of (e.g., "found a 2500-line file we hadn't anticipated; added
+    ADR-006 for it" or "noticed 7 places that re-declare TERMINAL_TASK_STATUSES")
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  docs(architecture): add ADRs, refactor backlog, and Cowork standing instructions
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.5 commands, output findings at top of
+   review.txt). If unexpected files emerge → flag before proceeding.
+2. Create docs/architecture/README.md with the index.
+3. Create one ADR per major file identified (5-8 files).
+4. Create docs/refactor-backlog.md with at least 10 items.
+5. Extend /CLAUDE.md with the new "Standing instructions for Cowork"
+   section (do NOT replace existing content).
+6. Run all 6 VERIFY checks.
+7. Generate review.txt + .local/.commit_message.
+8. STOP. Zahi reads the docs, decides if any need revision, then
+   `./deploy.sh --stag` (technically optional for docs-only — pages will
+   be served from main after merge).
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+Documentation files only. Zero behavior change. Trivially safe.
+
+================================================================================
+END OF SPEC
+================================================================================

@@ -1,0 +1,400 @@
+================================================================================
+BATCH P1.1-HOTFIX-6 — Remove pinch handler, defer to P1.4
+================================================================================
+Date:           2026-05-11
+Branch:         staging  (NOT main)
+Severity:       P1 — stability over feature. hotfix-4 + hotfix-5 attempted
+                pinch-to-zoom via @use-gesture/react. Both shipped to
+                prod. Real-device testing showed pinch is "twitchy" — it
+                fires but feels nothing like native iOS Photos: 1% steps,
+                limited range, not intuitive. Root cause is fundamental:
+                native iOS Photos uses CSS `transform: scale()` (smooth
+                pixel-zoom) — but that's exactly what causes pixelated
+                PDF text. To get sharp text AND smooth pinch requires a
+                hybrid pattern (CSS-transform-during-gesture +
+                re-render-on-release) — 2-3 hours of fresh-mind work,
+                NOT another @use-gesture config permutation.
+
+                Decision: REVERT pinch entirely. Ship P1.1 with +/-
+                zoom buttons + scrollbar pan as the only zoom UX.
+                Field-test with real users. Re-introduce pinch in P1.4
+                polish with the hybrid pattern, informed by field data.
+
+Files changed:  Frontend only:
+                  - frontend/src/components/PlanViewer.js (~80 LOC removed)
+                  - frontend/package.json — @use-gesture/react KEPT
+                    (P1.4 will use it)
+                Total: 1 file edited, ~80 LOC removed (the pinch hook,
+                scaleRef, sync useEffect, gestureStartScaleRef, debug
+                log, and the import).
+Pre-flight:     hotfix-4 + hotfix-5 deployed to prod. Both functional
+                in code (no crashes), but UX feedback from Zahi on real
+                iPhone: "עובד גרוע, לא אינטואיטיבי כמו שצריך להיות, מדי
+                פעם נותן להתקרב אחוז אחד". Per spec hotfix-5's "🛑 IF
+                HOTFIX-5 FAILS" guidance, Zahi chose Option C (defer
+                pinch to P1.4).
+
+CONTEXT — why revert, not iterate
+=================================
+
+Three reasons to remove pinch entirely now:
+
+1. **Pinch via re-render is fundamentally jank-prone.** Each pinch step
+   triggers `setScale` → react-pdf re-renders the entire PDF canvas at
+   the new scale. For a 1.6MB A1 plan, re-rasterization takes
+   ~50-100ms on a mid-range iPhone. Pinch gestures fire at 60Hz
+   (~16ms/frame). So we drop ~3-6 frames per gesture update — feels
+   "1% at a time" instead of smooth. This isn't a config issue;
+   it's architectural. The fix is the hybrid pattern (CSS transform
+   during gesture, re-render once on release) — same approach Adobe
+   Reader Mobile uses.
+
+2. **Today is the wrong day to write the hybrid pattern.** 9 deploys
+   across 2 days. hotfix-4 had a math bug (PATTERN A compounding).
+   hotfix-5 has a fundamental perf bug. Decision quality is degrading.
+   Fresh-mind work tomorrow > another hotfix tonight.
+
+3. **Buttons work fine.** +/- buttons trigger one re-render per click
+   at a known scale. Smooth, predictable, no jank. Field workers with
+   gloves / dirty hands / phones in landscape often prefer tappable
+   buttons over precise multi-touch gestures anyway. Field test will
+   tell us if pinch is critical UX or merely nice-to-have.
+
+What this hotfix preserves (intentionally):
+  - `@use-gesture/react` stays in package.json. P1.4 will use it with
+    the hybrid pattern. Removing + re-adding the dep is busy-work.
+  - `touchAction: 'pan-x pan-y'` stays on the scroll container.
+    One-finger pan/scroll still works natively (this is what scrollbar
+    drag depends on too).
+  - Math.floor fit-scale, dir="ltr", w-fit, visible scrollbars,
+    multiplicative +/- buttons, thumbnail preview — all unchanged.
+
+STEP 0 — MANDATORY PRE-FLIGHT
+=============================
+
+  # 1. Confirm hotfix-5 PATTERN B is current state
+  git fetch origin staging
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep -n "usePinch\|gestureStartScaleRef\|scaleRef"
+  # EXPECT: matches the lines we're removing — usePinch hook,
+  # scaleRef, gestureStartScaleRef, sync useEffect. If these are
+  # ALREADY absent, hotfix-6 may have been partially applied
+  # elsewhere — STOP and report.
+
+  # 2. Confirm @use-gesture/react still installed
+  grep '"@use-gesture/react"' frontend/package.json
+  # EXPECT: "^10.3.1" — KEEP. We're not removing the dep, just the
+  # consumer code. P1.4 will use it.
+
+  # 3. Confirm touchAction is 'pan-x pan-y' (no pinch-zoom) — we KEEP this
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep "touchAction"
+  # EXPECT: `touchAction: 'pan-x pan-y'` — preserved as-is. One-finger
+  # pan/scroll still works.
+
+  # 4. Confirm +/- zoom buttons are intact
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep -nE "zoomIn|zoomOut|setScale.*Math"
+  # EXPECT: zoomIn × 1.25 (cap 4.0), zoomOut × 0.8 (floor 0.1) —
+  # preserved as-is. These become the SOLE zoom UX after this hotfix.
+
+If ANY pre-flight returns different content → STOP and report.
+
+PART 1 — FRONTEND
+=================
+
+FILE 1 of 1: frontend/src/components/PlanViewer.js
+---------------------------------------------------
+
+LOCATION 1.1 — Remove `usePinch` import (top of file)
+
+   CURRENT (~L1-3):
+     import React, { useState, useCallback, useRef, useEffect } from 'react';
+     import { Document, Page, pdfjs } from 'react-pdf';
+     import { usePinch } from '@use-gesture/react';
+
+   REPLACE WITH:
+     import React, { useState, useCallback, useRef, useEffect } from 'react';
+     import { Document, Page, pdfjs } from 'react-pdf';
+
+   Note: do NOT touch the `import { ZoomIn, ZoomOut, ... } from
+   'lucide-react'` line below. We still need ZoomIn/ZoomOut icons for
+   the buttons.
+
+
+LOCATION 1.2 — Remove scaleRef declaration + comment
+
+   CURRENT (~L47-55, immediately after `const containerRef = useRef(null);`):
+     // 2026-05-10 hotfix-5 — explicit ref for pinch gesture start scale.
+     // Replaces hotfix-4 PATTERN A's `from` closure which was vulnerable
+     // to staleness (@use-gesture appears to cache the bound config and
+     // not re-evaluate `from()` on every render, so it kept returning the
+     // initial fit-scale → any touch reset scale to ~15%). The ref below
+     // is updated on every render via the sync useEffect, so the pinch
+     // handler always reads the latest scale via `scaleRef.current`.
+     const scaleRef = useRef(null);
+
+   REPLACE WITH: (delete entirely — including the blank line above the
+   reset useEffect, no replacement.)
+
+
+LOCATION 1.3 — Remove scaleRef sync useEffect
+
+   CURRENT (~L63-69, immediately after the reset useEffect):
+     // 2026-05-10 hotfix-5 — keep scaleRef in sync with scale state.
+     // The pinch handler reads from this ref (NOT from the `scale`
+     // closure) so it always sees the current value, regardless of
+     // whether @use-gesture's internal binding has been re-evaluated.
+     useEffect(() => {
+       scaleRef.current = scale;
+     }, [scale]);
+
+   REPLACE WITH: (delete entirely — including the blank line, no replacement.)
+
+
+LOCATION 1.4 — Remove the entire usePinch hook + its preceding comment block
+
+   CURRENT (~L71-137, the entire block from "// 2026-05-10 hotfix-5 —
+   PATTERN B (explicit ref + first flag)." through the closing `);` of
+   usePinch):
+     // 2026-05-10 hotfix-5 — PATTERN B (explicit ref + first flag).
+     //
+     // [... ~30 lines of comment ...]
+     //
+     // Bounds [0.1, 4.0] match the +/- button bounds (hotfix-1). Rubberband
+     // gives soft-bounce feedback at the edges. eventOptions.passive=false
+     // is required so we can preventDefault to suppress browser-native
+     // pinch on iOS Safari edge cases.
+     const gestureStartScaleRef = useRef(1.0);
+     usePinch(
+       ({ offset: [s], first, event, type }) => {
+         if (event && event.cancelable) event.preventDefault();
+         if (first) {
+           gestureStartScaleRef.current = scaleRef.current ?? 1.0;
+         }
+         const next = gestureStartScaleRef.current * s;
+         const clamped = Math.min(Math.max(next, 0.1), 4.0);
+         if (process.env.NODE_ENV !== 'production') {
+           // eslint-disable-next-line no-console
+           console.log('[PlanViewer pinch]', {
+             type, first, offset_s: s,
+             startScale: gestureStartScaleRef.current,
+             liveScale: scaleRef.current,
+             nextClamped: clamped,
+           });
+         }
+         setScale(clamped);
+       },
+       {
+         target: containerRef,
+         eventOptions: { passive: false },
+         scaleBounds: { min: 0.1, max: 4.0 },
+         rubberband: true,
+         pointer: { touch: true },
+       }
+     );
+
+   REPLACE WITH: (delete entirely, including the blank line before
+   `handleLoadSuccess`. No replacement.)
+
+   After this edit, the next code in the file should be the
+   `handleLoadSuccess` callback declaration with its own comment block.
+
+
+LOCATION 1.5 — Add brief note explaining the absence (optional but recommended)
+
+   At the location where the usePinch hook used to be (just before
+   `handleLoadSuccess`), add this short comment so future readers
+   don't reintroduce pinch via @use-gesture without understanding why:
+
+   ADD:
+     // 2026-05-11 hotfix-6 — pinch-to-zoom REMOVED.
+     // hotfix-4 + hotfix-5 attempted pinch via @use-gesture/react. Both
+     // shipped but UX was jank-prone on real iPhone: each scale change
+     // triggers a react-pdf re-render (~50-100ms per A1 plan), and pinch
+     // fires at 60Hz — drop ~3-6 frames per gesture step, feels "1% at
+     // a time". The fix is a hybrid pattern (CSS transform during
+     // gesture for smooth feel + re-render on gesture-end for sharp
+     // text), but that's significant work (~3 hours) and deferred to
+     // P1.4 polish. For P1.1 ship: +/- zoom buttons + scrollbar pan
+     // are the zoom UX. Field test will tell us if pinch is must-have.
+
+
+DO NOT TOUCH
+============
+- ❌ Backend (zero changes).
+- ❌ `@use-gesture/react` dependency in package.json (KEEP — P1.4
+     will re-use it with the hybrid pattern).
+- ❌ `touchAction: 'pan-x pan-y'` on the scroll container — keep as-is.
+     One-finger pan/scroll depends on this. Removing it would break
+     scrollbar drag.
+- ❌ +/- zoom buttons + multiplicative bounds — they become the sole
+     zoom UX.
+- ❌ Math.floor fit-scale calc, dir="ltr", w-fit, Tailwind scrollbar
+     modifiers, thumbnail preview, image rendering branch, lazy chunk,
+     self-hosted worker, viewport meta — all preserved.
+- ❌ ProjectPlansPage / UnitPlansPage (consumers — props unchanged).
+
+GLOBAL VERIFY
+=============
+
+VERIFY 1 — Lint (implicit via build).
+
+VERIFY 2 — Build
+    cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
+        REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com \
+        yarn build 2>&1 | tail -10
+    EXPECT: "Compiled successfully". No new errors. ESLint may emit a
+    warning if any of the now-unused imports linger (e.g. `useEffect`
+    is still needed for the reset effect, so it stays). The `usePinch`
+    import removal should not affect anything else.
+
+VERIFY 3 — Manual smoke (Zahi runs after staging deploy)
+
+  Focus: confirm pinch is GONE but buttons + pan still work.
+
+    A. Open A1 PDF, "צפייה במסך מלא".
+       EXPECT: opens at fit-scale (~50-60% desktop, ~25% iPhone).
+
+    B. Try to pinch on iPhone.
+       EXPECT: NOTHING HAPPENS. Pinch is no longer captured.
+       (No crash, no jank, no zoom either. The browser-default pinch
+       might fire on the WHOLE page since touch-action: 'pan-x pan-y'
+       suppresses pinch on the container — viewport may zoom slightly,
+       but the PDF canvas itself doesn't react. That's acceptable for
+       this revert.)
+
+    C. Click + zoom button. Click again. Click again.
+       EXPECT: scale increases ×1.25 per click. Sharp text at every
+       scale (each click triggers re-render). Smooth, predictable.
+
+    D. Click − zoom button to zoom out.
+       EXPECT: scale decreases ×0.8 per click.
+
+    E. After zooming in past viewport, drag scrollbars or
+       swipe one-finger on touch devices to pan.
+       EXPECT: smooth pan, visible scrollbars on macOS/iPhone.
+
+    F. Regression: detail-modal thumbnail preview, multi-page nav,
+       image plans, "פתח בכרטיסייה חדשה", external Eye/Download icons.
+       EXPECT: all preserved from hotfix-3/2/1 state.
+
+    G. CRITICAL: confirm NO console.log fires from PlanViewer.
+       Open Safari Web Inspector → Console → pinch / touch / zoom.
+       EXPECT: no log entries (debug log was inside the removed pinch
+       block).
+
+
+VERIFY 4 — Bundle inspection
+    grep -l "PlanViewer pinch" frontend/build/static/js/*.js
+    # EXPECT: (empty) — the debug log string is gone from all chunks.
+
+    grep -l "usePinch" frontend/build/static/js/*.js
+    # EXPECT: may still appear if @use-gesture/react is tree-shaken into
+    # any chunk (unlikely after removing the only consumer, but possible
+    # if other code imports the lib — which it doesn't). Either way is
+    # acceptable; we kept the dep for future P1.4 use.
+
+    ls -lh frontend/build/static/js/main.*.js
+    # EXPECT: ±0KB vs hotfix-5 (logic removal only).
+    # PlanViewer chunk may shrink slightly (~1-2KB) as the usePinch
+    # hook is no longer imported.
+
+
+DELIVERABLES
+============
+review.txt with:
+  - Rollback SHA (origin/staging HEAD before this commit, post-hotfix-5)
+  - STEP 0 grep outputs (4 checks)
+  - LOCATION 1.1-1.5 diffs
+  - VERIFY 2 (build), VERIFY 4 (bundle) outputs
+  - VERIFY 3 manual smoke deferred to Zahi
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(plans): revert pinch handler, defer to P1.4 polish
+
+  P1.1-hotfix-6 — remove pinch-to-zoom via @use-gesture/react.
+
+  Background: hotfix-4 and hotfix-5 attempted native pinch-zoom on
+  touch devices. Both shipped functional code but the UX was
+  jank-prone on real iPhone — each scale change triggers a react-pdf
+  re-render (~50-100ms per A1 plan), and pinch fires at 60Hz, so we
+  dropped 3-6 frames per gesture step and the result felt "1% at a
+  time" instead of smooth.
+
+  Root cause is architectural, not a config bug: native iOS Photos
+  feels smooth because it uses CSS transform: scale() on rasterized
+  pixels — but that's exactly what produces pixelated text on our
+  PDF canvas. To get sharp text AND smooth pinch requires the hybrid
+  pattern (CSS transform during gesture for smooth feel +
+  re-render-once on gesture-end for sharp text) — same approach
+  Adobe Reader Mobile uses. That's ~3 hours of fresh-mind work and
+  has been deferred to P1.4 polish.
+
+  For P1.1 ship: +/- zoom buttons + scrollbar pan + one-finger
+  native scroll are the zoom UX. Field test with real users will
+  tell us if pinch is must-have or nice-to-have.
+
+  Preserved:
+  - touch-action: 'pan-x pan-y' (one-finger pan/scroll still works)
+  - +/- buttons (multiplicative ×1.25 / ×0.8, bounds [0.1, 4.0])
+  - All hotfix-1/2/3 fixes (Math.floor, dir=ltr, scrollbars, w-fit,
+    thumbnail preview)
+  - @use-gesture/react in package.json (P1.4 will re-use it)
+
+  Removed:
+  - usePinch import
+  - scaleRef + sync useEffect
+  - gestureStartScaleRef + usePinch hook
+  - Debug log
+
+  No backend changes, no schema, no migrations. PlanViewer chunk
+  shrinks slightly (~1-2 KB) as the usePinch hook is no longer
+  imported.
+
+STEPS
+=====
+1. STEP 0 pre-flight (4 greps).
+2. LOCATION 1.1: remove `usePinch` import.
+3. LOCATION 1.2: remove scaleRef declaration.
+4. LOCATION 1.3: remove sync useEffect.
+5. LOCATION 1.4: remove the usePinch hook + its comment block + gestureStartScaleRef.
+6. LOCATION 1.5: add the explanatory note.
+7. VERIFY 2 (build).
+8. VERIFY 4 (bundle inspection).
+9. Generate review.txt + commit message.
+10. STOP. AWAITING ZAHI APPROVAL.
+
+ROLLBACK
+========
+git revert <commit-sha>
+git checkout staging && ./deploy.sh --stag
+(Reverts to hotfix-5 state — pinch fires but UX is jank. No worse than
+prior state.)
+
+================================================================================
+PLANS PHASE 1 STATUS AFTER THIS HOTFIX
+================================================================================
+
+After hotfix-6 ships:
+
+✅ P1.1 — Viewer foundation (DONE)
+   - react-pdf + lazy chunk + self-hosted worker
+   - Fit-to-width default scale (Math.floor)
+   - +/- multiplicative zoom buttons
+   - LTR scroll container, visible scrollbars, w-fit wrapper
+   - Thumbnail preview in detail modal
+   - One-finger pan/scroll
+   - NO pinch (deferred to P1.4)
+
+📋 P1.2 — Tap-to-pin + Task schema (NOT STARTED, ~2 weeks)
+📋 P1.3 — Context-aware opening + pin density overlay (NOT STARTED, ~2 weeks)
+📋 P1.4 — Capacitor offline + pinch via hybrid pattern + field polish (NOT STARTED, ~2 weeks)
+
+Decision rule for P1.2: ship after field test of P1.1 with WUyoughong
+or another real contractor. If they say "viewer is good enough" →
+proceed to P1.2. If they say "I can't read the plan" or "I need
+pinch" → bump P1.4 polish ahead of P1.2.
+
+================================================================================
+END OF SPEC
+================================================================================

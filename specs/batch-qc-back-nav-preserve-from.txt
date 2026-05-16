@@ -1,0 +1,335 @@
+================================================================================
+BATCH — QC back-navigation preserves ?from=qc through Floor round-trip
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — UX bug in production today. Reported by Zahi 2026-05-04
+                during routine navigation testing. NOT a regression of #476-#479
+                (independent issue, predates that work).
+
+Files changed:  2 files (both frontend page extends)
+                  Frontend: frontend/src/pages/BuildingQCPage.js (~3 LOC)
+                  Frontend: frontend/src/pages/FloorDetailPage.js (~5 LOC)
+
+Tests:          NO new test (pure UI navigation flow). VERIFY 4 visual smoke
+                covers it.
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+DB migration:   NONE. No backend changes.
+
+Family:         Same family as Batch 5K (#451) — `?from=qc` URL param convention
+                introduced when arriving at BuildingQCPage from /projects/{p}/qc.
+                5K fixed the immediate back-handler but did NOT preserve the
+                param through a round-trip via /floors/{f}. This batch closes
+                that gap.
+
+================================================================================
+BUG REPRODUCTION (Zahi 2026-05-04 production observation)
+================================================================================
+
+Real navigation chain in app.brikops.com:
+
+  Step 1:  /projects/{p}/qc
+           ↓ click a building
+  Step 2:  /projects/{p}/buildings/{b}/qc?from=qc      ✅ from=qc preserved (5K)
+           ↓ click a floor
+  Step 3:  /projects/{p}/floors/{f}                    ❌ from=qc LOST here
+           ↓ click "back" (FloorDetailPage:222 handleBack)
+  Step 4:  /projects/{p}/buildings/{b}/qc              ❌ from=qc not restored
+           ↓ click "back" (BuildingQCPage:79 handleBack)
+  Step 5:  /projects/{p}/buildings/{b}                 ❌ WRONG — should be /qc
+
+Expected at Step 5: /projects/{p}/qc (return to where the journey started).
+
+Root cause — the `?from=qc` URL param is dropped at TWO transitions:
+  - Step 2 → 3: BuildingQCPage navigating to floor doesn't propagate `from=qc`
+  - Step 4: FloorDetailPage's back handler doesn't include `from=qc` when
+    navigating back to BuildingQCPage
+
+Result: by Step 5, BuildingQCPage's handleBack has no signal that the user
+originally came from /qc, so it falls back to /buildings/{b}.
+
+================================================================================
+DESIGN DECISIONS
+================================================================================
+
+D1. Param naming — keep `from=qc` (existing convention from 5K).
+    NOT introducing a new param like `from=qc-building` to avoid taxonomy
+    sprawl. The same `from=qc` param flows through BuildingQC → Floor →
+    BuildingQC unchanged.
+
+D2. Param propagation — explicit, not implicit.
+    Each navigation explicitly reads the current URL's `from` param via
+    `useSearchParams` and includes it in the next URL. NOT relying on
+    react-router state (location.state) which doesn't survive browser
+    back-button.
+
+D3. Backwards compat — direct URL entries (no `from=qc`) keep working.
+    A user landing on /buildings/{b}/qc without `?from=qc` (direct link,
+    bookmark, or arriving from elsewhere like /buildings/{b}) → back button
+    falls back to /buildings/{b} (existing behavior). Only the round-trip
+    case is fixed.
+
+D4. Scope — DO NOT touch BuildingQCPage's existing handleBack (Batch 5K
+    work). Only ensure the param survives the Floor round-trip.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+⚠️ NOTE on stale local checkout — Cowork's mac repo may be out of date with
+   prod state of these files. Replit MUST run STEP 0 greps on the workspace
+   that's actually being deployed (Replit's repo, after `git pull`), not
+   blindly trust the line numbers in this spec. The spec line numbers are
+   approximate; STEP 0 verifies the actual code anchors.
+
+0.1 — Locate BuildingQCPage handleBack + verify Batch 5K from-aware logic:
+    grep -n "handleBack\|from=qc\|searchParams.*from" \
+        frontend/src/pages/BuildingQCPage.js | head -10
+    # Expected:
+    #   handleBack defined as useCallback (around L79).
+    #   IF Batch 5K is deployed: handleBack reads searchParams.get('from')
+    #     and conditionally navigates to /projects/{p}/qc when 'qc'.
+    #   IF Batch 5K logic is missing: handleBack only does
+    #     navigate(`/projects/${projectId}/buildings/${buildingId}`).
+    # If the 5K logic is missing, this spec MUST be expanded to include it.
+    # Document findings clearly in review.txt STEP 0 audit.
+
+0.2 — Locate the floor click navigation in BuildingQCPage:
+    grep -n "navigate.*floors/\${" frontend/src/pages/BuildingQCPage.js
+    # Expected: 1 hit — typically `navigate(`/projects/${projectId}/floors/${floor.id}`)`
+    # This is the line we extend to preserve `?from=qc`.
+
+0.3 — Locate FloorDetailPage handleBack:
+    grep -n "navigate.*buildings.*qc\|navigate.*projects.*qc" \
+        frontend/src/pages/FloorDetailPage.js | head -5
+    # Expected: 1 hit on the back-to-BuildingQC navigation
+    # (typically: navigate(buildingId ? `/projects/${projectId}/buildings/${buildingId}/qc` : `/projects/${projectId}/qc`))
+    # This is the line we extend to preserve `?from=qc`.
+
+0.4 — Verify useSearchParams is already imported in BOTH files:
+    grep -n "useSearchParams\|from 'react-router-dom'" \
+        frontend/src/pages/BuildingQCPage.js \
+        frontend/src/pages/FloorDetailPage.js | head -10
+    # If useSearchParams is NOT imported, add it to the destructure of
+    # 'react-router-dom'. (Hint from #469 followup spec — useSearchParams
+    # is widely used in the codebase already.)
+
+0.5 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — BuildingQCPage propagates `?from=qc` to floor URL
+================================================================================
+
+FILE: frontend/src/pages/BuildingQCPage.js
+-------------------------------------------
+
+LOCATION 1.1 — Add `useSearchParams` import IF not already imported:
+
+   FIND the react-router-dom import line (top of file). It looks like:
+       import { useNavigate, useParams } from 'react-router-dom';
+
+   Add `useSearchParams` to the destructure (if not already there):
+       import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+
+LOCATION 1.2 — Get the URL `from` param inside the component, near other
+   hooks (under `useNavigate` and `useParams`):
+
+   ADD:
+       const [searchParams] = useSearchParams();
+       const fromParam = searchParams.get('from');
+
+LOCATION 1.3 — Update the floor click navigation to propagate `from=qc`:
+
+   FIND (per STEP 0.2, around L375):
+       onClick={() => navigate(`/projects/${projectId}/floors/${floor.id}`)}
+
+   REPLACE WITH:
+       onClick={() => {
+         const url = `/projects/${projectId}/floors/${floor.id}`;
+         const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+         navigate(withFrom);
+       }}
+
+   IMPORTANT — only forward `?from=qc` when the user CAME FROM /qc.
+   Direct entries (no fromParam) keep the clean URL.
+
+DO NOT TOUCH:
+- handleBack at L79 — that's Batch 5K work, leave it alone (it should
+  already read `?from=qc` and route to /projects/{p}/qc when present).
+- Any other navigate(...) calls (e.g. to building detail).
+- Any other state, useEffect, or data fetching.
+
+================================================================================
+PART 2 — FloorDetailPage preserves `?from=qc` on back nav
+================================================================================
+
+FILE: frontend/src/pages/FloorDetailPage.js
+--------------------------------------------
+
+LOCATION 2.1 — Add `useSearchParams` import IF not already imported:
+
+   FIND the react-router-dom import line. Add `useSearchParams` to the
+   destructure if not there. (Hint: probably already imported — check
+   first.)
+
+LOCATION 2.2 — Get the URL `from` param inside the component:
+
+   ADD (near other hooks):
+       const [searchParams] = useSearchParams();
+       const fromParam = searchParams.get('from');
+
+LOCATION 2.3 — Update the back navigation to preserve `?from=qc`:
+
+   FIND (per STEP 0.3, around L222):
+       <button onClick={() => navigate(buildingId ? `/projects/${projectId}/buildings/${buildingId}/qc` : `/projects/${projectId}/qc`)} ...>
+
+   REPLACE WITH:
+       <button onClick={() => {
+         const base = buildingId
+           ? `/projects/${projectId}/buildings/${buildingId}/qc`
+           : `/projects/${projectId}/qc`;
+         const url = fromParam === 'qc' && buildingId ? `${base}?from=qc` : base;
+         navigate(url);
+       }} ...>
+
+   IMPORTANT — `?from=qc` is appended ONLY when:
+   - User has `?from=qc` in current URL (came from QC chain)
+   - AND buildingId exists (we're going to /buildings/{b}/qc, where the
+     param is meaningful — not /projects/{p}/qc which IS the destination)
+
+LOCATION 2.4 — AMENDMENT (Zahi 2026-05-04 mid-spec): preserve `?from=qc` on
+   the unit-scope card onClick (around L296-302 per #476 wiring). This is
+   a sibling concern to LOCATION 2.3 — when user clicks a unit-scope card
+   from the floor with `?from=qc` in URL, the resulting `/qc/units`
+   navigation should also carry the param.
+
+   FIND (per #476 PART 3 LOCATION 3.1):
+       onClick={() => navigate(`/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units?stage_id=${unitStage.stage_id}`)}
+
+   REPLACE WITH:
+       onClick={() => {
+         const url = `/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units?stage_id=${unitStage.stage_id}`;
+         const withFrom = fromParam === 'qc' ? `${url}&from=qc` : url;
+         navigate(withFrom);
+       }}
+
+   IMPORTANT — note the `&from=qc` (not `?from=qc`) since `?stage_id=` is
+   already on the URL. The reuse of `fromParam` (defined at LOCATION 2.2)
+   means no extra hook is needed.
+
+DO NOT TOUCH:
+- Any state, useEffect, or data fetching.
+- Any other component.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+   (Or fall back to babel parser on the 2 changed files alone — same env
+   limitation as #476-#479.)
+
+VERIFY 2 — `useSearchParams` imported in both files:
+   grep -c "useSearchParams" frontend/src/pages/BuildingQCPage.js
+   → ≥ 2 (1 import + ≥1 use)
+   grep -c "useSearchParams" frontend/src/pages/FloorDetailPage.js
+   → ≥ 2 (1 import + ≥1 use)
+
+VERIFY 3 — `from=qc` propagation logic in both files:
+   grep -c "fromParam === 'qc'\|from=qc" \
+       frontend/src/pages/BuildingQCPage.js \
+       frontend/src/pages/FloorDetailPage.js
+   → ≥ 2 (1 conditional in each file)
+
+VERIFY 4 — Visual smoke (Zahi runs after deploy to staging):
+
+   Round-trip test (the bug):
+   a) Login as super_admin.
+   b) Navigate to /projects/{p}/qc — QC home.
+   c) Click any building → URL `/projects/{p}/buildings/{b}/qc?from=qc` ✅
+   d) Click any floor card → URL `/projects/{p}/floors/{f}?from=qc` ← NEW
+   e) Click back arrow on FloorDetailPage → URL
+      `/projects/{p}/buildings/{b}/qc?from=qc` ← NEW (was without param)
+   f) Click back arrow on BuildingQCPage → URL `/projects/{p}/qc` ✅
+      (5K's handleBack reads from=qc and routes correctly)
+
+   Sub-path — unit-scope card from floor (LOCATION 2.4 amendment):
+   g) From the floor at /floors/{f}?from=qc, click a unit-scope card
+      (e.g. "אמבטיה+אינטרפוץ") → URL becomes
+      `/projects/{p}/buildings/{b}/floors/{f}/qc/units?stage_id=X&from=qc`
+      ← NEW (was without `&from=qc`)
+
+   Negative — direct entry (no from=qc):
+   h) Navigate directly to /projects/{p}/buildings/{b}/qc (no `?from=qc`).
+   i) Click any floor → URL `/projects/{p}/floors/{f}` (no `?from=qc` — clean).
+   j) Click back from floor → /projects/{p}/buildings/{b}/qc (no param) ✅
+   k) Click back from BuildingQC → /projects/{p}/buildings/{b} ✅
+      (existing behavior preserved — no from=qc to trigger /qc routing).
+   l) Direct entry to /floors/{f} → click a unit-scope card → URL has only
+      `?stage_id=X` (no `&from=qc` — clean).
+
+   Mobile (375px): nav buttons still tappable, no overflow.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top, including the 5K logic verification result
+  - Per-file diff (2 files, ~8 LOC total)
+  - VERIFY 1-3 outputs
+  - VERIFY 4 deferred-to-Zahi note (12 scenarios a-l)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(nav): preserve ?from=qc through BuildingQC → Floor → BuildingQC
+
+  Family-of-5K bug discovered 2026-05-04 in production. The ?from=qc
+  URL param introduced by Batch 5K (#451) survives a single transition
+  (project /qc → /buildings/{b}/qc) but is dropped on the round-trip
+  via /floors/{f}. By the time the user clicks back on BuildingQCPage,
+  the param is gone, and 5K's smart handleBack falls back to
+  /buildings/{b} instead of /projects/{p}/qc.
+
+  Fix: 2 files, ~8 LOC.
+   - BuildingQCPage: floor click navigation propagates ?from=qc to
+     /floors/{f} URL when current URL has it.
+   - FloorDetailPage: back-to-BuildingQC navigation preserves ?from=qc
+     when current URL has it AND buildingId exists.
+
+  Direct entries (no ?from=qc) preserve existing behavior. No backend
+  changes. No new tests (pure navigation flow — covered by V4 visual
+  smoke).
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.4 greps, paste output to top of review.txt)
+2. PART 1 — BuildingQCPage useSearchParams + floor click forwarding
+3. PART 2 — FloorDetailPage useSearchParams + back-nav preservation
+4. Run VERIFY 1-3
+5. Generate review.txt + .local/.commit_message
+6. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+2 files revert. Bug returns: round-trip QC → Building → Floor → back
+ends at /buildings/{b} instead of /projects/{p}/qc. No data loss; pure
+UX regression.
+
+NO impact on:
+- 5K work (untouched)
+- Direct-entry navigation flows (untouched)
+- Other QC, handover, or project pages
+- Backend
+
+================================================================================
+END OF SPEC
+================================================================================

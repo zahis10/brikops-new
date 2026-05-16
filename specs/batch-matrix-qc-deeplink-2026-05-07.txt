@@ -1,0 +1,400 @@
+================================================================================
+BATCH — Matrix → QC deep-link (CellEditDialog "פתח בבקרת ביצוע")
+================================================================================
+Date:           2026-05-07
+Branch:         staging  (NOT main)
+Severity:       P3 — feature enhancement (not bug). Zahi 2026-05-07.
+
+Files changed:  1 frontend component
+                  frontend/src/components/matrix/CellEditDialog.js (~50 LOC)
+
+Tests:          NO new tests (UI navigation; covered by VERIFY visual smoke).
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+DB migration:   NONE. No backend changes. Two existing endpoints used:
+                  GET /qc/floors/{floor_id}/run
+                  GET /qc/units/{unit_id}/run
+
+Family:         Standalone matrix UX integration. No coupling to other
+                pending batches.
+
+================================================================================
+GOAL
+================================================================================
+
+Add "פתח בבקרת ביצוע" (open in QC) button in the matrix cell edit
+dialog footer. On click:
+  - For unit-scope status stage  → navigate to StageDetailPage of the
+                                   specific (unit, stage) pair.
+  - For floor-scope status stage → navigate to StageDetailPage of the
+                                   specific (floor, stage) pair.
+  - For tag stages or admin-added matrix-only stages → button hidden
+                                   (no QC counterpart exists).
+
+User flow:
+  Matrix cell click → dialog opens → user clicks "פתח בבקרת ביצוע"
+  → spinner briefly → dialog closes → land on StageDetailPage with
+  full QC context for that exact stage.
+
+NOT in scope:
+  - Reverse direction (QC → Matrix). Separate batch if wanted.
+  - "from=matrix" return param so StageDetailPage's back returns to
+    matrix. User uses browser back or QC's normal back chain. Could
+    be added later if Zahi wants it.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+⚠️ Replit MUST run STEP 0 on workspace post-`git pull`. Spec line
+numbers are approximate.
+
+0.1 — Verify CellEditDialog has stage / unit / projectId props and
+      doesn't already wire navigation:
+    grep -n "useNavigate\|qcService\|stage\.scope\|stage\.type\|stage\.source" \
+        frontend/src/components/matrix/CellEditDialog.js
+    Expected:
+    - useNavigate NOT imported (this is the gap).
+    - qcService NOT imported (this is the gap).
+    - stage.scope / stage.type / stage.source not currently read.
+
+0.2 — Confirm getFloorRun and getUnitRun service methods exist:
+    grep -n "getFloorRun\|getUnitRun" frontend/src/services/api.js
+    Expected:
+      getFloorRun(floorId) at ~L1321 → GET /qc/floors/{floorId}/run
+      getUnitRun(unitId)   at ~L1325 → GET /qc/units/{unitId}/run
+
+0.3 — Verify EXACT source values in the codebase:
+    grep -n '"source":\s*"\|source.*=.*['\''"]' \
+        backend/contractor_ops/execution_matrix_router.py
+    grep -rn "source === '\|source !== '" \
+        frontend/src/components/matrix/
+
+    Expected (verified 2026-05-07):
+    - Backend L169/L219: source = "base" (template stages)
+    - Backend L179: source = "custom" (PM-added matrix-only stages)
+    - Frontend StageManagementDialog L36-37/L87 + MatrixGridView L43
+      check 'base' / 'custom'.
+    - Value 'admin' is NOT used anywhere. PART 2 must use 'custom'.
+
+0.4 — Confirm stage object passed into dialog has scope/type/source:
+    grep -n "scope\|type\|source" \
+        frontend/src/components/matrix/StageRow.js \
+        frontend/src/components/matrix/StageManagementDialog.js
+    Expected:
+    - StageRow comment: stage = { id, title, type, source, scope? }
+    - StageManagementDialog comment: stages = [{ id, title, type, source, scope?, order }]
+    - Backend execution_matrix_router.py: each returned stage carries
+      `scope`.
+
+0.5 — Confirm dialog receives unit with floor_id:
+    grep -n "<CellEditDialog\|setEditing\|editing\.unit" \
+        frontend/src/pages/ExecutionMatrixPage.js
+    Expected:
+    - L52: editing state shape: { unit, stage, cell }
+    - L196: floor={editing ? floorsById[editing.unit.floor_id] : null}
+      → confirms unit.floor_id IS present in the dialog props.
+
+0.6 — Confirm response shapes of getFloorRun / getUnitRun:
+    grep -n "@router.get.*floors.*run\|@router.get.*units.*run" \
+        backend/contractor_ops/qc_router.py | head -5
+    Then read each handler briefly to document its return shape.
+    Expected (current behavior):
+      GET /qc/units/{unit_id}/run    → returns { run: {...}, stages: [...] }
+      GET /qc/floors/{floor_id}/run  → returns { run: {...} } OR a flat {...} run dict
+    The handler picks runId defensively from result.run?.id || result?.id.
+
+0.7 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — Imports
+================================================================================
+
+FILE: frontend/src/components/matrix/CellEditDialog.js
+------------------------------------------------------
+
+Replace the existing import block (L1-7) with:
+
+  import React, { useState, useEffect, useCallback, useRef } from 'react';
+  import { useNavigate } from 'react-router-dom';
+  import * as Dialog from '@radix-ui/react-dialog';
+  import { X, ChevronDown, ChevronUp, Loader2, ExternalLink } from 'lucide-react';
+  import { toast } from 'sonner';
+  import StatusButtonGrid from './StatusButtonGrid';
+  import CellHistoryList from './CellHistoryList';
+  import { matrixService } from '../../services/matrixService';
+  import { qcService } from '../../services/api';
+
+Additions:
+  - `useNavigate` from react-router-dom
+  - `ExternalLink` icon from lucide-react
+  - `qcService` from `../../services/api`
+
+================================================================================
+PART 2 — Hooks + capability gate
+================================================================================
+
+After the existing useState block (line ~34, right after
+`const [saving, setSaving] = useState(false);`), ADD:
+
+  const navigate = useNavigate();
+  const [openingQc, setOpeningQc] = useState(false);
+
+  // QC integration availability:
+  // - Tag stages have no QC counterpart (text-only matrix values).
+  // - PM-added matrix-only stages (source='custom') don't exist in
+  //   qc_template either. Verified 2026-05-07: backend uses 'base'
+  //   for template stages and 'custom' for PM-added matrix-only.
+  //   ('admin' is NOT a valid source value.)
+  // - Unit-scope and floor-scope status stages from the template
+  //   (source='base') DO have QC counterparts.
+  const isUnitScope  = stage?.scope === 'unit';
+  const isFloorScope = stage?.scope === 'floor';
+  const isMatrixOnly = stage?.source === 'custom' || stage?.type === 'tag';
+  const canOpenInQc  = !isMatrixOnly && (isUnitScope || isFloorScope) && !!unit?.floor_id && !!projectId;
+
+================================================================================
+PART 3 — Navigation handler
+================================================================================
+
+After the existing `handleSave` function (ends ~L112), ADD:
+
+  const handleOpenInQc = useCallback(async () => {
+    if (!canOpenInQc || openingQc) return;
+    // Defensive: canOpenInQc already requires unit.floor_id, but guard
+    // explicitly so a stale prop never causes a getFloorRun(undefined).
+    if (!unit?.floor_id) {
+      toast.error('דירה לא משויכת לקומה');
+      return;
+    }
+    setOpeningQc(true);
+    try {
+      let runId = null;
+      if (isUnitScope) {
+        const result = await qcService.getUnitRun(unit.id);
+        runId = result?.run?.id || result?.id || null;
+      } else {
+        // floor-scope
+        const result = await qcService.getFloorRun(unit.floor_id);
+        runId = result?.run?.id || result?.id || null;
+      }
+      if (!runId) {
+        toast.error('לא ניתן לפתוח — לא נמצא run');
+        setOpeningQc(false);
+        return;
+      }
+      const url = `/projects/${projectId}/qc/floors/${unit.floor_id}/run/${runId}/stage/${stage.id}`;
+      onClose();
+      navigate(url);
+    } catch (err) {
+      console.error('[matrix→qc] navigation failed', err);
+      toast.error('שגיאה בפתיחת בקרת ביצוע');
+      setOpeningQc(false);
+    }
+  }, [canOpenInQc, openingQc, isUnitScope, unit, stage, projectId, navigate, onClose]);
+
+Notes:
+- Both endpoints may return `{ run: {...} }` or a flat run dict —
+  defensive `result?.run?.id || result?.id` covers both.
+- `onClose()` BEFORE `navigate()` so the dialog unmounts cleanly
+  before the route changes.
+- On error, dialog stays open and toast shows; `openingQc` reset so
+  user can retry.
+
+================================================================================
+PART 4 — Footer button
+================================================================================
+
+Replace the entire footer block (currently L242-263, the
+`<div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-slate-200 bg-white" ...>`
+through its closing `</div>`) with:
+
+  <div
+    className="flex items-center justify-between gap-2 px-4 py-3 border-t border-slate-200 bg-white"
+    style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+  >
+    {/* Left: open in QC (only when stage has a QC counterpart) */}
+    <div>
+      {canOpenInQc && (
+        <button
+          type="button"
+          onClick={handleOpenInQc}
+          disabled={openingQc}
+          className="px-3 py-3 rounded-lg text-xs font-medium text-violet-700 hover:bg-violet-50 active:bg-violet-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors min-h-[44px] inline-flex items-center gap-1.5"
+        >
+          {openingQc
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <ExternalLink className="w-3.5 h-3.5" />}
+          <span>{openingQc ? 'פותח...' : 'פתח בבקרת ביצוע'}</span>
+        </button>
+      )}
+    </div>
+
+    {/* Right: cancel + save (existing) */}
+    <div className="flex items-center gap-2">
+      <Dialog.Close asChild>
+        <button
+          type="button"
+          className="px-4 py-3 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors min-h-[44px]"
+        >
+          ביטול
+        </button>
+      </Dialog.Close>
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={!canEdit || !hasChange || saving}
+        className="px-5 py-3 rounded-lg text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 active:bg-violet-800 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors min-h-[44px] inline-flex items-center gap-2"
+      >
+        {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+        {saving ? 'שומר...' : 'שמור'}
+      </button>
+    </div>
+  </div>
+
+Changes vs. current:
+- Outer `justify-end` → `justify-between` (QC button left, cancel+save right).
+- New left-side QC button (rendered only when `canOpenInQc` is true).
+- Right side wrapped in its own flex container so cancel+save stay
+  grouped.
+- All buttons keep min-h-[44px] for Capacitor touch targets.
+- Footer paddingBottom for env(safe-area-inset-bottom) preserved.
+
+DO NOT TOUCH:
+- onSave / handleSave / canEdit / hasChange logic — unchanged.
+- History fetching (fetchHistory / toggleHistory / abortRef cleanup).
+- Status / note / textValue state.
+- Header content (location subtitle, dialog title, X close).
+- Read-only banner.
+- Body section (status grid, note textarea, history collapsible).
+- ExecutionMatrixPage / MatrixGridView / StageRow.
+- StageDetailPage / FloorDetailPage / UnitQCSelectionPage.
+- Backend (qc_router.py / execution_matrix_router.py).
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — yarn build passes (no new warnings).
+     cd frontend && yarn build
+
+V2 — All new symbols present:
+     grep -c "useNavigate\|qcService\|ExternalLink" \
+         frontend/src/components/matrix/CellEditDialog.js
+     → ≥ 5 (3 imports + ≥2 uses).
+
+     grep -c "canOpenInQc\|handleOpenInQc\|openingQc" \
+         frontend/src/components/matrix/CellEditDialog.js
+     → ≥ 6.
+
+     grep -c "פתח בבקרת ביצוע" \
+         frontend/src/components/matrix/CellEditDialog.js
+     → 1.
+
+V3 — Footer layout uses justify-between:
+     grep -c "justify-between" \
+         frontend/src/components/matrix/CellEditDialog.js
+     → ≥ 1.
+
+V4 — source value check (catches 'admin' typo regression):
+     grep -c "source === 'admin'" \
+         frontend/src/components/matrix/CellEditDialog.js
+     → 0.
+
+     grep -c "source === 'custom'" \
+         frontend/src/components/matrix/CellEditDialog.js
+     → 1.
+
+V5 — Visual smoke deferred to Zahi after deploy.
+
+  Floor-scope:
+  a) /projects/d41ca1d0.../execution-matrix.
+  b) Click cell of "הכנות אינסטלציה בקומה" (floor-scope) on דירה 1
+     building 8 floor -2.
+  c) Dialog opens with status grid.
+  d) Footer shows "פתח בבקרת ביצוע" on the LEFT, ביטול+שמור on the RIGHT.
+  e) Click "פתח בבקרת ביצוע".
+  f) Brief spinner → dialog closes → URL becomes
+     /projects/{p}/qc/floors/{f}/run/{r}/stage/{stageId}.
+  g) StageDetailPage renders the correct stage with correct items.
+
+  Unit-scope:
+  h) Back to matrix.
+  i) Click cell of "ריצוף" (unit-scope) on a specific unit.
+  j) Dialog footer shows the QC button.
+  k) Click → spinner → dialog closes → URL becomes
+     /projects/{p}/qc/floors/{f}/run/{unit_run_id}/stage/{stageId}.
+  l) StageDetailPage shows that unit's stage.
+
+  Tag stage (negative):
+  m) If a tag stage exists (text input dialog instead of status grid) →
+     QC button is HIDDEN.
+
+  PM custom stage (negative):
+  n) If PM added a stage only in matrix (source: 'custom') → QC
+     button HIDDEN.
+
+  Error path:
+  o) (hard to repro intentionally) — if API returns 404 or no run →
+     toast error, dialog stays open, button enabled again.
+
+  Mobile (Capacitor / 375px):
+  p) All buttons 44×44px+, footer padding respects env(safe-area-inset-bottom),
+     QC button doesn't push cancel/save off-screen.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (0.1-0.4 grep outputs).
+  - Diff for the single file (~50 LOC).
+  - V1-V3 outputs.
+  - V4 deferred-to-Zahi note (scenarios a-p).
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+
+.local/.commit_message:
+  feat(matrix): "פתח בבקרת ביצוע" deep-link from cell dialog
+
+  Adds a footer button in the matrix CellEditDialog that navigates
+  directly to the corresponding StageDetailPage in QC for the exact
+  (unit, stage) or (floor, stage) pair the user is editing.
+
+  - Floor-scope status stages → /qc/floors/{f}/run/{floor_run_id}/stage/{s}
+  - Unit-scope status stages  → /qc/floors/{f}/run/{unit_run_id}/stage/{s}
+  - Tag stages and PM-added custom (source='custom') stages → button hidden.
+
+  Uses existing qcService.getFloorRun / getUnitRun endpoints. No
+  backend changes. Reverse direction (QC → Matrix) and from=matrix
+  back-handling are deferred.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (greps 0.1-0.6; output at top of review.txt).
+2. PART 1 — Imports.
+3. PART 2 — Hooks + canOpenInQc gate (source='custom', not 'admin').
+4. PART 3 — handleOpenInQc callback (with floor_id defensive guard).
+5. PART 4 — Footer rewrite.
+6. Run V1-V4.
+7. Generate review.txt + .local/.commit_message.
+8. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+1 file revert. Button disappears. No data corruption.
+
+NO impact on:
+- Cell edit / save flow (unchanged).
+- History rendering.
+- StageDetailPage / FloorDetailPage / UnitQCSelectionPage.
+- Backend.
+- Other matrix components.
+
+================================================================================
+END OF SPEC
+================================================================================

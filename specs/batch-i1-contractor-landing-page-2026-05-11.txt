@@ -1,0 +1,264 @@
+================================================================================
+BATCH I.1 — Contractor landing page fix (follow-up to Batch I)
+================================================================================
+Date:           2026-05-11
+Branch:         staging  (NOT main)
+Severity:       P2 — UX polish (no security implication).
+                Batch I (shipped 2026-05-11 prod) successfully blocked
+                contractors from reaching BuildingDefectsPage. ✅ Tests
+                B/C/D passed. But Test A (the reported back-nav flow)
+                landed contractors on `/projects` (the project LIST)
+                instead of their specific project dashboard.
+
+                Real-world impact: contractor receives WA → clicks
+                link → views defect → clicks back → sees an unhelpful
+                project list. Should see THEIR project view with
+                THEIR open defects.
+
+Approach:       Replace `navigate('/')` with
+                `navigate('/projects/{task.project_id}?src=contractor')`.
+                The `?src=contractor` query param is the existing
+                escape-hatch (from Stream A 2026-05-01) that routes
+                contractors to ContractorDashboard with the project
+                preselected, rather than the management dashboard.
+
+                Falls back to `/projects` (the list) only if
+                `task.project_id` is somehow missing — extremely rare
+                edge case (a defect without project_id shouldn't
+                exist), but defensive.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only:
+                  - frontend/src/pages/TaskDetailPage.js
+                    (2 surgical edits — useEffect + onClick — ~6 LOC
+                     net change)
+                Total: 1 file. No backend, no DB, no env vars.
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN this batch:
+  ✅ useEffect (Batch I L291-304 — externalEntry sessionStorage
+     pre-set): contractorBack URL changes from `/` to
+     `/projects/{task.project_id}?src=contractor`.
+  ✅ onClick (Batch I L865-884 — isContractor branch): same URL
+     change.
+
+OUT of this batch (deferred):
+  ❌ Batch J (scope-aware paywall) — separate batch, scheduled after
+     this stabilizes. The bug Zahi reported (contractor submitting
+     proof blocked because the user has expired org elsewhere) is
+     architectural and documented at ROADMAP L659.
+  ❌ Other "/" navigate calls in TaskDetailPage — none found in our
+     scope (the only 2 are the ones we modified in Batch I).
+  ❌ Other contractor entry points (notifications, push, etc.) —
+     not in scope for this fix.
+
+================================================================================
+STEP 0 — PRE-FLIGHT (3 checks PASS)
+================================================================================
+
+1. Confirm Batch I changes are in place:
+   $ grep -nC 2 "isContractor" frontend/src/pages/TaskDetailPage.js | grep -A 2 "navigate"
+   →  L234: const isContractor = projectRole === 'contractor' || user?.role === 'contractor';
+   →  L~298: const contractorBack = isContractor ? '/' : (task.building_id ? ...)
+   →  L~870: else if (isContractor) { navigate('/'); }
+   ✓ Both Batch I edits present. The `/` is the URL we're updating.
+
+2. Confirm `?src=contractor` route handling exists:
+   $ grep -n "?src=contractor\|src.*contractor\|src=wa" frontend/src/App.js
+   →  Route /projects/:projectId routes to ProjectsHome wrapper.
+   →  ProjectsHome reads URL projectId param + src query param.
+   →  When src='contractor' → opens ContractorDashboard with project
+      pre-selected (per Stream A 2026-05-01 implementation).
+   ✓ Existing infrastructure. No new route needed.
+
+3. Confirm `task.project_id` is always available in this code path:
+   $ grep -n "task\.project_id\|task?.project_id" frontend/src/pages/TaskDetailPage.js | head -5
+   →  Multiple references throughout the file — task.project_id is a
+      required field on the Task schema and is always present once
+      task is loaded.
+   ✓ Safe to reference; fallback `'/projects'` for the edge case where
+     task somehow has no project_id (defensive).
+
+================================================================================
+LOCATION 1 — TaskDetailPage.js: useEffect contractorBack URL
+================================================================================
+File: frontend/src/pages/TaskDetailPage.js
+Lines: ~291-304 (the useEffect added in Batch I — exact line may have
+       shifted slightly; anchor by "BATCH I" comment or `contractorBack`
+       variable name)
+
+BEFORE (current — Batch I state):
+  useEffect(() => {
+    if (externalEntry && task?.project_id && !location.state?.returnTo) {
+      // BATCH I (2026-05-11) — P0 SECURITY: never deep-link contractors
+      // to the building-defects page (they'd see other companies' work).
+      // Contractors land on their dashboard; management keeps the
+      // existing building-default behavior.
+      const contractorBack = isContractor
+        ? '/'
+        : (task.building_id
+            ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
+            : `/projects/${task.project_id}/control?tab=defects`);
+      sessionStorage.setItem(RETURN_TO_KEY, contractorBack);
+    }
+  }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo, isContractor]);
+
+AFTER:
+  useEffect(() => {
+    if (externalEntry && task?.project_id && !location.state?.returnTo) {
+      // BATCH I (2026-05-11) — P0 SECURITY: never deep-link contractors
+      // to the building-defects page (they'd see other companies' work).
+      // Contractors land on their project-scoped dashboard via
+      // `/projects/{id}?src=contractor` (existing Stream A route).
+      // BATCH I.1 (2026-05-11) — fixed landing from `/` (project list)
+      // to project-scoped URL so contractor sees their own defects
+      // in the right project, not an unhelpful project list.
+      const contractorBack = isContractor
+        ? `/projects/${task.project_id}?src=contractor`
+        : (task.building_id
+            ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
+            : `/projects/${task.project_id}/control?tab=defects`);
+      sessionStorage.setItem(RETURN_TO_KEY, contractorBack);
+    }
+  }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo, isContractor]);
+
+Single string change. Dep array unchanged.
+
+================================================================================
+LOCATION 2 — TaskDetailPage.js: onClick isContractor branch
+================================================================================
+File: frontend/src/pages/TaskDetailPage.js
+Lines: ~865-884 (back-button onClick — anchor by "isContractor" branch
+       inside the onClick handler)
+
+BEFORE (current — Batch I state):
+  onClick={() => {
+    const returnTo = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
+    if (returnTo) {
+      sessionStorage.removeItem(RETURN_TO_KEY);
+      navigate(returnTo);
+    } else if (isContractor) {
+      // BATCH I (2026-05-11) — P0 SECURITY: contractors never
+      // land on the building-defects page (cross-contractor
+      // data leak). Defense in depth: backend also returns
+      // 403 if URL is hand-crafted. Order: explicit returnTo
+      // > isContractor > building default > project default.
+      navigate('/');
+    } else if (task?.building_id && task?.project_id) {
+      navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
+    } else if (task?.project_id) {
+      navigate(`/projects/${task.project_id}/control?tab=defects`);
+    } else {
+      navigate('/projects');
+    }
+  }}
+
+AFTER:
+  onClick={() => {
+    const returnTo = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
+    if (returnTo) {
+      sessionStorage.removeItem(RETURN_TO_KEY);
+      navigate(returnTo);
+    } else if (isContractor) {
+      // BATCH I (2026-05-11) — P0 SECURITY: contractors never
+      // land on the building-defects page (cross-contractor
+      // data leak). Defense in depth: backend also returns
+      // 403 if URL is hand-crafted. Order: explicit returnTo
+      // > isContractor > building default > project default.
+      // BATCH I.1 (2026-05-11) — fixed landing from `/` (project
+      // list) to project-scoped URL so contractor sees their own
+      // defects in the right project, not an unhelpful project list.
+      navigate(
+        task?.project_id
+          ? `/projects/${task.project_id}?src=contractor`
+          : '/projects'
+      );
+    } else if (task?.building_id && task?.project_id) {
+      navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
+    } else if (task?.project_id) {
+      navigate(`/projects/${task.project_id}/control?tab=defects`);
+    } else {
+      navigate('/projects');
+    }
+  }}
+
+Why the ternary:
+- If task.project_id available → project-scoped contractor dashboard.
+- If somehow missing (defensive, very rare) → /projects (current
+  fallback). Better than crashing or navigating to undefined URL.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ Other branches (returnTo, building_id, project_id default, /projects).
+- ❌ Bell notifications, WA flows, anything from Batches G/I.
+- ❌ Backend — no changes needed (Batch I's 403 gate stays).
+- ❌ The useEffect dep array — already includes isContractor from Batch I.
+- ❌ isContractor derivation at L234.
+- ❌ Other "/" or "/projects" references in this file — they're for
+     different code paths (error states, project_id missing fallbacks).
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+(Backend not touched. No backend verify needed.)
+
+================================================================================
+VERIFY 2 — Manual smoke (DEFERRED TO ZAHI)
+================================================================================
+
+**A (THE BUG WE'RE FIXING):**
+   1. Login as the SAME contractor user from Batch I test.
+   2. Receive WA notification for a defect.
+   3. Tap link → opens TaskDetailPage (externalEntry).
+   4. Tap back arrow.
+   EXPECT: lands on `https://app.brikops.com/projects/{their_project_id}?src=contractor`
+   EXPECT: sees their own defect list in THAT project.
+   EXPECT NOT: lands on `https://app.brikops.com/projects` (the bug).
+
+**B (Batch I regression — defense-in-depth preserved):**
+   1. Same contractor types `/projects/X/buildings/Y/defects` in URL bar.
+   EXPECT: still 403 → bounced.
+
+**C (Management regression):**
+   1. PM opens defect → click back.
+   EXPECT: still lands on BuildingDefectsPage (unchanged from Batch I).
+
+**D (returnTo regression):**
+   1. PM clicks defect from BuildingDefectsPage → click back.
+   EXPECT: returns to BuildingDefectsPage via returnTo (unchanged).
+
+Only Test A should differ from Batch I results.
+
+================================================================================
+RISK
+================================================================================
+Very low. Single string change in 2 places. Frontend only.
+
+- ⚠ Edge case: defect without project_id (defensive ternary handles it
+  by routing to /projects). Should never happen in practice — Task
+  schema requires project_id — but the fallback is safe if it does.
+- ⚠ The src=contractor route depends on existing Stream A
+  implementation. Verified active in prod (used by reminder digests).
+  If that route handler ever changes, this batch is unaffected (we
+  just navigate to the URL).
+
+Bundle size impact: zero (no new imports, no new logic).
+Performance impact: zero.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+(Reverts contractor landing to `/`. Batch I's security fix preserved.)
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

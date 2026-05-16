@@ -1,0 +1,633 @@
+================================================================================
+BATCH H.1 — Multi-file plan upload: extract shared BulkPlanUploadModal + port to UnitPlansPage
+================================================================================
+Date:           2026-05-13
+Branch:         staging  (NOT main)
+Severity:       P2 — field UX. PMs uploading sets of related plans
+                (architecture + electrical + plumbing for the same
+                floor or unit) currently must repeat the single-file
+                upload modal 3+ times for ProjectPlansPage and have
+                NO bulk option at all on UnitPlansPage.
+
+                ProjectPlansPage already has a working "העלאה מרובה"
+                modal (Zahi confirmed 2026-05-13 — "עובד מעולה לא
+                צריך שיפור"). UnitPlansPage is the gap.
+
+                This batch:
+                1. **Extracts** the existing bulk modal from
+                   ProjectPlansPage into a shared component
+                   `<BulkPlanUploadModal>`.
+                2. **Refactors** ProjectPlansPage to use the shared
+                   component (no functional change — just delegation).
+                3. **Ports** to UnitPlansPage (adds bulk button + uses
+                   shared component, adapted for unit-scoped context).
+
+                Architectural benefit: ProjectPlansPage drops ~220 LOC
+                (currently 4,115 LOC — flagged by CLAUDE.md as
+                already too big). The bulk modal becomes reusable
+                for future pages (handover sub-plans? site plans?).
+
+Approach:       Frontend-only. Backend unchanged — endpoints already
+                accept single-file uploads; the modal loops with
+                concurrency=3. NO new dependencies.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only (3 files):
+                  - frontend/src/components/BulkPlanUploadModal.jsx
+                    (NEW, ~280 LOC — extracted from ProjectPlansPage)
+                  - frontend/src/pages/ProjectPlansPage.js
+                    (-220 LOC net: remove modal JSX + handlers + state;
+                    add ~30 LOC for using shared component)
+                  - frontend/src/pages/UnitPlansPage.js
+                    (+38 LOC net: state + bulk button + render shared
+                    component)
+                Total: 3 files, net ~+98 LOC across codebase. NO backend,
+                NO DB, NO env vars, NO new dependencies.
+
+Baseline:       origin/staging HEAD = F.2-polish-1 shipped. Per-file
+                state pre-edit:
+                  - ProjectPlansPage.js: 4,115 LOC (CLAUDE.md flagged
+                    as 1,500+ heavy file).
+                  - UnitPlansPage.js: ~510 LOC.
+                Per-file state post-edit:
+                  - ProjectPlansPage.js: ~3,895 LOC (-220 ✓).
+                  - UnitPlansPage.js: ~548 LOC.
+                  - BulkPlanUploadModal.jsx: ~280 LOC (NEW).
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN H.1:
+  ✅ NEW `frontend/src/components/BulkPlanUploadModal.jsx` —
+     reusable bulk-upload modal. Manages its own state internally
+     (file list, per-file metadata, upload progress, results).
+     Configurable via props (see LOCATION 1 for full interface).
+  ✅ ProjectPlansPage.js refactored to use the shared component.
+     Existing functionality 1:1 preserved. Existing single-file
+     upload modal UNTOUCHED (different concern).
+  ✅ UnitPlansPage.js gets a new "העלאה מרובה" button (next to
+     existing single-file upload) + renders the shared modal,
+     scoped to the current unit.
+  ✅ Per-file fields adapt to context:
+       - ProjectPlansPage: discipline, plan_type, floor_id
+       - UnitPlansPage: discipline, plan_type (NO floor — already
+         in unit context)
+  ✅ Concurrency=3 upload loop preserved (no API change).
+  ✅ Existing 50MB / 20-file limits preserved.
+
+OUT of H.1:
+  ❌ NO change to single-file upload modal — different code path,
+     stays as-is on both pages.
+  ❌ NO backend changes — endpoints still single-file (`UploadFile`
+     param). Frontend loops with concurrency=3.
+  ❌ NO new metadata fields (e.g., `name`, `note`) added to bulk
+     flow — current behavior preserved: bulk derives name from
+     filename in backend (per `plans_router.py:199`).
+  ❌ NO change to validation rules (file size, ext list, count).
+  ❌ NO change to other consumers of `projectPlanService.upload` /
+     `unitPlanService.upload`.
+  ❌ NO H.2 (iOS document scanner) — that's a separate native
+     batch bundle (H.2-Bundle with Stream B1+B2).
+
+================================================================================
+STEP 0 — PRE-FLIGHT (6 PASS)
+================================================================================
+
+1. Confirm baseline shipped (F.2-polish-1 in HEAD):
+   $ git log origin/staging --oneline -3
+   →  Expect: F.2-polish-1 commit at HEAD (after abfa7f2 F.2 v3).
+
+2. Confirm ProjectPlansPage existing bulk modal structure:
+   $ grep -n "bulkFiles\|bulkDefaultDiscipline\|showBulkModal" \
+       frontend/src/pages/ProjectPlansPage.js
+   →  Expect: ~10-15 hits across state declarations, handlers, and JSX.
+
+3. Confirm ProjectPlansPage upload endpoint wrapping:
+   $ grep -n "projectPlanService.upload" frontend/src/pages/ProjectPlansPage.js
+   →  Expect: ~3-4 hits (single-file modal + bulk loop + maybe replace flow).
+
+4. Confirm UnitPlansPage has only single-file today:
+   $ grep -nc "bulkFiles\|showBulkModal" frontend/src/pages/UnitPlansPage.js
+   →  Expect: 0 (clean baseline for adding bulk).
+
+5. Confirm UnitPlansPage upload wrapper:
+   $ grep -n "unitPlanService.upload" frontend/src/pages/UnitPlansPage.js
+   →  Expect: 1 hit in the single-file submit handler.
+
+6. Confirm backend endpoints accept single-file (no change needed):
+   $ grep -nA 2 "@router\.post.*plans" \
+       backend/contractor_ops/plans_router.py | head -20
+   →  Expect: routes use `UploadFile = File(...)` (single). No
+              `List[UploadFile]` anywhere. ✓ No backend work.
+
+7. **Capture pre-extraction behavior — CRITICAL guardrail against
+   silent regression:**
+   Before any code changes, Zahi (or QA) must document the CURRENT
+   ProjectPlansPage bulk modal behavior on staging:
+   - Open bulk modal — note opening animation, time-to-interactive
+   - Take screenshots at every state:
+     * Empty (no files selected yet)
+     * With 3 files added (showing per-file rows)
+     * Mid-upload (showing progress pills)
+     * Results screen (success/error counts + retry buttons)
+   - Edge cases:
+     * Add 20 files (count limit)
+     * Try 21st file → see rejection message
+     * Try 51MB file → see size rejection
+     * Trigger a failure → use retry per row
+     * Close modal mid-upload
+   - Note exact Hebrew button labels, error messages, default
+     dropdown values
+   - Note list refresh behavior + scroll position after upload
+   The extracted component on Smoke A must match each of these
+   EXACTLY. Any visible difference = regression to investigate.
+
+8. **PLAN_TYPES verification (CONFIRMED 2026-05-13):**
+   $ grep -n "const PLAN_TYPES\|export.*PLAN_TYPES" frontend/src/
+   →  0 hits. **No PLAN_TYPES constant exists.**
+   $ grep -n "'standard'\|'tenant_changes'" \
+       frontend/src/pages/ProjectPlansPage.js
+   →  Multiple hits — plan_type values are INLINE strings.
+      Two values total: `'standard'` (כללית) and `'tenant_changes'`
+      (שינויי דיירים). Used at L276, L402, L471, L503, L528, L819,
+      L1058-1059, L1081, L1427.
+
+   **Spec impact:** the shared component MUST accept the plan_type
+   options as a prop (since no shared constant exists). LOCATION 1
+   updated to define the dropdown options INLINE in the prop or
+   accept them as `planTypes` prop. NOT creating a new constants
+   file in this batch — keep scope tight.
+
+9. **UnitPlansPage availableDisciplines verification
+   (CONFIRMED 2026-05-13):**
+   $ grep -n "disciplines\|loadDisciplines" \
+       frontend/src/pages/UnitPlansPage.js
+   →  L63: `const [disciplines, setDisciplines] = useState([]);`
+   →  L99: `const loadDisciplines = useCallback(async () => {...});`
+   →  L120: `useEffect(() => { loadUnit(); loadDisciplines(); }, ...);`
+   →  L130: `const allDisciplinesList = disciplines.length > 0 ? disciplines : ...`
+   ✓ UnitPlansPage ALREADY HAS disciplines data. No new fetch needed.
+   Pass `allDisciplinesList` to the shared component as
+   `allDisciplines` prop.
+
+================================================================================
+LOCATION 1 — NEW: BulkPlanUploadModal component
+================================================================================
+File: `frontend/src/components/BulkPlanUploadModal.jsx` (NEW)
+Approach: extract the existing bulk modal from ProjectPlansPage
+verbatim, then parameterize. Internal state stays local to the
+component (no callback prop dance for file list — caller doesn't
+need to know).
+
+PROP INTERFACE:
+  {
+    // Open/close control
+    open: boolean,
+    onClose: () => void,
+
+    // Discipline config
+    allDisciplines: Array<{value: string, label: string}>,  // dropdown options
+    defaultDiscipline: string,                                // initial value
+    onDefaultDisciplineChange: (value: string) => void,       // bubble up if needed
+
+    // Per-file fields config
+    showFloorField: boolean,                                  // true for ProjectPlansPage, false for UnitPlansPage
+    floorsList?: Array<{id: string, name: string}>,           // required if showFloorField
+
+    // Plan type config — pass options inline (no shared constant
+    // exists; PLAN_TYPES is NOT a defined constant per STEP 0.8).
+    // Expected default value: [
+    //   { value: 'standard', label: 'כללית' },
+    //   { value: 'tenant_changes', label: 'שינויי דיירים' }
+    // ]
+    planTypes: Array<{value: string, label: string}>,
+
+    // Upload function — the page passes its bound service call
+    uploadFn: async (file: File, discipline: string, opts: {
+      plan_type?: string, floor_id?: string
+    }) => Promise<{id: string, ...}>,
+
+    // Success callback (e.g., refetch list)
+    onUploadComplete?: () => void,
+
+    // Optional limits
+    maxFiles?: number,            // default 20
+    maxFileSizeMb?: number,       // default 50
+    acceptedExtensions?: string,  // default '.pdf,.jpg,.jpeg,.png,.dwg,.dxf'
+  }
+
+COMPONENT STRUCTURE (~280 LOC):
+  - Internal state:
+      const [files, setFiles] = useState([]);  // [{file, discipline, plan_type, floor_id, status, error, id}]
+      const [uploading, setUploading] = useState(false);
+      const [results, setResults] = useState(null);
+  - useEffect to RESET state when `open` flips false→true:
+      useEffect(() => {
+        if (!open) {
+          setFiles([]);
+          setUploading(false);
+          setResults(null);
+        }
+      }, [open]);
+  - Helper: `handleFileSelect(fileList)` — append to `files` with default discipline applied + status='pending'. Validates size/count.
+  - Helper: `removeFile(id)` — splice.
+  - Helper: `updateFileMeta(id, field, value)` — update one row's discipline/plan_type/floor_id.
+  - Helper: `handleBulkUpload()` — concurrency=3 loop. For each file, set status='uploading' → call `uploadFn(file, discipline, opts)` → set status='done'/'error'. Final: setResults({success: N, error: M}).
+  - Helper: `retryFile(id)` — re-upload a single file in error state.
+  - JSX:
+      - Header: title "העלאה מרובה" + close X
+      - Default discipline dropdown (single)
+      - File picker (drag-drop + button, `multiple`)
+      - File list: per-row with name, size, discipline override, plan_type override, floor_id override (if `showFloorField`), status pill, remove button
+      - Footer: "העלה N קבצים" button + "ביטול" button
+      - Post-upload results view: "X הצליחו, Y נכשלו" + retry buttons per failed row
+  - Tailwind styling: dark theme matching ProjectPlansPage existing
+    modal (slate-800/slate-700, amber primary, red destructive,
+    safe-area-bottom padding for iOS).
+  - `dir="rtl"` on outermost div.
+
+Note: the implementation is essentially a COPY of the existing
+ProjectPlansPage bulk modal logic, with the `floor_id` field
+conditionally rendered based on `showFloorField` prop, and the
+upload call delegated to `uploadFn` (instead of hardcoded
+`projectPlanService.upload`).
+
+================================================================================
+LOCATION 2 — Refactor ProjectPlansPage.js to use shared component
+================================================================================
+File: `frontend/src/pages/ProjectPlansPage.js`
+Net diff: ~-220 LOC.
+
+REMOVE (find by anchor):
+
+(a) Bulk state declarations (`bulkFiles`, `bulkDefaultDiscipline`,
+    `bulkUploading`, `bulkResults`, `showBulkModal`):
+    ~5 lines around L127-132.
+
+(b) Bulk handlers (`handleBulkFileSelect`, `removeBulkFile`,
+    `updateBulkFile`, `handleBulkUpload`, `retryBulkFile`,
+    `closeBulkModal`):
+    ~90 lines around L459-551.
+
+(c) Bulk modal JSX:
+    ~150 lines around L1306-1457.
+
+ADD (find by anchor for the bulk button):
+
+ANCHOR (existing bulk button @ ~L745-751):
+    <button
+      onClick={() => setShowBulkModal(true)}
+      ...
+    >
+      העלאה מרובה
+    </button>
+
+KEEP THE BUTTON as-is, but replace its `onClick` to use a new
+local state (`bulkOpen`) — or just keep `showBulkModal` as the gating
+state. Same gating semantics.
+
+ADD (somewhere near other modal renders, e.g., next to single-file
+modal JSX):
+
+  <BulkPlanUploadModal
+    open={showBulkModal}
+    onClose={() => setShowBulkModal(false)}
+    allDisciplines={availableDisciplines}
+    defaultDiscipline={bulkDefaultDiscipline}
+    onDefaultDisciplineChange={setBulkDefaultDiscipline}
+    showFloorField={true}
+    floorsList={floors}
+    planTypes={PLAN_TYPES}
+    uploadFn={async (file, discipline, opts) =>
+      projectPlanService.upload(projectId, file, discipline, opts)
+    }
+    onUploadComplete={() => loadPlans()}
+  />
+
+KEEP the state vars `showBulkModal` and `bulkDefaultDiscipline` —
+they live at the page level so the page can pass them in.
+REMOVE the others (`bulkFiles`, `bulkUploading`, `bulkResults`) —
+they're now internal to the modal component.
+
+Add the import at top of file:
+  import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
+
+================================================================================
+LOCATION 3 — Port to UnitPlansPage.js
+================================================================================
+File: `frontend/src/pages/UnitPlansPage.js`
+Net diff: ~+38 LOC.
+
+ADD (top of file imports):
+  import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
+
+ADD (state declarations alongside existing single-file state, ~L70):
+  // BATCH H.1 (2026-05-13) — bulk upload modal for unit plans.
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkDefaultDiscipline, setBulkDefaultDiscipline] = useState('');
+
+ADD (bulk button JSX, next to single-file upload button — anchor by
+finding the existing single-file upload trigger):
+
+ANCHOR (existing single-file upload trigger — find by content like
+"העלאה" or `setShowUpload`):
+
+  <button onClick={() => setShowUpload(true)} ...>
+    + תוכנית חדשה
+  </button>
+
+ADD BESIDE IT (sibling button):
+
+  {/* BATCH H.1 (2026-05-13) — bulk upload entry for unit plans. */}
+  <button
+    onClick={() => setShowBulkModal(true)}
+    className="..."  /* same secondary-style as ProjectPlansPage bulk button */
+  >
+    העלאה מרובה
+  </button>
+
+ADD (next to other modal renders, e.g., near the existing
+single-file upload modal JSX):
+
+  <BulkPlanUploadModal
+    open={showBulkModal}
+    onClose={() => setShowBulkModal(false)}
+    allDisciplines={availableDisciplines}
+    defaultDiscipline={bulkDefaultDiscipline}
+    onDefaultDisciplineChange={setBulkDefaultDiscipline}
+    showFloorField={false}
+    planTypes={PLAN_TYPES}
+    uploadFn={async (file, discipline, opts) =>
+      unitPlanService.upload(projectId, unitId, file, discipline, opts)
+    }
+    onUploadComplete={() => loadPlans()}
+  />
+
+Notes:
+- `showFloorField={false}` because unit context already implies floor.
+- `uploadFn` calls `unitPlanService.upload` with the unit-scoped
+  signature.
+- No `floorsList` prop (unused when `showFloorField={false}`).
+- Plan type presets come from same constant as ProjectPlansPage
+  (`PLAN_TYPES`) — import or define if not exported.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ Single-file upload modals on either page — different flow,
+     stays as-is.
+- ❌ Backend endpoints (`POST /projects/{id}/plans`,
+     `POST /projects/{id}/units/{uid}/plans`) — single-file
+     architecture preserved.
+- ❌ `projectPlanService.upload` / `unitPlanService.upload`
+     signatures — unchanged.
+- ❌ Plan listing / detail view UI on either page.
+- ❌ Plan version / replace flow (`handleVersionUpload`,
+     `handleReplaceUpload`).
+- ❌ File size / extension / count limits (preserved at 50MB / 20
+     files / .pdf,.jpg,.jpeg,.png,.dwg,.dxf).
+- ❌ Concurrency=3 upload pattern.
+- ❌ Audit log behavior (1 entry per file — preserved).
+- ❌ Thumbnail generation background task — preserved.
+- ❌ Other PhotoAnnotation / F.x logic.
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — File size sanity
+================================================================================
+$ wc -l frontend/src/components/BulkPlanUploadModal.jsx
+   →  Expect: ~280. Cap: 350.
+
+$ wc -l frontend/src/pages/ProjectPlansPage.js
+   →  Expect: ~3,895 (was 4,115, removed ~220). ✓ MAJOR codebase
+      win — file drops below the CLAUDE.md "concerning" threshold
+      faster.
+
+$ wc -l frontend/src/pages/UnitPlansPage.js
+   →  Expect: ~548 (was ~510, +38).
+
+================================================================================
+VERIFY 3 — grep sanity
+================================================================================
+$ grep -n "BulkPlanUploadModal" frontend/src/
+   →  Expect: 3 hits across 3 files (1 def + 2 imports/usages).
+
+$ grep -n "showBulkModal\|setShowBulkModal" \
+    frontend/src/pages/ProjectPlansPage.js \
+    frontend/src/pages/UnitPlansPage.js
+   →  Expect: ~4 hits in each (state + open + close + JSX gate).
+
+$ grep -n "bulkFiles\|handleBulkUpload" \
+    frontend/src/pages/ProjectPlansPage.js
+   →  Expect: 0 hits. These are now INTERNAL to BulkPlanUploadModal.
+   ✓ Confirms extraction is clean.
+
+$ grep -n "bulkFiles\|handleBulkUpload" \
+    frontend/src/components/BulkPlanUploadModal.jsx
+   →  Expect: 5+ hits. ✓ Logic relocated to component.
+
+================================================================================
+VERIFY 4 — Manual smoke (DEFERRED TO ZAHI)
+================================================================================
+
+**A — ProjectPlansPage bulk regression — IDENTICAL TO BEFORE
+       (CRITICAL — NON-NEGOTIABLE):**
+
+  PREREQUISITE (per STEP 0.7): Pre-extraction screenshots captured
+  on staging at the F.2-polish-1 HEAD before this batch deploys.
+  Use them as the gold reference for comparison.
+
+  Run side-by-side (or memory-vs-screenshot) check on 10 explicit
+  points:
+
+   1. **Modal opening:** opens at same speed (no perceptible lag),
+      same backdrop fade-in animation timing.
+   2. **UI layout:** header + file list + footer in same vertical
+      order; same panel width / corner radius / max-height; safe-
+      area-inset-bottom padding on iOS preserved.
+   3. **Per-file row fields visible:** discipline dropdown,
+      plan_type toggle (כללית/שינויי דיירים), floor_id dropdown.
+      Same labels, same order, same visual styling.
+   4. **Default values:** new files added get the bulk-default
+      discipline pre-filled; plan_type defaults to 'standard';
+      floor_id defaults to empty/null.
+   5. **Hebrew labels and translations:** every visible string
+      identical — header "העלאה מרובה", buttons "העלה N קבצים" /
+      "ביטול", per-file remove "הסר", error messages, empty-state
+      message.
+   6. **Button labels and styles:** primary action button color
+      (amber), neutral cancel (slate), destructive remove (red);
+      disabled states visually match.
+   7. **Upload progress UX:** per-file status pills cycle through
+      pending → uploading (spinner) → done (✓) → error (✗); same
+      colors, same timing (concurrency=3 → ~3 files in-flight
+      at any moment).
+   8. **Results screen:** post-upload summary showing "X הצליחו, Y
+      נכשלו"; per-file rows showing status + error message; "נסה
+      שוב" button per failed row with same styling.
+   9. **List refresh:** main plans list refreshes after upload
+      completes; new entries appear at top (or sorted per existing
+      logic); scroll position preserved or reset per existing
+      behavior.
+  10. **Modal close behavior:** clicking X / overlay / completing
+      upload → modal closes the same way; state resets; no flicker
+      or leftover overlay.
+
+  If ANY point differs from the pre-extraction screenshots → STOP
+  and diagnose. This is an EXTRACTION, not a refactor or
+  re-implementation. Behavior must be 1:1.
+
+  **Functional run after the visual check:**
+  1. Open bulk modal → select 3 files (PDF + JPG + DWG).
+  2. Set default discipline = "אדריכלות".
+  3. Override file #2 discipline = "חשמל".
+  4. Override file #3 floor_id = "קומה 2".
+  5. Tap "העלה 3 קבצים".
+  EXPECT: 3 successful uploads with correct per-file metadata.
+  List refreshes.
+
+**B — UnitPlansPage bulk happy path (NEW):**
+  1. Open a project → drill into a unit → תוכניות tab.
+  2. Tap "העלאה מרובה".
+  EXPECT: bulk modal opens. NO "קומה" override column (unit-scoped,
+  not shown).
+  3. Select 2 files.
+  4. Set discipline + plan_type per file.
+  5. Tap "העלה 2 קבצים".
+  EXPECT: both upload to the unit's plans. List refreshes with new
+  entries.
+
+**C — Single-file upload regression (both pages):**
+  1. ProjectPlansPage → tap "+ תוכנית חדשה" (single).
+  2. Pick 1 file, fill all metadata.
+  3. Upload.
+  EXPECT: works as before. The single-file modal is unchanged.
+  Same for UnitPlansPage.
+
+**D — Bulk limits enforcement:**
+  1. Try to select 21 files at once.
+  EXPECT: toast/error — "מקסימום 20 קבצים בהעלאה". Files limited.
+  2. Try to select a 51MB file.
+  EXPECT: rejected with size error.
+
+**E — Bulk upload retry on failure:**
+  1. Simulate a network failure during one file's upload (offline
+     toggle or revoke API token mid-batch — easier: try to upload
+     20 files quickly and trigger rate limit).
+  2. Result screen shows partial success.
+  3. Tap "נסה שוב" on the failed row.
+  EXPECT: that single file retries (others NOT re-uploaded).
+
+**F — Cancel during upload:**
+  1. Select files → start upload → close modal mid-upload.
+  EXPECT: upload finishes for files already in flight (concurrency=3);
+  remaining queued files are skipped. List refreshes with whatever
+  succeeded.
+  Acceptable behavior. NOT a hard requirement to cancel in-flight
+  requests.
+
+**G — Cross-platform:**
+  - Test A + B on iPhone (Capacitor) AND Android.
+  EXPECT: file picker shows native Photos/Files picker on iOS, file
+  picker on Android. Multi-select works. Upload completes.
+
+**H — Modal state reset between opens:**
+  1. Open bulk modal → add files → close modal (don't upload).
+  2. Re-open bulk modal.
+  EXPECT: file list is EMPTY (no leftover files from previous open).
+  Default discipline retained from previous selection (state lives
+  in page, not modal).
+
+================================================================================
+RISK
+================================================================================
+Low-medium. Largest changes by LOC, but it's an EXTRACTION (not
+new logic). Existing tests on ProjectPlansPage bulk apply 1:1.
+
+- ⚠ Extraction risk — the new component must behave IDENTICALLY
+  to the existing bulk modal on ProjectPlansPage. Smoke A is the
+  guard: if anything regresses on the existing flow, abort.
+- ⚠ Per-file state shape — keep the same `{file, discipline,
+  plan_type, floor_id, status, error, id}` to minimize change.
+- ⚠ Rate limit (`check_upload_rate_limit` per `plans_router.py:146`)
+  — bulk uploads on UnitPlansPage hit the same limit. If users
+  upload 20 plans/minute, could trip. Existing ProjectPlansPage
+  bulk already operates under this; no new exposure.
+- ⚠ `PLAN_TYPES` constant — if defined as a local const inside
+  ProjectPlansPage, must be exported (or moved to a shared
+  constants file). Spec assumes exportable. Verify during STEP 0.
+- ⚠ `availableDisciplines` calculation — currently fetched per
+  page based on project disciplines. Pass through to modal
+  unchanged.
+- ⚠ Cross-context use — if a future page wants to use
+  BulkPlanUploadModal in a different context (e.g., site plans),
+  the props interface should accommodate. Current interface
+  already covers floor/no-floor variant; future variants would
+  just add flags.
+- ⚠ ProjectPlansPage drops below 1,500-LOC danger threshold —
+  this is desired per CLAUDE.md refactor goals. No risk; pure win.
+
+Bundle size: zero (no new deps).
+Performance: zero impact.
+Backend / DB / env / payment / billing: zero touch.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+- Reverts component file deletion + ProjectPlansPage refactor +
+  UnitPlansPage port.
+- ProjectPlansPage restored to inline bulk modal (works as before).
+- UnitPlansPage loses bulk upload (back to single-file only).
+- No data lost — uploaded plans persist.
+
+================================================================================
+DEPLOY ORDERING
+================================================================================
+F.2-polish-1 at HEAD. This batch lands cleanly:
+- New component file: no overlap.
+- ProjectPlansPage: large refactor, but isolated to bulk modal area.
+- UnitPlansPage: additive port, no overlap with single-file flow.
+- Zero merge conflicts expected.
+
+================================================================================
+NEXT STEPS (after H.1 ships green)
+================================================================================
+**Phase 2 — H.2-Bundle (native release):**
+Combined batch with all native-pending items to share one Apple/
+Android review cycle:
+
+1. **H.2 — iOS document scanner**
+   - Capacitor plugin (`@capacitor-community/document-scanner` —
+     verify maintenance during spec)
+   - ~50 LOC frontend
+   - Native: Podfile pod + Gradle dep + Hebrew permission strings
+
+2. **Stream B1 — Universal Links (iOS) + App Links (Android)**
+   - **This is the "WhatsApp link → app if installed" fix.**
+   - Apple-app-site-association JSON hosted at
+     `app.brikops.com/.well-known/`
+   - Android assetlinks.json hosted same place
+   - iOS `Associated Domains` entitlement
+   - Android `<intent-filter android:autoVerify="true">`
+   - JS handler via existing `@capacitor/app` plugin
+   - ~30-60 LOC frontend
+
+3. **Stream B2 — Contact Picker**
+   - Capacitor plugin (`@capacitor-community/contacts` — verify)
+   - ~80-120 LOC frontend
+   - Native: NSContactsUsageDescription + READ_CONTACTS
+
+**Bundle total:** ~160-230 LOC frontend + 2 plugins + native config.
+Apple review ~1-3 days. Spec when H.1 ships green.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

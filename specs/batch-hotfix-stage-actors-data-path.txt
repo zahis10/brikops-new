@@ -1,0 +1,329 @@
+================================================================================
+HOTFIX — Override audit block + badges read wrong path on response
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       🚨 P0 — UX in production. Override functionality works (data
+                persisted correctly in DB), but the entire audit visibility
+                layer (#478 badges + #479 audit block) does NOT render
+                because frontend reads `runData.stage_actors` at top-level
+                while the API response has `stage_actors` nested INSIDE
+                `runData.run` object. Discovered via DevTools Network
+                inspection during staging smoke 2026-05-04.
+
+Files changed:  1 file
+                  Frontend: frontend/src/pages/StageDetailPage.js (~5 LOC)
+
+Tests:          NO new test (UI/UX path correction only).
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+DB migration:   NONE. Backend response untouched. Data is already correctly
+                placed inside `run.stage_actors` and has been there all along.
+
+CLAUDE.md compliance:
+  - "לא לנחש, לבדוק בקוד תמיד" — STEP 0 includes EXPLICIT API response
+    shape verification (DevTools Network preview snippet attached). This
+    bug occurred because #478 + #479 specs verified the BACKEND CODE
+    that generates the response, but never verified the ACTUAL SHAPE
+    of the response. New process improvement queued (see notes).
+
+================================================================================
+ROOT CAUSE — verified 2026-05-04 via DevTools Network preview
+================================================================================
+
+Actual API response shape from `GET /api/qc/run/{run_id}` on staging
+(production code path, observed live by Zahi):
+
+   {
+     "can_edit": true,
+     "role": "project_manager",
+     "run": {
+       "id": "6adb55dc-...",
+       "project_id": "616c30e0-...",
+       "building_id": "...",
+       "floor_id": "...",
+       "scope": "floor",
+       "stage_actors": {                  ← HERE — nested in run
+         "stage_ceiling_prep": { "submitted_by": "...", ... },
+         "stage_plaster": { ... }
+       },
+       "stage_statuses": { ... },
+       "template_id": "..."
+     },
+     "stages": [...],
+     "summary": {...},
+     "template_name": "..."
+   }
+
+`stage_actors` is on `runData.run.stage_actors`, NOT on `runData.stage_actors`.
+
+Frontend code from #478 (badges) and #479 (audit block) consistently reads:
+
+   runData?.stage_actors?.[stageId]?.via_override            ← undefined ALWAYS
+
+Resulting in:
+- #478 top status badge "אושר ב-Override על־ידי X" → never renders
+- #478 bottom action-bar badge → never renders
+- #479 amber audit block with reason → never renders
+
+The override action ITSELF works correctly (POST endpoint persists items +
+stage_statuses + stage_actors to DB). The visibility layer is purely broken.
+
+History — why this slipped through:
+
+1. Spec #478 PART 1.2 said: "+1 line in get_run_detail response — exposes
+   `stage_actors: run.get('stage_actors', {})`". The intent was to make
+   `stage_actors` visible at top-level of the response.
+
+2. Replit's STEP 0.2 of #478 confirmed "Backend data confirmed exposed:
+   qc_router.py:1120 'stage_actors': run.get('stage_actors', {})" — but
+   that grep verified the source code line existed, NOT that the data
+   actually appeared at top-level of the JSON response.
+
+3. In practice, `stage_actors` is naturally part of the `run` document
+   (it's a field on db.qc_runs documents), so it comes through inside
+   `run` automatically. The +1 line at qc_router.py:1120 is REDUNDANT
+   and may either be ineffective (e.g. inside run dict construction,
+   or shadowed) or is genuinely at top-level but the response field
+   is not what we observe.
+
+4. Frontend (both #478 + #479) trusted the spec contract and read
+   from top-level. Never verified actual response shape during
+   staging smoke prior to the override badge feature itself.
+
+Conclusion: pure path mismatch. Fix is to change frontend to read from
+the actual location (`runData.run.stage_actors`).
+
+================================================================================
+DESIGN DECISION — fix forward, NOT backend reshape
+================================================================================
+
+Option A (chosen) — fix frontend to read `runData.run.stage_actors`:
+  - 3 occurrences in StageDetailPage.js
+  - ~5 LOC total
+  - Zero backend touch (data already there)
+  - Zero deploy chain risk
+
+Option B (rejected) — change backend to expose `stage_actors` at top-level:
+  - Requires actually moving/duplicating the field in get_run_detail
+  - Inconsistent with `stage_statuses` which lives the same way (inside `run`)
+  - Adds coupling between backend response shape and frontend assumption
+  - Future #478/#479-style features would have the same trap
+
+Option A is the only correct fix. The backend code line at
+qc_router.py:1120 ("stage_actors": run.get("stage_actors", {})) can stay
+as-is OR be cleaned up in a future refactor — NOT in this hotfix.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Confirm the 3 broken read sites in StageDetailPage.js:
+    grep -n "runData?\.stage_actors\|runData\.stage_actors" \
+        frontend/src/pages/StageDetailPage.js
+    # Expected (per #478 + #479 deploys, 22062e8 staging):
+    #   approximately 3-6 hits across:
+    #     - L~1688-1693 (#479 top status badge)
+    #     - L~1848-1888 (#479 audit block — multiple internal references)
+    #     - L~2291-2299 (#478 bottom action-bar badge, rev2 amber palette)
+    #   Each occurrence should read `runData?.stage_actors?.[stageId]?.X`.
+
+0.2 — Confirm the actual response shape on staging:
+    Browser DevTools → Network tab on a stage page → click the
+    /api/qc/run/{run_id} request → Preview tab → expand `run` →
+    confirm `run.stage_actors` exists and contains the override data.
+    Verified by Zahi 2026-05-04 — sample data shown in ROOT CAUSE above.
+
+0.3 — Confirm the backend data path is at `run.stage_actors`, not
+    top-level `stage_actors`:
+    grep -n "\"stage_actors\"\|stage_actors:" \
+        backend/contractor_ops/qc_router.py | head -10
+    # Document findings. The +1 line at L~1120 may exist but is ineffective
+    # in placing the field at top-level of the response. We DO NOT touch
+    # this line in this hotfix — only frontend reads change.
+
+0.4 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — Update 3 sites in StageDetailPage.js to read `runData.run.stage_actors`
+================================================================================
+
+FILE: frontend/src/pages/StageDetailPage.js
+--------------------------------------------
+
+Replace EVERY occurrence of:
+   runData?.stage_actors?.[stageId]?.<field>
+With:
+   runData?.run?.stage_actors?.[stageId]?.<field>
+
+The 3 known locations (line numbers approximate — STEP 0.1 confirms):
+
+LOCATION 1.1 — Top status row badge (#479, ~L1688-1693)
+   Current condition:
+       {isApproved && runData?.stage_actors?.[stageId]?.via_override && (...)}
+   Updated:
+       {isApproved && runData?.run?.stage_actors?.[stageId]?.via_override && (...)}
+   Inside the badge text:
+       {runData?.stage_actors?.[stageId]?.approved_by_name || 'מנהל פרויקט'}
+   Updated:
+       {runData?.run?.stage_actors?.[stageId]?.approved_by_name || 'מנהל פרויקט'}
+
+LOCATION 1.2 — Audit block conditional + 3 fields (#479, ~L1848-1888)
+   Current outer condition:
+       {runData?.stage_actors?.[stageId]?.via_override && (...)}
+   Updated:
+       {runData?.run?.stage_actors?.[stageId]?.via_override && (...)}
+   Inside, the 3 read sites for approved_by_name, approved_at,
+   override_reason — all updated to the new path:
+       runData?.run?.stage_actors?.[stageId]?.approved_by_name
+       runData?.run?.stage_actors?.[stageId]?.approved_at
+       runData?.run?.stage_actors?.[stageId]?.override_reason
+
+LOCATION 1.3 — Bottom action-bar badge (#478 rev2, ~L2291-2299)
+   Current condition + text:
+       {isApproved && runData?.stage_actors?.[stageId]?.via_override && (...)}
+       ... אושר ב-Override על־ידי {runData?.stage_actors?.[stageId]?.approved_by_name || 'מנהל פרויקט'} ...
+   Updated:
+       {isApproved && runData?.run?.stage_actors?.[stageId]?.via_override && (...)}
+       ... אושר ב-Override על־ידי {runData?.run?.stage_actors?.[stageId]?.approved_by_name || 'מנהל פרויקט'} ...
+
+Defensive note: if STEP 0.1 finds MORE than 3 read sites (e.g. 4 or 5),
+update ALL of them. The rule is: any `runData?.stage_actors?.[stageId]?...`
+becomes `runData?.run?.stage_actors?.[stageId]?...`. No exceptions.
+
+DO NOT TOUCH:
+- Backend code (qc_router.py +1 line at L1120 stays untouched).
+- Override endpoint, RBAC, audit log, notifications — all working.
+- Items rendering, approve/reject/submit/reopen flows.
+- Any other component or page.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse):
+   cd frontend && yarn build
+   → no new warnings or errors
+   (Or fall back to babel parser on the changed file alone — same env
+   limitation as #476-#479.)
+
+VERIFY 2 — No remaining `runData.stage_actors` reads (top-level path):
+   grep -c "runData?\\.stage_actors\\|runData\\.stage_actors" \
+       frontend/src/pages/StageDetailPage.js
+   → 0 (all usages must now use `runData.run.stage_actors`)
+
+VERIFY 3 — All reads now go through `runData.run.stage_actors`:
+   grep -c "runData?\\.run?\\.stage_actors\\|runData\\.run\\.stage_actors" \
+       frontend/src/pages/StageDetailPage.js
+   → ≥ 3 (3 occurrences from #478 + #479; could be more with internal field reads)
+
+VERIFY 4 — No regression on existing tests:
+   cd backend && python -m pytest tests/test_qc_override_close.py tests/test_qc_units_status.py -v
+   → all pass (backend untouched)
+
+VERIFY 5 — Visual smoke (Zahi runs after deploy to staging):
+   a) Login as super_admin → go to a stage already override-approved
+      during prior staging smoke (e.g. "טיח בקומה" or "הכנות חשמל בקומה").
+   b) AT TOP of stage page, in the status badges row near "אושר ביקורת",
+      see the AMBER badge "🛡 אושר ב-Override על־ידי Super Admin". ✅
+   c) BELOW "סיכום פעולות" card, see the AMBER block titled
+      "🛡 סגור באמצעות Override" with אישר / תאריך / סיבה rows. ✅
+   d) The reason field shows the EXACT text typed in the override dialog. ✅
+   e) Bottom action-bar shows the override badge variant (instead of
+      generic "שלב אושר"). ✅
+   f) On a NORMALLY approved stage (no override) — neither badge
+      nor audit block renders (only standard "סיכום פעולות"). ✅
+   g) Override flow itself still works (button, dialog, submit). ✅
+   h) Mobile viewport (375px DevTools): no overflow, audit table wraps.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (greps + Zahi's network preview confirmation)
+  - Per-file diff (1 file, ~5 LOC)
+  - VERIFY 1-4 outputs
+  - VERIFY 5 deferred-to-Zahi note (8 scenarios a-h)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(qc): override badges + audit block read correct response path
+
+  P0 hotfix to #478 + #479. Override functionality works end-to-end
+  (data persisted correctly in DB), but ALL 3 visibility surfaces
+  (top badge, bottom action-bar badge, audit block with reason) did
+  not render on staging because frontend read `runData.stage_actors`
+  at top-level while the actual API response has `stage_actors`
+  nested inside `runData.run`.
+
+  Discovered via DevTools Network preview during staging smoke
+  (Zahi 2026-05-04). The +1 line approved for #478 was redundant
+  (data was already on `run`); the bug is the frontend assumption
+  about the response shape.
+
+  Fix: change all 3 read sites in StageDetailPage.js from
+    runData?.stage_actors?.[stageId]?.X
+  to:
+    runData?.run?.stage_actors?.[stageId]?.X
+
+  ~5 LOC, frontend only. No backend change. No new tests
+  (functionality covered by #478's existing tests + V5 visual smoke).
+
+  Process improvement: future specs that add UI reading from a new
+  backend field MUST verify the actual API response shape (Network
+  preview), not just the source code that generates the response.
+  Tracked separately as iron rule for CLAUDE.md.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.3 greps, paste output to top of review.txt)
+2. PART 1 — replace all `runData?.stage_actors?.` with
+   `runData?.run?.stage_actors?.` in StageDetailPage.js
+3. Run VERIFY 1-4
+4. Generate review.txt + .local/.commit_message
+5. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+1 file revert. Override badges + audit block return to NOT rendering
+(but the override functionality itself keeps working — data still
+persists). Zero data risk.
+
+NO impact on:
+- Override endpoint, RBAC, audit log, notifications
+- Other approve/reject/submit/reopen flows
+- Backend (untouched)
+- Other QC pages
+
+================================================================================
+PROCESS IMPROVEMENT — TO ADD TO CLAUDE.md (after this hotfix ships)
+================================================================================
+
+New iron rule for spec template:
+
+    Whenever a UI batch reads from a NEW or EXTENDED backend field,
+    STEP 0 MUST verify the ACTUAL shape of the API response, not just
+    the source code that generates it. Required steps:
+
+      (a) Identify the endpoint URL the new UI reads from
+      (b) Open DevTools Network tab on staging (or curl the endpoint
+          with a valid auth token)
+      (c) Inspect the JSON response Preview / Response body
+      (d) Confirm the field exists at the EXACT path the frontend
+          will read (top-level vs nested vs key naming)
+      (e) Document the verified shape in the spec STEP 0 audit
+
+    This rule fixes the #478 + #479 trap: spec assumed top-level
+    `stage_actors`; backend places it inside `run`; frontend never
+    rendered the override badges/audit block until the path was
+    fixed in this hotfix.
+
+================================================================================
+END OF SPEC
+================================================================================

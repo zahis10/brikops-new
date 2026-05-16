@@ -1,0 +1,139 @@
+================================================================================
+BATCH D — Hide unit-scope stages on floors with 0 units (#30)
+================================================================================
+Date:           2026-05-11
+Branch:         staging  (NOT main)
+Severity:       P2 — UX clutter from real-device testing (#30).
+                On floors with no units (e.g. "קומה -3" mechanical
+                basement, technical floor, common area), the FloorDetailPage
+                displays all unit-scope stages with "0/0 דירות הושלמו".
+                These stage cards cannot be clicked through to anything
+                meaningful (no units to QC), they just clutter the view
+                and confuse PMs.
+
+                Confirmed from Zahi's screenshot of floor -3: 6 unit-scope
+                stages displayed with "0/0 דירות הושלמו", all useless.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only:
+                  - frontend/src/pages/FloorDetailPage.js (1 LOC added)
+                Total: 1 file. No backend.
+
+================================================================================
+WHY FRONTEND, NOT BACKEND
+================================================================================
+
+The backend `get_units_status` endpoint returns all unit-scope stages
+for any floor in a project where unit-scope stages exist in the template.
+This is technically correct: the API answers "what stages apply to units
+on this floor?" with the stage definitions, regardless of unit count.
+
+Filtering at backend would change the API contract — risky for other
+consumers (BuildingDefectsPage, ProjectControlPage might depend on the
+shape today).
+
+Filtering at frontend is a 1-line change, scoped to FloorDetailPage only,
+and easy to revert. If we later decide backend should also filter, that's
+a separate batch.
+
+================================================================================
+STEP 0 — PRE-FLIGHT (3 checks PASS)
+================================================================================
+
+1. Confirm unit-scope stages render at FloorDetailPage.js:301-351:
+   $ grep -nC 1 "unitsStatus.stages.length > 0" \
+       frontend/src/pages/FloorDetailPage.js
+   →  300: /* Replaces the old hardcoded single-stage block. */
+   →  301: {unitsStatus && Array.isArray(unitsStatus.stages) &&
+   →       unitsStatus.stages.length > 0 && unitsStatus.stages.map(unitStage => {
+   ✓ Confirmed location of the map.
+
+2. Confirm unitStage has `total_units` field:
+   $ grep -n "total_units\|approved_units\|in_progress_units" \
+       frontend/src/pages/FloorDetailPage.js
+   →  302: const total = unitStage.total_units || 0;
+   →  303: const approved = unitStage.approved_units || 0;
+   ✓ Field exists, currently used for display.
+
+3. Confirm no other place displays per-floor unit-scope stages:
+   $ grep -rn "unitsStatus.stages\|unitStage\." frontend/src/
+   →  only FloorDetailPage.js
+   ✓ Filter is local. No collateral effects.
+
+================================================================================
+LOCATION 1 — Filter empty unit-scope stages at render
+================================================================================
+File: frontend/src/pages/FloorDetailPage.js
+Line: 301
+
+BEFORE:
+        {unitsStatus && Array.isArray(unitsStatus.stages) && unitsStatus.stages.length > 0 && unitsStatus.stages.map(unitStage => {
+
+AFTER:
+        {unitsStatus && Array.isArray(unitsStatus.stages) && unitsStatus.stages.length > 0 && unitsStatus.stages.filter(s => (s.total_units || 0) > 0).map(unitStage => {
+
+Single change: insert `.filter(s => (s.total_units || 0) > 0)` before `.map(`.
+
+Effect:
+- Floor WITH units (e.g. floor 2 has 6 דירות) → filter passes → all stages
+  render as before.
+- Floor with 0 units (e.g. floor -3 mechanical) → filter excludes every
+  unit-scope stage → only floor-scope stages display (like "הצפה/אטימות").
+- Floor where SOME stages have 0 total_units but others have > 0 → only
+  the populated ones display. (Should be rare — total_units is computed
+  from floor.units in backend, so all unit-scope stages on the same
+  floor have identical total_units. But safe to handle per-stage.)
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ The unitStage display logic (L302-350) — no change to how individual
+     cards render.
+- ❌ Floor-scope stages render at L284 — separate map, unaffected.
+- ❌ Backend qc_router.py — no change.
+- ❌ The `is_empty` indicator (L334-336) — that's for stages with no
+     QC items in template (different from "no units on floor"). Stays.
+
+================================================================================
+VERIFY 1 — Build
+================================================================================
+$ cd frontend && CI=true yarn build
+   →  EXIT=0 expected.
+
+================================================================================
+VERIFY 2 — Smoke (DEFERRED TO ZAHI on staging)
+================================================================================
+A. On staging, open project with the floor-3 (or any floor with 0 units).
+   Navigate to בקרת ביצוע → choose that floor.
+   EXPECT: only floor-scope stages render (e.g. "הצפה/אטימות").
+           Unit-scope stages "טיח דירתי", "צבע יד ראשונה" etc. DO NOT appear.
+
+B. Open a regular floor (floor 1 or 2 with units).
+   EXPECT: full list of stages renders as before — both floor-scope and
+   unit-scope, with their counts (e.g. "0/4 דירות הושלמו").
+
+C. Sanity: walk into a unit-scope stage on a populated floor → still
+   navigable, QC flow works as before.
+
+================================================================================
+RISK
+================================================================================
+Very low. Pure display filter. Backend untouched. No data mutation.
+
+Edge case: a freshly-created floor where unit aggregation hasn't completed
+yet (units exist but total_units=0 in cache). Would be hidden briefly
+until reload. Mitigation: refresh after creating units. Same behavior as
+today for the "0/0" display.
+
+Bundle size impact: zero.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+(Reverts to "show all unit-scope stages regardless of unit count".)
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

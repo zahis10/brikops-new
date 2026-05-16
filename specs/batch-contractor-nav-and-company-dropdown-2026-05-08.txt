@@ -1,0 +1,441 @@
+================================================================================
+P1 — Contractor navigation fix + Company-only assignment in management panel
+================================================================================
+Date:           2026-05-08
+Branch:         staging  (NOT main)
+Severity:       P1 — UX blockers reported by Zahi 2026-05-08 immediately after
+                P0 contractor visibility batch landed.
+
+Files changed:  3 frontend files
+                  frontend/src/utils/navigation.js   (+1 / -1 LOC)
+                  frontend/src/App.js                (+2 / -1 LOC)
+                  frontend/src/pages/TaskDetailPage.js (+10 / -3 LOC)
+
+Tests:          NO new tests (UI nav + dropdown options change). VERIFY
+                visual smoke covers it.
+
+Mobile:         Frontend OTA via Capgo. No native files.
+DB migration:   NONE. No backend changes. Backend already supports both
+                modes (handleAssignContractor + taskService.update).
+
+Family:         Standalone P1. No coupling to other batches.
+
+================================================================================
+TWO BUGS, ONE BATCH
+================================================================================
+
+BUG A — Contractor can't click on a project in MyProjectsPage:
+  User who is PM in project A AND contractor in project B sees both
+  in MyProjectsPage. PM project click works (→ /control). Contractor
+  project click does nothing visible.
+
+  Root cause (frontend/src/utils/navigation.js L10-11):
+      } else if (role === 'contractor') {
+          navigate('/projects');
+      }
+
+  /projects route renders ProjectsHome (App.js L147). ProjectsHome
+  checks user.role globally → it's 'project_manager' (since user is PM
+  in project A) → returns MyProjectsPage. Same page user is already on.
+  The click effectively no-ops.
+
+  An existing escape hatch exists at App.js L163:
+      const fromContractorReminder = searchParams.get('src') === 'wa';
+  When src=wa is present, ProjectsHome forces ContractorDashboard
+  regardless of global role. This is currently used only by WhatsApp
+  reminder links.
+
+  Fix: extend the escape hatch to also accept src=contractor, and have
+  navigateToProject pass src=contractor + the project id.
+
+BUG B — PM cannot assign a defect to a company-only (no specific contractor):
+  Today's management panel "קבלן" dropdown lists:
+   - "לא שויך" — clears assignment.
+   - Each contractor user — assigns specific user, auto-fills company.
+   - Per company that has contact_name AND has NO contractors in the
+     project — assigns company only (no user).
+
+  After P0 batch (2026-05-08), any contractor in the assigned company
+  can submit proof — so company-only assignment is a useful workflow.
+  But the PM has no way to PICK company-only when the company DOES
+  have contractors registered (the filter at L1087 excludes those).
+
+  Root cause (TaskDetailPage L1086-1088):
+      const contactFallbacks = projectCompanies
+          .filter(pc => pc.contact_name && !projectContractors.some(...))
+          .map(...)
+
+  Fix: add a separate "company-only" option list that includes ALL
+  project companies (regardless of whether they have contractors),
+  visually distinct from specific-contractor options.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+⚠️ Replit MUST run STEP 0 on workspace post-`git pull`. Spec line numbers
+are approximate (post P0 deploy may have shifted lines).
+
+0.1 — Confirm navigateToProject contractor branch:
+    grep -n "role === 'contractor'\|navigate('/projects')" \
+        frontend/src/utils/navigation.js
+    Expected: L10-11 — the bug.
+
+0.2 — Confirm ProjectsHome escape hatch:
+    grep -n "src.*===.*'wa'\|fromContractorReminder" frontend/src/App.js
+    Expected: L163 area. We extend it.
+
+0.3 — Confirm management panel contractor dropdown:
+    grep -n "contactFallbacks\|projectCompanies\|assignableContractors" \
+        frontend/src/pages/TaskDetailPage.js
+    Expected (post-P0):
+    - L1085: assignableContractors filter
+    - L1086-1088: contactFallbacks filter + map (the gap)
+    - L1092-1109: InlineSelect with options spread
+
+0.4 — Confirm handleAssignContractor handles `__contact__<id>` already:
+    grep -n "__contact__\|company_id.*pcId" frontend/src/pages/TaskDetailPage.js
+    Expected: L636-647 — the existing handler. Backend
+    taskService.update(id, { company_id: pcId, assignee_id: null })
+    works for ANY project_company (not gated on contractor presence).
+
+0.5 — Confirm i18n key for "company-only" label:
+    grep -rn "כל החברה\|company_only\|companyOnly" \
+        frontend/src/i18n/he.json frontend/src/pages/TaskDetailPage.js
+    Expected: not present. We hardcode the Hebrew label inline (no i18n
+    key needed for one-place use).
+
+0.6 — VERIFY route mapping for /projects/{id}:
+    grep -B1 -A2 'path="/projects' frontend/src/App.js | head -40
+
+    Expected on HEAD (verified 2026-05-08):
+      path="/projects"               → <ProjectsHome />
+      path="/projects/:projectId"    → <ProjectsHome />   ← critical
+      path="/projects/:projectId/control"   → <ProjectControlPage />
+      path="/projects/:projectId/dashboard" → <DashboardPage />
+
+    The fix relies on `/projects/{id}` routing to ProjectsHome (which
+    inspects ?src=contractor and forks to ContractorDashboard with
+    initialProjectId={projectId}). If `/projects/{id}` routes
+    elsewhere, the escape hatch never fires and the navigate() call
+    lands on a PM-only page — STOP and re-spec.
+
+    VERIFIED CORRECT — both `/projects` and `/projects/:projectId` map
+    to <ProjectsHome />. Proceed.
+
+0.7 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — navigation.js: pass src=contractor for contractor role
+================================================================================
+
+FILE: frontend/src/utils/navigation.js
+--------------------------------------
+
+L10-11 — REPLACE:
+
+  BEFORE:
+      } else if (role === 'contractor') {
+          navigate('/projects');
+      }
+
+  AFTER:
+      } else if (role === 'contractor') {
+          // FIX 2026-05-08: navigate with src=contractor so ProjectsHome
+          // forces ContractorDashboard for users who are PM globally
+          // but contractor in this specific project. Mirrors the existing
+          // src=wa escape hatch (App.js L163, Batch 6C).
+          navigate(`/projects/${id}?src=contractor`);
+      }
+
+DO NOT TOUCH:
+- MANAGEMENT_ROLES tuple at L1.
+- The MGMT branch (L8-9).
+- The fallback else branch (L12-13) — that path is for unknown roles.
+- getProjectBackPath (L17-22).
+
+================================================================================
+PART 2 — App.js: extend ProjectsHome escape hatch
+================================================================================
+
+FILE: frontend/src/App.js
+-------------------------
+
+L163 — REPLACE:
+
+  BEFORE:
+      const fromContractorReminder = searchParams.get('src') === 'wa';
+
+  AFTER:
+      // src=wa  → from WhatsApp contractor reminder (Batch 6C)
+      // src=contractor → from MyProjectsPage click on a project where
+      //                  the user has membership.role='contractor'
+      //                  (Batch 2026-05-08)
+      const fromContractorReminder =
+          searchParams.get('src') === 'wa' ||
+          searchParams.get('src') === 'contractor';
+
+DO NOT TOUCH:
+- The PM_OR_ADMIN_ROLES tuple at L145.
+- The isPmOrAdmin computation (L170-172).
+- The L175-180 PM/admin redirect block.
+- The L182 ContractorDashboard return.
+- Any other component or route in the file.
+
+================================================================================
+PART 3 — TaskDetailPage: company-only options in management panel
+================================================================================
+
+FILE: frontend/src/pages/TaskDetailPage.js
+------------------------------------------
+
+L1085-1088 — REPLACE the option building block:
+
+  BEFORE:
+      const assignableContractors = projectContractors.filter(c => c.company_id && c.contractor_trade_key);
+      const contactFallbacks = projectCompanies
+          .filter(pc => pc.contact_name && !projectContractors.some(c => c.company_id === pc.id || c.user_company_id === pc.id))
+          .map(pc => ({ value: `__contact__${pc.id}`, label: `${pc.contact_name} (${pc.name})` }));
+
+  AFTER:
+      const assignableContractors = projectContractors.filter(c => c.company_id && c.contractor_trade_key);
+      // FIX 2026-05-08: company-only assignment.
+      // Every project_company gets a "כל החברה" option, regardless of
+      // whether it has contractors registered. After P0 batch, any
+      // contractor in the assigned company can submit proof — so PM
+      // assigning to company-only is a valid workflow.
+      const companyOnlyOptions = projectCompanies
+          .filter(pc => pc.name)
+          .map(pc => ({
+              value: `__contact__${pc.id}`,
+              label: `🏢 ${pc.name} — כל החברה`,
+          }));
+      // Legacy contact_name fallbacks (companies with NO contractor and
+      // a registered contact person) — kept for the existing flow.
+      const contactFallbacks = projectCompanies
+          .filter(pc => pc.contact_name && !projectContractors.some(c => c.company_id === pc.id || c.user_company_id === pc.id))
+          .map(pc => ({ value: `__contact__${pc.id}`, label: `${pc.contact_name} (${pc.name})` }));
+
+L1094-1101 — UPDATE the InlineSelect options spread:
+
+  BEFORE:
+      options={[
+          { value: '', label: 'לא שויך' },
+          ...assignableContractors.map(c => ({
+              value: c.user_id,
+              label: c.user_name || c.user_id
+          })),
+          ...contactFallbacks
+      ]}
+
+  AFTER:
+      options={[
+          { value: '', label: 'לא שויך' },
+          ...assignableContractors.map(c => ({
+              value: c.user_id,
+              label: c.user_name || c.user_id
+          })),
+          ...companyOnlyOptions,
+          ...contactFallbacks,
+      ]}
+
+L1104-1108 — UPDATE the label resolver to handle company-only selection:
+
+  BEFORE:
+      label={savingField === 'assignee' ? 'שומר...' : (
+          task.assignee_id
+              ? (task.assignee_name || projectContractors.find(c => c.user_id === task.assignee_id)?.user_name || 'קבלן משויך')
+              : 'לא שויך'
+      )}
+
+  AFTER:
+      label={savingField === 'assignee' ? 'שומר...' : (
+          task.assignee_id
+              ? (task.assignee_name || projectContractors.find(c => c.user_id === task.assignee_id)?.user_name || 'קבלן משויך')
+              : (task.company_id
+                  ? `🏢 ${task.company_name || projectCompanies.find(pc => pc.id === task.company_id)?.name || 'חברה משויכת'} — כל החברה`
+                  : 'לא שויך')
+      )}
+
+  This shows "🏢 גמרים — כל החברה" when company_id is set but
+  assignee_id is null. task.company_name comes from the P0 batch (now
+  in the API response).
+
+DO NOT TOUCH:
+- handleAssignContractor (L635-699). It already handles `__contact__<id>`
+  via the L636-648 branch — sets company_id=pcId, assignee_id=null.
+- The "no companies" empty state at L1072-1083.
+- The "no contractors" warning at L1089-1090. Note: with the new
+  companyOnlyOptions, this guard's conditions change — companyOnlyOptions
+  is non-empty whenever projectCompanies has any name. Update the
+  guard accordingly:
+
+      BEFORE:
+          return assignableContractors.length === 0 && contactFallbacks.length === 0 && !task.assignee_id ? (
+
+      AFTER:
+          return assignableContractors.length === 0 && companyOnlyOptions.length === 0 && contactFallbacks.length === 0 && !task.assignee_id ? (
+
+  In practice this rarely fires now — only when a project has zero
+  named companies. That's a project-setup issue, not assignment.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — yarn build (defensive, no warnings):
+     cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
+
+V2 — grep verification:
+     grep -c "src=contractor" frontend/src/utils/navigation.js
+     → 1.
+
+     grep -c "src=contractor\|'contractor'" frontend/src/App.js
+     → ≥ 1 (the new check).
+
+     grep -c "companyOnlyOptions\|כל החברה" \
+         frontend/src/pages/TaskDetailPage.js
+     → ≥ 3 (definition + spread + label).
+
+V3 — Visual smoke deferred to Zahi after deploy. Scenarios:
+
+  Bug A — MyProjectsPage navigation:
+  a) Login as user who is PM in project P1 AND contractor in project P2
+     (or super_admin who has contractor membership somewhere).
+  b) Open /projects.
+  c) Click on P1 → navigates to /projects/P1/control?workMode=structure
+     (existing PM behavior — regression check).
+  d) Go back to /projects.
+  e) Click on P2 → navigates to /projects/P2?src=contractor → renders
+     ContractorDashboard with P2 selected.
+  f) Browser back → returns to MyProjectsPage with both projects listed.
+
+  Bug B — Company-only assignment:
+  g) Login as PM. Open any open defect.
+  h) Open the "קבלן" dropdown in the management panel.
+  i) See three groups (visually):
+     - "לא שויך"
+     - Specific contractor users (e.g. "WUyoughong")
+     - "🏢 <company name> — כל החברה" for each project company
+     - (Optional) Contact-only fallbacks (existing behavior)
+  j) Pick "🏢 גמרים — כל החברה".
+  k) Toast "חברה שויכה בהצלחה" appears.
+  l) Page refreshes. The dropdown label now reads
+     "🏢 גמרים — כל החברה".
+  m) שיוך card displays company "גמרים" (the P0 fix is still working).
+  n) "קבלן" line shows "לא שויך" (no specific assignee).
+  o) Open defect as a contractor in גמרים → sees the proof card,
+     can submit (P0 flow). Assignee_id stays null.
+  p) PM picks a SPECIFIC contractor → toast "קבלן שויך בהצלחה",
+     dropdown label shows the contractor name (regression check).
+
+  Direct entry / no params (regression):
+  q) Visit /projects/{P1}/control directly (PM URL) → still works.
+  r) Visit /projects?src=wa from a WhatsApp simulation → still
+     forces ContractorDashboard (existing behavior).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (0.1-0.5 grep outputs).
+  - Per-file diff (3 files, ~12 LOC).
+  - V1-V2 outputs.
+  - V3 deferred-to-Zahi note (scenarios a-r).
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+
+.local/.commit_message:
+  fix(ui): contractor project nav + company-only assignment
+
+  Two P1 UX bugs reported 2026-05-08 immediately after the P0
+  contractor visibility batch landed.
+
+  BUG A — MyProjectsPage click on a contractor project no-ops.
+  navigateToProject sent contractors to /projects (where they
+  already are), so a user who is PM globally but contractor in a
+  specific project couldn't enter that project. Fix: pass
+  ?src=contractor on navigation; ProjectsHome already had a
+  src=wa escape hatch (Batch 6C) — we extend it to also accept
+  src=contractor.
+
+  BUG B — PM couldn't assign a defect to a company without
+  picking a specific contractor. The contactFallbacks list
+  filtered out companies that had ANY contractors registered, so
+  with the P0 "any company member can submit proof" flow live,
+  there was no way to set up that flow. Fix: add a separate
+  companyOnlyOptions list that emits a "🏢 <name> — כל החברה"
+  entry for every project_company, in addition to the specific
+  contractors and contact_name fallbacks.
+
+  Backend untouched. handleAssignContractor already handled
+  __contact__<id> via taskService.update({company_id, assignee_id:null}).
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (0.1-0.5 greps; output at top of review.txt).
+2. PART 1 — navigation.js contractor navigate.
+3. PART 2 — App.js src=contractor check.
+4. PART 3 — TaskDetailPage companyOnlyOptions + label update + guard.
+5. Run V1-V2.
+6. Generate review.txt + .local/.commit_message.
+7. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+3 files revert. 2 bugs return. No data corruption — pure UI / nav
+changes.
+
+NO impact on:
+- Backend, schema, DB, indexes.
+- WhatsApp / notifications.
+- assignee_id values.
+- Direct-entry flows (PM URLs, /projects?src=wa).
+- Other contractor flows (proof submission, etc.) — those are P0,
+  unchanged.
+
+================================================================================
+RISK
+================================================================================
+
+- Adding companyOnlyOptions to the contractor dropdown grows it
+  visually for projects with many companies. If projects have >20
+  companies, the InlineSelect may be unwieldy. Acceptable for now;
+  consider sectioned dropdown or search filter as a future polish.
+- The label resolver fallback chain (L1104-1108) now reads
+  task.company_name first. This is the field exposed in P0 batch.
+  If the P0 deploy is ever rolled back, this fallback chain still
+  resolves via projectCompanies.find() — defensive.
+
+================================================================================
+KNOWN LIMITATION (document, defer fix)
+================================================================================
+
+contactFallbacks and companyOnlyOptions both emit the same value
+format: `__contact__${pc.id}`. On the backend, both write the same
+row: { company_id: pcId, assignee_id: null }.
+
+Implication: when the page reloads after PM picked a contact_name
+option (e.g. "ירון יורון (גמרים)"), the label resolver will display
+"🏢 גמרים — כל החברה" because the resolver only sees company_id +
+assignee_id=null, with no way to distinguish "contact-name intent"
+from "company-only intent".
+
+Both options route to the same workflow (any company member can
+submit proof), so functionally there's no difference. Only the
+display label changes after reload.
+
+Acceptable trade-off for P1. Proper fix would require a backend
+`assignment_type` field (e.g. 'contact_name' vs 'company_only').
+Deferred until a PM reports actual confusion.
+
+Add to CLAUDE.md under known limitations.
+
+================================================================================
+END OF SPEC
+================================================================================

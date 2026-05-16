@@ -1,0 +1,774 @@
+================================================================================
+BATCH #500 — Phase 2D-1: Excel-style Filter System + Saved Views (THE CORE)
+================================================================================
+Date:           2026-05-05
+Branch:         staging  (NOT main)
+Severity:       P1 — "מערכת הסינון זה הלב והליבה של כל המערכת" (Zahi 2026-05-05).
+                The matrix is functionally an unusable Excel replacement for
+                management without per-column filtering.
+
+Family:         Phase 2D-1 of Execution Matrix.
+                  Phase 1 backend                    #483  ✅ shipped
+                  Phase 2A frontend read-only        #484-#492  ✅ shipped
+                  Phase 2B cell editing              #494  ✅ shipped
+                  Phase 2C stage management          #495  ✅ shipped
+                  Phase 2C polish (data-loss fix)    #497  ✅ shipped
+                  UX label clarity                   #498  ✅ shipped (this PR)
+                  Phase 2D-1 filters + saved views   #500  ← THIS BATCH
+                  Phase 2D-2 view toggle + פתח/סגור   #501  ← LATER (separate)
+
+Files changed:  6 NEW files frontend, 2 EDIT files frontend
+                  Backend: ZERO LOC (saved views CRUD already in #483)
+                  Tests:   ~7 new frontend logic tests
+                  (post-2026-05-05 Replit review: +5 LOC delete UI on
+                   saved-view pills + 2 extra tests for sentinel
+                   conversion + reset behavior)
+
+LOC estimate:   ~625 LOC frontend
+Risk:           Medium. Large new surface, but:
+                  - Backend completely untouched
+                  - All new components ISOLATED — no edits to MatrixCell /
+                    MatrixGridView / MatrixListView / StageManagementDialog
+                  - ExecutionMatrixPage gets ~30 LOC of wiring only
+                  - Saved views are per-user, no cross-user data risk
+                  - Rollback = git revert (zero data risk)
+
+================================================================================
+DESIGN — Excel pattern, drawer placement, dynamic sections
+================================================================================
+
+CORE METAPHOR (Zahi 2026-05-05): "תמיד תחשוב על זה כעל טבלת אקסל...
+טבלת אקסל משופרת". Every column in the matrix gets its own filter.
+AND between columns, OR within a column.
+
+PLACEMENT: Drawer from right (mobile + desktop). Decision made by Zahi
+2026-05-05 over alternatives (inline chips / popover). Reasoning:
+  - 5+ filter categories don't fit in inline chips on mobile
+  - Drawer is the established pattern in BrikOps (BuildingDefectsPage)
+  - Zero pixels stolen from the matrix grid (critical on 30-unit screens)
+  - Roomy enough for dynamic per-column sections + saved views
+
+OPENING: Floating Action Button (FAB) at bottom-right of matrix page.
+Active filter count rendered as a numeric badge on the FAB. Clicking
+opens the drawer.
+
+FILTER LOGIC:
+  - Within a section (a single column's checkboxes): OR
+    Example: tag "סוג מכירה" with [שוק חופשי, משתכן] checked → unit
+    matches if cell value is EITHER.
+  - Between sections (different columns): AND
+    Example: building=A AND סוג מכירה=שוק חופשי AND טיח status=הושלם
+    → unit must satisfy ALL.
+  - Empty value: explicit "(ריק)" checkbox per section. NOT default-on.
+
+DRAWER STRUCTURE (top-down):
+  1. Header: title "סינון" + active count badge + X close button
+  2. Saved views row: pills of user's saved views + "+" to save current
+  3. Free-text search input: matches unit_no + cell text_value + cell note
+  4. Group "📍 מיקום":
+       - בניין: checkboxes per building (from data.buildings)
+       - דירה: text input (filter by unit_no contains)
+  5. Group "📝 מידע כללי" — DYNAMIC:
+       - Renders one section per stage where stage.type === "tag"
+       - Each section: checkboxes for distinct text_value across all
+         cells of that stage + "(ריק)" + optional "+ ערך" text input
+         for free-text "contains" matching
+  6. Group "🔨 שלבי בקרת ביצוע" — DYNAMIC:
+       - Renders one section per stage where stage.type === "status"
+       - Each section: 6 status checkboxes (הושלם / בוצע חלקית / בתהליך
+         / לא הושלם / אין צורך / אין חוסרים) + "(ריק)"
+  7. Footer: "החל (N)" + "נקה הכל"
+
+SECTION COLLAPSIBLE BEHAVIOR (Zahi explicit request 2026-05-05):
+  "תוודא שיש חץ לקיפול נושאים או משהו כדי שלא יהיה עמוס מדי"
+  - Default: ALL sections collapsed (just header row, no body)
+  - Header shows: name + icon + active count badge if active + chevron
+  - Chevron: ▸ collapsed (default), ▾ expanded
+  - Click anywhere on header row → toggle expand/collapse
+  - Auto-expand when loading a saved view that has values in that section
+  - "Expand all / Collapse all" mini-button at top of drawer (post-MVP polish — out of 2D-1 scope, see open question Q3)
+
+FILTER STATE LOCATION:
+  - Live in component state (useMatrixFilters hook), NOT URL params.
+  - Refresh resets to default.
+  - Persistence = saved views (backend).
+  - URL persistence deferred to 2D-2 (open question Q5 below).
+
+PERFORMANCE:
+  - Filtering is computed in useMemo over `units` + `cellsByUnitStage`
+  - 30 units × 11 stages = 330 cells max. O(units × stages) per render.
+  - No backend round-trip on filter change (everything is in-memory).
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT (before writing any code)
+================================================================================
+
+0.1 — Verify matrixService current methods (must NOT add saveView/etc twice):
+    grep -n "export const matrixService\|async [a-zA-Z]" \
+        frontend/src/services/matrixService.js
+    Expected: 4 methods (getMatrix, updateCell, getCellHistory, updateStages).
+    NO saved view methods yet. We add 4 in PART 6.
+
+0.2 — Verify backend saved views endpoints exist (we DO NOT modify them):
+    grep -n "execution-matrix.*views\|saved.view\|MatrixSavedView" \
+        backend/contractor_ops/execution_matrix_router.py | head -10
+    Expected: ≥5 endpoints under /views (list/create/update/delete + ?).
+    Schema MatrixSavedViewFilters from schemas.py L969 covers EXACTLY:
+      building_ids[], floor_ids[], unit_ids[],
+      stage_status_filters: Dict[str, List[str]],
+      tag_value_filters: Dict[str, List[str]],
+      search_text
+    ⚠️ Do NOT modify the schema — frontend filter shape MUST match.
+
+0.3 — Verify ExecutionMatrixPage current structure (where to inject FAB+drawer):
+    grep -n "useMatrixData\|stages\|cells\|units\|StageManagementDialog\|return (" \
+        frontend/src/pages/ExecutionMatrixPage.js
+    Expected: page is ~210 LOC, returns wrapper with header + body.
+    FAB+drawer go INSIDE the page's return JSX (not parent).
+
+0.4 — Verify @radix-ui/react-dialog already installed (used by Phase 2C):
+    cat frontend/package.json | grep "radix-ui/react-dialog"
+    Expected: present (used by StageManagementDialog).
+    → Reuse for the drawer (same modal+focus-trap behavior).
+
+0.5 — Confirm 6-status enum source of truth:
+    grep -n "MATRIX_STATUS_VALUES\|^STATUS_CONFIG\|completed\|partial\|in_progress\|not_done\|not_relevant\|no_findings" \
+        frontend/src/constants/STATUS_CONFIG.js | head -15
+    Expected: 6 statuses with Hebrew labels. Section "🔨 שלבי בקרת ביצוע"
+    iterates STATUS_CONFIG to render checkboxes — single source of truth.
+
+0.6 — Verify FAB position won't conflict with existing fixed UI on mobile:
+    grep -rn "position: fixed\|position:fixed\|className=.*fixed.*bottom" \
+        frontend/src/components/ frontend/src/layouts/ frontend/src/pages/ \
+        2>/dev/null | grep -i "bottom\|nav\|tab\|footer" | head -10
+    Expected:
+      - Identify any existing fixed-bottom elements (bottom nav, sticky
+        action bar, banner) on the matrix page or its layout shell
+      - If none found: current FAB position (bottom: max(16px, env(...)))
+        is fine
+      - If found: adjust FAB `bottom` offset to clear that element
+        (e.g. `bottom: calc(56px + env(safe-area-inset-bottom) + 16px)`)
+    Document finding in review.txt STEP 0 audit. Capacitor compliance
+    requires NO blocking of existing fixed UI.
+
+0.7 — Output STEP 0 audit at TOP of review.txt before writing any code.
+
+================================================================================
+PART 1 — Filter state hook (useMatrixFilters)
+================================================================================
+
+NEW FILE: frontend/src/hooks/useMatrixFilters.js  (~120 LOC)
+
+Responsibilities:
+  - Hold filter state (building_ids, apartment_search, search_text,
+    stage_status_filters, tag_value_filters)
+  - Expose toggle helpers (toggleBuilding, toggleStageStatus, etc.)
+  - Compute `filteredUnits` via useMemo (Excel logic: AND across, OR within)
+  - Compute `activeCount` per section + total
+  - Reset, setFromSavedView (load entire state in one call)
+
+API:
+    const {
+      filters,
+      filteredUnits,
+      activeCount,        // { total, building, apartment, search,
+                          //   stage_status: {stage_id: count},
+                          //   tag_value: {stage_id: count} }
+      toggleBuilding,
+      toggleStageStatus,  // (stageId, statusValue) → toggle in array
+      toggleTagValue,     // (stageId, value)
+      setApartmentSearch,
+      setSearchText,
+      reset,
+      loadSavedView,      // (viewObj) → applies viewObj.filters
+      currentFilterPayload, // serializable shape matching backend schema
+    } = useMatrixFilters({ units, cellsByUnitStage, stages });
+
+Filter logic (filteredUnits):
+    return units.filter(u => {
+      // 1. Building (AND, OR within)
+      if (filters.building_ids.length > 0
+          && !filters.building_ids.includes(u.building_id)) return false;
+
+      // 2. Apartment search (substring on unit_no)
+      if (filters.apartment_search) {
+        const q = filters.apartment_search.toLowerCase();
+        if (!String(u.unit_no).toLowerCase().includes(q)) return false;
+      }
+
+      // 3. Per-stage status filters (AND across stages, OR within statuses)
+      for (const [stageId, allowed] of Object.entries(
+        filters.stage_status_filters || {}
+      )) {
+        if (!allowed?.length) continue;
+        const cell = cellsByUnitStage[`${u.id}::${stageId}`];
+        const status = cell?.status ?? '__empty__';
+        if (!allowed.includes(status)) return false;
+      }
+
+      // 4. Per-tag value filters
+      for (const [stageId, allowed] of Object.entries(
+        filters.tag_value_filters || {}
+      )) {
+        if (!allowed?.length) continue;
+        const cell = cellsByUnitStage[`${u.id}::${stageId}`];
+        const value = cell?.text_value ?? '__empty__';
+        if (!allowed.includes(value)) return false;
+      }
+
+      // 5. Global free-text search across cells + unit_no + notes
+      if (filters.search_text) {
+        const q = filters.search_text.toLowerCase();
+        const inUnitNo = String(u.unit_no).toLowerCase().includes(q);
+        const inCells = stages.some(s => {
+          const c = cellsByUnitStage[`${u.id}::${s.id}`];
+          return (c?.text_value ?? '').toLowerCase().includes(q)
+              || (c?.note ?? '').toLowerCase().includes(q);
+        });
+        if (!inUnitNo && !inCells) return false;
+      }
+
+      return true;
+    });
+
+Distinct value helpers (memoized — used by tag sections):
+    distinctTagValues(stageId) → unique list of cell.text_value across
+                                 all cells of that stage (for checkboxes)
+
+Empty-value sentinel:
+    Use string '__empty__' for "(ריק)" mapping. NOT null/undefined to keep
+    array.includes() checks clean. Frontend-only sentinel; the saved-view
+    payload converts '__empty__' to literal "" before sending to backend.
+
+NEW FILE: frontend/src/hooks/__tests__/useMatrixFilters.test.js  (~110 LOC, 7 tests)
+  T1. building_ids + tag_value_filters AND combination filters correctly
+  T2. status filter: OR within (multiple statuses) keeps unit if ANY match
+  T3. global search_text matches in cell.text_value AND cell.note
+  T4. activeCount counts every active section correctly (regression for
+      Excel-pattern "see at a glance how many filters")
+  T5. loadSavedView replaces state atomically (no leak between switches)
+  T6. empty-value sentinel boundary conversion:
+      - When loading a saved view where backend has stage_status_filters
+        with "" → frontend internally maps to '__empty__' for checkbox
+        matching
+      - When saving (currentFilterPayload), '__empty__' → "" before
+        sending to backend
+      - Round-trip preserves semantics: "user chose to filter for blank"
+  T7. reset() clears every filter section to defaults:
+      building_ids=[], unit_ids=[], apartment_search='',
+      stage_status_filters={}, tag_value_filters={}, search_text=''
+
+================================================================================
+PART 2 — Single collapsible filter section (MatrixFilterSection)
+================================================================================
+
+NEW FILE: frontend/src/components/matrix/MatrixFilterSection.js  (~110 LOC)
+
+Re-usable section that handles all 4 modes (building / apartment / status / tag).
+
+Props:
+  mode: 'building' | 'apartment' | 'status' | 'tag' | 'search'
+  title: string                  // section header text
+  icon: 'loc' | 'tag' | 'status' // colored mini-badge in header
+  iconLetter: 'A' | 'D' | 'S' | 'T'
+  activeCount: number            // shown as pill on header if > 0
+  options: Array<{value, label, color?}>  // for checkbox modes
+  selectedValues: string[]
+  onToggle: (value) => void
+  onClear: () => void            // optional, only when activeCount > 0
+  defaultExpanded: boolean       // default false; auto-true if activeCount > 0
+  textValue?: string             // for 'apartment' / 'search' modes
+  onTextChange?: (v) => void
+
+Rendering rules:
+  - Header row (always visible):
+      [icon-letter-pill] [title] [count-badge if active] ... [chevron]
+      Click anywhere on header → toggle local expanded state.
+      Header height: 36px → ≥44px tap target requirement met.
+  - Body (only when expanded):
+      For checkbox modes: list of options with check-box + label
+      For text modes: <input type="text" placeholder="חיפוש..." />
+      Body padding: 4px 8px 8px 22px (indent under header icon).
+  - Empty state for tag mode: if `options.length === 0`, show
+      "אין ערכים בעמודה זו" centered, faded.
+
+Colors per mode (from c-* ramps in the design system, all ramp-stable):
+  - mode='building'  → c-teal (#0F6E56 text on #E1F5EE)
+  - mode='apartment' → c-teal (same family — both are location)
+  - mode='tag'       → c-amber (#854F0B on #FAEEDA)
+  - mode='status'    → c-purple (#3C3489 on #EEEDFE)
+
+Touch targets: Header row, body checkbox rows ≥44px (`py-2.5`).
+
+NO state in this component except `expanded`. All filter state lives in
+the parent's useMatrixFilters hook — single source of truth.
+
+================================================================================
+PART 3 — Drawer container (MatrixFilterDrawer)
+================================================================================
+
+NEW FILE: frontend/src/components/matrix/MatrixFilterDrawer.js  (~210 LOC)
+
+Wraps Radix Dialog (modal=true) styled as right-side drawer (RTL: enters
+from the right per Zahi's mockup).
+
+Props:
+  open: boolean
+  onClose: () => void
+  filters: from useMatrixFilters
+  toggleBuilding / toggleStageStatus / toggleTagValue / etc.
+  buildings: Array<{id, name}>
+  stages: Array<{id, title, type, source}>
+  cellsByUnitStage: object
+  savedViews: Array<{id, title, icon, filters}>
+  onLoadSavedView: (view) => void
+  onSaveCurrentView: (title) => void  // opens small inline modal? see Q1
+  onDeleteSavedView: (viewId) => void
+
+Layout (mobile-first, sm+ treated identically — drawer width 90vw mobile,
+fixed 380px desktop):
+  ┌─────────────────────────────────────────┐
+  │ סינון [count-badge: N]              × │ ← head
+  ├─────────────────────────────────────────┤
+  │ תצוגות שמורות                           │
+  │ [pill][pill][pill] [+ שמור]            │
+  ├─────────────────────────────────────────┤
+  │ [🔍 חיפוש חופשי..............]         │ ← global search
+  │                                         │
+  │ ── 📍 מיקום ──                          │
+  │ [Section: בניין]                        │
+  │ [Section: דירה]                         │
+  │                                         │
+  │ ── 📝 מידע כללי ──                      │ ← only if any tag stages
+  │ [Section: סוג מכירה]                    │
+  │ [Section: <each tag stage>]             │
+  │                                         │
+  │ ── 🔨 שלבי בקרת ביצוע ──                │ ← only if any status stages
+  │ [Section: טיח]                          │
+  │ [Section: <each status stage>]          │
+  │                                         │
+  │ scroll if overflow                       │
+  ├─────────────────────────────────────────┤
+  │ [החל (N)]               [נקה הכל]      │ ← foot, sticky
+  │ pb: env(safe-area-inset-bottom)         │
+  └─────────────────────────────────────────┘
+
+Group dividers:
+  - "📍 מיקום" — always shown
+  - "📝 מידע כללי" — shown only if `stages.some(s => s.type === 'tag')`
+  - "🔨 שלבי בקרת ביצוע" — shown only if `stages.some(s => s.type === 'status')`
+  Group dividers are non-clickable text labels with `border-top`.
+
+Sections rendering:
+  Stages are sorted by `.order` (already sorted upstream by backend).
+  Custom stages (negative order) render before template stages — same
+  RTL right-to-left order as the matrix grid view, so the user's mental
+  model maps 1:1.
+
+"החל" button:
+  - Currently does NOT exist as separate apply step — filters apply LIVE
+    as user toggles. The "החל" button just CLOSES the drawer.
+  - Why live: 30 units × 11 stages = 330 cells. Filtering is fast
+    (memoized). Live feedback matches the Excel mental model — user
+    sees rows disappear/appear in real-time.
+  - Button label updates: "החל (N)" if N > 0, otherwise "סגור".
+
+"נקה הכל" button:
+  - Calls `reset()` from the hook → clears every filter section.
+  - Saved-view selection cleared too (no longer "loaded").
+
+Saved-view "+" button → opens a tiny SavedViewSaveDialog (PART 4 below).
+
+Saved-view DELETE: each saved-view pill renders an "×" mini-button at
+its right edge (in RTL — visually right side of the pill, not pixel-right).
+Click "×" → calls `onDeleteSavedView(view.id)` → matrixService.deleteSavedView
+→ refresh list → pill disappears.
+
+  Pill markup (~5 LOC):
+    <span className="view-pill" onClick={() => onLoadSavedView(view)}>
+      {view.title}
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onDeleteSavedView(view.id); }}
+        className="ml-1 text-xs opacity-60 hover:opacity-100"
+        aria-label={`מחק תצוגה ${view.title}`}
+      >×</button>
+    </span>
+
+  Confirm before delete: window.confirm? → NO. Use a tiny inline
+  confirm dialog matching #495 pattern? → defer. For 2D-1 ship the "×"
+  with NO confirm — saved views are easy to recreate (just re-set
+  filters + save). Worst case: undo the save right after.
+
+  ⚠️ Why include in 2D-1 (was Q2): without delete UI, users accumulate
+  stale views over time → support burden ("delete my old views via
+  the DB please"). 5 LOC eliminates this entire support category.
+
+DRAWER STYLING:
+  - Background: var(--color-background-primary)
+  - Width: 90vw on mobile, 380px on sm+
+  - Right-anchored on screen (RTL — enter slide from right)
+  - Border-left: 0.5px solid var(--color-border-secondary)
+  - Footer sticky: padding-bottom: max(12px, env(safe-area-inset-bottom))
+  - Body scroll: overflow-y: auto with smooth scrollbar
+
+ESCAPE behavior:
+  - ESC key → onClose (Radix default — keep)
+  - Backdrop click → onClose (Radix default — keep)
+  - Swipe-from-left on mobile → defer to 2D-2 polish (Q4 below)
+
+================================================================================
+PART 4 — SavedViewSaveDialog (small modal-in-modal)
+================================================================================
+
+NEW FILE: frontend/src/components/matrix/SavedViewSaveDialog.js  (~70 LOC)
+
+Triggered when user clicks "+ שמור" pill in the saved-views row.
+
+Modal contents:
+  - Title "שמירת תצוגה"
+  - Input: "שם התצוגה" (max 80, required)
+  - Optional emoji icon picker (defer — out of scope for 2D-1, just pass null)
+  - Buttons: "ביטול" / "שמור"
+
+Submit:
+  - Calls `matrixService.createSavedView(projectId, {title, filters})`
+  - On success: closes self, parent re-fetches saved views, new pill
+    appears at end of saved-views row
+  - On error: shows error inline, does NOT close
+
+⚠️ This dialog opens INSIDE the filter drawer. Test focus/escape carefully:
+ESC should close THIS dialog only, not the parent drawer.
+
+(Open question Q1 below — alternatively use a prompt() or inline input
+in the saved-views row. Recommend dialog for accessibility + future
+icon-picker extension.)
+
+================================================================================
+PART 5 — Floating Action Button (MatrixFilterFAB)
+================================================================================
+
+NEW FILE: frontend/src/components/matrix/MatrixFilterFAB.js  (~50 LOC)
+
+Bottom-right floating button on the matrix page.
+
+Props:
+  activeCount: number
+  onClick: () => void
+
+Position: `position: fixed; bottom: 16px; left: 16px;` (RTL → bottom-right
+visually). Above safe area on mobile: `bottom: max(16px, calc(env(safe-area-
+inset-bottom) + 16px))`.
+
+Visual:
+  - Circle/rounded-rect, 56×56px, c-purple background, white filter icon
+  - Active count badge: top-left small red circle with N (only if N > 0)
+  - Long-shadow on hover/active per ui-ux-pro-max standard
+
+Z-index:
+  - Above matrix grid scroll
+  - BELOW the drawer (drawer covers FAB while open)
+  - BELOW Phase 2B cell edit popover (test no overlap with cell action sheet)
+
+Mobile-specific tweak:
+  - Hide FAB while user is scrolling (subtle UX nicety) → defer to 2D-2
+
+================================================================================
+PART 6 — matrixService extension (saved views CRUD)
+================================================================================
+
+EDIT FILE: frontend/src/services/matrixService.js  (+~60 LOC)
+
+Add 4 new async methods, mirroring the existing `getMatrix` / `updateCell`
+pattern (axios + getAuthHeader). Backend endpoints already exist from #483:
+
+  GET    /api/execution-matrix/{projectId}/views          → list user's views
+  POST   /api/execution-matrix/{projectId}/views          → create new
+  PUT    /api/execution-matrix/{projectId}/views/{viewId} → update name/filters
+  DELETE /api/execution-matrix/{projectId}/views/{viewId} → delete
+
+Frontend methods:
+  async listSavedViews(projectId)
+  async createSavedView(projectId, payload)   // payload = {title, icon?, filters}
+  async updateSavedView(projectId, viewId, payload)
+  async deleteSavedView(projectId, viewId)
+
+Filter shape sent to backend MUST match `MatrixSavedViewFilters` schema.
+Frontend sentinel '__empty__' is converted to "" before sending.
+
+================================================================================
+PART 7 — Wire into ExecutionMatrixPage
+================================================================================
+
+EDIT FILE: frontend/src/pages/ExecutionMatrixPage.js  (~30 LOC added)
+
+Changes:
+  1. Import MatrixFilterDrawer + MatrixFilterFAB + useMatrixFilters
+  2. Get filter state from hook (after useMatrixData returns):
+       const filterAPI = useMatrixFilters({ units, cellsByUnitStage, stages });
+  3. Get saved views (separate fetch via useState + useEffect):
+       const [savedViews, setSavedViews] = useState([]);
+       useEffect(() => {
+         matrixService.listSavedViews(projectId).then(setSavedViews);
+       }, [projectId]);
+  4. State for drawer open:
+       const [filtersOpen, setFiltersOpen] = useState(false);
+  5. Pass `filterAPI.filteredUnits` (instead of raw `units`) to
+     MatrixListView and MatrixGridView. Cells unchanged — they're
+     keyed by unit_id+stage_id and the views handle empty cells.
+  6. Render <MatrixFilterFAB activeCount={...} onClick={() => setFiltersOpen(true)} />
+  7. Render <MatrixFilterDrawer open={filtersOpen} onClose={...} {...filterAPI} ... />
+
+NOT TOUCHED in this batch:
+  - MatrixCell, MatrixGridView, MatrixListView (they receive filtered units)
+  - StageManagementDialog (#495 + #497 + #498 polish)
+  - useMatrixData hook (still fetches all units; filter is client-side)
+  - matrixService.getMatrix / updateCell / etc.
+  - Backend (zero changes).
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — Frontend syntax (yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors. Bundle size delta should be ≤30KB.
+
+V2 — New files exist with expected line counts:
+   wc -l frontend/src/hooks/useMatrixFilters.js \
+         frontend/src/components/matrix/MatrixFilterSection.js \
+         frontend/src/components/matrix/MatrixFilterDrawer.js \
+         frontend/src/components/matrix/MatrixFilterFAB.js \
+         frontend/src/components/matrix/SavedViewSaveDialog.js \
+         frontend/src/hooks/__tests__/useMatrixFilters.test.js
+   → ~120 + ~110 + ~210 + ~50 + ~70 + ~80 LOC respectively (±10%)
+
+V3 — Frontend tests pass:
+   cd frontend && yarn test --watchAll=false useMatrixFilters
+   → 5 passing
+
+V4 — Backend untouched:
+   git diff --stat backend/
+   → 0 lines diff
+
+V5 — Sibling matrix files untouched:
+   git diff --stat frontend/src/components/matrix/MatrixCell.js \
+                   frontend/src/components/matrix/MatrixGridView.js \
+                   frontend/src/components/matrix/MatrixListView.js \
+                   frontend/src/components/matrix/StageRow.js \
+                   frontend/src/components/matrix/StageManagementDialog.js \
+                   frontend/src/components/matrix/AddStageForm.js
+   → 0 lines diff
+
+V6 — ExecutionMatrixPage.js diff scope is wiring-only:
+   git diff frontend/src/pages/ExecutionMatrixPage.js | head -80
+   → only imports added + filterAPI useMemo + 2 new JSX elements
+     (FAB + drawer) + units → filteredUnits replacement.
+     NO logic change to existing handlers.
+
+V7 — Backend regression (untouched, but smoke):
+   cd backend && python -m pytest tests/test_execution_matrix.py -q
+   → 17 passed (unchanged from #497)
+
+V8 — Capacitor compliance:
+   - All buttons in drawer + FAB are ≥44px tap targets
+   - Footer of drawer uses `padding-bottom: max(12px, env(safe-area-inset-bottom))`
+   - FAB respects safe-area on bottom (per #490 pattern)
+
+================================================================================
+SMOKE TEST (Zahi after deploy to staging) — Excel pattern coverage
+================================================================================
+
+Staging URL: https://staging.brikops-new.pages.dev
+Login:       superadmin@brikops.dev / StagingDemo2026!
+Path:        /projects/616c30e0-.../execution-matrix
+
+Setup state on staging (one-time): ensure project has at least
+  - 2 buildings (A, B)
+  - ≥10 units across the buildings
+  - 1+ tag custom stage with ≥2 distinct values (e.g. "סוג מכירה" with
+    "שוק חופשי" / "משתכן" set on different units)
+  - 2+ status stages with cells filled to multiple statuses
+
+Hard refresh after deploy.
+
+(a) FAB visible at bottom-right. Badge says "0" or hidden.
+(b) Tap FAB → drawer opens from right with header "סינון".
+(c) Sections grouped by 📍 / 📝 / 🔨, each section COLLAPSED.
+(d) Tap "בניין" header → expands, shows checkboxes for buildings.
+
+──── Zahi's example #1: filter by single building ────
+(e) Check "בניין A" → matrix updates LIVE (no apply needed).
+    Drawer FAB badge shows "1". Section header shows "1" pill.
+(f) Close drawer → FAB still shows "1". Matrix shows only Building A units.
+
+──── Zahi's example #2: building + specific stage ────
+(g) Open drawer. Check "בניין A" + expand "טיח" + check "הושלם".
+    Matrix → only Building A units that have טיח=הושלם.
+    FAB badge "2". Sections "בניין" and "טיח" both show "1" pill.
+
+──── Zahi's example #3 (HARDEST — multi-column): ────
+(h) Open drawer.
+(i) "בניין" → check בניין A
+(j) "סוג מכירה" → check שוק חופשי
+(k) "טיח" → check 2 statuses (e.g. הושלם + בוצע חלקית)
+(l) "סומסום" → check 1 status (הושלם)
+    Matrix → only units satisfying ALL: Building=A AND
+    סוג_מכירה=שוק_חופשי AND טיח∈{הושלם,חלקי} AND סומסום=הושלם.
+    FAB badge "5". 4 sections active.
+
+──── Saved views ────
+(m) With state from (l) — tap "+ שמור" → modal asks for title.
+(n) Type "שוק חופשי בא׳" → שמור → modal closes, pill appears at
+    end of saved-views row.
+(o) Tap "נקה הכל" → all sections clear, FAB badge "0".
+(p) Tap the saved view pill → state from (l) restored exactly.
+    All 4 sections auto-expand to show the active filters.
+(q) Click "×" on the saved-view pill → pill disappears immediately
+    (no confirm dialog — cheap to recreate). Confirm via re-fetch:
+    refresh page, the pill is gone. Backend deleted the view doc
+    via DELETE /views/{viewId}.
+
+──── Free-text search ────
+(r) Type into search box. As user types, matrix filters live to units
+    that have any cell.text_value or cell.note containing the query.
+    Match is case-insensitive, substring.
+
+──── Edge cases ────
+(s) Hide a status stage via ⚙ → confirm filter section for that stage
+    DISAPPEARS from drawer (because section list is derived from current
+    visible stages). No orphaned filter state — when user re-shows the
+    stage, the previously-set filter for that stage is RESTORED (state
+    is preserved by stage_id key, only the rendering is conditional).
+(t) Switch projects → drawer state resets. Saved views show only this
+    project's views.
+
+──── Mobile (375px DevTools) ────
+(u) FAB at bottom-right, doesn't cover content (above safe area).
+(v) Drawer 90vw width — leaves a peek of the matrix on the left.
+(w) Section bodies scroll naturally when many statuses checked.
+(x) "החל" button label updates: "החל (5)" → "סגור" when 0 active.
+
+──── No regressions ────
+(y) Cell edit (Phase 2B) still works on filtered units.
+(z) Stage management ⚙ (Phase 2C) — opening this dialog while the
+    filter drawer is closed should work normally. NOT testing both
+    open simultaneously (out of scope).
+
+================================================================================
+OPEN QUESTIONS (resolve before review)
+================================================================================
+
+Q1. SavedViewSaveDialog UX — Radix modal-in-modal vs inline input?
+    Recommend: Radix modal (consistent with #495 stage management,
+    accessible focus-trap). Inline input would reduce LOC by ~50 but
+    creates focus-trap edge cases.
+    Default: Radix modal (PART 4 above).
+
+Q2. Saved-view delete UX — long-press? swipe-left? right-click?
+    DECIDED 2026-05-05 (Replit feedback adopted): include minimal "×"
+    button on each pill (PART 3 above, ~5 LOC). No confirm dialog
+    (cheap to recreate views). Without this, users accumulate stale
+    views → support load. Worth the 5 LOC.
+    DECIDED: include in 2D-1.
+
+Q3. "פתח/סגור הכל" button — include in 2D-1?
+    Recommend: defer to 2D-2 (Zahi already separated 2D-2 explicitly).
+    Default: skip; sections start collapsed; user expands what they need.
+
+Q4. Swipe-to-close drawer on mobile?
+    Recommend: defer to 2D-2. Radix Dialog backdrop-click + ESC + X
+    button cover all entry points.
+    Default: skip.
+
+Q5. URL param persistence (e.g. ?building=A&stage_status[plaster]=completed)?
+    Recommend: defer. Saved views give the durability story; URL would
+    introduce a serialization format that has to be versioned.
+    Default: skip; mention as 2E candidate in roadmap.
+
+Q6. Should "(ריק)" be default-checked on every section?
+    Recommend: NO. Default = nothing checked = show all. "(ריק)" is
+    an EXPLICIT filter for "I want to see units missing a value here".
+    Default: nothing checked.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (6 sub-greps)
+  - Per-file diff (6 NEW + 2 EDIT files)
+  - VERIFY 1-8 outputs
+  - Smoke (a) through (z) deferred-to-Zahi note
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(matrix): Phase 2D-1 — Excel-style filter drawer + saved views
+
+  THE CORE of the matrix feature per Zahi 2026-05-05: "מערכת הסינון
+  זה הלב והליבה של כל המערכת... טבלת אקסל משופרת". Without
+  per-column filtering, the matrix is unusable as Excel replacement.
+
+  Drawer placement chosen over inline-chips and popover (Zahi review
+  2026-05-05) — only pattern that fits 5+ filter categories on mobile
+  + matches BuildingDefectsPage precedent.
+
+  Excel filter logic: AND between sections, OR within values.
+  Sections built dynamically from visible stages → every column the
+  user added (custom or template, status or tag) gets its own filter
+  section automatically. Sections start collapsed (Zahi: "שלא יהיה
+  עמוס מדי") with chevron toggle + active-count badge per section.
+
+  Saved views use the existing #483 backend (zero backend changes).
+  Schema MatrixSavedViewFilters at schemas.py:969 already has the
+  exact shape — building_ids[], stage_status_filters{stage_id: [..]},
+  tag_value_filters{stage_id: [..]}, search_text.
+
+  6 NEW files (~620 LOC frontend), 2 EDIT files (matrixService +
+  ExecutionMatrixPage wiring). Backend untouched. 5 new logic tests.
+
+  No regressions: MatrixCell / MatrixGridView / MatrixListView /
+  StageManagementDialog all untouched. Filter applies upstream by
+  filtering units passed into the views.
+
+  Out of scope (2D-2 polish): פתח/סגור הכל, swipe-to-close,
+  delete-saved-view UI, URL param persistence.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (6 sub-greps to verify line numbers / existing methods)
+2. PART 1 — useMatrixFilters hook + tests (~200 LOC including tests)
+3. PART 2 — MatrixFilterSection component (~110 LOC)
+4. PART 3 — MatrixFilterDrawer component (~210 LOC)
+5. PART 4 — SavedViewSaveDialog (~70 LOC)
+6. PART 5 — MatrixFilterFAB (~50 LOC)
+7. PART 6 — matrixService saved-view methods (~60 LOC)
+8. PART 7 — ExecutionMatrixPage wiring (~30 LOC)
+9. Run VERIFY 1-8 (all must be green)
+10. Generate review.txt + .local/.commit_message
+11. STOP. Zahi reviews. Then he runs:
+      git checkout staging && git merge main && ./deploy.sh --stag
+    ⚠️ COMMIT ON `staging` BRANCH.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+8 file revert (6 deletes + 2 reverts). The matrix loses filter UI but
+all data remains intact. Saved views in DB are orphaned but harmless
+(separate collection). Re-apply by restoring the commit when ready.
+
+NO impact on:
+- Cell editing (#494)
+- Stage management (#495 + #497 + #498)
+- MatrixListView / MatrixGridView / MatrixCell render
+- Sticky columns (#486+#487)
+- Backend (zero LOC of backend touched)
+- Auth, billing, safety routers, plans
+
+================================================================================
+END OF SPEC — PHASE 2D-1
+================================================================================

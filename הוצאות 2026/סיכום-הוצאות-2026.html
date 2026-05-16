@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>דוח הוצאות 2026</title>
+<style>
+@page { size: A4; margin: 1.5cm 1.2cm; }
+body {
+    font-family: "DejaVu Sans", "Noto Sans Hebrew", sans-serif;
+    direction: rtl;
+    font-size: 10pt;
+    color: #222;
+}
+h1 { color: #1F4E78; font-size: 22pt; margin: 0 0 4pt 0; border-bottom: 3px solid #1F4E78; padding-bottom: 6pt; }
+h2 { color: #1F4E78; font-size: 14pt; margin-top: 18pt; margin-bottom: 8pt; border-right: 4px solid #1F4E78; padding-right: 8pt; }
+h3 { color: #444; font-size: 11pt; margin-top: 12pt; margin-bottom: 4pt; }
+.subtitle { color: #666; font-size: 11pt; margin-bottom: 18pt; }
+.summary-grid { display: flex; gap: 10pt; margin: 12pt 0; flex-wrap: wrap; }
+.stat-box {
+    flex: 1; min-width: 140pt;
+    background: #F4F8FB; border: 1px solid #D0DCEA; border-radius: 4pt;
+    padding: 10pt; text-align: center;
+}
+.stat-value { font-size: 18pt; font-weight: bold; color: #1F4E78; }
+.stat-label { font-size: 9pt; color: #666; margin-top: 4pt; }
+table { width: 100%; border-collapse: collapse; margin-top: 6pt; font-size: 9pt; }
+th { background: #1F4E78; color: white; padding: 5pt 6pt; text-align: right; font-weight: 600; }
+td { padding: 5pt 6pt; border-bottom: 1px solid #E5E5E5; text-align: right; }
+tr:nth-child(even) td { background: #FAFBFC; }
+.total-row td { background: #FFE699 !important; font-weight: bold; }
+.amount { text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.note {
+    background: #FFF8E1; border-right: 4px solid #F0AD4E;
+    padding: 8pt 12pt; font-size: 9pt; margin: 10pt 0;
+}
+.note-bad {
+    background: #FDECEA; border-right: 4px solid #D9534F;
+}
+.small { font-size: 8.5pt; color: #666; }
+ul { padding-right: 18pt; margin: 6pt 0; }
+li { margin: 3pt 0; }
+.footer { margin-top: 24pt; font-size: 8pt; color: #999; text-align: center; border-top: 1px solid #DDD; padding-top: 8pt; }
+</style>
+</head>
+<body>
+
+<h1>דוח הוצאות עסקי - 2026</h1>
+<div class="subtitle">תקופה: 1 בינואר 2026 — 5 במאי 2026 · הוכן עבור הרו"ח של זאחי שמי / BrikOps</div>
+
+<div class="summary-grid">
+    <div class="stat-box">
+        <div class="stat-value">67</div>
+        <div class="stat-label">סה"כ חשבוניות זוהו</div>
+    </div>
+    <div class="stat-box">
+        <div class="stat-value">37</div>
+        <div class="stat-label">סכום חולץ אוטומטית</div>
+    </div>
+    <div class="stat-box">
+        <div class="stat-value">30</div>
+        <div class="stat-label">סכום בקובץ מצורף<br/>(לחילוץ ידני)</div>
+    </div>
+    <div class="stat-box">
+        <div class="stat-value">63,286 ₪</div>
+        <div class="stat-label">סה"כ מזוהה<br/>(לפני חלץ של חסרים)</div>
+    </div>
+</div>
+
+<h2>מתודולוגיה</h2>
+<p>הדוח נבנה מסריקה אוטומטית של תיבת הדואר של זאחי (zahis10@gmail.com).
+זוהו חשבוניות, קבלות ומנויים מ-1.1.2026 ועד היום, ב-4 שכבות חיפוש:</p>
+<ol>
+    <li>חשבוניות / קבלות (מילות מפתח: invoice, receipt, חשבונית, קבלה).</li>
+    <li>ספקי SaaS ידועים (Replit, Anthropic, Google, Cloudflare, Capgo, Apple, MongoDB, DigitalOcean, Twilio).</li>
+    <li>תשלומים וחיובי אשראי.</li>
+    <li>חשבוניות מ-iCount, morning (חשבונית ירוקה), פרטנר, סופרפאוור, סקאלה אנרגיה, רשויות.</li>
+</ol>
+
+<div class="note note-bad">
+<strong>חשוב:</strong> מסמכי "חשבונית זיכוי" של "ארגון בדיקה 1" / "BrikOps Test" סוננו מהדוח —
+אלו מסמכי בדיקה של מודול התשלומים בתוך BrikOps, לא הוצאות אמיתיות.
+</div>
+
+<h2>סיכום לפי קטגוריה</h2>
+<table>
+<thead><tr><th>קטגוריה</th><th class="amount">מס' חשבוניות</th><th class="amount">סה"כ ש"ח (משוער)</th></tr></thead>
+<tbody>
+<tr><td>מסים</td><td class="amount">1</td><td class="amount">57,000.00 ₪</td></tr><tr><td>SaaS / כלי פיתוח <span class="small">(9 חסרים סכום)</span></td><td class="amount">41</td><td class="amount">6,173.66 ₪</td></tr><tr><td>מנוי אישי? <span class="small">(1 חסרים סכום)</span></td><td class="amount">5</td><td class="amount">112.16 ₪</td></tr><tr><td>תקשורת <span class="small">(4 חסרים סכום)</span></td><td class="amount">4</td><td class="amount">—</td></tr><tr><td>חשמל <span class="small">(2 חסרים סכום)</span></td><td class="amount">2</td><td class="amount">—</td></tr><tr><td>מים <span class="small">(1 חסרים סכום)</span></td><td class="amount">1</td><td class="amount">—</td></tr><tr><td>טעינת רכב <span class="small">(2 חסרים סכום)</span></td><td class="amount">2</td><td class="amount">—</td></tr><tr><td>הנהלת חשבונות <span class="small">(5 חסרים סכום)</span></td><td class="amount">5</td><td class="amount">—</td></tr><tr><td>מסים / אגרות <span class="small">(2 חסרים סכום)</span></td><td class="amount">2</td><td class="amount">—</td></tr><tr><td>אשראי - לפירוט <span class="small">(4 חסרים סכום)</span></td><td class="amount">4</td><td class="amount">—</td></tr><tr class="total-row"><td>סה"כ</td><td class="amount">67</td><td class="amount">63,285.82 ₪</td></tr></tbody></table>
+<h2>סיכום לפי ספק (10 הגדולים)</h2>
+<table>
+<thead><tr><th>ספק</th><th>קטגוריה</th><th class="amount">חשבוניות</th><th class="amount">סה"כ ש"ח</th></tr></thead>
+<tbody>
+<tr><td>מס הכנסה</td><td>מסים</td><td class="amount">1</td><td class="amount">57,000.00 ₪</td></tr><tr><td>Replit</td><td>SaaS / כלי פיתוח</td><td class="amount">22</td><td class="amount">4,355.80 ₪</td></tr><tr><td>MongoDB Atlas</td><td>SaaS / כלי פיתוח</td><td class="amount">3</td><td class="amount">614.33 ₪</td></tr><tr><td>Looka</td><td>SaaS / כלי פיתוח</td><td class="amount">1</td><td class="amount">349.96 ₪</td></tr><tr><td>Apple Developer</td><td>SaaS / כלי פיתוח</td><td class="amount">1</td><td class="amount">324.90 ₪</td></tr><tr><td>Anthropic</td><td>SaaS / כלי פיתוח</td><td class="amount">5</td><td class="amount">255.50 ₪</td></tr><tr><td>Twilio</td><td>SaaS / כלי פיתוח</td><td class="amount">3</td><td class="amount">109.65 ₪</td></tr><tr><td>Invideo</td><td>SaaS / כלי פיתוח</td><td class="amount">2</td><td class="amount">91.25 ₪</td></tr><tr><td>Capgo</td><td>SaaS / כלי פיתוח</td><td class="amount">1</td><td class="amount">51.10 ₪</td></tr><tr><td>Chessly</td><td>מנוי אישי?</td><td class="amount">1</td><td class="amount">36.46 ₪</td></tr></tbody></table>
+<h2>מנויים אישיים — לבדיקה עם הרו"ח</h2>
+<div class="note">
+חמישה מנויים אותרו שייתכן שהם אישיים, לא עסקיים. סה"כ משוער <strong>112.16 ₪</strong>.
+מומלץ להעריך עם הרו"ח האם להכיר אותם:
+</div>
+<ul>
+    <li><strong>Apple TV+</strong> חודשי — ₪25.90 (1 במאי)</li>
+    <li><strong>YouTube Premium</strong> חודשי — ₪31.90 (20 באפריל)</li>
+    <li><strong>Crunchyroll (Anime)</strong> חודשי — ₪17.90 (22 באפריל)</li>
+    <li><strong>Chessly</strong> (שחמט) — $9.99 (12 באפריל)</li>
+    <li><strong>Speed Secrets</strong> (מסלול מירוצים) — סכום לא גלוי (13 באפריל)</li>
+</ul>
+
+<h2>הערות חשובות לרו"ח</h2>
+<ul>
+    <li><strong>שער המרה:</strong> הוצאות בדולר הומרו ב-1$ = 3.65 ₪. הרו"ח יחליף בשער יום העסקה האמיתי.</li>
+    <li><strong>30 חשבוניות</strong> מסומנות כ"בקובץ מצורף" — הסכום נמצא בתוך ה-PDF המקורי (פרטנר, סופרפאוור, מי 7, סקאלה, iCount, morning, חלק מ-Anthropic). יש לפתוח את כל אחת מהן ולעדכן.</li>
+    <li><strong>תשלום מס הכנסה:</strong> ב-5.2.2026 שולמו 57,000 ₪ (העברה בנקאית, תיק 203004767). זהו תשלום כיסוי חוב — לוודא שאין כפילות עם דוח שנתי.</li>
+    <li><strong>פירוטי ישראכרט החודשיים</strong> רשומים בקטגוריה "אשראי - לפירוט" אך לא מסוכמים — אלו סיכומים, לא חשבוניות. הרו"ח עשוי לרצות אותם להצלבה.</li>
+    <li><strong>Replit</strong> עלה הכי הרבה — 22+ קבלות בכמה חודשים. רובן Core Usage (~$50 פעם ב-1-2 ימים).</li>
+    <li><strong>Apple Developer Program</strong> — ₪324.90 שנתי (31 במרץ 2026 → 31 במרץ 2027).</li>
+    <li><strong>iCount</strong> נסגר ב-29.4.2026 (מייל אישור). מאז עברת ל-morning בלבד.</li>
+    <li><strong>Wolt</strong> (אוכל) לא נכלל — אם רלוונטי כארוחות עבודה יש להוסיף ידנית מהמיילים.</li>
+</ul>
+
+<h2>איך להוריד את החשבוניות</h2>
+<p>בקובץ ה-Excel המצורף (<em>הוצאות-2026-לרואה-חשבון.xlsx</em>), בעמודה "קישור למייל" יש לחיצה ישירה לכל מייל ב-Gmail.</p>
+<ol>
+    <li>פתח/י את ה-Excel.</li>
+    <li>לחיצה על "פתיחה ב-Gmail" בכל שורה תפתח את המייל המקורי.</li>
+    <li>ב-Gmail: לחיצה על האייקון של המצורף → הורדה. שמירה בתיקייה <code>הוצאות 2026/חשבוניות/</code>.</li>
+    <li>טיפ: צור/י תווית ב-Gmail בשם "הוצאות 2026", סמן/י את כל המיילים האלה, ואז Gmail מאפשר הורדה גורפת של כל המצורפים בתווית.</li>
+</ol>
+
+<h2>פירוט מלא — כל ההוצאות</h2>
+<table style="font-size: 8pt;">
+<thead><tr>
+    <th>תאריך</th><th>ספק</th><th>תיאור</th><th class="amount">סכום</th><th>מטבע</th><th>הערה</th>
+</tr></thead>
+<tbody>
+<tr><td>2026-05-03</td><td>iCount</td><td>iCount - קבלה 14075</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-05-03</td><td>Replit</td><td>Replit Pro - Receipt #2586-7207</td><td class="amount">25.00</td><td>USD</td><td class="small">Welcome to Replit Pro - מנוי ח</td></tr><tr><td>2026-05-03</td><td>Replit</td><td>Replit Core Usage - Receipt #1307-4121</td><td class="amount">31.60</td><td>USD</td><td class="small">תשלום על שימוש</td></tr><tr><td>2026-05-02</td><td>סופרפאוור (Electra)</td><td>חשבונית חשמל סופרפאוור 553025310</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-05-02</td><td>MongoDB Atlas</td><td>MongoDB Atlas - חיוב חודשי</td><td class="amount">89.60</td><td>USD</td><td class="small">Database hosting</td></tr><tr><td>2026-05-01</td><td>morning (חשבונית ירוקה)</td><td>חשבון חודשי - מאי 2026</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">מנוי חודשי - חשבונית ירוקה בע"</td></tr><tr><td>2026-05-01</td><td>DigitalOcean</td><td>DigitalOcean - חיוב חודש 2026-04</td><td class="amount">5.80</td><td>USD</td><td class="small"></td></tr><tr><td>2026-05-01</td><td>Apple</td><td>Apple TV+ חודשי</td><td class="amount">25.90</td><td>ILS</td><td class="small">האם זה לעסק או אישי? לבדוק</td></tr><tr><td>2026-04-30</td><td>Replit</td><td>Replit Core Usage - Receipt #1531-6539</td><td class="amount">250.10</td><td>USD</td><td class="small">תשלום threshold</td></tr><tr><td>2026-04-26</td><td>Twilio</td><td>Twilio auto-recharge - BrikOps</td><td class="amount">10.04</td><td>USD</td><td class="small">SMS / verification API</td></tr><tr><td>2026-04-26</td><td>Anthropic</td><td>Anthropic API Credits - Receipt #2389-1756-6110</td><td class="amount">(במצורף)</td><td>USD</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-04-26</td><td>Anthropic</td><td>Anthropic API Credits - Receipt #2309-3046-9367</td><td class="amount">70.00</td><td>USD</td><td class="small">טעינת קרדיטים ל-Claude API</td></tr><tr><td>2026-04-23</td><td>iCount</td><td>iCount - חשבונית מס קבלה 2034288</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-04-22</td><td>Google Play</td><td>Crunchyroll (Ellation) - חודשי</td><td class="amount">17.90</td><td>ILS</td><td class="small">Anime - אישי</td></tr><tr><td>2026-04-20</td><td>Twilio</td><td>Twilio auto-recharge - BrikOps</td><td class="amount">(במצורף)</td><td>USD</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-04-20</td><td>Apple / Google</td><td>YouTube Premium - חודשי</td><td class="amount">31.90</td><td>ILS</td><td class="small">ככל הנראה אישי</td></tr><tr><td>2026-04-19</td><td>GoDaddy</td><td>GoDaddy - April account summary</td><td class="amount">(במצורף)</td><td>USD</td><td class="small">domain - לבדוק האם יש חיוב חדש</td></tr><tr><td>2026-04-19</td><td>Capgo</td><td>Capgo Solo plan - Receipt #2745-4849</td><td class="amount">14.00</td><td>USD</td><td class="small">OTA לאפליקציית BrikOps - חיוב </td></tr><tr><td>2026-04-18</td><td>Anthropic</td><td>Anthropic API Credits - Receipt #2218-4364-7305</td><td class="amount">(במצורף)</td><td>USD</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-04-16</td><td>Partner תקשורת</td><td>חשבונית חודשית - מרץ 2026</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-04-16</td><td>Anthropic</td><td>Anthropic API Credits - Receipt #2981-9595-7448</td><td class="amount">(במצורף)</td><td>USD</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-04-15</td><td>מי 7</td><td>חשבונית מס/קבלה</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-04-15</td><td>ישראכרט</td><td>פירוט חיובים חודשי - אפריל 2026</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">מסמך סיכום אשראי - לבדוק עם הר</td></tr><tr><td>2026-04-15</td><td>Replit</td><td>Replit Core Usage - Receipt #2524-7734</td><td class="amount">(במצורף)</td><td>USD</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-04-15</td><td>Replit</td><td>Replit Core Usage - Receipt #1648-4015</td><td class="amount">22.73</td><td>USD</td><td class="small"></td></tr><tr><td>2026-04-13</td><td>Speed Secrets</td><td>Speed Secrets - חידוש מנוי</td><td class="amount">(במצורף)</td><td>USD</td><td class="small">מסלול מירוצים - אישי</td></tr><tr><td>2026-04-13</td><td>Replit</td><td>Replit Core Usage - Receipt #1621-3101</td><td class="amount">50.01</td><td>USD</td><td class="small"></td></tr><tr><td>2026-04-12</td><td>Replit</td><td>Replit Core Usage - Receipt #1160-3129</td><td class="amount">51.14</td><td>USD</td><td class="small"></td></tr><tr><td>2026-04-12</td><td>Chessly</td><td>Chessly Membership</td><td class="amount">9.99</td><td>USD</td><td class="small">שחמט - אישי</td></tr><tr><td>2026-04-11</td><td>סקאלה אנרגיה</td><td>טעינה ברשת ציבורית</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-04-10</td><td>Replit</td><td>Replit Core Usage - Receipt #1268-6354</td><td class="amount">50.23</td><td>USD</td><td class="small"></td></tr><tr><td>2026-04-10</td><td>Anthropic</td><td>Anthropic API Credits - Receipt #2413-0886-7261</td><td class="amount">(במצורף)</td><td>USD</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-04-08</td><td>Replit</td><td>Replit Core Usage - Receipt #1802-6747</td><td class="amount">50.31</td><td>USD</td><td class="small"></td></tr><tr><td>2026-04-08</td><td>Invideo</td><td>Invideo AI Plus subscription</td><td class="amount">(במצורף)</td><td>USD</td><td class="small">מנוי - סכום בקובץ</td></tr><tr><td>2026-04-08</td><td>Invideo</td><td>Invideo AI - Generative Addon</td><td class="amount">25.00</td><td>USD</td><td class="small">וידאו - הוספת קרדיטים</td></tr><tr><td>2026-04-06</td><td>Replit</td><td>Replit Core Usage - Receipt #1918-2964</td><td class="amount">50.13</td><td>USD</td><td class="small"></td></tr><tr><td>2026-04-05</td><td>Replit</td><td>Replit Core Usage - Receipt #1763-0921</td><td class="amount">50.58</td><td>USD</td><td class="small"></td></tr><tr><td>2026-04-05</td><td>PrimeTestLab</td><td>PrimeTestLab Closed Testing Services - Invoice #P073822...</td><td class="amount">(במצורף)</td><td>USD</td><td class="small">שירותי בדיקות לאפליקציה - לאמת</td></tr><tr><td>2026-04-03</td><td>Replit</td><td>Replit Core Usage - Receipt #1392-4208</td><td class="amount">50.52</td><td>USD</td><td class="small"></td></tr><tr><td>2026-04-03</td><td>Looka</td><td>Looka Brand Kit Subscription - שנתי</td><td class="amount">95.88</td><td>USD</td><td class="small">מנוי שנתי לעיצוב לוגו ומותג</td></tr><tr><td>2026-04-02</td><td>Replit</td><td>Replit Core Usage - Receipt #1931-6976</td><td class="amount">50.49</td><td>USD</td><td class="small"></td></tr><tr><td>2026-04-02</td><td>MongoDB Atlas</td><td>MongoDB Atlas - חיוב חודשי</td><td class="amount">60.32</td><td>USD</td><td class="small"></td></tr><tr><td>2026-04-01</td><td>Replit</td><td>Replit Core Usage - Receipt #1098-4143</td><td class="amount">50.05</td><td>USD</td><td class="small"></td></tr><tr><td>2026-03-31</td><td>סקאלה אנרגיה</td><td>טעינה ברשת ציבורית</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-03-31</td><td>Apple Developer</td><td>Apple Developer Program - מינוי שנתי</td><td class="amount">324.90</td><td>ILS</td><td class="small">מינוי שנתי - חיוב עד 31.03.202</td></tr><tr><td>2026-03-29</td><td>סופרפאוור (Electra)</td><td>חשבונית חשמל סופרפאוור 55945446</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-03-29</td><td>Replit</td><td>Replit Core Usage - Receipt #1055-3014</td><td class="amount">50.66</td><td>USD</td><td class="small"></td></tr><tr><td>2026-03-28</td><td>Replit</td><td>Replit Core Usage - Receipt #1461-3207</td><td class="amount">50.05</td><td>USD</td><td class="small"></td></tr><tr><td>2026-03-28</td><td>Replit</td><td>Replit Core Usage - Receipt #1252-2453</td><td class="amount">51.14</td><td>USD</td><td class="small"></td></tr><tr><td>2026-03-26</td><td>Replit</td><td>Replit Core Usage - Receipt #1878-7831</td><td class="amount">54.11</td><td>USD</td><td class="small"></td></tr><tr><td>2026-03-26</td><td>Replit</td><td>Replit Core Usage - Receipt #1331-8535</td><td class="amount">51.46</td><td>USD</td><td class="small"></td></tr><tr><td>2026-03-25</td><td>רשות התאגידים</td><td>אגרה שנתית מופחתת לחברה 2026</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">ראה גם מייל ב-1.2.2026</td></tr><tr><td>2026-03-25</td><td>morning (חשבונית ירוקה)</td><td>מינוי Best חודשי - חידוש אוטומטי</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-03-25</td><td>Replit</td><td>Replit Core Usage - Receipt #1390-2680</td><td class="amount">51.67</td><td>USD</td><td class="small"></td></tr><tr><td>2026-03-24</td><td>Replit</td><td>Replit Core Usage - Receipt #1787-7604</td><td class="amount">50.41</td><td>USD</td><td class="small"></td></tr><tr><td>2026-03-23</td><td>Replit</td><td>Replit Core Usage - Receipt #1443-0720</td><td class="amount">50.98</td><td>USD</td><td class="small"></td></tr><tr><td>2026-03-22</td><td>morning (חשבונית ירוקה)</td><td>מינוי Best חודשי - חידוש אוטומטי (חשבון ראשי)</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">צ.ע. שמי יזמות בע"מ</td></tr><tr><td>2026-03-18</td><td>Partner תקשורת</td><td>חשבונית חודשית - פברואר 2026</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-03-13</td><td>ישראכרט</td><td>פירוט חיובים חודשי - מרץ 2026</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small"></td></tr><tr><td>2026-03-02</td><td>MongoDB Atlas</td><td>MongoDB Atlas - חיוב חודשי</td><td class="amount">18.39</td><td>USD</td><td class="small"></td></tr><tr><td>2026-02-20</td><td>Twilio</td><td>Twilio account funded - BrikOps</td><td class="amount">20.00</td><td>USD</td><td class="small">טעינה ידנית</td></tr><tr><td>2026-02-17</td><td>Partner תקשורת</td><td>חשבונית חודשית - ינואר 2026</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">סכום בקובץ מצורף</td></tr><tr><td>2026-02-13</td><td>ישראכרט</td><td>פירוט חיובים חודשי - פברואר 2026</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small"></td></tr><tr><td>2026-02-05</td><td>מס הכנסה</td><td>תשלום מס הכנסה - תיק 203004767</td><td class="amount">57,000.00</td><td>ILS</td><td class="small">תשלום כיסוי חוב קיים</td></tr><tr><td>2026-02-01</td><td>רשות התאגידים</td><td>אגרה שנתית מופחתת לחברה 2026 (תזכורת)</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small"></td></tr><tr><td>2026-01-19</td><td>Partner תקשורת</td><td>חשבונית חודשית - דצמבר 2025</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small">חשבונית של דצמבר אבל הגיעה בינ</td></tr><tr><td>2026-01-13</td><td>ישראכרט</td><td>פירוט חיובים חודשי - ינואר 2026</td><td class="amount">(במצורף)</td><td>ILS</td><td class="small"></td></tr></tbody></table>
+<div class="footer">
+דוח נוצר אוטומטית ע"י סריקת תיבת המייל zahis10@gmail.com · 5 במאי 2026 · BrikOps · נא לבדוק את הסכומים החסרים לפני שליחה לרו"ח.
+</div>
+</body></html>

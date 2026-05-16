@@ -1,0 +1,491 @@
+================================================================================
+BATCH 506 — Google + Apple SSO buttons on invite landing screen (P1)
+================================================================================
+Date:           2026-05-09
+Branch:         staging  (NOT main)
+Severity:       P1 — feature gap. Today, contractors/team-members invited via
+                WhatsApp can only register via phone+password+OTP. Zahi's
+                product requirement: same one-click SSO experience that
+                non-invite users get on /onboarding.
+Files changed:  1 frontend (no backend changes)
+                  Frontend: frontend/src/pages/OnboardingPage.js
+                  (~50 lines added: SSO block on renderInvitePhoneStep
+                   + 1-line setStep('phone') in handleSocialAuthResult)
+Pre-flight:     Continues batch 505 + 505-hotfix. The backend already
+                supports invite_token through /auth/social and
+                /auth/social/verify-otp (L1830, 2122, 2128). Phone-match
+                security gate is in place at L2135. This spec is
+                purely a frontend feature — no backend or test changes.
+================================================================================
+
+CONTEXT
+-------
+After batch 505 + 505-hotfix shipped, contractors invited via WhatsApp can
+register on /onboarding?invite=X but ONLY via phone+OTP+password. Non-invite
+users on /onboarding (regular registration) DO have Google + Apple SSO
+buttons (renderPhoneStep, L1054-1090). Zahi's product requirement:
+
+  > "אבל זה לא מספיק טוב כי onboarding לא יכול להתחבר בתור קבלן.
+  >  אני רוצה גם כשיש invite לקבלן או לאיש צוות
+  >  תהיה לו האפשרות להירשם ישירות עם גוגל או אפל"
+
+Decisions confirmed by Zahi:
+  1. Phone-match OTP MANDATORY after Google OAuth — keeps 505 security
+     posture. Forwarding an invite link + holding a Google account is
+     not enough; the SMS round-trip on invite.target_phone is required.
+  2. Buttons on the FIRST screen only (renderInvitePhoneStep, before phone
+     entry) — parallel choice with the existing phone+OTP path.
+
+Backend already handles this:
+  - /auth/social with invite_token: validates invite, attaches to session
+    (onboarding_router.py:1830-1839)
+  - /auth/social/verify-otp register branch: enforces phone-match against
+    invite.target_phone (L2135) and consumes invite (L2169+)
+
+Frontend is the only missing piece. The existing handleGoogleSignIn and
+handleAppleSignIn callbacks already pass inviteToken to socialAuth
+(L200, L302) — the buttons just need to be rendered.
+
+USER FLOW (after this spec):
+  1. Contractor receives WhatsApp with invite link
+  2. Click → /onboarding?invite=X → renderInvitePhoneStep
+  3. Sees "יש לך הזמנה לפרויקט" + phone input + "שלח קוד אימות"
+     **PLUS** divider "או הרשמה עם" + Google + Apple buttons
+     **PLUS** ToS checkbox above SSO buttons (gates SSO + phone+OTP)
+  4. Path A — phone: existing flow (505-hotfix added ToS at the post-OTP
+     step; this spec adds it pre-OTP for SSO use too)
+  5. Path B — Google:
+     a. Click Google → standard GIS popup → user authenticates
+     b. socialAuth('google', credential, null, inviteToken) → backend
+        validates invite → returns registration_required + session_token
+     c. handleSocialAuthResult sets socialFlow='register' AND setStep('phone')
+        (the new line — was missing this so the SSO UI didn't show in
+         invite mode after Google completed)
+     d. renderPhoneStep socialFlow='register' branch (L1143) renders:
+        phone input → user enters invite's target phone → /auth/social/
+        send-otp → user receives SMS → enters OTP → /auth/social/verify-otp
+        with invite_token + termsAccepted=true
+     e. Backend: phone-match check against invite.target_phone (L2135),
+        creates user with Google identity, joins project per invite, returns
+        token. User lands on project tasks page.
+
+STEP 0 — MANDATORY PRE-FLIGHT
+=============================
+Before editing, Replit MUST run all 5 greps below and confirm line numbers
+in this spec still match HEAD on origin/staging:
+
+  # 1. renderInvitePhoneStep declaration
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | grep -n \
+    "const renderInvitePhoneStep = ()"
+  # EXPECT: line 733
+
+  # 2. The submit Button at end of renderInvitePhoneStep form (last Button
+  # before the renderInviteAccept declaration)
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | sed -n '763,775p'
+  # EXPECT: contains <Button type="submit" disabled={loading} ...
+  #         followed by </form><div ...><button onClick navigate('/login')...
+
+  # 3. handleSocialAuthResult registration_required branch
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | sed -n '170,180p'
+  # EXPECT: contains
+  #   if (result.status === 'registration_required') {
+  #     setSocialSessionToken(result.session_token);
+  #     setSocialFlow('register');
+  #     return;
+  #   }
+
+  # 4. SSO buttons pattern reference (Google + Apple from renderPhoneStep)
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | sed -n '1043,1090p'
+  # EXPECT: divider "או הרשמה עם", then flex gap-3 with Google + Apple
+  #         buttons. Both have `disabled: socialLoading || !termsAccepted`.
+
+  # 5. Confirm backend phone-match gate is in place (no edit, just verify
+  # security expectation holds before deploy)
+  git show origin/staging:backend/contractor_ops/onboarding_router.py | sed -n '2130,2140p'
+  # EXPECT: contains:
+  #   if session_invite.get('target_phone') and session_invite['target_phone'] != phone:
+  #       raise HTTPException(status_code=400, detail='הטלפון לא תואם להזמנה')
+
+  # 6. setStep transition safety audit (NEW — Zahi review concern #1)
+  # Verify the new setStep('phone') in handleSocialAuthResult doesn't break
+  # any flow that expects to stay at a different step. List ALL setStep
+  # usages and confirm transitions are coherent:
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | grep -n "setStep('" | head -25
+  # EXPECT (current state, before this spec):
+  #   ~L427: setStep('otp') — after request-otp success
+  #   ~L437: setStep('otp') — alternative path
+  #   ~L494: setStep('invite-login-needed') — invite + new phone
+  #   ~L502: setStep('login-password') — existing user with password
+  #   ~L504: setStep('choose-path') — branch
+  #   ~L506: setStep('choose-path') — fallback
+  #   ~L509: setStep('choose-path') — error fallback
+  #   ~L1292: setStep('phone') — back from OTP step (already exists, proves
+  #                              setStep('phone') is a known-safe transition)
+  #   ~L1590: setStep('choose-path') — back from details
+  #
+  # The new setStep('phone') in handleSocialAuthResult registration_required
+  # is SAFE because:
+  #   - For non-invite Google flow: caller already came FROM step='phone';
+  #     setStep('phone') is idempotent.
+  #   - For invite Google flow: caller came from step='invite-accept'-ish
+  #     (renderInvitePhoneStep). Transitioning to 'phone' renders
+  #     renderPhoneStep with socialFlow='register' — the intended UI.
+  #   - L1292 already does setStep('phone') as a back navigation; same
+  #     transition target, no precedent for breakage.
+  # If grep reveals a setStep we missed that conflicts — STOP and report.
+
+If ANY pre-flight returns different content → STOP. Report to Zahi.
+
+PART 1 — FRONTEND (1 file)
+==========================
+
+FILE 1 of 1: frontend/src/pages/OnboardingPage.js
+--------------------------------------------------
+
+LOCATION 1.1 — handleSocialAuthResult: also setStep('phone') on
+                 registration_required (L172-176)
+
+   CURRENT (lines 172-176):
+       if (result.status === 'registration_required') {
+         setSocialSessionToken(result.session_token);
+         setSocialFlow('register');
+         return;
+       }
+
+   REPLACE WITH:
+       if (result.status === 'registration_required') {
+         setSocialSessionToken(result.session_token);
+         setSocialFlow('register');
+         // 2026-05-09 — invite-flow Google: handleSocialAuthResult was
+         // called from renderInvitePhoneStep (step='invite-accept'-ish),
+         // which doesn't render socialFlow='register' UI. Transition to
+         // step='phone' so renderPhoneStep socialFlow='register' branch
+         // (L1143) shows the OTP UI. No-op for non-invite flows that
+         // already started on step='phone'.
+         setStep('phone');
+         return;
+       }
+
+NOTE: This single-line addition is the linchpin that makes the new SSO
+buttons usable in invite flow. Without it, clicking Google from
+renderInvitePhoneStep silently does nothing visible (socialFlow updates,
+but the rendering function doesn't change).
+
+
+LOCATION 1.2 — renderInvitePhoneStep: add ToS checkbox + SSO buttons
+                 (insert before the closing </div> at the end of the
+                 function, ~L774 in current code)
+
+   CURRENT (lines 763-775):
+       <Button type="submit" disabled={loading} className="w-full bg-amber-500 hover:bg-amber-600 text-white h-11">
+           {loading ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
+           {t('onboarding', 'send_otp')}
+         </Button>
+       </form>
+       <div className="text-center mt-3">
+         <button type="button" onClick={() => navigate('/login')} className="text-sm text-amber-600 hover:text-amber-700 font-medium">
+           {t('onboarding', 'have_account')}
+         </button>
+       </div>
+     </div>
+   );
+
+   REPLACE WITH:
+       <Button type="submit" disabled={loading || !termsAccepted} className="w-full bg-amber-500 hover:bg-amber-600 text-white h-11">
+           {loading ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
+           {t('onboarding', 'send_otp')}
+         </Button>
+       </form>
+
+       {/* 2026-05-09 — ToS consent (Israeli Spam Law). Gates BOTH
+            phone+OTP path (above) AND Google/Apple buttons (below).
+            Same pattern as L869 in renderInviteAccept and L1193 in
+            renderPhoneStep. */}
+       <div className="flex items-start gap-2 pt-2">
+         <input
+           id="onb-invitelanding-terms"
+           type="checkbox"
+           checked={termsAccepted}
+           onChange={(e) => setTermsAccepted(e.target.checked)}
+           className="mt-1 h-4 w-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500"
+         />
+         <label htmlFor="onb-invitelanding-terms" className="text-xs text-slate-700">
+           אני מאשר/ת את <a href="/legal/terms.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">תנאי השימוש</a> ואת <a href="/legal/privacy.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">מדיניות הפרטיות</a>
+         </label>
+       </div>
+
+       {/* 2026-05-09 — SSO alternative path. Mirror of L1043-1090 pattern
+            in renderPhoneStep. Backend phone-match check at
+            onboarding_router.py:2135 enforces invite.target_phone == OTP'd
+            phone, so security parity with existing phone+OTP path. */}
+       <div className="relative my-6">
+         <div className="absolute inset-0 flex items-center">
+           <div className="w-full border-t border-slate-200" />
+         </div>
+         <div className="relative flex justify-center text-sm">
+           <span className="bg-white px-3 text-slate-400">או הרשמה עם</span>
+         </div>
+       </div>
+
+       <div className="flex gap-3">
+         <button
+           type="button"
+           onClick={handleGoogleSignIn}
+           disabled={socialLoading || !termsAccepted}
+           className="flex-1 h-11 flex items-center justify-center gap-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700 disabled:opacity-50 touch-manipulation"
+         >
+           <svg className="w-5 h-5" viewBox="0 0 24 24">
+             <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
+             <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+             <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+             <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+           </svg>
+           Google
+         </button>
+
+         <button
+           type="button"
+           onClick={handleAppleSignIn}
+           disabled={socialLoading || !termsAccepted}
+           className="flex-1 h-11 flex items-center justify-center gap-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium disabled:opacity-50 touch-manipulation"
+         >
+           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+             <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
+           </svg>
+           Apple
+         </button>
+       </div>
+       <div ref={googleButtonRef} className="hidden" />
+
+       <div className="text-center mt-3">
+         <button type="button" onClick={() => navigate('/login')} className="text-sm text-amber-600 hover:text-amber-700 font-medium">
+           {t('onboarding', 'have_account')}
+         </button>
+       </div>
+     </div>
+   );
+
+NOTES on LOCATION 1.2:
+  - The submit Button's `disabled` prop changed from `loading` to
+    `loading || !termsAccepted`. Mirrors the renderInviteLoginNeeded
+    pattern from 505-hotfix. Without ToS check, neither phone-OTP nor
+    SSO can proceed.
+  - The `<div ref={googleButtonRef} className="hidden" />` at the end is
+    REQUIRED. handleGoogleSignIn (L168-189) renders the GIS button into
+    this hidden div and programmatically clicks it. Without this ref-target,
+    the Google flow throws "container not found" and silently fails.
+  - The "have_account" link stays at the bottom (unchanged) so users with
+    existing accounts can switch to /login.
+
+DO NOT TOUCH
+============
+- ❌ Do NOT modify handleGoogleSignIn / handleAppleSignIn / handleSocialAuthResult
+     beyond the single-line setStep('phone') addition at LOCATION 1.1.
+- ❌ Do NOT modify the backend. Phone-match check at
+     onboarding_router.py:2135 is correct and tested.
+- ❌ Do NOT add any new state variables. termsAccepted, socialLoading,
+     handleGoogleSignIn etc. are all already in scope.
+- ❌ Do NOT add new i18n keys. The "או הרשמה עם" divider and Hebrew label
+     text mirror what already exists in renderPhoneStep (hard-coded strings).
+- ❌ Do NOT add or modify routes in App.js.
+- ❌ Do NOT add new tests. The flow is exercised by existing T8/T9 from
+     batch 505 (Google + invite phone match / mismatch). Manual prod smoke
+     covers the rest. T12-T14 are deferred to a follow-up batch IF flake
+     observed in prod smoke.
+- ❌ Do NOT change the order of fields. Phone input + send-otp Button stays
+     first. ToS checkbox + SSO buttons are added BELOW the existing form,
+     not above. Phone is the primary path; SSO is secondary.
+
+GLOBAL VERIFY
+=============
+VERIFY 1 — Lint
+    cd frontend && CI=true npm run lint 2>&1 | tail -20
+    EXPECT: no new errors. termsAccepted, socialLoading, handleGoogleSignIn,
+    handleAppleSignIn are already in handleRequestOtp and other callbacks'
+    closure scope; no new useCallback deps required.
+
+VERIFY 2 — Build
+    cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
+        REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com \
+        yarn build 2>&1 | tail -30
+    EXPECT: "Compiled successfully" or with warnings only. No errors.
+
+VERIFY 3 — Manual smoke on staging (after deploy)
+    Test A — phone path still works:
+      a. Create new invite via API (super admin):
+         POST https://api-staging.brikops.com/api/projects/{project_id}/invites
+         body: {phone:"+972505550101", role:"contractor", trade_key:"electrical",
+                full_name:"Test SSO A", company_id:"<existing>"}
+      b. Open: https://staging.brikops-new.pages.dev/onboarding?invite=<id>
+      c. EXPECT: see new ToS checkbox + new SSO buttons below the existing
+         "send OTP" button. Send-OTP button disabled until ToS checked.
+      d. Check ToS, enter phone, click send-OTP.
+      e. EXPECT: existing flow still works. Lands on invite-login-needed
+         (505-hotfix), creates account.
+
+    Test B — Google + invite + matching phone:
+      a. Create new invite for a phone Zahi can authenticate Google with
+         (i.e. linked to Zahi's Google account's email).
+      b. Open in incognito, check ToS, click Google.
+      c. Authenticate Zahi's Google account in popup.
+      d. EXPECT: page transitions to phone-input UI (renderPhoneStep
+         socialFlow='register'). Header says "אימות טלפון" or similar.
+      e. Enter the SAME phone the invite was sent to. Send-OTP.
+      e2. **(NEW — Zahi review concern #2: ToS state persistence)** —
+          When the OTP-input screen renders (renderPhoneStep socialFlow='otp'
+          at L1204+), confirm the ToS checkbox at L1193 is **already checked**
+          because termsAccepted is component state and persists across the
+          renderInvitePhoneStep → renderPhoneStep transition. User should
+          NOT need to re-check ToS. Document in review.txt:
+              ToS persisted across step transition: YES / NO
+          If NO → file follow-up spec for state persistence fix. Not a
+          blocker for this batch (gate still works, just annoying UX).
+      f. Receive SMS. Enter OTP. Click verify.
+      g. EXPECT: 200, navigate to project, joined as invited role+trade.
+
+    Test C — Google + invite + MISMATCHED phone (security check):
+      a. Create new invite for phone X.
+      b. Open in incognito, click Google, authenticate.
+      c. Phone-input UI appears. Enter DIFFERENT phone Y (not X).
+      d. Send-OTP, receive SMS on Y, enter OTP, click verify.
+      e. EXPECT: 400 "הטלפון לא תואם להזמנה". User NOT joined to project.
+
+VERIFY 4 — Regression grep (no new "missed form" pattern)
+    Verify all forms that consume invite_token now have ToS gates:
+    grep -n "termsAccepted\|onb-invite-terms\|onb-invite-newuser-terms\|onb-invitelanding-terms" \
+        frontend/src/pages/OnboardingPage.js | sort -t: -k1 -n | head -20
+
+    EXPECT 4 distinct checkbox IDs and consistent termsAccepted gating:
+      L63                 — useState declaration
+      L869                — onb-invite-terms (renderInviteAccept, batch 505)
+      L989                — onb-invite-newuser-terms (renderInviteLoginNeeded, 505-hotfix)
+      L774-region (NEW)   — onb-invitelanding-terms (renderInvitePhoneStep, this spec)
+      L1193               — termsAccepted in renderPhoneStep socialFlow=otp
+      L1579               — termsAccepted in renderDetails
+      All disabled props: `loading || !termsAccepted` or `socialLoading || !termsAccepted`
+
+VERIFY 5 — Production-equivalent build inspection (skip if 1+2 pass)
+    Inspect compiled bundle to confirm new id is in emitted JS:
+    grep -c "onb-invitelanding-terms" frontend/build/static/js/main.*.js
+    EXPECT: ≥ 2 (one in input id, one in label htmlFor)
+
+DELIVERABLES
+============
+review.txt with:
+  - Rollback SHA (origin/staging HEAD before this commit)
+  - Per-file diff (single file: OnboardingPage.js, ~50 lines added)
+  - STEP 0 grep outputs at top (all 5)
+  - VERIFY 1, 2, 4, 5 outputs
+  - VERIFY 3 manual smoke deferred to Zahi
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(onboarding): add Google + Apple SSO buttons to invite landing screen
+
+  Adds SSO entry points to renderInvitePhoneStep (the invite landing
+  screen at /onboarding?invite=X). Today, contractors invited via
+  WhatsApp can only register via phone+OTP+password — they don't get
+  the same one-click Google/Apple experience as non-invite users.
+
+  After this change:
+  - Invite landing shows phone input + send-OTP (existing) PLUS new
+    ToS checkbox + Google + Apple buttons.
+  - Phone-OTP path: unchanged. Now also gated by ToS checkbox.
+  - Google/Apple path: standard SSO flow → backend validates invite_token
+    + Google identity → registration_required → renderPhoneStep
+    socialFlow='register' UI handles phone+OTP. Backend phone-match
+    check at onboarding_router.py:2135 enforces that the OTP'd phone
+    equals invite.target_phone, preserving the security posture from
+    batch 505 (no privilege escalation via forwarded invite + Google).
+
+  Single behavioral change beyond UI: handleSocialAuthResult's
+  registration_required branch now also calls setStep('phone'), so the
+  socialFlow='register' UI in renderPhoneStep takes over after Google
+  OAuth completes. Without this, clicking Google from the invite
+  landing screen would silently update internal state but show no
+  visible UI change.
+
+  No backend changes. No new tests (T8/T9 from 505 already cover
+  Google+invite phone match/mismatch). No new i18n keys.
+
+STEPS
+=====
+1. Run STEP 0 pre-flight greps (all 5). Paste outputs at top of review.txt.
+   If any line numbers drifted → STOP and report.
+2. Edit OnboardingPage.js LOCATION 1.1 (1 line added in handleSocialAuthResult).
+3. Edit OnboardingPage.js LOCATION 1.2 (~50 lines added at end of
+   renderInvitePhoneStep, before the final closing </div>).
+4. Run VERIFY 1 (lint). Paste output.
+5. Run VERIFY 2 (build). Paste output.
+6. Run VERIFY 4 (regression grep). Paste output with classification.
+7. Run VERIFY 5 (bundle inspection). Paste output.
+8. Generate review.txt with the diff.
+9. Write .local/.commit_message per template above.
+10. STOP. Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+    Do NOT run ./deploy.sh, ./ship.sh, git commit, or git push.
+
+ROLLBACK
+========
+git revert <commit-sha>
+git checkout staging && ./deploy.sh --stag
+
+Risk profile: very low. Surface area is one render function + one
+single-line addition in a callback. No backend, no schemas, no migrations.
+Existing handleGoogleSignIn already passes inviteToken (verified in
+batch 505). Backend phone-match enforcement already shipped (batch 505).
+
+DEPLOY PACING (Zahi review concern #3 — auth-area fatigue)
+==========================================================
+Today already shipped 2 auth-area changes to prod:
+  - Batch 505 (full unified auth + ToS consent) — early today
+  - Batch 505-hotfix (renderInviteLoginNeeded ToS) — afternoon today
+
+This is the THIRD auth-area change of the same day. Auth fatigue
+accumulates: each deploy carries small risk of a missed edge case in
+SSO/OTP/invite flows. Stacking three same-day prod deploys is risky.
+
+Cadence for batch 506:
+  1. Deploy to STAGING after Replit returns review.txt + Zahi approves.
+  2. Smoke V3 Tests A + B + C on staging.
+  3. **WAIT 24 hours minimum before prod.** Watch staging.
+  4. If staging clean for 24h → prod.
+  5. If any auth-area issue surfaces in 505/505-hotfix in prod during
+     the 24h watch → defer 506 prod deploy further.
+
+Rationale: 505 + hotfix have only been live in prod for hours. Real
+users may not have hit the new flows yet. Letting 506 stage soak for
+a day catches any "we broke the existing flow" regressions before
+compounding more changes on top.
+
+NOT URGENT — defer if needed:
+  - This is P1 feature add, not a P0 fix.
+  - Contractors invited via WhatsApp can still register today (via
+    phone+OTP+password — 505 + hotfix path).
+  - SSO-on-invite is "nice UX", not "broken without it".
+
+DEFERRED FOLLOW-UP (out of scope for this batch — Zahi review concern,
+                    do not implement here)
+================================================================
+Post-OAuth phone re-entry is annoying. Currently after Google OAuth in
+invite flow, user is asked to enter phone again — even though the invite
+already knows `target_phone`. UX could:
+
+  - Auto-fill the phone field from invite.target_phone (require
+    /api/invites/{id}/info to also return target_phone, which today is
+    deliberately NOT exposed for privacy reasons — would need a
+    risk/benefit decision)
+  - Skip phone-input entirely, use invite.target_phone directly for
+    /auth/social/send-otp call
+
+Both options trade away phone-privacy of the invite endpoint OR add
+a backend code path that uses invite.target_phone implicitly without
+user confirmation. Both have security/privacy implications.
+
+Decision: **Defer until users complain.** The current "enter phone for
+the invite you got" is a single field copy-paste from the WhatsApp
+message. Acceptable friction for P1.
+
+================================================================================
+END OF SPEC
+================================================================================

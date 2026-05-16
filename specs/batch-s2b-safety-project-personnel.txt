@@ -1,0 +1,1164 @@
+================================================================================
+BATCH S2B — Safety Project Personnel (אחראי בטיחות בפרויקט)
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — feature gap discovered during S2A V9 visual smoke. Section 3
+                of the registration ("מנהלי החברה") is generic name+ID with no
+                role assignment. Israeli safety regulation requires distinct
+                project safety roles: מנהל עבודה, עוזר בטיחות, ממונה בטיחות,
+                יועץ בטיחות. These will be referenced by Tour signatures in
+                Phase 2 (decision #5: מנהל עבודה + עוזר בטיחות חתימות חובה).
+
+Files changed:  3 NEW files + 2 small extensions to existing files
+                  Backend (NEW):    backend/contractor_ops/safety_personnel_router.py
+                  Backend (NEW):    schemas additions in schemas.py (append only)
+                  Backend (extend): backend/server.py (register new router)
+                  Frontend (NEW):   frontend/src/components/safety/SafetyProjectPersonnelSection.js
+                  Frontend (extend): frontend/src/pages/SafetyProjectRegistrationPage.js (import + include)
+                  Frontend (extend): frontend/src/services/api.js (4 new methods on safetyService)
+                  Tests (NEW):       backend/tests/test_safety_personnel.py
+
+Mobile:         Frontend OTA only (Capgo). No native files touched.
+                Touch targets ≥44px (py-3 on all buttons). No PDF in this batch.
+DB migration:   NONE. New collection `safety_project_personnel` is lazy-init —
+                empty until first POST. Existing projects keep working.
+File org:       Per CLAUDE.md rule (#469 onward): every new sub-batch in NEW
+                files. We do NOT append routes to safety_router.py (already
+                1,912 lines). NEW router file imports helpers from existing
+                safety_router via `from contractor_ops.safety_router import ...`.
+
+================================================================================
+CONTEXT
+================================================================================
+
+Discovered 2026-05-04 by Zahi during V9 visual smoke testing of Batch S2A
+(#468 — Safety Project Registration). The form's Section 3 ("מנהלי החברה")
+exposes only generic fields: first_name, last_name, id_number, address,
+notes. There is no `role` / `title` field, and no way to mark someone as
+מנהל עבודה vs עוזר בטיחות vs ממונה בטיחות.
+
+This is a real gap because:
+
+1. Israeli safety regulation REQUIRES distinct roles per project:
+   - מנהל עבודה (Site Manager) — required at every site
+   - עוזר בטיחות (Safety Assistant) — required at sites with 50+ workers
+   - ממונה בטיחות (Safety Officer) — typically external, often shared
+     across multiple projects of the same contractor
+   - יועץ בטיחות (Safety Consultant) — optional advisor
+
+2. Phase 2 Tour signatures will need to look up "the מנהל עבודה for this
+   project" and "the עוזר בטיחות for this project" by role. Per concept
+   decision #5 (HANDOFF doc), these two roles are required signers on
+   every safety tour.
+
+3. Section 3 stays as-is — it correctly captures *company directors*
+   (regulatory requirement to list company managers in the registry).
+   Personnel and directors are different concepts and should not be
+   conflated.
+
+DESIGN DECISION (Zahi 2026-05-04):
+  - SEPARATE collection `safety_project_personnel` (NOT embedded in
+    safety_project_settings). Reason: Phase 2 Tour signatures need stable
+    UUID references to each person. Embedded list = reference by index
+    (fragile) or by name (very fragile).
+  - NO LIMIT on count per role. A project can have multiple מנהלי עבודה,
+    multiple עוזרי בטיחות, etc.
+  - Section in the form groups personnel by role with "+ הוסף [תפקיד]"
+    button per role.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify safety_router.py helpers we'll import (anchors must exist):
+    grep -n "def _hash_id_number\|def _check_project_access\|def _now_iso\|SAFETY_WRITERS\s*=\|SAFETY_VIEWERS\s*=\|^router\s*=\s*APIRouter" \
+        backend/contractor_ops/safety_router.py | head -10
+    # Expected:
+    #   _hash_id_number defined (line ~70)
+    #   _check_project_access defined
+    #   _now_iso defined
+    #   SAFETY_WRITERS constant defined
+    #   SAFETY_VIEWERS constant defined
+    #   router = APIRouter(...) defined with prefix '/api/safety'
+
+0.2 — Verify safety_registration_router.py exists from #468 addendum (so we
+    follow the exact same import + APIRouter pattern):
+    test -f backend/contractor_ops/safety_registration_router.py && echo "EXISTS" || echo "MISSING"
+    # Expected: EXISTS. Read it as the template for our new file.
+    grep -n "^from\|^router\s*=\s*APIRouter\|app.include_router" \
+        backend/contractor_ops/safety_registration_router.py backend/server.py | head -15
+    # Expected in safety_registration_router.py:
+    #   from contractor_ops.safety_router import _check_project_access, _now_iso, SAFETY_WRITERS, SAFETY_VIEWERS
+    #   router = APIRouter(prefix="/api/safety", tags=["safety"])
+    # Expected in server.py:
+    #   app.include_router(safety_registration_router.router)
+    # If template differs — STOP and copy exactly its pattern.
+
+0.3 — Verify there's NO existing personnel collection, schema, or routes:
+    grep -rn "safety_project_personnel\|SafetyProjectPersonnel" \
+        backend/ frontend/src/ | head -5
+    # Expected: 0 hits. If anything is there — STOP and report.
+
+0.4 — Verify SafetyProjectRegistrationPage.js exists from #468 (we extend it):
+    test -f frontend/src/pages/SafetyProjectRegistrationPage.js && echo "EXISTS" || echo "MISSING"
+    # Expected: EXISTS.
+    grep -n "Section title=\|managers\|<Section" frontend/src/pages/SafetyProjectRegistrationPage.js | head -10
+    # Expected: 4 sections (1.כללי / 2.מען / 3.מנהלי החברה / 4.אסמכתאות).
+    # We will insert OUR section between current 3 and current 4 → renumber.
+
+0.5 — Verify safetyService in api.js is the place to add new methods:
+    grep -n "export const safetyService\|getRegistration\|saveRegistration" \
+        frontend/src/services/api.js | head -10
+    # Expected: safetyService exists. getRegistration / saveRegistration
+    # added by #468. We add 4 new methods (listPersonnel, createPersonnel,
+    # updatePersonnel, deletePersonnel).
+
+0.6 — Verify Capacitor touch-target pattern + lucide-react Plus icon used:
+    grep -n "py-3\|<Plus" frontend/src/pages/SafetyProjectRegistrationPage.js | head -5
+    # Expected: at least 1 use of py-3 (≥44px touch). At least 1 <Plus icon.
+    # We follow the same patterns.
+
+0.7 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — BACKEND SCHEMAS (file 1 of 4)
+================================================================================
+
+FILE 1 of 4: backend/contractor_ops/schemas.py
+-----------------------------------------------
+
+LOCATION 1.1 — Append AT END OF FILE (after the last existing model, including
+   the SafetyProjectRegistration models added by #468):
+
+   ADD:
+       # =====================================================================
+       # Safety Project Personnel (Batch S2B 2026-05-04)
+       # אחראי בטיחות בפרויקט — distinct from company managers (which
+       # remain in SafetyProjectRegistration.managers).
+       # Implements Israeli safety regulation roles required per project.
+       # =====================================================================
+
+       SAFETY_PERSONNEL_ROLES = (
+           'site_manager',       # מנהל עבודה
+           'safety_assistant',   # עוזר בטיחות
+           'safety_officer',     # ממונה בטיחות
+           'safety_consultant',  # יועץ בטיחות
+       )
+
+       class SafetyProjectPersonnelCreate(BaseModel):
+           """Create one personnel record. Multiple per role allowed."""
+           role: Literal['site_manager', 'safety_assistant', 'safety_officer', 'safety_consultant']
+           first_name: str = Field(..., min_length=1, max_length=60)
+           last_name: str = Field(..., min_length=1, max_length=60)
+           id_number: Optional[str] = Field(None, max_length=20)  # PII — hashed on persist
+           license_number: Optional[str] = Field(None, max_length=30)  # רישיון בטיחות
+           phone: Optional[str] = Field(None, max_length=20)
+           email: Optional[str] = Field(None, max_length=120)
+           notes: Optional[str] = Field(None, max_length=500)
+
+       class SafetyProjectPersonnelUpdate(BaseModel):
+           """Patch-style update. All fields optional."""
+           role: Optional[Literal['site_manager', 'safety_assistant', 'safety_officer', 'safety_consultant']] = None
+           first_name: Optional[str] = Field(None, min_length=1, max_length=60)
+           last_name: Optional[str] = Field(None, min_length=1, max_length=60)
+           id_number: Optional[str] = Field(None, max_length=20)
+           license_number: Optional[str] = Field(None, max_length=30)
+           phone: Optional[str] = Field(None, max_length=20)
+           email: Optional[str] = Field(None, max_length=120)
+           notes: Optional[str] = Field(None, max_length=500)
+
+       class SafetyProjectPersonnel(BaseModel):
+           """Persisted shape. id_number returned MASKED, never raw."""
+           id: str
+           project_id: str
+           role: str
+           first_name: str
+           last_name: str
+           id_number: Optional[str] = None  # MASKED form ("1***6789")
+           license_number: Optional[str] = None
+           phone: Optional[str] = None
+           email: Optional[str] = None
+           notes: Optional[str] = None
+           is_active: bool = True
+           created_at: str
+           created_by: Optional[str] = None
+           updated_at: Optional[str] = None
+           updated_by: Optional[str] = None
+
+DO NOT TOUCH:
+- Any existing model in schemas.py.
+- The Imports at top — `Literal`, `Optional`, `Field`, `BaseModel` all
+  already imported per existing safety models. Verify with grep before
+  assuming. If `Literal` is missing, add it: `from typing import Literal`.
+
+================================================================================
+PART 2 — BACKEND ROUTER (NEW FILE — file 2 of 4)
+================================================================================
+
+FILE 2 of 4: backend/contractor_ops/safety_personnel_router.py (NEW FILE)
+-------------------------------------------------------------------------
+
+CREATE NEW FILE per CLAUDE.md rule (#469+ no append to existing big files).
+Mirrors the pattern of safety_registration_router.py (created by #468 addendum).
+
+   FULL FILE CONTENTS:
+
+       """
+       Safety Project Personnel routes — Batch S2B 2026-05-04.
+
+       Distinct from SafetyProjectRegistration.managers (which captures
+       company directors). This module manages PROJECT-LEVEL safety roles:
+       מנהל עבודה / עוזר בטיחות / ממונה בטיחות / יועץ בטיחות.
+
+       Stored in collection `safety_project_personnel`.
+       Lazy init — collection grows on first POST. No migration needed.
+
+       File created per CLAUDE.md rule: new sub-batches in new files.
+       Imports helpers from contractor_ops.safety_router instead of
+       duplicating them.
+       """
+       from __future__ import annotations
+
+       import uuid
+       from typing import Optional, List
+
+       from fastapi import APIRouter, Depends, HTTPException, Query
+
+       from contractor_ops.safety_router import (
+           _check_project_access,
+           _hash_id_number,
+           _now_iso,
+           SAFETY_VIEWERS,
+           SAFETY_WRITERS,
+           get_db,
+       )
+       from contractor_ops.router import require_roles
+       from contractor_ops.schemas import (
+           SafetyProjectPersonnel,
+           SafetyProjectPersonnelCreate,
+           SafetyProjectPersonnelUpdate,
+       )
+
+       # Same prefix as parent safety router — FastAPI merges them transparently.
+       router = APIRouter(prefix="/api/safety", tags=["safety"])
+
+
+       def _mask_id(raw: Optional[str]) -> Optional[str]:
+           """Mask Israeli ID for UI display: '123456789' → '1***6789'.
+           Same pattern used inline in safety_registration_router for
+           SafetyProjectRegistration.managers."""
+           if not raw:
+               return None
+           stripped = raw.strip()
+           if len(stripped) < 4:
+               return None  # Too short — don't display partial
+           return f"{stripped[:1]}***{stripped[-3:]}"
+
+
+       def _to_response(doc: dict) -> dict:
+           """Strip Mongo _id + the hashed PII; return masked form."""
+           out = {k: v for k, v in doc.items() if k not in ("_id", "id_number_hash", "deletedAt")}
+           # id_number stored as masked already by create/update; pass through.
+           return out
+
+
+       @router.get("/{project_id}/personnel", response_model=List[SafetyProjectPersonnel])
+       async def list_personnel(
+           project_id: str,
+           role: Optional[str] = Query(None, description="Filter by role"),
+           is_active: Optional[bool] = Query(True, description="Default: only active"),
+           user: dict = Depends(require_roles(*SAFETY_VIEWERS)),
+       ):
+           db = get_db()
+           await _check_project_access(user, project_id)
+           query: dict = {"project_id": project_id, "deletedAt": None}
+           if role is not None:
+               query["role"] = role
+           if is_active is not None:
+               query["is_active"] = is_active
+           cursor = db.safety_project_personnel.find(query).sort([("role", 1), ("last_name", 1), ("first_name", 1)])
+           docs = await cursor.to_list(length=500)
+           return [_to_response(d) for d in docs]
+
+
+       @router.post("/{project_id}/personnel", response_model=SafetyProjectPersonnel, status_code=201)
+       async def create_personnel(
+           project_id: str,
+           payload: SafetyProjectPersonnelCreate,
+           user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+       ):
+           db = get_db()
+           await _check_project_access(user, project_id)
+           now = _now_iso()
+           raw_id = payload.id_number
+           doc = {
+               "id": str(uuid.uuid4()),
+               "project_id": project_id,
+               "role": payload.role,
+               "first_name": payload.first_name.strip(),
+               "last_name": payload.last_name.strip(),
+               "id_number": _mask_id(raw_id),  # masked for display
+               "id_number_hash": _hash_id_number(raw_id) if raw_id else None,  # PII protection
+               "license_number": payload.license_number,
+               "phone": payload.phone,
+               "email": payload.email,
+               "notes": payload.notes,
+               "is_active": True,
+               "created_at": now,
+               "created_by": user.get("email") or user.get("id"),
+               "updated_at": now,
+               "updated_by": user.get("email") or user.get("id"),
+               "deletedAt": None,
+           }
+           await db.safety_project_personnel.insert_one(doc)
+           return _to_response(doc)
+
+
+       @router.patch("/{project_id}/personnel/{personnel_id}", response_model=SafetyProjectPersonnel)
+       async def update_personnel(
+           project_id: str,
+           personnel_id: str,
+           payload: SafetyProjectPersonnelUpdate,
+           user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+       ):
+           db = get_db()
+           await _check_project_access(user, project_id)
+           existing = await db.safety_project_personnel.find_one(
+               {"id": personnel_id, "project_id": project_id, "deletedAt": None}
+           )
+           if not existing:
+               raise HTTPException(status_code=404, detail="Personnel not found")
+
+           updates = payload.dict(exclude_unset=True)
+
+           # Handle id_number specially: re-hash + re-mask, never persist raw.
+           if "id_number" in updates:
+               raw = updates["id_number"]
+               updates["id_number"] = _mask_id(raw)
+               updates["id_number_hash"] = _hash_id_number(raw) if raw else None
+
+           # Trim string fields where present.
+           for k in ("first_name", "last_name"):
+               if k in updates and isinstance(updates[k], str):
+                   updates[k] = updates[k].strip()
+
+           updates["updated_at"] = _now_iso()
+           updates["updated_by"] = user.get("email") or user.get("id")
+
+           await db.safety_project_personnel.update_one(
+               {"id": personnel_id, "project_id": project_id, "deletedAt": None},
+               {"$set": updates},
+           )
+           refreshed = await db.safety_project_personnel.find_one(
+               {"id": personnel_id, "project_id": project_id}
+           )
+           return _to_response(refreshed)
+
+
+       @router.delete("/{project_id}/personnel/{personnel_id}", status_code=204)
+       async def delete_personnel(
+           project_id: str,
+           personnel_id: str,
+           user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+       ):
+           db = get_db()
+           await _check_project_access(user, project_id)
+           result = await db.safety_project_personnel.update_one(
+               {"id": personnel_id, "project_id": project_id, "deletedAt": None},
+               {
+                   "$set": {
+                       "deletedAt": _now_iso(),
+                       "is_active": False,
+                       "updated_at": _now_iso(),
+                       "updated_by": user.get("email") or user.get("id"),
+                   }
+               },
+           )
+           if result.matched_count == 0:
+               raise HTTPException(status_code=404, detail="Personnel not found")
+           return None
+
+NOTES:
+- Soft delete (deletedAt timestamp). Never hard-delete (matches pattern used
+  in safety_router.py for workers).
+- Same prefix `/api/safety` as parent — FastAPI merges. So actual paths:
+    GET    /api/safety/{project_id}/personnel
+    POST   /api/safety/{project_id}/personnel
+    PATCH  /api/safety/{project_id}/personnel/{personnel_id}
+    DELETE /api/safety/{project_id}/personnel/{personnel_id}
+- If `_hash_id_number` or `_check_project_access` import path differs in the
+  current safety_router.py (e.g. `_check_project_access` is in router.py
+  instead) — adapt the import. STEP 0.1 verifies actual location.
+
+================================================================================
+PART 3 — REGISTER NEW ROUTER (file 3 of 4)
+================================================================================
+
+FILE 3 of 4: backend/server.py
+-------------------------------
+
+LOCATION 3.1 — Add the new router include alongside other safety routers.
+
+   FIND the existing line that includes safety_registration_router (added by
+   #468 addendum). It looks like one of:
+       app.include_router(safety_registration_router.router)
+     OR
+       from contractor_ops import safety_registration_router
+       ...
+       app.include_router(safety_registration_router.router)
+
+   ADD IMMEDIATELY AFTER (mirror exact import style — module import OR
+   from-import — match what already exists):
+
+   If file uses `from contractor_ops import ...`:
+       from contractor_ops import safety_personnel_router
+       ...
+       app.include_router(safety_personnel_router.router)
+
+   If file uses `import contractor_ops.safety_registration_router as ...`:
+       match that style instead.
+
+DO NOT TOUCH:
+- Order of other includes (don't reshuffle).
+- Any auth / middleware setup.
+
+================================================================================
+PART 4 — FRONTEND API SERVICE (file 4 of 4 backend-side, frontend file)
+================================================================================
+
+FILE 4 of 4: frontend/src/services/api.js
+------------------------------------------
+
+LOCATION 4.1 — Inside `export const safetyService = { ... }`, after the
+   registration methods (added by #468), append:
+
+   ADD (4 methods):
+
+       listPersonnel: async (projectId, params = {}) => {
+         const qs = new URLSearchParams();
+         if (params.role) qs.set('role', params.role);
+         if (params.is_active !== undefined) qs.set('is_active', String(params.is_active));
+         const suffix = qs.toString() ? `?${qs.toString()}` : '';
+         const res = await api.get(`/safety/${projectId}/personnel${suffix}`);
+         return res.data;
+       },
+
+       createPersonnel: async (projectId, payload) => {
+         const res = await api.post(`/safety/${projectId}/personnel`, payload);
+         return res.data;
+       },
+
+       updatePersonnel: async (projectId, personnelId, payload) => {
+         const res = await api.patch(`/safety/${projectId}/personnel/${personnelId}`, payload);
+         return res.data;
+       },
+
+       deletePersonnel: async (projectId, personnelId) => {
+         await api.delete(`/safety/${projectId}/personnel/${personnelId}`);
+       },
+
+NOTES:
+- The base `api` axios client already prefixes /api (verify with grep
+  `baseURL.*api`). So `/safety/...` resolves to `/api/safety/...`.
+- Match the comma/spacing/indent style of surrounding methods exactly.
+
+================================================================================
+PART 5 — FRONTEND COMPONENT (NEW FILE)
+================================================================================
+
+FILE: frontend/src/components/safety/SafetyProjectPersonnelSection.js (NEW FILE)
+--------------------------------------------------------------------------------
+
+CREATE NEW FILE. Renders one collapsible section grouped by role with
+"+ הוסף [תפקיד]" buttons per role group. Owns its own data fetching +
+mutations (independent of the parent registration form's save flow).
+
+   FULL FILE CONTENTS:
+
+       /**
+        * Safety Project Personnel Section — Batch S2B 2026-05-04.
+        *
+        * Renders inside SafetyProjectRegistrationPage as a collapsible section.
+        * Lists personnel grouped by 4 safety roles. Each role group has
+        * "+ הוסף" button. Multiple personnel per role allowed.
+        *
+        * PII: ID number is sent raw on POST/PATCH but server returns masked
+        * form ("1***6789"). The masked form is what we display + persist
+        * locally. Never display raw ID after creation.
+        *
+        * Capacitor: all touch targets py-3 (≥44px). No file downloads in
+        * this component.
+        */
+       import React, { useEffect, useState, useCallback } from 'react';
+       import { Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+       import { safetyService } from '../../services/api';
+
+       const ROLE_LABELS = {
+         site_manager:      'מנהל עבודה',
+         safety_assistant:  'עוזר בטיחות',
+         safety_officer:    'ממונה בטיחות',
+         safety_consultant: 'יועץ בטיחות',
+       };
+
+       const ROLE_ORDER = ['site_manager', 'safety_assistant', 'safety_officer', 'safety_consultant'];
+
+       const EMPTY_DRAFT = {
+         first_name: '',
+         last_name: '',
+         id_number: '',
+         license_number: '',
+         phone: '',
+         email: '',
+         notes: '',
+       };
+
+       export default function SafetyProjectPersonnelSection({ projectId, isOpen, onToggle }) {
+         const [personnel, setPersonnel] = useState([]);
+         const [loading, setLoading] = useState(true);
+         const [error, setError] = useState(null);
+         const [drafts, setDrafts] = useState({}); // { role: { ...EMPTY_DRAFT } } for in-progress add
+         const [savingRole, setSavingRole] = useState(null);
+
+         const reload = useCallback(async () => {
+           try {
+             setLoading(true);
+             const data = await safetyService.listPersonnel(projectId, { is_active: true });
+             setPersonnel(Array.isArray(data) ? data : []);
+             setError(null);
+           } catch (err) {
+             console.error('listPersonnel failed:', err);
+             setError('טעינה נכשלה');
+           } finally {
+             setLoading(false);
+           }
+         }, [projectId]);
+
+         useEffect(() => {
+           if (projectId) reload();
+         }, [projectId, reload]);
+
+         const startAdd = (role) => {
+           setDrafts(prev => ({ ...prev, [role]: { ...EMPTY_DRAFT } }));
+         };
+
+         const cancelAdd = (role) => {
+           setDrafts(prev => {
+             const next = { ...prev };
+             delete next[role];
+             return next;
+           });
+         };
+
+         const updateDraft = (role, field, value) => {
+           setDrafts(prev => ({ ...prev, [role]: { ...prev[role], [field]: value } }));
+         };
+
+         const submitDraft = async (role) => {
+           const draft = drafts[role];
+           if (!draft || !draft.first_name.trim() || !draft.last_name.trim()) {
+             setError('שם פרטי + שם משפחה הם שדות חובה');
+             return;
+           }
+           try {
+             setSavingRole(role);
+             const payload = {
+               role,
+               first_name: draft.first_name.trim(),
+               last_name: draft.last_name.trim(),
+               id_number: draft.id_number?.trim() || null,
+               license_number: draft.license_number?.trim() || null,
+               phone: draft.phone?.trim() || null,
+               email: draft.email?.trim() || null,
+               notes: draft.notes?.trim() || null,
+             };
+             await safetyService.createPersonnel(projectId, payload);
+             cancelAdd(role);
+             await reload();
+           } catch (err) {
+             console.error('createPersonnel failed:', err);
+             setError('שמירה נכשלה');
+           } finally {
+             setSavingRole(null);
+           }
+         };
+
+         const remove = async (personnelId) => {
+           if (!window.confirm('להסיר את האחראי הזה?')) return;
+           try {
+             await safetyService.deletePersonnel(projectId, personnelId);
+             await reload();
+           } catch (err) {
+             console.error('deletePersonnel failed:', err);
+             setError('מחיקה נכשלה');
+           }
+         };
+
+         const grouped = ROLE_ORDER.reduce((acc, role) => {
+           acc[role] = personnel.filter(p => p.role === role);
+           return acc;
+         }, {});
+
+         const totalCount = personnel.length;
+
+         return (
+           <div className="border border-slate-200 rounded-lg bg-white">
+             {/* Section header — collapsible */}
+             <button
+               type="button"
+               onClick={onToggle}
+               className="w-full flex items-center justify-between py-3 px-4 text-right"
+             >
+               <span className="text-slate-500">
+                 {isOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+               </span>
+               <span className="font-semibold text-slate-800">
+                 4. אחראי בטיחות בפרויקט ({totalCount})
+               </span>
+             </button>
+
+             {isOpen && (
+               <div className="px-4 pb-4 space-y-4">
+                 {error && (
+                   <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
+                     {error}
+                   </div>
+                 )}
+
+                 {loading ? (
+                   <p className="text-sm text-slate-500">טוען...</p>
+                 ) : (
+                   ROLE_ORDER.map(role => (
+                     <div key={role} className="border-t border-slate-100 pt-3 first:border-t-0 first:pt-0">
+                       <div className="flex items-center justify-between mb-2">
+                         <span className="text-sm text-slate-500">
+                           {grouped[role].length} {grouped[role].length === 1 ? 'איש' : 'אנשים'}
+                         </span>
+                         <h4 className="font-medium text-slate-700">{ROLE_LABELS[role]}</h4>
+                       </div>
+
+                       {/* Existing personnel list for this role */}
+                       {grouped[role].length === 0 && !drafts[role] && (
+                         <p className="text-xs text-slate-400 mb-2">לא הוגדרו {ROLE_LABELS[role]}</p>
+                       )}
+                       <div className="space-y-2 mb-2">
+                         {grouped[role].map(p => (
+                           <div key={p.id} className="flex items-start justify-between border border-slate-200 rounded p-3 bg-slate-50">
+                             <button
+                               type="button"
+                               onClick={() => remove(p.id)}
+                               className="text-red-500 hover:text-red-700 p-2"
+                               aria-label="הסר"
+                             >
+                               <Trash2 className="w-4 h-4" />
+                             </button>
+                             <div className="flex-1 text-right space-y-1">
+                               <div className="font-medium text-slate-800">
+                                 {p.first_name} {p.last_name}
+                               </div>
+                               {p.id_number && (
+                                 <div className="text-xs text-slate-500">ת.ז: {p.id_number}</div>
+                               )}
+                               {p.license_number && (
+                                 <div className="text-xs text-slate-500">רישיון: {p.license_number}</div>
+                               )}
+                               {p.phone && (
+                                 <div className="text-xs text-slate-500">טל': {p.phone}</div>
+                               )}
+                               {p.email && (
+                                 <div className="text-xs text-slate-500">דוא״ל: {p.email}</div>
+                               )}
+                               {p.notes && (
+                                 <div className="text-xs text-slate-500 mt-1">{p.notes}</div>
+                               )}
+                             </div>
+                           </div>
+                         ))}
+                       </div>
+
+                       {/* Inline add draft for this role */}
+                       {drafts[role] ? (
+                         <div className="border border-blue-200 rounded p-3 bg-blue-50 space-y-2">
+                           <div className="grid grid-cols-2 gap-2">
+                             <input
+                               type="text"
+                               placeholder="שם פרטי *"
+                               value={drafts[role].first_name}
+                               onChange={(e) => updateDraft(role, 'first_name', e.target.value)}
+                               className="border border-slate-300 rounded px-3 py-3 text-right text-sm"
+                             />
+                             <input
+                               type="text"
+                               placeholder="שם משפחה *"
+                               value={drafts[role].last_name}
+                               onChange={(e) => updateDraft(role, 'last_name', e.target.value)}
+                               className="border border-slate-300 rounded px-3 py-3 text-right text-sm"
+                             />
+                           </div>
+                           <input
+                             type="text"
+                             placeholder="ת.ז (אופציונלי)"
+                             value={drafts[role].id_number}
+                             onChange={(e) => updateDraft(role, 'id_number', e.target.value)}
+                             className="w-full border border-slate-300 rounded px-3 py-3 text-right text-sm"
+                           />
+                           <input
+                             type="text"
+                             placeholder="מספר רישיון בטיחות (אופציונלי)"
+                             value={drafts[role].license_number}
+                             onChange={(e) => updateDraft(role, 'license_number', e.target.value)}
+                             className="w-full border border-slate-300 rounded px-3 py-3 text-right text-sm"
+                           />
+                           <div className="grid grid-cols-2 gap-2">
+                             <input
+                               type="tel"
+                               placeholder="טלפון"
+                               value={drafts[role].phone}
+                               onChange={(e) => updateDraft(role, 'phone', e.target.value)}
+                               className="border border-slate-300 rounded px-3 py-3 text-right text-sm"
+                             />
+                             <input
+                               type="email"
+                               placeholder="דוא״ל"
+                               value={drafts[role].email}
+                               onChange={(e) => updateDraft(role, 'email', e.target.value)}
+                               className="border border-slate-300 rounded px-3 py-3 text-right text-sm"
+                             />
+                           </div>
+                           <textarea
+                             placeholder="הערות"
+                             value={drafts[role].notes}
+                             onChange={(e) => updateDraft(role, 'notes', e.target.value)}
+                             rows={2}
+                             className="w-full border border-slate-300 rounded px-3 py-3 text-right text-sm"
+                           />
+                           <div className="flex items-center gap-2 justify-end">
+                             <button
+                               type="button"
+                               onClick={() => cancelAdd(role)}
+                               className="px-4 py-3 text-sm text-slate-600 hover:bg-slate-100 rounded"
+                               disabled={savingRole === role}
+                             >
+                               ביטול
+                             </button>
+                             <button
+                               type="button"
+                               onClick={() => submitDraft(role)}
+                               className="px-4 py-3 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                               disabled={savingRole === role}
+                             >
+                               {savingRole === role ? 'שומר...' : 'שמור'}
+                             </button>
+                           </div>
+                         </div>
+                       ) : (
+                         <button
+                           type="button"
+                           onClick={() => startAdd(role)}
+                           className="w-full flex items-center justify-center gap-2 py-3 px-4 border border-dashed border-slate-300 rounded text-sm text-slate-600 hover:bg-slate-50"
+                         >
+                           <Plus className="w-4 h-4" /> הוסף {ROLE_LABELS[role]}
+                         </button>
+                       )}
+                     </div>
+                   ))
+                 )}
+               </div>
+             )}
+           </div>
+         );
+       }
+
+NOTES:
+- All buttons + inputs use py-3 → ≥44px touch target (Apple HIG).
+- Arabic numeric inputs (id_number) — type="text" not "number" because
+  Israeli IDs can have leading zeros that "number" would strip.
+- Email input uses type="email" → triggers correct mobile keyboard (Capacitor).
+- Phone input uses type="tel" → triggers numeric keyboard (Capacitor).
+- Confirm dialog (window.confirm) is a Capacitor-safe native confirm; works
+  on both web and WebView.
+- The component owns its data — it does NOT participate in the parent
+  registration form's save flow. Each personnel is saved independently
+  via its own API call.
+
+================================================================================
+PART 6 — INSERT INTO REGISTRATION PAGE
+================================================================================
+
+FILE: frontend/src/pages/SafetyProjectRegistrationPage.js
+----------------------------------------------------------
+
+LOCATION 6.1 — Add import at top of file, alongside other component imports:
+
+   ADD (place near other component imports, e.g. after the lucide-react import):
+       import SafetyProjectPersonnelSection from '../components/safety/SafetyProjectPersonnelSection';
+
+LOCATION 6.2 — Extend the openSections state initial value to include
+   `personnel: false`:
+
+   FIND the openSections useState (it currently has keys like:
+   general, address, managers, regulatory):
+       const [openSections, setOpenSections] = useState({
+         general: true,
+         address: false,
+         managers: false,
+         regulatory: false,
+       });
+
+   REPLACE WITH (add personnel between managers and regulatory):
+       const [openSections, setOpenSections] = useState({
+         general: true,
+         address: false,
+         managers: false,
+         personnel: false,
+         regulatory: false,
+       });
+
+LOCATION 6.3 — Insert the personnel section between Section 3 (managers)
+   and Section 4 (regulatory). Renumber the regulatory section header
+   from "4." to "5." within the existing <Section title=...> string.
+
+   FIND the existing structure (approx lines 777-820):
+       {/* Section 3 — מנהלים */}
+       <Section title={`3. מנהלי החברה (${reg.managers.length})`} ...>
+         ...
+       </Section>
+
+       {/* Section 4 — אסמכתאות */}
+       <Section title="4. אסמכתאות רגולטוריות" ...>
+         ...
+       </Section>
+
+   REPLACE WITH:
+       {/* Section 3 — מנהלי החברה (Batch S2A — company directors) */}
+       <Section title={`3. מנהלי החברה (${reg.managers.length})`} ...>
+         ...
+       </Section>
+
+       {/* Section 4 — אחראי בטיחות בפרויקט (Batch S2B — project safety roles) */}
+       <SafetyProjectPersonnelSection
+         projectId={projectId}
+         isOpen={openSections.personnel}
+         onToggle={() => toggleSection('personnel')}
+       />
+
+       {/* Section 5 — אסמכתאות (renumbered from 4) */}
+       <Section title="5. אסמכתאות רגולטוריות" ...>
+         ...
+       </Section>
+
+   IMPORTANT: keep the spacing wrapper between sections consistent with
+   what's already there (e.g. `space-y-4` on the container or explicit
+   `<div className="mt-4">`). Do NOT change the wrapper.
+
+DO NOT TOUCH:
+- The save-all flow for the registration form. Personnel saves itself.
+- The PDF generation. Personnel are NOT in the PDF for this batch — that
+  comes in a follow-up (Batch S2B v2 if needed) once the design batch
+  fixes the Hebrew label rendering issue.
+- Completion bar logic. Personnel does NOT count toward completion %
+  (it's optional per regulation depending on site size — different
+  thresholds for each role).
+
+================================================================================
+PART 7 — TESTS (NEW FILE)
+================================================================================
+
+FILE: backend/tests/test_safety_personnel.py (NEW FILE)
+--------------------------------------------------------
+
+CREATE NEW FILE. 6 unit tests minimum. Use the asyncio.run(run()) pattern
+(no pytest-asyncio in this codebase — verified by grep on existing tests).
+
+   FULL FILE CONTENTS:
+
+       """
+       Safety Project Personnel tests — Batch S2B 2026-05-04.
+
+       Mirrors the test pattern of test_safety_registration.py (#468).
+       Uses asyncio.run(run()) — no pytest-asyncio in codebase.
+       """
+       import asyncio
+       import os
+       import uuid
+
+       import pytest
+       from httpx import AsyncClient, ASGITransport
+
+       from server import app
+       # NOTE: import paths may differ. Verify with:
+       #   grep -n "^from server import\|from backend.server" backend/tests/test_safety_*.py
+       # Match whatever pattern existing test files use.
+
+
+       PROJECT_ID = "test-project-personnel-s2b"
+
+
+       def _auth_headers(role="safety_officer"):
+           """Mock or real test auth per existing pattern. Match what
+           test_safety_registration.py does. If it uses a fixture-based
+           token — import that fixture. If it sets a header directly —
+           do the same."""
+           # PLACEHOLDER — replace with the actual pattern:
+           return {"Authorization": "Bearer test-token-superadmin"}
+
+
+       def test_create_personnel_basic():
+           async def run():
+               async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                   payload = {
+                       "role": "site_manager",
+                       "first_name": "ישראל",
+                       "last_name": "ישראלי",
+                       "phone": "0501234567",
+                   }
+                   r = await client.post(
+                       f"/api/safety/{PROJECT_ID}/personnel",
+                       json=payload,
+                       headers=_auth_headers(),
+                   )
+                   assert r.status_code == 201, r.text
+                   body = r.json()
+                   assert body["role"] == "site_manager"
+                   assert body["first_name"] == "ישראל"
+                   assert body["is_active"] is True
+                   assert "id" in body
+           asyncio.run(run())
+
+
+       def test_create_personnel_id_is_masked_in_response():
+           async def run():
+               async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                   payload = {
+                       "role": "safety_officer",
+                       "first_name": "אבי",
+                       "last_name": "כהן",
+                       "id_number": "123456789",
+                   }
+                   r = await client.post(
+                       f"/api/safety/{PROJECT_ID}/personnel",
+                       json=payload,
+                       headers=_auth_headers(),
+                   )
+                   assert r.status_code == 201, r.text
+                   body = r.json()
+                   # Must be masked, NOT raw 123456789
+                   assert body["id_number"] == "1***789"
+                   assert "id_number_hash" not in body  # never leaked
+           asyncio.run(run())
+
+
+       def test_list_personnel_filters_by_role():
+           async def run():
+               async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                   # Seed two roles
+                   await client.post(
+                       f"/api/safety/{PROJECT_ID}/personnel",
+                       json={"role": "site_manager", "first_name": "א", "last_name": "ב"},
+                       headers=_auth_headers(),
+                   )
+                   await client.post(
+                       f"/api/safety/{PROJECT_ID}/personnel",
+                       json={"role": "safety_assistant", "first_name": "ג", "last_name": "ד"},
+                       headers=_auth_headers(),
+                   )
+                   r = await client.get(
+                       f"/api/safety/{PROJECT_ID}/personnel?role=site_manager",
+                       headers=_auth_headers(),
+                   )
+                   assert r.status_code == 200, r.text
+                   for item in r.json():
+                       assert item["role"] == "site_manager"
+           asyncio.run(run())
+
+
+       def test_list_personnel_no_role_returns_all_active():
+           async def run():
+               async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                   r = await client.get(
+                       f"/api/safety/{PROJECT_ID}/personnel",
+                       headers=_auth_headers(),
+                   )
+                   assert r.status_code == 200, r.text
+                   assert isinstance(r.json(), list)
+                   for item in r.json():
+                       assert item["is_active"] is True
+           asyncio.run(run())
+
+
+       def test_update_personnel_changes_role():
+           async def run():
+               async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                   create = await client.post(
+                       f"/api/safety/{PROJECT_ID}/personnel",
+                       json={"role": "safety_consultant", "first_name": "ה", "last_name": "ו"},
+                       headers=_auth_headers(),
+                   )
+                   pid = create.json()["id"]
+                   patch = await client.patch(
+                       f"/api/safety/{PROJECT_ID}/personnel/{pid}",
+                       json={"role": "safety_officer"},
+                       headers=_auth_headers(),
+                   )
+                   assert patch.status_code == 200, patch.text
+                   assert patch.json()["role"] == "safety_officer"
+           asyncio.run(run())
+
+
+       def test_delete_personnel_soft_deletes():
+           async def run():
+               async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                   create = await client.post(
+                       f"/api/safety/{PROJECT_ID}/personnel",
+                       json={"role": "safety_assistant", "first_name": "ז", "last_name": "ח"},
+                       headers=_auth_headers(),
+                   )
+                   pid = create.json()["id"]
+                   d = await client.delete(
+                       f"/api/safety/{PROJECT_ID}/personnel/{pid}",
+                       headers=_auth_headers(),
+                   )
+                   assert d.status_code == 204, d.text
+                   # Subsequent list should not include the deleted record
+                   listing = await client.get(
+                       f"/api/safety/{PROJECT_ID}/personnel?is_active=true",
+                       headers=_auth_headers(),
+                   )
+                   ids = [p["id"] for p in listing.json()]
+                   assert pid not in ids
+           asyncio.run(run())
+
+NOTES:
+- The auth fixture pattern MUST match existing safety tests. Replit: read
+  test_safety_registration.py first to see how it authenticates, then
+  copy that pattern. The placeholder `_auth_headers()` MUST be replaced
+  with the working pattern.
+- Project access: if the codebase has a test helper that grants the
+  test user access to PROJECT_ID, use it. Otherwise mock _check_project_access
+  the same way other safety tests do.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend syntax + import resolution:
+   cd backend && python -c "from contractor_ops import safety_personnel_router; \
+       from contractor_ops.schemas import SafetyProjectPersonnel, SafetyProjectPersonnelCreate, SafetyProjectPersonnelUpdate; \
+       print('OK')"
+   → prints OK with no ImportError
+
+VERIFY 2 — Router registered in server.py:
+   cd backend && python -c "from server import app; \
+       routes = [r.path for r in app.routes]; \
+       assert any('/personnel' in p for p in routes), 'personnel routes missing'; \
+       print('OK', [p for p in routes if 'personnel' in p])"
+   → prints 4 paths matching:
+       /api/safety/{project_id}/personnel  (GET, POST)
+       /api/safety/{project_id}/personnel/{personnel_id}  (PATCH, DELETE)
+
+VERIFY 3 — Run new test file:
+   cd backend && python -m pytest tests/test_safety_personnel.py -v
+   → 6 passed
+
+VERIFY 4 — Frontend syntax (Babel parse):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 5 — Component file exists + uses py-3 ≥3 times (Capacitor touch):
+   test -f frontend/src/components/safety/SafetyProjectPersonnelSection.js && echo "EXISTS"
+   grep -c "py-3" frontend/src/components/safety/SafetyProjectPersonnelSection.js
+   → ≥10 (every input + button uses py-3)
+
+VERIFY 6 — Registration page renumbers + imports new section:
+   grep -c "SafetyProjectPersonnelSection" frontend/src/pages/SafetyProjectRegistrationPage.js
+   → at least 2 (1 import, 1 use)
+   grep -c '5. אסמכתאות' frontend/src/pages/SafetyProjectRegistrationPage.js
+   → at least 1 (regulatory section renumbered to 5)
+
+VERIFY 7 — safetyService extended with 4 new methods:
+   grep -c "listPersonnel\|createPersonnel\|updatePersonnel\|deletePersonnel" \
+       frontend/src/services/api.js
+   → at least 4
+
+VERIFY 8 — Visual smoke (Zahi runs after deploy to staging):
+   a) Login → navigate to /projects/{id}/safety/registration.
+   b) Section 4 ("4. אחראי בטיחות בפרויקט (0)") loads collapsed.
+   c) Open it → see 4 role groups: מנהל עבודה / עוזר בטיחות /
+      ממונה בטיחות / יועץ בטיחות. Each shows "לא הוגדרו" + "+ הוסף" button.
+   d) Click "+ הוסף מנהל עבודה" → inline form opens with name/ID/license/
+      phone/email/notes fields. All inputs ≥44px tall.
+   e) Fill name + phone, click שמור → row appears in list.
+   f) Add second מנהל עבודה → both appear under same role group.
+   g) Add 1 עוזר בטיחות → appears under עוזר בטיחות group with count "1 איש".
+   h) Click trash icon on one row → confirm dialog → row disappears
+      after confirm.
+   i) Add personnel with ID number "123456789" → after save, displayed as
+      "ת.ז: 1***789" (masked).
+   j) Section 5 ("5. אסמכתאות רגולטוריות") still works as before (didn't
+      break).
+   k) Mobile viewport (375px DevTools): all role groups stack vertically,
+      no horizontal scroll, "+ הוסף" buttons full width.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (greps + outputs)
+  - Per-file diff (3 NEW files + 3 extended files)
+  - VERIFY 1-7 outputs
+  - VERIFY 8 deferred-to-Zahi note
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(safety): project safety personnel — site manager / safety
+    assistant / officer / consultant (Batch S2B)
+
+  Adds dedicated section for project safety roles distinct from
+  company directors. New collection safety_project_personnel with
+  4 roles (site_manager, safety_assistant, safety_officer,
+  safety_consultant). Multiple per role allowed.
+
+  PII: ID number hashed (SHA-256) + masked for display ("1***789").
+  Same pattern as workers + registration managers.
+
+  New file safety_personnel_router.py (per CLAUDE.md rule —
+  no append to safety_router.py at 1,912 lines). Imports helpers
+  from existing safety_router.
+
+  Frontend: new SafetyProjectPersonnelSection component, included
+  as Section 4 in SafetyProjectRegistrationPage. Regulatory
+  section renumbered to 5. All touch targets ≥44px (Capacitor).
+
+  Tests: 6 unit tests covering create / mask / list / filter /
+  update / soft-delete.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.6 greps, paste output to top of review.txt)
+2. PART 1 — schemas.py additions
+3. PART 2 — NEW safety_personnel_router.py
+4. PART 3 — server.py register router
+5. PART 4 — api.js 4 new methods
+6. PART 5 — NEW SafetyProjectPersonnelSection.js component
+7. PART 6 — SafetyProjectRegistrationPage.js insert + renumber
+8. PART 7 — NEW test_safety_personnel.py
+9. Run VERIFY 1-7
+10. Generate review.txt + .local/.commit_message
+11. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+3 NEW files removed + 3 file diffs revert. Existing personnel docs in DB
+remain (soft-deletable manually if needed). The /api/safety/.../personnel
+routes 404. The registration page goes back to 4 sections.
+
+No data loss — collection survives revert; just no UI/API to read it.
+
+================================================================================
+END OF SPEC
+================================================================================

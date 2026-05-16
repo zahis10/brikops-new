@@ -100,3 +100,6 @@ backend/reports/
 # Claude Code local state — never commit worktrees or agent scratch
 .claude/
 secrets/
+
+# AWS Elastic Beanstalk local config (may contain secrets — local only)
+.elasticbeanstalk/

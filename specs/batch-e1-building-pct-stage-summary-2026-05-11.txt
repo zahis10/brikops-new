@@ -1,0 +1,202 @@
+================================================================================
+BATCH E.1 — Building card progress % uses stage_summary (follow-up to Batch E)
+================================================================================
+Date:           2026-05-11
+Branch:         staging  (NOT main)
+Severity:       P2 — DATA ACCURACY follow-up.
+                Batch E (just shipped 2026-05-11) updated:
+                  - /qc/floors/batch-status response to include
+                    stage_summary block with correct totals.
+                  - FloorDetailPage + BuildingQCPage to use it.
+                But explicitly left out-of-scope:
+                  - QCFloorSelectionPage (`/projects/{id}/qc` — the
+                    PROJECT-level view showing buildings).
+                Result: building cards on the project view still
+                show item-level percentages from the old
+                qd.pass_count / qd.total fields. Building 8 shows
+                90% when stages are actually ~52% complete.
+                Confirmed by Zahi's screenshot 2026-05-11 (prod
+                view of מגרש 810, building 8: card says "90%" but
+                inside view shows floors at 14/27, 17/27 שלבים).
+
+Approach:       Mirror the same stage_summary-first pattern Batch E
+                applied to BuildingQCPage: prefer stage_summary
+                fields when present, fall back to legacy item counts
+                for rolling-deploy safety.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only:
+                  - frontend/src/pages/QCFloorSelectionPage.js
+                    (~6 LOC: replace 1 branch of the buildingStats
+                     accumulator + 1 comment)
+                Total: 1 file, ~6 LOC. Backend untouched (already
+                returns stage_summary from Batch E).
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN this batch:
+  ✅ QCFloorSelectionPage building card progress percentage —
+     calculate from stage_summary.approved_stages /
+     stage_summary.total_stages instead of pass_count / total.
+  ✅ Fall back to legacy item counts if stage_summary absent
+     (rolling-deploy / cache-miss safety).
+
+OUT of this batch (deferred):
+  ❌ ProjectControlPage loadStats (L3568+) which uses
+     `f.pass_count === f.total` as a "completed" heuristic — same
+     anti-pattern but Zahi hasn't reported visible incorrectness
+     there yet. If he spots it, separate batch.
+  ❌ ProjectDashboardPage summary blocks — also documented as
+     out-of-scope in Batch E spec. Follow-up if needed.
+  ❌ The buildingStats `counts` accumulator (L117) which counts
+     floors by badge — that's already CORRECT because Batch E
+     fixed the badge value. No change needed.
+  ❌ failingFloors count (L118) — already correct (uses badge +
+     fail_count, both still accurate).
+  ❌ Backend changes — none required.
+
+================================================================================
+STEP 0 — PRE-FLIGHT (3 checks PASS)
+================================================================================
+
+1. Confirm bug location at QCFloorSelectionPage.js L119-127:
+   $ grep -nC 1 'qd.total > 0' frontend/src/pages/QCFloorSelectionPage.js
+   →  119: if (qd && typeof qd === 'object' && qd.total > 0) {
+   →  120:   totalItems += qd.total;
+   →  121:   passItems += qd.pass_count || 0;
+   ✓ Confirmed — building rollup uses item counts.
+
+2. Confirm Batch E delivered stage_summary at /qc/floors/batch-status:
+   $ grep -nC 2 'stage_summary' backend/contractor_ops/qc_router.py | head -20
+   →  Multiple matches in qc_router.py confirming stage_summary
+      is now returned in batch-status response per Batch E.
+   ✓ Backend already returns the data we need.
+
+3. Confirm `qd.badge` and `counts` accumulator are CORRECT (Batch E
+   fixed badge for free):
+   $ grep -nC 1 'getFloorBadge' frontend/src/pages/QCFloorSelectionPage.js
+   →  115: const st = getFloorBadge(qd);
+   →  117: counts[normalized] = (counts[normalized] || 0) + 1;
+   ✓ The "X הושלמו / Y בביצוע" floor count on building cards
+     uses `counts` which is badge-derived — already correct.
+     Only the percentage indicator (passItems/totalItems) is broken.
+
+================================================================================
+LOCATION 1 — QCFloorSelectionPage.js: prefer stage_summary in rollup
+================================================================================
+File: frontend/src/pages/QCFloorSelectionPage.js
+Lines: 119-127 (the inner branch of the floors.forEach inside
+       buildingStats useMemo)
+
+BEFORE:
+        if (qd && typeof qd === 'object' && qd.total > 0) {
+          totalItems += qd.total;
+          passItems += qd.pass_count || 0;
+        } else if (normalized === 'approved') {
+          totalItems += 1;
+          passItems += 1;
+        } else if (normalized !== 'not_started') {
+          totalItems += 1;
+        }
+
+AFTER:
+        // BATCH E.1 (2026-05-11) — prefer stage_summary (Batch E
+        // backend already returns it). Falls back to legacy item
+        // counts if absent (e.g. rolling deploy lag). The third
+        // branch (rare badge-only fallback) is unchanged.
+        if (qd?.stage_summary && qd.stage_summary.total_stages > 0) {
+          totalItems += qd.stage_summary.total_stages;
+          passItems += qd.stage_summary.approved_stages;
+        } else if (qd && typeof qd === 'object' && qd.total > 0) {
+          totalItems += qd.total;
+          passItems += qd.pass_count || 0;
+        } else if (normalized === 'approved') {
+          totalItems += 1;
+          passItems += 1;
+        } else if (normalized !== 'not_started') {
+          totalItems += 1;
+        }
+
+Why this is correct:
+- `qd.stage_summary.total_stages` includes BOTH floor-scope + unit-scope
+  stages (Batch E aggregated them).
+- `qd.stage_summary.approved_stages` counts stages where ALL units
+  approved (strict, Option A).
+- Their ratio is the true "what % of this floor's work is done" measured
+  in stages. Sum across all floors of a building gives the building's
+  weighted progress. Average via `passItems / totalItems` is
+  STAGE-weighted (not item-weighted) — small floors don't dominate.
+
+Edge cases preserved:
+- Floor with no qd entry at all → falls through to legacy branches
+  (approved with no data → counted as approved; in-progress with no
+  data → counted in denominator only).
+- Rolling deploy where backend returns stage_summary but old frontend
+  hits a cache: legacy fallback ensures progressPct still computed.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ The counts[normalized] accumulator (L117) — counts floors by
+     badge, already accurate via Batch E.
+- ❌ The failingFloors count (L118) — already accurate.
+- ❌ The "100%" big number, accentBorder, ringColor formulas —
+     they consume progressPct which we're recomputing correctly.
+- ❌ globalStats (L144-154) — already badge-driven, no change needed.
+- ❌ ProjectControlPage L3568+ loadStats — separate concern,
+     defer until Zahi spots it.
+- ❌ ProjectDashboardPage summary blocks — separate concern.
+- ❌ The "totalFloors" calculation (L156) — counts hierarchy
+     floors, unrelated.
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings (we add 1 conditional
+     branch using only existing patterns).
+
+================================================================================
+VERIFY 2 — Smoke (DEFERRED TO ZAHI on staging or prod)
+================================================================================
+A. Open `/projects/{projectId}/qc` (QCFloorSelectionPage — the project
+   view that lists buildings).
+B. For מגרש 810, building 8 (the one in Zahi's screenshot):
+   EXPECT BEFORE: card shows "90%" (the bug).
+   EXPECT AFTER: card shows ~50% (close to the avg of 14/27, 17/27
+   shown inside).
+C. Verify the floor counts ("1 הושלמו · 10 בביצוע") UNCHANGED —
+   they're correct already (badge-derived).
+D. Click into building 8 → BuildingQCPage. Each floor card already
+   shows "X/Y שלבים" correctly (from Batch E). The new building
+   percentage on the parent view should now correlate visually
+   (avg of those floor pcts).
+
+Regression sweep:
+- Building with all floors approved → still shows 100%.
+- Building with no started floors → still shows 0%.
+- Building with mixed floor-scope-only floors (legacy data) →
+  falls through to item-count branch (still works).
+
+================================================================================
+RISK
+================================================================================
+Very low. Single useMemo branch change. Fallback chain preserves
+all existing edge cases.
+
+Bundle size impact: zero (no new imports).
+Performance impact: zero (same compute, different fields).
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+(Reverts to item-count-based percentage. Building cards go back
+to showing inflated percentages.)
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

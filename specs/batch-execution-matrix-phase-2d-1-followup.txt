@@ -1,0 +1,233 @@
+================================================================================
+BATCH #500-FOLLOWUP — Phase 2D-1 polish: building sort + apartment exact match
+================================================================================
+Date:           2026-05-05
+Branch:         staging  (NOT main)
+Severity:       P3 — UX polish discovered during Zahi's mobile prod test of
+                #500 (with 4 buildings × 203 units project, 18 stages —
+                a real-scale dataset, not the demo project).
+
+Family:         Followup to #500 (Phase 2D-1 filters + saved views).
+
+Files changed:  1 frontend file (MatrixFilterDrawer.js + maybe useMatrixFilters)
+                  Backend: ZERO
+                  Tests:   1 frontend test added (apartment exact match)
+
+LOC estimate:   ~15 LOC frontend
+Risk:           P5 — pure UI sort + substring → exact change. No data, no
+                schema, no API.
+
+================================================================================
+CONTEXT — Zahi prod test 2026-05-05 ~20:41
+================================================================================
+
+Tested #500 on mobile (Capgo OTA) on a real project: 4 buildings × 203
+units × 18 stages. Two issues surfaced:
+
+ISSUE 1: Building filter section order is NOT numeric.
+  Buildings named "8", "9", "10", "11" render as: 8 / 10 / 9 / 11
+  (lexicographic). Expected: 8 / 9 / 10 / 11 (numeric).
+
+  Root cause: #489 added numeric building sort to `_unit_sort_key`
+  in backend (units sort tuple). But the buildings ARRAY itself in
+  the /matrix response is returned in DB order. MatrixFilterDrawer
+  gets `data.buildings` and renders without re-sorting.
+
+ISSUE 2: Apartment text-search is substring, not exact match.
+  User types "2" → matches 2, 12, 20, 21, 22, 23, 25, 26, 27, ...
+  (every unit_no containing the digit "2"). Zahi expectation:
+
+  "אם אני רושם דירה מספר 2 יראה לי רק את זה, אם אני רושם דירה
+   מספר 22 יראה לי כל הדירות שהם מספר 22 וכן הלאה"
+
+  → exact match on unit_no, not includes().
+
+  Why I picked substring originally: thought it would help fuzzy
+  search on free-text apartment names ("Penthouse", "א-1"). But:
+  (a) that's what the global "חיפוש חופשי" field is for; (b) most
+  units have numeric names; (c) substring causes the 2→22 problem
+  for every PM.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify current building sort in MatrixFilterDrawer.js:
+    grep -n "buildings\|building_ids" frontend/src/components/matrix/MatrixFilterDrawer.js | head -10
+    Expected: buildings prop iterated directly (no .sort() call).
+    Document where to inject the numeric sort.
+
+0.2 — Verify current apartment_search filter logic:
+    grep -n "apartment_search\|unit_no.*includes\|unit_no.*===" frontend/src/hooks/useMatrixFilters.js | head -10
+    Expected: `.includes()` on `String(u.unit_no).toLowerCase()` against
+    `filters.apartment_search.toLowerCase()`.
+
+0.3 — Verify backend _unit_sort_key numeric pattern (we mirror it):
+    grep -n "building_name_num\|building_name_str\|int.*building" backend/contractor_ops/execution_matrix_router.py | head -5
+    Expected: 6-tuple sort key from #486+#489 with building_name_num
+    parsed via int() with 9999 fallback.
+
+0.4 — Output STEP 0 audit at TOP of review.txt.
+
+================================================================================
+PART 1 — Building list numeric sort in drawer
+================================================================================
+
+FILE: frontend/src/components/matrix/MatrixFilterDrawer.js
+
+Locate the spot where `buildings` is mapped to checkbox options for the
+"בניין" section. ADD a memoized sorted version BEFORE the section
+renders:
+
+  const sortedBuildings = useMemo(() => {
+    const list = [...(buildings || [])];
+    return list.sort((a, b) => {
+      const aNum = parseInt(a.name, 10);
+      const bNum = parseInt(b.name, 10);
+      const aValid = !Number.isNaN(aNum) && /^[0-9]/.test(String(a.name));
+      const bValid = !Number.isNaN(bNum) && /^[0-9]/.test(String(b.name));
+      if (aValid && bValid) return aNum - bNum;
+      if (aValid && !bValid) return -1;  // numeric before non-numeric
+      if (!aValid && bValid) return 1;
+      return String(a.name || '').localeCompare(String(b.name || ''), 'he');
+    });
+  }, [buildings]);
+
+Then use `sortedBuildings` instead of `buildings` in the building section's
+options mapping.
+
+Why mirror the backend exactly:
+  - #489 sort: parseInt with NaN fallback, numeric-first, then locale string
+  - This keeps the drawer order consistent with the matrix table order
+    (which already sorts numerically per #489)
+
+================================================================================
+PART 2 — Apartment search: exact match
+================================================================================
+
+FILE: frontend/src/hooks/useMatrixFilters.js
+
+Locate the apartment_search filter step in the filteredUnits useMemo.
+
+CHANGE:
+  // OLD:
+  if (filters.apartment_search) {
+    const q = filters.apartment_search.toLowerCase();
+    if (!String(u.unit_no).toLowerCase().includes(q)) return false;
+  }
+
+  // NEW:
+  if (filters.apartment_search) {
+    const q = filters.apartment_search.trim().toLowerCase();
+    if (q && String(u.unit_no).toLowerCase() !== q) return false;
+  }
+
+Behavior:
+  - Empty input → no filter (early return via `if (q)` short-circuit)
+  - Non-empty input → exact case-insensitive match on unit_no
+  - "2" → only unit_no === "2"
+  - "22" → only unit_no === "22"
+  - "א-1" → only unit_no === "א-1" (still works for non-numeric)
+
+Substring search is still available via the global "חיפוש חופשי" field
+at the top of the drawer — that one matches across unit_no + cell
+text_value + cell note (different intent).
+
+================================================================================
+PART 3 — Test
+================================================================================
+
+EDIT: frontend/src/hooks/__tests__/useMatrixFilters.test.js
+
+ADD test T8:
+
+  test('apartment_search uses exact match, not substring', () => {
+    const units = [
+      { id: 'u1', unit_no: '2', building_id: 'b1' },
+      { id: 'u2', unit_no: '22', building_id: 'b1' },
+      { id: 'u3', unit_no: '12', building_id: 'b1' },
+      { id: 'u4', unit_no: '20', building_id: 'b1' },
+    ];
+    const { result } = renderHook(() => useMatrixFilters({
+      units, cellsByUnitStage: {}, stages: [],
+    }));
+    act(() => { result.current.setApartmentSearch('2'); });
+    expect(result.current.filteredUnits.map(u => u.id)).toEqual(['u1']);
+    act(() => { result.current.setApartmentSearch('22'); });
+    expect(result.current.filteredUnits.map(u => u.id)).toEqual(['u2']);
+    act(() => { result.current.setApartmentSearch(''); });
+    expect(result.current.filteredUnits.length).toBe(4);
+  });
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — Frontend syntax (yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors.
+
+V2 — Test:
+   cd frontend && yarn test --watchAll=false useMatrixFilters
+   → 8/8 passing (was 7).
+
+V3 — Diff scope:
+   git diff --stat frontend/src/components/matrix/MatrixFilterDrawer.js \
+                   frontend/src/hooks/useMatrixFilters.js \
+                   frontend/src/hooks/__tests__/useMatrixFilters.test.js
+   → ~15 frontend LOC changed across 3 files.
+
+V4 — Backend untouched:
+   git diff --stat backend/  → 0 lines.
+
+V5 — Sibling matrix files untouched:
+   git diff --stat frontend/src/components/matrix/MatrixCell.js \
+                   frontend/src/components/matrix/MatrixGridView.js \
+                   frontend/src/components/matrix/MatrixListView.js \
+                   frontend/src/components/matrix/StageManagementDialog.js \
+                   frontend/src/components/matrix/MatrixFilterFAB.js \
+                   frontend/src/components/matrix/MatrixFilterSection.js \
+                   frontend/src/components/matrix/SavedViewSaveDialog.js
+   → 0 lines.
+
+================================================================================
+SMOKE TEST (Zahi after deploy to staging)
+================================================================================
+
+Project: same 4-building × 203-unit project where the issues were found.
+
+(a) Open filter drawer → "בניין" section.
+(b) Buildings now render in NUMERIC order: 8, 9, 10, 11 (was 8, 10, 9, 11).
+(c) Type "2" in apartment search → only דירה 2 shows (not 12, 20, 22, ...).
+(d) Type "22" → only דירה 22 shows.
+(e) Clear apartment search → all units reappear.
+(f) Free-text "חיפוש חופשי" still does substring across cell values
+    (no regression — it's a different field).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with STEP 0 audit + diff + V1-V5 + smoke (a)-(f) deferred.
+.local/.commit_message:
+  fix(matrix): #500 followup — building numeric sort + apartment exact match
+
+  Two UX issues from Zahi's mobile prod test of Phase 2D-1
+  (4-building × 203-unit project):
+
+  1. Building filter section ordered lexicographically (8, 10, 9, 11)
+     instead of numerically (8, 9, 10, 11). Frontend sort the
+     buildings list with parseInt + 9999 fallback — mirrors the
+     same logic backend uses in _unit_sort_key (#489).
+
+  2. Apartment search was substring-based — typing "2" matched
+     2, 12, 20, 21, 22, 23, ... PMs expect exact match. Changed to
+     case-insensitive equals. The global "חיפוש חופשי" field still
+     covers substring search across all cells (different intent).
+
+  ~15 LOC across 3 files. New test T8 enforces the exact-match
+  semantic. Backend untouched.
+
+================================================================================
+END OF SPEC — #500 followup polish
+================================================================================

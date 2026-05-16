@@ -1,0 +1,661 @@
+================================================================================
+BATCH 5C v2 — Status='approved' alignment (Bug B real fix) + dropdown polish
+================================================================================
+Date:           2026-04-28 (v2 — expanded after deeper audit)
+Branch:         staging  (NOT main)
+Severity:       P0 — Bug B from 5B was MISDIAGNOSED. Real fix needed.
+                P2 — Bug C visual polish bundled in.
+Files changed:  6 backend, 4 frontend = 10 files total
+                  Backend: constants.py, projects_router.py, stats_router.py
+                           (5 locations), export_router.py, tasks_router.py,
+                           handover_router.py
+                  Frontend: UnitDetailPage.js, ProjectTasksPage.js,
+                            StatusPill.jsx, GroupedSelectField.js (= "FILE 10",
+                            also tagged "Bug C visual polish")
+Pre-flight:     This is the FOLLOW-UP to Batch 5B. 5B Bug A (modal) and Bug B
+                refresh-pattern stay shipped. THIS spec fixes the actual
+                stale-status root cause + polishes the dropdown grouping UI.
+                v2 added 4 missed locations (stats_router lines 48-49 and
+                56-58, tasks_router line 416, handover_router local duplicate
+                at line 1206). v2 also adds STEP 0 pre-flight grep audit.
+
+Already verified by Zahi (no work needed in spec):
+- i18n files (he/en/ar/zh) at frontend/src/i18n/*.json — already have
+  `'approved': 'אושר'` mapping at line 49 in all 4 languages. No edit needed.
+- Backend tests at backend/tests/ — only one status assertion exists
+  (test_m6_manager_panel.py:61, testing the normal `manager-decision approve`
+  path which intentionally writes 'closed' at tasks_router.py:1039). Our
+  changes don't touch that code path. Test will continue to pass.
+- Frontend tests — no __tests__ directory exists. N/A.
+
+Side finding: there is NO automated test coverage for the force_close path
+(POST /tasks/{id}/force-close) which writes 'approved'. This is WHY this bug
+existed in production. 4 regression tests REQUIRED before public launch
+(see "REQUIRED FOR PUBLIC LAUNCH — Regression test" section below). If
+shipped without, file as P1 TODO blocking public launch.
+================================================================================
+
+CONTEXT — WHAT 5B GOT WRONG
+---------------------------
+Batch 5B Bug B added refresh-on-focus to UnitDetailPage. That part works —
+the page DOES refetch when user returns. But the staleness Zahi saw isn't
+caused by missing refresh. It's caused by a status-string mismatch between
+backend and frontend:
+
+  - Two different "close" endpoints write DIFFERENT status strings to DB:
+      • POST /tasks/{id}/force-close   (פאנל ניהול direct close)
+        → writes status='approved'   (backend/contractor_ops/tasks_router.py:982)
+      • POST /tasks/{id}/approve      (after pending_manager_approval)
+        → writes status='closed'
+
+  - Frontend assumes ONLY 'closed' means done. Status maps don't include
+    'approved'. The list-item renderer falls back to STATUS_LABELS.open
+    when status is unmapped:
+
+        const statusInfo = STATUS_LABELS[task.status] || STATUS_LABELS.open;
+
+    → A task closed via פאנל ניהול renders with the RED "פתוח" badge
+      forever, even though backend correctly set status='approved'.
+
+  - Backend KPI / bucket aggregations only count 'closed' as closed in
+    several places. Tasks in 'approved' status are counted as NEITHER open
+    NOR closed → "סגורים 0 / פתוחים 1 / בטיפול 1" + 3 visible cards adds
+    up wrong because the approved card is in NO bucket.
+
+WHY THIS MATTERS — Pre-launch this is the most common close path during
+manual QA: the manager taps "סגירה ידנית" or "אישור ישיר" in the panel.
+Production users won't have a contractor sending photos for every defect.
+If we ship this bug, every directly-closed defect will look open forever.
+
+DECISION — Treat 'approved' as a closed-equivalent for DISPLAY and
+AGGREGATION, but keep both as distinct DB values for audit trail
+(force-close vs. proof-then-approve are meaningfully different events).
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT (before ANY edits)
+================================================================================
+
+Goal: confirm the line numbers and code shapes in this spec match HEAD before
+editing. If anything drifted since spec was written, STOP and report — do
+NOT proceed with edits based on stale assumptions.
+
+0.1 — Verify line numbers + code shapes for all targeted backend locations:
+
+    grep -n "TERMINAL_TASK_STATUSES" backend/contractor_ops/constants.py
+    # Expect: line 1 — `TERMINAL_TASK_STATUSES = {"closed", "done", "cancelled"}`
+
+    grep -n "closed_statuses" backend/contractor_ops/projects_router.py | head -5
+    # Expect: line ~1448 — `closed_statuses = {'closed'}`
+
+    grep -n "if s == 'closed'\|sc.get(\"closed\"" backend/contractor_ops/stats_router.py
+    # Expect 3 lines: 132 (closed_count += 1), 171 (contractor_map closed),
+    # plus context to confirm shape of line 145 ('closed',) tuple
+
+    grep -n "'\\\$nin': \\['closed'\\]\|'\\\$ne': \\['\\\$status', 'closed'\\]" backend/contractor_ops/stats_router.py
+    # Expect lines 48, 49, 56, 57 — all single-element 'closed' filters/aggs
+
+    grep -n "CLOSED_STATUSES" backend/contractor_ops/export_router.py
+    # Expect: line 52 — `CLOSED_STATUSES = {'closed'}`
+
+    grep -n "closed_count = sc.get" backend/contractor_ops/tasks_router.py
+    # Expect: line 416 — `closed_count = sc.get("closed", 0)`
+
+    grep -n "TERMINAL_TASK_STATUSES" backend/contractor_ops/handover_router.py
+    # Expect: line 1206 — local duplicate `TERMINAL_TASK_STATUSES = ("closed", "done", "cancelled")`
+
+0.2 — Reopen flow check (per Zahi's correctness concern):
+
+    grep -B 2 -A 12 "def reopen_task\|/reopen" backend/contractor_ops/tasks_router.py | head -30
+    # MUST CONFIRM: the guard at line ~792 reads
+    # `if task['status'] not in ('closed', 'approved'):`
+    # If it ONLY says 'closed' → STOP and add 'approved' as part of this batch
+    # (otherwise force-closed tasks become un-reopenable, which is a NEW bug).
+
+0.3 — Frontend STATUS map regression audit (find any maps missed):
+
+    grep -rn "STATUS_LABELS\|STATUS_CONFIG\|STATUS_DOT\|status_config\|statusLabel" \
+        frontend/src/pages/ frontend/src/components/ \
+        | grep -v ".test." | head -40
+    # Document EVERY file that defines a status map. Spec covers
+    # UnitDetailPage, ProjectTasksPage, StatusPill. Any OTHER file → flag
+    # for inclusion before editing.
+
+0.4 — Backend wide regression audit (ensure no other 'closed'-only refs):
+
+    grep -rn "'closed'\|\"closed\"" backend/contractor_ops/ \
+        | grep -v ".test\|__pycache__\|# " \
+        | grep -v "'closed', 'approved'\|'approved', 'closed'\|TERMINAL_TASK_STATUSES" \
+        | head -40
+    # Every remaining match must be classified per VERIFY 2 below
+    # (KEEP — write-only or intentional / EDIT — add 'approved' / NEEDS-DECISION).
+
+0.5 — Output the STEP 0 audit at the TOP of review.txt before any diffs,
+in this exact format:
+
+    STEP 0 PRE-FLIGHT AUDIT
+    -----------------------
+    0.1 line numbers verified: PASS / DRIFT (list discrepancies)
+    0.2 reopen guard accepts both: PASS / FAIL (add to batch if FAIL)
+    0.3 frontend status maps: list of files found, decisions per file
+    0.4 backend wide grep: list each remaining match + decision
+
+If ANY 0.x check fails or surfaces a new file/line, PAUSE and report before
+applying edits.
+
+================================================================================
+BUG B (real fix) — Treat 'approved' as a closed-equivalent everywhere
+================================================================================
+
+PART 1 — BACKEND (6 files)
+==========================
+
+FILE 1 of 6: backend/contractor_ops/constants.py
+-------------------------------------------------
+Single line. Adds 'approved' to terminal-status set so all the downstream
+modules (snapshot_cron, reminder_service, admin_dashboard, handover_router,
+admin_analytics) auto-fix without per-file edits.
+
+CURRENT (line 1):
+    TERMINAL_TASK_STATUSES = {"closed", "done", "cancelled"}
+
+REPLACE WITH:
+    TERMINAL_TASK_STATUSES = {"closed", "approved", "done", "cancelled"}
+
+FILE 2 of 6: backend/contractor_ops/projects_router.py
+------------------------------------------------------
+Project dashboard bucket counts (compute_counts at line 1450) only counts
+'closed' — misses 'approved'.
+
+CURRENT (line 1448):
+    closed_statuses = {'closed'}
+
+REPLACE WITH:
+    closed_statuses = {'closed', 'approved'}
+
+DO NOT TOUCH lines 1445-1447 (open/in_progress/waiting_verify sets are
+correct as-is — 'approved' should NOT be in any of those).
+
+FILE 3 of 6: backend/contractor_ops/stats_router.py
+----------------------------------------------------
+FIVE exact-match checks against 'closed' must accept 'approved' too. v2
+expanded this from 3 to 5 — the original spec missed the project-summary
+function at lines 48-49 and the per-building aggregation pipeline at
+lines 56-58.
+
+LOCATION 3.1 — line 48 (project summary, open_defects count):
+   CURRENT:
+       open_defects = await db.tasks.count_documents({'project_id': project_id, 'status': {'$nin': ['closed']}})
+   REPLACE WITH:
+       open_defects = await db.tasks.count_documents({'project_id': project_id, 'status': {'$nin': ['closed', 'approved']}})
+
+LOCATION 3.2 — line 49 (project summary, critical_defects count):
+   CURRENT:
+       critical_defects = await db.tasks.count_documents({'project_id': project_id, 'priority': 'critical', 'status': {'$nin': ['closed']}})
+   REPLACE WITH:
+       critical_defects = await db.tasks.count_documents({'project_id': project_id, 'priority': 'critical', 'status': {'$nin': ['closed', 'approved']}})
+
+LOCATION 3.3 — lines 56-58 (per-building aggregation pipeline):
+   CURRENT (inside the building_defects_agg pipeline):
+       'open': {'$sum': {'$cond': [{'$ne': ['$status', 'closed']}, 1, 0]}},
+       'critical': {'$sum': {'$cond': [{'$and': [{'$eq': ['$priority', 'critical']}, {'$ne': ['$status', 'closed']}]}, 1, 0]}},
+       'closed': {'$sum': {'$cond': [{'$eq': ['$status', 'closed']}, 1, 0]}},
+   REPLACE WITH:
+       'open': {'$sum': {'$cond': [{'$not': {'$in': ['$status', ['closed', 'approved']]}}, 1, 0]}},
+       'critical': {'$sum': {'$cond': [{'$and': [{'$eq': ['$priority', 'critical']}, {'$not': {'$in': ['$status', ['closed', 'approved']]}}]}, 1, 0]}},
+       'closed': {'$sum': {'$cond': [{'$in': ['$status', ['closed', 'approved']]}, 1, 0]}},
+
+LOCATION 3.4 — line 132-133 (dashboard contractor performance):
+   CURRENT:
+       if s == 'closed':
+           closed_count += 1
+   REPLACE WITH:
+       if s in ('closed', 'approved'):
+           closed_count += 1
+
+LOCATION 3.5 — line 145 (dashboard overdue count):
+   CURRENT:
+       if t.get('due_date') and t['due_date'] < now_iso and s not in ('closed',):
+           overdue_count += 1
+   REPLACE WITH:
+       if t.get('due_date') and t['due_date'] < now_iso and s not in ('closed', 'approved'):
+           overdue_count += 1
+
+LOCATION 3.6 — line 171-172 (per-contractor closed counter):
+   CURRENT:
+       if s == 'closed':
+           contractor_map[group_key]['closed'] += 1
+   REPLACE WITH:
+       if s in ('closed', 'approved'):
+           contractor_map[group_key]['closed'] += 1
+
+DO NOT TOUCH line 51 (`status: {'$nin': ['closed', 'approved']}`) — that
+query already correctly excludes both.
+
+FILE 4 of 6: backend/contractor_ops/export_router.py
+----------------------------------------------------
+Export filter set used by the "סינון: סגורים" filter in CSV/Excel/PDF
+exports. Currently misses 'approved' — exported "closed" rows would be
+incomplete.
+
+CURRENT (line 52):
+    CLOSED_STATUSES = {'closed'}
+
+REPLACE WITH:
+    CLOSED_STATUSES = {'closed', 'approved'}
+
+DO NOT TOUCH lines 45-51 (other status sets are correct).
+
+FILE 5 of 6: backend/contractor_ops/tasks_router.py    ← NEW IN v2
+--------------------------------------------------------------
+Project KPI summary uses the raw 'closed' bucket from status_counts and
+divides it into a success_rate. With force-closed tasks landing in
+'approved', this denominator/numerator combo undercounts success.
+
+LOCATION 5.1 — line 416 (closed_count from status_counts dict):
+   CURRENT:
+       closed_count = sc.get("closed", 0)
+   REPLACE WITH:
+       closed_count = sc.get("closed", 0) + sc.get("approved", 0)
+
+   NOTE: line 422 (`success_rate = round((closed_count / resolved) * 100,
+   1) if resolved > 0 else 0`) already uses `resolved` from
+   `handled_statuses` which DOES include 'approved' (line 364). So the
+   denominator was right, only the numerator was wrong. Fixing line 416
+   makes the success_rate correct.
+
+DO NOT TOUCH:
+- line 245 (`{'$nin': ['closed', 'approved']}`) — already correct
+- line 364 (`handled_statuses = ['closed', 'approved', 'pending_manager_approval']`) — already correct
+- line 733 (`if target_status == TaskStatus.closed`) — write logic, intentional
+- line 768 (`'closed': 'status_closed'`) — notification event mapping, intentional
+- line 792 (`if task['status'] not in ('closed', 'approved'):`) — already correct
+- line 969 (`if task['status'] in ('approved', 'closed'):`) — already correct
+- line 1039 (`new_status = 'closed'`) — write logic, intentional
+
+FILE 6 of 6: backend/contractor_ops/handover_router.py    ← NEW IN v2
+--------------------------------------------------------------
+This file has a LOCAL DUPLICATE of TERMINAL_TASK_STATUSES at line 1206 that
+DOES NOT include 'approved'. Updating constants.py alone won't fix this —
+the local duplicate shadows the import. Two-step fix:
+
+LOCATION 6.1 — line 1206 (local duplicate constant):
+   CURRENT:
+       TERMINAL_TASK_STATUSES = ("closed", "done", "cancelled")
+
+   STEP 1: Remove the local duplicate entirely (delete the whole line).
+
+   STEP 2: Add an import from constants.py at the top of the file
+   (alongside other contractor_ops imports). Search for an existing
+   `from .constants import` line — if it exists, append
+   `TERMINAL_TASK_STATUSES` to its import list. If no such import line
+   exists, add a new one:
+       from .constants import TERMINAL_TASK_STATUSES
+
+   IMPORTANT: handover_router uses TERMINAL_TASK_STATUSES as a TUPLE in a
+   few places (line 1415, 1420, 1423, 1456 — verify with grep). The
+   constants.py value is a SET. If any consumer requires tuple semantics
+   (ordered, indexable), wrap with `tuple(TERMINAL_TASK_STATUSES)` at
+   the call site. Otherwise leave as-is — `in` membership works for both.
+
+   PRE-EDIT CHECK:
+       grep -n "TERMINAL_TASK_STATUSES" backend/contractor_ops/handover_router.py
+   For each usage line, confirm it works with a set (most just use `in`).
+
+DO NOT TOUCH any other status logic in handover_router. Only the local
+constant + the new import.
+
+PART 2 — FRONTEND (4 files)
+============================
+
+FILE 7 of 10: frontend/src/pages/UnitDetailPage.js
+-------------------------------------------------
+Add 'approved' to STATUS_LABELS so the list-item renderer recognizes it,
+AND to STATUS_FILTER_OPTIONS so users can filter by it.
+
+LOCATION 5.1 — STATUS_LABELS (line 20-27):
+   AFTER the line:
+       closed: { label: 'סגור', color: 'bg-green-100 text-green-700' },
+   ADD a new line below it:
+       approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
+
+   Note: 'אושר' (approved) is visually distinct from 'סגור' (closed)
+   intentionally — both are green/done but the user can see WHICH path
+   closed it. Color picker: closed = green-100, approved = emerald-100
+   (slightly different shade to differentiate at a glance without
+   confusing them as different states).
+
+LOCATION 5.2 — STATUS_FILTER_OPTIONS (line 36-44):
+   AFTER the line:
+       { value: 'closed', label: 'סגור' },
+   ADD a new line below it:
+       { value: 'approved', label: 'אושר' },
+
+FILE 8 of 10: frontend/src/pages/ProjectTasksPage.js
+---------------------------------------------------
+Same pattern — STATUS_CONFIG and MANAGER_STATUS_CHIPS must include 'approved'.
+
+LOCATION 6.1 — STATUS_CONFIG (line 20-30):
+   AFTER the line:
+       closed: { label: 'סגור', color: 'bg-green-100 text-green-700' },
+   ADD a new line below it:
+       approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
+
+LOCATION 6.2 — MANAGER_STATUS_CHIPS (around line 38-48):
+   The "closed" chip currently filters status=closed only. Update its
+   `statusIn` so the chip catches BOTH closed + approved tasks.
+
+   FIND the closed chip entry. Convert it from `status: 'closed'` to
+   `statusIn: 'closed,approved'`. Example before/after:
+
+       BEFORE:  { key: 'closed', label: 'סגור', status: 'closed' },
+       AFTER:   { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
+
+   Reason: the chip-counting logic at ProjectTasksPage.js line 402-405
+   already supports `statusIn` (comma-separated list). This makes the
+   "סגור" chip accurately reflect both close paths.
+
+   IF a separate "אושר" chip is desired alongside, also add a new entry
+   AFTER the reopened chip:
+       { key: 'approved', label: 'אושר', status: 'approved' },
+   (Optional — leave in if visual chip count benefits, remove if it
+    clutters the strip.)
+
+FILE 9 of 10: frontend/src/components/StatusPill.jsx
+---------------------------------------------------
+This component renders the dot color in many list views. It has a STATUS_DOT
+map (around line 3-13) that falls back to grey for unknown statuses.
+
+ADD an entry mapping 'approved' to the same green dot used for 'closed'.
+
+   FIND the STATUS_DOT entry for 'closed'. Add a new entry below it
+   for 'approved' with the SAME color value (green).
+
+PART 3 — REGRESSION GUARD
+==========================
+
+There are likely OTHER frontend pages with similar status maps that don't
+include 'approved'. To prevent the same bug recurring elsewhere, the spec
+includes a grep audit step (VERIFY 5 below).
+
+================================================================================
+FILE 10 of 10 / BUG C — GroupedSelectField visual hierarchy
+================================================================================
+File: frontend/src/components/GroupedSelectField.js (line 14-43)
+This is a separate concern from Bug B status alignment, bundled in this
+batch because both are pre-launch UX polish.
+
+CURRENT
+-------
+Headers (`isHeader: true` items, e.g. "תחום: מעליות" and "חברות אחרות")
+are rendered as plain inline text-xs gray-500 spans. They look almost
+identical to regular options — users can't visually distinguish "this is
+a section header" from "this is a selectable item".
+
+FIX
+---
+Replace the two header span variants with a more emphatic visual:
+- Bold weight (font-bold)
+- Slightly larger font (text-sm instead of text-xs)
+- Distinct background color (bg-slate-100 for primary headers,
+  bg-slate-50 for muted/"חברות אחרות" header)
+- Top border on the muted "חברות אחרות" header to act as a separator
+  between the matching trade group and the rest
+
+REPLACE the existing headers branch (lines 17-27 of GroupedSelectField.js):
+
+   CURRENT:
+       const out = options.map(opt => {
+         if (opt?.isHeader) {
+           headers.add(opt.value);
+           return {
+             value: opt.value,
+             label: (
+               <span className={`text-xs font-medium ${opt.muted ? 'text-slate-400' : 'text-slate-500'} pointer-events-none`}>
+                 {opt.label}
+               </span>
+             ),
+           };
+         }
+
+   REPLACE WITH:
+       const out = options.map(opt => {
+         if (opt?.isHeader) {
+           headers.add(opt.value);
+           const isMuted = !!opt.muted;
+           // Section headers get bold + bg + (for the "חברות אחרות"
+           // header) a top border to act as a separator. Inline-block
+           // padding gives the row a distinct vertical rhythm vs. the
+           // selectable option rows.
+           const wrapperCls = isMuted
+             ? 'block w-full px-3 py-1.5 text-sm font-bold text-slate-500 bg-slate-50 border-t border-slate-200 pointer-events-none'
+             : 'block w-full px-3 py-1.5 text-sm font-bold text-slate-700 bg-slate-100 pointer-events-none';
+           return {
+             value: opt.value,
+             label: (
+               <span className={wrapperCls}>
+                 {opt.label}
+               </span>
+             ),
+           };
+         }
+
+DO NOT TOUCH the muted (non-header) branch (lines 29-34) — it correctly
+applies opacity-70 to the "חברות אחרות" company items themselves.
+
+DO NOT TOUCH the headerValues / handleChange / SelectField parts.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend syntax check
+   python3 -m compileall backend/contractor_ops/ -q
+   → no errors.
+
+VERIFY 1.5 — handover_router uses TERMINAL_TASK_STATUSES correctly after dedupe
+   The local duplicate at line 1206 was a TUPLE; constants.py exports a SET.
+   Most operations (`in`, `for x in ...`) work on both, but indexing
+   (`TERMINAL_TASK_STATUSES[0]`) and `len()` of an ORDERED collection assume
+   tuple semantics. After Replit removes the local duplicate, run:
+
+   $ grep -n "TERMINAL_TASK_STATUSES\[" backend/contractor_ops/handover_router.py
+   → must return ZERO matches (no indexing — sets don't support [N])
+
+   $ grep -n "TERMINAL_TASK_STATUSES\.index\|TERMINAL_TASK_STATUSES\.count" backend/contractor_ops/handover_router.py
+   → must return ZERO matches (set has no .index() / .count())
+
+   $ grep -n "list(TERMINAL_TASK_STATUSES)\|tuple(TERMINAL_TASK_STATUSES)" backend/contractor_ops/handover_router.py
+   → if any matches: WARNING — calling `list()` or `tuple()` on a set gives
+     non-deterministic order. Verify the call site doesn't depend on order
+     (most don't — `$in` filters and counts are order-independent).
+
+   $ grep -n "TERMINAL_TASK_STATUSES" backend/contractor_ops/handover_router.py
+   → list every remaining usage. For each, confirm it's `in` membership or
+     iteration (both safe). If anything else, document and verify manually.
+
+   If any of the first 2 greps returns a match → STOP. The dedupe broke
+   runtime behavior; either revert or convert the call site to set-safe code.
+
+VERIFY 2 — Backend grep — every remaining 'closed'-only ref classified
+   $ grep -rn "'closed'\|\"closed\"\|sc\.get(\"closed\"" backend/contractor_ops/ \
+       | grep -v "__pycache__\|\.test\." \
+       | grep -v "'closed', 'approved'\|'approved', 'closed'\|TERMINAL_TASK_STATUSES\|'closed_at'\|'closed_by'"
+
+   For EVERY remaining match, document in review.txt under "VERIFY 2
+   surviving matches" using this format:
+
+       file:line  | match snippet (1 line)
+       context    | 3 lines before/after
+       decision   | KEEP / EDIT-MISSED / NEEDS-REVIEW
+       reasoning  | one sentence
+
+   Decision rules:
+     KEEP        — write-only path that intentionally writes status='closed'
+                   (e.g. tasks_router.py:1039 in the manager-approve branch),
+                   OR a notification event mapping (e.g. line 768),
+                   OR an audit-trail field name like 'closed_at'/'closed_by'
+                   (NOT a status comparison).
+     EDIT-MISSED — an aggregation/filter/comparison that should also handle
+                   'approved' but was missed by this spec. STOP and add to
+                   the batch before proceeding.
+     NEEDS-REVIEW— ambiguous; flag inline for Zahi to review before merge.
+
+   Example expected outputs (from spec scope, all should classify as KEEP):
+     tasks_router.py:733 — `if target_status == TaskStatus.closed:` — KEEP
+       (write-side guard preventing contractors from closing; intentional)
+     tasks_router.py:768 — `'closed': 'status_closed'` — KEEP
+       (event-name mapping, not a status comparison)
+     tasks_router.py:1039 — `new_status = 'closed'` — KEEP
+       (write in normal-flow approve branch)
+
+   NO match should classify as EDIT-MISSED if STEP 0.4 was done. If even
+   one shows up here, STOP and treat as a spec gap.
+
+VERIFY 3 — Frontend build
+   cd frontend && yarn build
+   → succeeds, no NEW warnings.
+
+VERIFY 4 — Frontend grep — confirm 'approved' added everywhere
+   $ grep -n "approved:" frontend/src/pages/UnitDetailPage.js
+   → at least 1 match (in STATUS_LABELS).
+   $ grep -n "value: 'approved'" frontend/src/pages/UnitDetailPage.js
+   → at least 1 match (in STATUS_FILTER_OPTIONS).
+   $ grep -n "approved:" frontend/src/pages/ProjectTasksPage.js
+   → at least 1 match (in STATUS_CONFIG).
+   $ grep -n "statusIn: 'closed,approved'" frontend/src/pages/ProjectTasksPage.js
+   → exactly 1 match (the closed chip).
+   $ grep -n "approved" frontend/src/components/StatusPill.jsx
+   → at least 1 match.
+
+VERIFY 5 — Regression guard — find any OTHER frontend status maps with
+   'closed' but not 'approved' that we might have missed:
+   $ grep -rn "closed: {" frontend/src/pages/ frontend/src/components/ \
+       | grep -v "approved:" | head -20
+   For each match: open the file, locate the STATUS map, and verify
+   whether 'approved' should be added there too. Report findings — if
+   any are found, add to the spec scope and re-VERIFY.
+
+VERIFY 6 — GroupedSelectField visual snapshot
+   Not automatable — Zahi runs visually:
+   - Open Companies tab → add company "Test Co" with trade "מעליות"
+   - Switch to Team tab → "+ הוסף איש צוות" → set role=קבלן, trade=מעליות
+   - Open חברה dropdown
+   - Expected: "תחום: מעליות" header is BOLD on light slate background.
+     Below it: "Test Co" + "מעליות" (the existing one).
+     Then: a top-bordered separator with "חברות אחרות" in BOLD on lighter
+     slate. Below: חשמלור, אינסטלציה, מיזוג בעם (muted opacity).
+   - The two headers should visually pop — a 3-second glance must answer
+     "where does the matching trade end and other trades start".
+
+VERIFY 7 — Manual end-to-end smoke (Zahi runs)
+   a. Login as super admin on staging.
+   b. Open a defect in דירה 1 → "פאנל ניהול" → סגירה ישירה (force-close).
+      Verify the task detail page shows status "אושר" or similar.
+   c. Browser-back to UnitDetailPage. Expected:
+      - The defect's badge in the list shows "אושר" (green) — NOT "פתוח".
+      - KPI bar: "סגורות" increments by 1.
+      - Filter sidebar: "סגורים" count includes the just-closed task.
+   d. Repeat with the contractor-flow close path (proof → approve) and
+      verify it still shows "סגור" (also green) and counts correctly.
+
+================================================================================
+REQUIRED FOR PUBLIC LAUNCH — Regression test for force_close → approved
+================================================================================
+This test would have caught the bug we spent 3 batches chasing (Batch 5,
+5B, 5C). The reason this bug shipped to staging in the first place is
+that NO automated test exercises the force_close path. Adding it now
+prevents regression of the exact same bug class — and keeps any future
+status enum addition from quietly breaking aggregations.
+
+If Replit ships Batch 5C without it, the test must be filed as a P1
+TODO that BLOCKS public launch (not just a nice-to-have).
+
+File: backend/tests/test_m6_manager_panel.py (new test class) OR new file
+      backend/tests/test_force_close_aggregations.py if Replit prefers
+      isolation.
+
+TEST 1 — force_close writes 'approved' and audit fields:
+  - Setup: create a task in status='in_progress', PM membership.
+  - Call: POST /api/tasks/{id}/force-close with body
+    {'reason': 'בדיקה ידנית', 'close_type': 'no_contractor_response'}
+  - Assert: 200 OK
+  - Assert: r.json()["task"]["status"] == "approved"
+  - Assert: force_closed_by == PM user id
+  - Assert: force_closed_reason == 'בדיקה ידנית'
+  - Assert: force_closed_at is ISO timestamp string
+  - Assert: force_closed_type == 'no_contractor_response'
+
+TEST 2 — KPI rollup includes 'approved' in closed bucket:
+  - Setup: create 3 tasks in same project: 1 open, 1 closed (normal), 1 approved (force-closed).
+  - Call: GET /api/stats/projects/{project_id}/summary
+  - Assert: response.open_defects == 1 (NOT 2 — the approved one must NOT count as open)
+  - Assert: response.per_building_defects[building_id].closed includes
+    BOTH the closed and approved tasks (i.e., 2 closed, not 1).
+
+TEST 3 — Project dashboard counts approved as closed:
+  - Same 3-task setup.
+  - Call: GET /api/projects/{project_id}/dashboard
+  - Assert: closed_count == 2 (closed + approved combined).
+
+TEST 4 — Approved task can be reopened:
+  - Setup: force-close a task to status='approved'.
+  - Call: POST /api/tasks/{id}/reopen
+  - Assert: 200 OK
+  - Assert: status changed to 'reopened'.
+  - Assert: force_closed_* fields are unset.
+
+These 4 tests are CHEAP to write (~30-40 minutes of Replit time) and
+HIGH-VALUE — they cover the entire force_close → aggregation → reopen
+loop. Without them, the next person who adds a status will face the
+same 3-batch debugging cycle.
+
+================================================================================
+DELIVERABLES
+================================================================================
+review.txt with:
+  - Rollback SHA
+  - Per-file diff (4 backend, 4 frontend)
+  - VERIFY 1-5 outputs (skip 6+7 — Zahi runs visually)
+  - List of any VERIFY 5 hits + decisions on each
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(tasks): treat status=approved as closed-equivalent for display + aggregation; polish dropdown headers
+
+================================================================================
+STEPS
+================================================================================
+0. STEP 0 PRE-FLIGHT (mandatory) — run all 5 grep checks (0.1-0.5).
+   Output the audit at the TOP of review.txt. If anything fails, PAUSE
+   and report to Zahi BEFORE editing.
+1. Backend edits in this order:
+   constants.py (single source of truth — fix first, cascades downstream)
+   → tasks_router.py:416 (project KPI numerator)
+   → projects_router.py:1448 (per-unit closed_statuses)
+   → stats_router.py (5 locations: 48, 49, 56-58 pipeline, 132, 145, 171-172)
+   → export_router.py:52 (CLOSED_STATUSES)
+   → handover_router.py:1206 (remove local duplicate, add import)
+2. Frontend status-map edits:
+   UnitDetailPage.js (STATUS_LABELS + STATUS_FILTER_OPTIONS)
+   → ProjectTasksPage.js (STATUS_CONFIG + closed chip statusIn)
+   → StatusPill.jsx (STATUS_DOT)
+3. GroupedSelectField.js visual polish (header bg + bold + separator).
+4. Run VERIFY 1-5 (backend compile, build, all greps, regression guard).
+   For VERIFY 2: classify EVERY surviving 'closed' match as KEEP /
+   EDIT-MISSED / NEEDS-REVIEW with context + reasoning.
+5. Generate review.txt — STEP 0 audit at top, then VERIFY 2 classifications,
+   then per-file diffs.
+6. Write .local/.commit_message.
+7. STOP. Zahi runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+./deploy.sh --prod  (after staging) — backend changes are additive (adding
+'approved' to sets), no schema migration. Forward-compatible. Safe to revert.
+
+================================================================================
+END OF SPEC
+================================================================================

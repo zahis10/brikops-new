@@ -1,0 +1,265 @@
+================================================================================
+HOTFIX FOLLOWUP TO #494 — Make whole stage row tappable in MatrixListView
+================================================================================
+Date:           2026-05-05
+Branch:         staging  (NOT main)
+Severity:       P3 — UX polish discovered during prod mobile test of #494
+                Phase 2B. Tapping the stage TITLE doesn't open the cell-edit
+                dialog; only the small status icon is tappable. Per Zahi:
+                "אינטואיטיבי שכשאני לוחץ בכל מקום ברובריקה למשל של הכנת
+                ליציקת תקרה זה אמור לפתוח לי את הpopup".
+
+Files changed:  1 frontend file, ~10 LOC
+                  Frontend: components/matrix/MatrixListView.js (~10 LOC)
+
+Tests:          NO new tests. UI tap-target enlargement only.
+Backend:        ZERO changes.
+Mobile:         Frontend OTA via Capgo. No native files.
+
+Family:         Followup to #494 Phase 2B (CellEditDialog wiring).
+
+================================================================================
+ROOT CAUSE — Zahi's prod mobile test 2026-05-05
+================================================================================
+
+After #494 deployed:
+  ✅ Tap on the small status icon → CellEditDialog opens (working as designed)
+  ❌ Tap on stage TITLE ("הכנה ליציקת תקרה") → nothing happens
+
+Looking at MatrixListView.js L115-132 (post-#494):
+  <div className="flex items-center justify-between gap-3 py-3 ...">
+    <span className="...">{stage.title}</span>          ← NOT clickable
+    <div className="shrink-0">
+      <MatrixCell ... onClick={... onCellClick(unit, stage, cell) ...} />  ← clickable
+    </div>
+  </div>
+
+Only `MatrixCell` (the icon at left) wraps in `<button>` via the `onClick`
+prop pattern from #494 PART 6. The title `<span>` and outer `<div>` aren't
+clickable.
+
+UX expectation (Zahi): the entire row should be the tap target — title
+text + icon + everything in between. Larger tap area is better mobile UX
+and matches the unit card header pattern (#490) which is already a full
+button.
+
+================================================================================
+DESIGN DECISION
+================================================================================
+
+D1. **Convert the row `<div>` to `<button>`** with the onClick handler
+    on it. Now the entire row (title + icon area) is the tap target.
+
+D2. **Remove `onClick` from MatrixCell inside ListView** — having a
+    button inside a button is invalid HTML and React warns. The outer
+    button takes over click handling.
+
+D3. **MatrixGridView unchanged** — desktop cells remain individually
+    clickable (cell IS the visible area). The MatrixCell `onClick` prop
+    stays useful there.
+
+D4. Border-bottom separator preserved — the row keeps its existing
+    layout, only the wrapping element changes.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify current MatrixListView stage row structure (post-#494):
+    grep -n "stages.map\|MatrixCell\|stage.title" \
+        frontend/src/components/matrix/MatrixListView.js | head -10
+    # Expected:
+    #   ~L112: stages.map((stage, idx) => {
+    #   ~L115: <div className="flex items-center justify-between gap-3 py-3 ...">
+    #   ~L122: <span ...>{stage.title}</span>
+    #   ~L125: <MatrixCell ... onClick={onCellClick ? () => ... : null} />
+
+0.2 — Confirm MatrixGridView NOT affected:
+    grep -n "MatrixCell\|onClick" frontend/src/components/matrix/MatrixGridView.js
+    # Expected: MatrixCell still receives onClick prop directly
+    # (cell IS the click target on desktop). We do NOT touch this file.
+
+0.3 — Output STEP 0 audit at TOP of review.txt.
+
+================================================================================
+PART 1 — Convert stage row to button + remove inner onClick
+================================================================================
+
+FILE: frontend/src/components/matrix/MatrixListView.js
+-------------------------------------------------------
+
+LOCATION 1.1 — Replace the stage row JSX (per STEP 0.1):
+
+   FIND (post-#494):
+       {stages.map((stage, idx) => {
+         const cell = cellsByUnitStage[`${unit.id}::${stage.id}`];
+         return (
+           <div
+             key={stage.id}
+             className={`flex items-center justify-between gap-3 py-3 ${
+               idx < stages.length - 1 ? 'border-b border-slate-50' : ''
+             }`}
+           >
+             <span className="text-[13px] text-slate-700 leading-snug min-w-0 flex-1">
+               {stage.title}
+             </span>
+             <div className="shrink-0">
+               <MatrixCell
+                 cell={cell}
+                 stage={stage}
+                 size="sm"
+                 onClick={onCellClick ? () => onCellClick(unit, stage, cell) : null}
+               />
+             </div>
+           </div>
+         );
+       })}
+
+   REPLACE WITH:
+       {stages.map((stage, idx) => {
+         const cell = cellsByUnitStage[`${unit.id}::${stage.id}`];
+         const handleRowClick = onCellClick
+           ? () => onCellClick(unit, stage, cell)
+           : null;
+         const Wrapper = handleRowClick ? 'button' : 'div';
+         return (
+           <Wrapper
+             key={stage.id}
+             type={handleRowClick ? 'button' : undefined}
+             onClick={handleRowClick || undefined}
+             className={`w-full flex items-center justify-between gap-3 py-3 text-right ${
+               handleRowClick ? 'hover:bg-slate-50 active:bg-slate-100 transition-colors cursor-pointer' : ''
+             } ${idx < stages.length - 1 ? 'border-b border-slate-50' : ''}`}
+           >
+             <span className="text-[13px] text-slate-700 leading-snug min-w-0 flex-1">
+               {stage.title}
+             </span>
+             <div className="shrink-0">
+               <MatrixCell cell={cell} stage={stage} size="sm" />
+             </div>
+           </Wrapper>
+         );
+       })}
+
+   IMPORTANT changes:
+   - Wrapper element: `<div>` → `<button>` when `onCellClick` is provided
+     (read-only contexts without onClick stay as `<div>` — backward compat)
+   - `type="button"` on the button (avoids form submission default)
+   - `text-right` added — `<button>` defaults to text-align:center; this
+     keeps RTL natural alignment of the title span
+   - `w-full` ensures button stretches across the row
+   - hover/active feedback added for visual affordance
+   - `cursor-pointer` for desktop mouse users
+   - `MatrixCell` no longer receives `onClick` here (the outer button
+     handles all clicks)
+   - Layout / visual appearance: IDENTICAL to before (same flex,
+     gap, padding, border, font size). Only the wrapping element +
+     hover state changes.
+
+DO NOT TOUCH:
+- The unit card header `<button>` (already a full tap target from #490).
+- Progress bar.
+- Empty state.
+- MatrixCell component (still receives onClick from MatrixGridView in
+  desktop — that wiring stays).
+- MatrixGridView at all.
+- ExecutionMatrixPage handler logic.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 2 — Stage row uses button wrapper when onCellClick provided:
+   grep -n "Wrapper\|handleRowClick" frontend/src/components/matrix/MatrixListView.js
+   → ≥ 3 hits (declaration + assignment + usage)
+
+VERIFY 3 — MatrixCell inside ListView has NO onClick:
+   grep -A3 "MatrixCell" frontend/src/components/matrix/MatrixListView.js \
+     | grep -c "onClick"
+   → 0 (MatrixCell is a passive icon inside the row button)
+
+VERIFY 4 — MatrixGridView UNCHANGED:
+   git diff frontend/src/components/matrix/MatrixGridView.js
+   → 0 lines diff
+
+VERIFY 5 — Backend regression (no backend touched):
+   cd backend && python -m pytest tests/test_execution_matrix.py -q
+   → 14 passed (unchanged)
+
+VERIFY 6 — Visual smoke (Zahi runs after deploy to staging):
+
+   Mobile (375px DevTools / actual phone):
+   a) Login → /projects/{p}/execution-matrix.
+   b) Tap a unit card → expands.
+   c) Tap on the TITLE TEXT "הכנה ליציקת תקרה" → CellEditDialog opens.
+      (Was: nothing happened.)
+   d) Tap on the small status icon at the left of the same row →
+      Same dialog opens (existing behavior preserved).
+   e) Tap anywhere else on the row (the gap between title and icon) →
+      Dialog opens.
+   f) Visual: row background flashes lightly on tap (active feedback).
+   g) Hover (desktop dev tools): bg-slate-50 appears on hover.
+
+   Desktop GridView unchanged:
+   h) Click on a cell in the desktop grid → CellEditDialog opens
+      (existing #494 behavior, no regression).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (1 file, ~10 LOC)
+  - VERIFY 1-5 outputs
+  - VERIFY 6 deferred-to-Zahi note (8 scenarios a-h)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(matrix): make whole stage row tappable in mobile MatrixListView
+
+  Followup to #494 Phase 2B. Per Zahi's prod mobile test 2026-05-05:
+  tapping the stage TITLE didn't open the cell-edit dialog — only
+  the small status icon at the left was tappable. Intuitive
+  expectation is that the entire row (title + icon + space between)
+  is one large tap target.
+
+  Fix: change the stage row wrapper from <div> to <button> when
+  onCellClick is provided. Remove the redundant onClick from
+  MatrixCell inside ListView (avoids nested buttons / double handlers).
+
+  Layout unchanged — same flex, gap, padding, border, font. Added
+  hover/active feedback + cursor-pointer for visual affordance.
+
+  MatrixGridView (desktop) untouched — cells remain individually
+  clickable there since each cell IS the visible target.
+
+  ~10 LOC, 1 file. No backend, no tests.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (3 greps)
+2. PART 1 — Convert row to button + remove inner onClick (~10 LOC)
+3. Run VERIFY 1-5
+4. Generate review.txt + .local/.commit_message
+5. STOP. Zahi reviews. Then he runs:
+     git checkout staging && git merge main && ./deploy.sh --stag
+   ⚠️ COMMIT ON `staging` BRANCH.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+1 file revert. Stage row returns to <div> with only the icon clickable.
+NO impact on desktop, backend, or any other matrix functionality.
+
+================================================================================
+END OF SPEC
+================================================================================

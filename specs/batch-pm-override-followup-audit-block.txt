@@ -1,0 +1,300 @@
+================================================================================
+ADDENDUM to #478 — PM Override audit block visibility on StageDetailPage
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — UX polish blocking prod deploy of #478. Override functions
+                correctly (verified on staging), but the UI does not visibly
+                show the override REASON or distinguish override-approval from
+                normal approval prominently enough. Compliance / PM oversight
+                requires the reason visible without leaving the page.
+
+Files changed:  1 file (frontend page extend)
+                  Frontend: frontend/src/pages/StageDetailPage.js (~25 LOC)
+
+Tests:          NO new test (UI/UX only).
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+DB migration:   NONE — all data already in stage_actors[stage_id]
+                (added by #478: via_override, override_reason,
+                approved_by_name, approved_at).
+
+================================================================================
+CONTEXT (Zahi 2026-05-04 staging smoke)
+================================================================================
+
+#478 deployed to staging. Override functionality works:
+  ✅ Button visible to PM + super_admin only
+  ✅ Dialog with reason validation
+  ✅ Items bulk-marked pass + via_override=true
+  ✅ Stage status flips to approved
+  ✅ Audit log entry created
+
+But Zahi reports the UI on StageDetailPage AFTER override does NOT clearly show:
+  ❌ The reason for the override (typed by PM in the dialog) — not visible
+     anywhere on the page
+  ❌ Whether the existing "אושר ב-Override" badge is rendering at all
+     (Zahi could not see it in the screenshot — needs verification)
+  ❌ Distinct visual treatment of override-approval vs normal approval —
+     the "סיכום פעולות" block looks identical to a normal approval
+
+Quote (Zahi):
+  > "אני לא רואה audit או פירוט של למה נסגר, פשוט שpm סגר, זה מספיק טוב לנו?"
+
+Answer: not good enough. The reason is needed in-UI for compliance, oversight,
+and PM trust. Audit log alone (queryable only by admins) is insufficient.
+
+This addendum closes the gap with ~25 LOC.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Confirm the existing badge implementation from #478 is in place and
+    verify its CURRENT placement:
+    grep -n "via_override\|אושר ב-Override\|אושר ב-override" \
+        frontend/src/pages/StageDetailPage.js | head -10
+    # Expected from #478:
+    #   1 hit for the badge JSX block (around lines 2294-2299 per #478 diff)
+    #   The badge wraps `runData?.stage_actors?.[stageId]?.via_override`
+    # Note: Zahi could not see the badge in his staging smoke. Possible causes:
+    #   (a) Badge IS rendering but in an off-screen location (scroll up needed)
+    #   (b) Badge condition evaluates false (data mismatch)
+    #   (c) Badge JSX is in a parent that conditionally hides it
+
+0.2 — Confirm stage_actors data is delivered to the frontend:
+    Browser DevTools → Network tab → after override → look for the GET on
+    /qc/run/{run_id} response. Verify the JSON body contains:
+       stage_actors: { "<stage_id>": { approved_by, approved_by_name,
+                                        approved_at, via_override: true,
+                                        override_reason: "..." } }
+    If `stage_actors` is empty or missing — that's a backend issue
+    (the +1 line from #478 didn't merge) → STOP and report.
+    If `stage_actors[stage_id].via_override === true` and reason is the
+    string Zahi typed → data is correct, the issue is purely UI rendering.
+
+0.3 — Locate the "סיכום פעולות" section in StageDetailPage.js — this is
+    where we add the new audit block:
+    grep -n "סיכום פעולות\|approved_by_name\|approved_at" \
+        frontend/src/pages/StageDetailPage.js | head -10
+    # Expected: at least 1 hit on "סיכום פעולות" header. Surrounding JSX
+    # renders the approver name + timestamp. We add a sibling block
+    # IMMEDIATELY AFTER it that's visible only when via_override === true.
+
+0.4 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — VERIFY EXISTING BADGE PLACEMENT (FIX IF NEEDED)
+================================================================================
+
+The badge from #478 should appear adjacent to other status badges near the
+top of the stage page (next to "אושר ביקורת", "כולל תיעוד לפני עבודה", etc.).
+
+LOCATION 1.1 — Find the existing badge JSX (~lines 2294-2299 per #478 diff):
+
+   FIND:
+       {runData?.stage_actors?.[stageId]?.via_override && (
+         <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+           <Shield className="w-3 h-3" />
+           אושר ב-Override על־ידי {runData?.stage_actors?.[stageId]?.approved_by_name || ''}
+         </span>
+       )}
+
+   VERIFY: this badge is rendered INSIDE the same JSX container as the
+   other top-of-page status badges ("אושר ביקורת", "תיעוד לפני עבודה",
+   "איכות: תקין"). If the badge is in a separate container or hidden by
+   conditional rendering — MOVE IT to be a sibling of those existing badges
+   so it appears in the same horizontal row near the page header.
+
+   No code change needed if the placement is already correct.
+
+================================================================================
+PART 2 — ADD AUDIT BLOCK BELOW "סיכום פעולות"
+================================================================================
+
+LOCATION 2.1 — Find the "סיכום פעולות" section. The current rendering
+   shows generic approval info. We add a NEW amber-highlighted block
+   IMMEDIATELY BELOW (or inside, sibling) when via_override is true.
+
+   The block displays:
+   - Title: "🛡 סגור באמצעות Override"
+   - Approver name
+   - Approval timestamp
+   - Override reason (full text)
+
+   ADD (place adjacent to the existing approval-summary JSX):
+
+       {runData?.stage_actors?.[stageId]?.via_override && (
+         <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200" dir="rtl">
+           <div className="flex items-center gap-2 mb-2">
+             <Shield className="w-4 h-4 text-amber-700" />
+             <span className="text-sm font-bold text-amber-900">
+               סגור באמצעות Override
+             </span>
+           </div>
+           <table className="w-full text-xs text-amber-900">
+             <tbody>
+               <tr>
+                 <td className="py-1 pl-2 text-amber-700 align-top whitespace-nowrap">אישר:</td>
+                 <td className="py-1">
+                   {runData?.stage_actors?.[stageId]?.approved_by_name || 'משתמש לא ידוע'}
+                 </td>
+               </tr>
+               <tr>
+                 <td className="py-1 pl-2 text-amber-700 align-top whitespace-nowrap">תאריך:</td>
+                 <td className="py-1">
+                   {(() => {
+                     const at = runData?.stage_actors?.[stageId]?.approved_at;
+                     if (!at) return '—';
+                     try {
+                       const d = new Date(at);
+                       return d.toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' });
+                     } catch (e) {
+                       return at;
+                     }
+                   })()}
+                 </td>
+               </tr>
+               <tr>
+                 <td className="py-1 pl-2 text-amber-700 align-top whitespace-nowrap">סיבה:</td>
+                 <td className="py-1 break-words">
+                   {runData?.stage_actors?.[stageId]?.override_reason || '—'}
+                 </td>
+               </tr>
+             </tbody>
+           </table>
+         </div>
+       )}
+
+   IMPORTANT — placement:
+   - Place adjacent to the existing "סיכום פעולות" rendering (sibling element).
+   - The block uses `mt-3` so there's spacing from the approval summary above it.
+   - All content is RTL via `dir="rtl"`.
+
+LOCATION 2.2 — Defensive check: confirm the existing approval-summary
+   block does NOT already include the override reason via some other path.
+   If it does — pick ONE rendering location and remove the duplicate from
+   the other.
+
+DO NOT TOUCH:
+- The badge from PART 1 (if placement is correct).
+- The existing "סיכום פעולות" approval-summary block — the new block is an
+  addition, not a replacement.
+- Item rendering (each item with its pass/fail/notes/photos) — unchanged.
+- The Override button + dialog — they are upstream from this addendum,
+  not affected.
+- Backend code — all data already exposed by #478.
+- Any other page or component.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse):
+   cd frontend && yarn build
+   → no new warnings or errors
+   (Or fall back to babel parse on the changed file alone — same env
+   limitation as #476/#477/#478.)
+
+VERIFY 2 — `via_override` references in StageDetailPage:
+   grep -c "via_override" frontend/src/pages/StageDetailPage.js
+   → ≥ 3 (1 in badge from #478, 1 conditional + ≥1 inside the new block)
+
+VERIFY 3 — Hebrew label "סגור באמצעות Override" present:
+   grep -c "סגור באמצעות Override" frontend/src/pages/StageDetailPage.js
+   → ≥ 1
+
+VERIFY 4 — `override_reason` referenced in JSX (the reason is rendered):
+   grep -c "override_reason" frontend/src/pages/StageDetailPage.js
+   → ≥ 1
+
+VERIFY 5 — No regression on existing tests:
+   cd backend && python -m pytest tests/test_qc_override_close.py tests/test_qc_units_status.py -v
+   → all pass (unchanged from #478)
+
+VERIFY 6 — Visual smoke (Zahi runs after deploy to staging):
+
+   Setup:
+   a) Login as super_admin → navigate to a stage that was already
+      override-approved during the previous staging smoke (the one Zahi
+      already overrode in his last test).
+
+   Verify:
+   b) At the top of the stage page, near the existing status badges
+      ("אושר ביקורת", "תיעוד לפני עבודה", "איכות: תקין"), there is an
+      AMBER badge "🛡 אושר ב-Override על־ידי Super Admin".
+   c) Below the existing "סיכום פעולות" block, there is a NEW amber-
+      highlighted section titled "🛡 סגור באמצעות Override" with:
+        - אישר: Super Admin
+        - תאריך: 04/05/2026 13:45  (formatted dd/mm/yyyy hh:mm in Hebrew)
+        - סיבה: [the full reason text Zahi typed in the dialog]
+   d) The reason is the EXACT text Zahi typed (no truncation).
+   e) On a stage that was approved NORMALLY (not override) — neither
+      the badge nor the audit block appears. Only the standard "סיכום
+      פעולות" with its single approval row.
+
+   Regression:
+   f) Override flow itself still works (button visible, dialog opens,
+      submit works) — same as #478.
+   g) Mobile viewport (375px DevTools): the audit table doesn't overflow
+      horizontally. Reason text wraps via `break-words`.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - 0.2 confirmation that stage_actors data is in API response
+  - Per-file diff (1 file, ~25 LOC)
+  - VERIFY 1-5 outputs
+  - VERIFY 6 deferred-to-Zahi note (7 scenarios a-g)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(qc): visible audit block for PM Override on StageDetailPage
+
+  #478 followup — closes UX gap discovered during staging smoke.
+  Override functions correctly but the UI did not visibly show the
+  override reason or distinguish override-approval from normal
+  approval prominently enough.
+
+  This addendum:
+   - Verifies the existing #478 badge placement (top status badges row)
+   - Adds a NEW amber-highlighted audit block below "סיכום פעולות"
+     when stage_actors[stage_id].via_override === true
+   - Block shows: approver name, formatted timestamp, FULL reason text
+   - All data already exposed by #478 (no backend change)
+
+  P2 — blocks prod deploy of #478. The PM and any compliance reviewer
+  should see the override reason without leaving the page (audit log
+  alone, queryable only by admins, is insufficient).
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.3 greps + verify Network response)
+2. PART 1 — verify badge placement (no edit if correct)
+3. PART 2 — add audit block below "סיכום פעולות"
+4. Run VERIFY 1-5
+5. Generate review.txt + .local/.commit_message
+6. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+1 file revert. The audit block disappears. Override still works
+(backend + #478 logic untouched). Audit data remains in DB and audit
+log; only the in-page UI block is removed.
+
+NO impact on:
+- #478 endpoint, RBAC, or backend logic
+- Other stages or other pages
+- Approve / reject / submit / reopen flows
+
+================================================================================
+END OF SPEC
+================================================================================

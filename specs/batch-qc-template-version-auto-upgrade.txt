@@ -1,0 +1,433 @@
+================================================================================
+BATCH #601 — Auto-upgrade existing QC runs to current template version
+================================================================================
+Date:           2026-05-07
+Branch:         staging  (NOT main)
+Severity:       P1 — Zahi prod 2026-05-07: admin edited qc_template (added
+                floor-scope stages "התקנת משקופים", "חגורות", etc.).
+                New stages appear in matrix columns (template-driven live
+                read) but cells stay empty because existing floor runs
+                are pinned to the OLD template version.
+
+Family:         Stand-alone fix — closes a long-standing template
+                immutability issue exposed by the QC↔Matrix sync feature
+                (#503). Pre-existing in qc_router since template
+                versioning was added.
+
+Files changed:  3 files
+                  Backend: 1 modified (qc_router.py — new helper +
+                                       call site updates in 2 endpoints)
+                  Backend: 1 schema addition (run audit fields in MatrixCell
+                                              tracking — no schema change
+                                              needed actually, just add
+                                              fields to the run doc inline)
+                  Tests: test_qc_router.py (~3 new tests)
+
+LOC estimate:   ~80 total (~50 logic + ~30 tests)
+Risk:           MEDIUM — mutates existing run docs to point to current
+                template_version_id. Idempotent, but a one-shot upgrade
+                per run. Reversible (set template_version_id back to
+                old via Atlas if needed). No schema change.
+
+================================================================================
+PROBLEM (Zahi prod 2026-05-07)
+================================================================================
+
+Concrete scenario:
+  - Building 9 (no QC activity yet): all new template stages appear with
+    cells synced correctly ✓
+  - Building 8 (existing QC runs from before template change): floor-scope
+    stages added to template DON'T appear in QC view → no items in DB →
+    matrix cells stay empty even though column renders
+
+Root cause located in qc_router.py:
+
+  async def _get_template(db=None, *, project_id=None, run=None):
+      if run:
+          vid = run.get("template_version_id")
+          if vid:
+              # Returns the OLD template snapshot tied to this run
+              return await db.qc_templates.find_one({"id": vid}, {"_id": 0})
+      ...
+
+When `get_or_create_floor_run` calls `_get_template(db, run=run, ...)` for
+an EXISTING run, it pulls the template version that was active when the
+run was created. New stages added to the project's qc_template AFTER the
+run was created are invisible to that run.
+
+`_backfill_missing_items` is correct logic — it iterates the (old) template
+and adds any items it doesn't already have. But since the template it sees
+is OLD, there's nothing new to add.
+
+Result: admin template additions don't propagate to existing runs.
+Matrix shows the new column (template-driven, live read at /matrix) but
+no items exist → no QC activity possible → matrix cells stay empty
+forever.
+
+================================================================================
+THE FIX — auto-upgrade run to current template on access
+================================================================================
+
+When loading an existing run via get_or_create_*_run:
+  1. Load the CURRENT template by project_id (ignore run's pinned version)
+  2. Compare current template id vs run.template_version_id
+  3. If different → update the run doc:
+     - run.template_version_id = current.id
+     - run.template_upgraded_at = now
+     - run.template_upgraded_by = user.id
+     - Audit log entry
+  4. Use the current template for _backfill_missing_items
+  5. Existing items are preserved; only NEW items added
+
+Why this is safe:
+  - _backfill_missing_items is keyed on (stage_id, item_id). If an item
+    already exists, it's not re-inserted. New items added cleanly.
+  - Existing data UNCHANGED. Approved items stay approved. Rejected stay
+    rejected. Audit chains intact.
+  - If admin REMOVES a stage from template: items for that stage stay
+    in the run (orphaned). Matrix doesn't render the column anyway
+    (it reads visible stages from current template). Harmless.
+  - If admin RENAMES a stage_id (very rare): old stage's items become
+    orphaned, new stage's items get added. Cosmetic only.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify _get_template signature and run-pinning behavior:
+    grep -B2 -A20 "async def _get_template" \
+        backend/contractor_ops/qc_router.py | head -25
+    Expected: when `run` parameter is set + run.template_version_id
+    exists, returns the cached/DB doc by version_id (NOT current).
+
+0.2 — Find ALL places that call _get_template with run=:
+    grep -n "_get_template.*run=" backend/contractor_ops/qc_router.py
+    Expected: at least 3-5 call sites in get_or_create_floor_run,
+    get_or_create_unit_run, possibly approve/reject endpoints.
+    Each is a candidate for the fix.
+
+0.3 — Verify existing run docs have template_version_id field:
+    Run a quick query in Atlas (or grep tests):
+    grep "template_version_id" backend/contractor_ops/qc_router.py | head -10
+    Expected: field set when run is created (in `if not run:` branch
+    of get_or_create_*_run).
+
+0.4 — Verify _backfill_missing_items doesn't filter by status/state
+       (it should run on any run, including approved):
+    Already verified earlier — it does NOT skip based on stage_status.
+    Just inserts items where (stage_id, item_id) tuple isn't present.
+    Document in review.txt for completeness.
+
+0.5 — Verify project's "current" template lookup pattern:
+    Look at the `if not run:` branch of get_or_create_*_run.
+    `tpl = await _get_template(db, project_id=project_id)`
+    This ALREADY returns current. So the fix is to use this same
+    pattern even when run exists.
+
+0.6 — Output STEP 0 audit at top of review.txt.
+
+================================================================================
+PART 1 — NEW helper `_resolve_run_template_with_upgrade`
+================================================================================
+
+FILE: backend/contractor_ops/qc_router.py
+
+Add a new helper near _backfill_missing_items / _get_template:
+
+    async def _resolve_run_template_with_upgrade(
+        db,
+        run: dict,
+        project_id: str,
+        actor: dict,
+    ) -> dict:
+        """
+        Load the CURRENT template for the project. If the run is pinned
+        to an older template version, upgrade the run document to point
+        to the current version and log an audit entry.
+
+        Returns the current template dict.
+
+        Idempotent: if the run is already on the current version, no
+        DB write happens (just returns the template).
+
+        This unblocks _backfill_missing_items to add stages/items that
+        admin added to the template AFTER the run was created.
+        """
+        current = await _get_template(db, project_id=project_id)
+        current_id = current.get("id")
+        run_version_id = run.get("template_version_id")
+
+        if run_version_id == current_id:
+            # Already on current — no upgrade needed
+            return current
+
+        # Upgrade the run to current template
+        now = _now()
+        actor_id = actor.get("id") if actor else None
+        actor_name = (actor or {}).get("name") or "system"
+        await db.qc_runs.update_one(
+            {"id": run["id"]},
+            {
+                "$set": {
+                    "template_version_id": current_id,
+                    "template_id": current.get("template_id") or current_id,
+                    "template_upgraded_at": now,
+                    "template_upgraded_by": actor_id,
+                    "template_upgraded_from": run_version_id,
+                },
+            },
+        )
+        # Refresh local copy for caller
+        run["template_version_id"] = current_id
+        run["template_id"] = current.get("template_id") or current_id
+        run["template_upgraded_at"] = now
+        run["template_upgraded_by"] = actor_id
+
+        # Audit (best-effort — don't block on failure)
+        try:
+            await _audit(
+                db,
+                project_id=project_id,
+                actor_id=actor_id,
+                actor_name=actor_name,
+                action="qc_run_template_upgraded",
+                entity_type="qc_run",
+                entity_id=run["id"],
+                payload={"from": run_version_id, "to": current_id},
+            )
+        except Exception as e:
+            logger.warning(f"[#601] audit failed for run={run['id']}: {e}")
+
+        logger.info(
+            f"[#601] upgraded run={run['id']} "
+            f"template {run_version_id} → {current_id}"
+        )
+        return current
+
+================================================================================
+PART 2 — Update call sites in get_or_create_*_run
+================================================================================
+
+FILE: backend/contractor_ops/qc_router.py
+
+LOCATION 2.1 — get_or_create_floor_run:
+
+  FIND (after the `if not run:` block, when run exists):
+      tpl = await _get_template(db, run=run, project_id=project_id)
+
+  REPLACE WITH:
+      tpl = await _resolve_run_template_with_upgrade(
+          db, run, project_id, user
+      )
+
+LOCATION 2.2 — get_or_create_unit_run:
+  Same replacement at the equivalent line.
+
+LOCATION 2.3 — Other endpoints (approve_stage, reject_stage,
+override_approve_stage, reopen_stage, submit_stage, update_qc_item,
+reject_qc_item):
+
+These also call `_get_template(db, run=run, ...)` for tpl_stage lookups.
+For these endpoints, we want CONSISTENCY with whatever the user just saw
+in get_or_create_*_run. So the run is already upgraded by the time these
+fire. They can keep using `_get_template(db, run=run, ...)` because the
+run's template_version_id now points to current.
+
+Verify by adding a comment near each remaining `_get_template(db, run=run)`
+call:
+    # NOTE: by this point the run has already been upgraded to current
+    # template via _resolve_run_template_with_upgrade in get_or_create_*_run.
+    # Subsequent calls with run=run are safe.
+    tpl = await _get_template(db, run=run, project_id=project_id)
+
+If, for safety, prefer to ALSO upgrade in mutation endpoints — wrap with
+helper call. Adds ~20 LOC. Optional.
+
+================================================================================
+PART 3 — Tests
+================================================================================
+
+FILE: backend/tests/test_qc_router.py
+
+3.1 — NEW test_resolve_run_template_with_upgrade_idempotent:
+   - Setup run with template_version_id = "v1"
+   - Update qc_templates collection to have "v1" as latest for project
+   - Call _resolve_run_template_with_upgrade
+   - Assert: returns "v1" template, no DB write
+
+3.2 — NEW test_resolve_run_template_with_upgrade_actually_upgrades:
+   - Setup run with template_version_id = "v1"
+   - qc_templates has "v2" as latest for project (more stages)
+   - Call _resolve_run_template_with_upgrade
+   - Assert: returns "v2" template
+   - Assert: run doc updated with template_version_id="v2",
+     template_upgraded_from="v1"
+   - Assert: audit log entry created
+
+3.3 — NEW test_get_or_create_floor_run_backfills_after_upgrade:
+   - Setup floor run with old template ("v1" had 5 stages)
+   - Update template to "v2" (7 stages — added 2 new floor-scope stages)
+   - Call GET /floors/{id}/run
+   - Assert: response shows 7 stages (template current)
+   - Assert: qc_items collection now has items for the 2 new stages
+     (run_id matches, status="pending")
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — Backend tests:
+   cd backend && python -m pytest tests/test_qc_router.py \
+                                   tests/test_qc_to_matrix_sync.py \
+                                   tests/test_execution_matrix.py -q
+   → existing tests + 3 new = should be green
+
+V2 — Frontend build:
+   cd frontend && yarn build
+   → clean (no frontend changes)
+
+V3 — Diff scope:
+   git diff --stat
+   → 2 files: qc_router.py (+~50/-2), test_qc_router.py (+~30)
+
+V4 — Sibling files untouched:
+   git diff --stat -- backend/contractor_ops/execution_matrix_router.py \
+                      backend/contractor_ops/qc_to_matrix_sync.py \
+                      backend/contractor_ops/schemas.py \
+                      frontend/
+   → 0 lines diff
+
+V5 — Feature flag default:
+   No new flags introduced. MATRIX_QC_SYNC_ENABLED unchanged.
+
+================================================================================
+SMOKE TEST (Zahi after deploy)
+================================================================================
+
+Real-world reproduction of the Zahi 2026-05-07 scenario:
+
+(א) Pre-fix state on staging:
+    1. Verify a run exists from before the template change
+    2. Note: template now has new floor-scope stages
+
+(ב) Deploy this batch.
+
+(ג) Navigate to QC of building 8 floor 1 (the one Zahi tested,
+    100% complete on old template):
+    1. ✅ Now shows the new floor-scope stages (התקנת משקופים,
+       חגורות, ביטון משקופים, ביטון צנרת)
+    2. ✅ Total item count increases (was 25/25 → e.g. 25/35)
+    3. ✅ New items show as "pending" / "טרם התחיל"
+
+(ד) Hard-refresh the matrix:
+    1. ✅ For building 8 cells of the new stages — empty cells
+       (correctly — no QC activity yet)
+    2. Mark one item in one of the new stages as "תקין"
+    3. ✅ Matrix cell flips to BLUE (in_progress) — sync works
+
+(ה) Verify Atlas — pick one upgraded run:
+    1. db.qc_runs.findOne({floor_id: <building 8 floor 1>})
+    2. ✅ template_version_id = current
+    3. ✅ template_upgraded_at = recent timestamp
+    4. ✅ template_upgraded_from = old version id
+
+(ו) Verify Atlas — qc_items count:
+    1. db.qc_items.countDocuments({run_id: <run.id>})
+    2. ✅ Higher than before (new items added by _backfill_missing_items)
+
+(ז) Verify the same in building 9 (was already on current template):
+    1. No regression — runs in building 9 stay as-is
+    2. _resolve_run_template_with_upgrade is idempotent — returns
+       current immediately, no DB write
+
+(ח) No regressions on followup-3 tests:
+    1. Re-run the 9 sync scenarios (א-ט) from #503-followup-3
+    2. ✅ All pass
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt — STEP 0 audit (5 sub-greps) + diff + V1-V5 + smoke
+(א)-(ח) deferred + footer "AWAITING ZAHI APPROVAL — DO NOT DEPLOY"
+
+.local/.commit_message:
+  fix(qc): #601 — auto-upgrade existing QC runs to current template version
+
+  Per Zahi prod test 2026-05-07: admin added floor-scope stages to
+  qc_template (התקנת משקופים, חגורות וכו'). Building 9 (no prior
+  QC) showed all new stages. Building 8 (existing QC runs from
+  before the template change) didn't — the runs were pinned to
+  the OLD template_version_id and _backfill_missing_items had
+  nothing to add.
+
+  Root cause: _get_template(db, run=run, ...) returns the template
+  version stored in run.template_version_id, which is set when
+  the run is first created. Subsequent template changes by admin
+  don't propagate to existing runs.
+
+  Fix: NEW helper _resolve_run_template_with_upgrade — loads the
+  CURRENT template by project_id, compares to run.template_version_id,
+  upgrades the run doc if stale (updates template_version_id +
+  audit fields), returns current template. Idempotent: no DB
+  write if already on current.
+
+  Wired into get_or_create_floor_run and get_or_create_unit_run.
+  Mutation endpoints (approve/reject/override/submit/update_item/
+  reject_item) keep using _get_template(db, run=run, ...) — by the
+  time they fire, the run has already been upgraded by the get_or_create
+  call that loaded it.
+
+  ~50 LOC qc_router.py + ~30 LOC tests. Zero schema changes (only
+  adds optional fields on the run doc — Mongo doesn't care). No
+  frontend changes. No feature flag needed.
+
+  Idempotent + reversible: if anything goes wrong, set
+  template_version_id back via Atlas update.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+Existing data UNCHANGED. The only DB writes this batch makes are:
+- Update template_version_id on existing run docs (1 field per run)
+- Add audit log entries (immutable, harmless)
+
+Reversal: not strictly needed (no schema change). To "undo" upgrades:
+   db.qc_runs.updateMany(
+     { template_upgraded_at: { $exists: true } },
+     { $rename: { "template_upgraded_from": "template_version_id" } }
+   )
+But since the upgrades are correct (template was outdated), there's
+no reason to undo.
+
+NO impact on:
+- QC editing flow (#494)
+- Matrix view + filter + Excel (#500/#502)
+- QC↔Matrix sync (#503 + 3 followups)
+- Schemas, frontend, auth, billing, safety routers
+- Existing approved/rejected QC items
+
+================================================================================
+PHASED ROLLOUT
+================================================================================
+
+1. Replit implements + V1-V5 green
+2. Zahi: ./deploy.sh --stag
+3. Smoke (א)-(ח) on staging — focus on (ג) and (ד) — verify the
+   bug is fixed in real workflow
+4. 24h watch on staging logs (look for "[#601] upgraded run" log
+   entries — should fire on first visit per stale run)
+5. Zahi: ./deploy.sh --prod
+6. Spot-check on prod: open building 8 floor 1 → confirm new stages
+   appear
+
+ROLLBACK: same 3 modes as #503 (env flag flip + git revert + Atlas).
+This batch has no env flag, so MILD becomes "git revert" (still small —
+2 files, ~80 LOC).
+
+================================================================================
+END OF SPEC — #601
+================================================================================

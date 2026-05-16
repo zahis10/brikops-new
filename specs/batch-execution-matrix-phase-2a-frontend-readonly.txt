@@ -1,0 +1,1171 @@
+================================================================================
+BATCH — Execution Matrix (מטריצת ביצוע) — PHASE 2A: FRONTEND READ-ONLY (Mobile-first)
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — major new feature surface for execution control.
+                Builds the user-visible UI on top of #483 Phase 1 backend.
+                NOT a bug fix.
+
+This is PHASE 2A of 4 sub-phases (per Zahi 2026-05-04 scoping):
+  - PHASE 2A (this batch): Read-only view, mobile-first + desktop grid.
+                            Foundation, route, nav link, service, components.
+  - PHASE 2B: Cell editing — popover, status select, note, audit history.
+  - PHASE 2C: Stage management — add custom, hide base, reorder.
+  - PHASE 2D: Filters + saved views.
+
+Files changed:  8 NEW files + 2 small edits
+                  Frontend NEW: pages/ExecutionMatrixPage.js (~260 LOC)
+                  Frontend NEW: components/matrix/MatrixListView.js (~180 LOC)
+                  Frontend NEW: components/matrix/MatrixGridView.js (~150 LOC)
+                  Frontend NEW: components/matrix/MatrixCell.js (~80 LOC)
+                  Frontend NEW: components/matrix/StatusLegend.js (~60 LOC)
+                  Frontend NEW: components/matrix/STATUS_CONFIG.js (~50 LOC)
+                  Frontend NEW: services/matrixService.js (~80 LOC)
+                  Frontend NEW: hooks/useMatrixData.js (~60 LOC)
+                  Frontend edit: App.js (+3 LOC for route)
+                  Frontend edit: project nav component (+5 LOC for link)
+
+Tests:          NO new tests — frontend UI. VERIFY 5 visual smoke covers it.
+                Backend tests from #483 still pass (no backend touch).
+
+Mobile:         🚨 MOBILE-FIRST PRIORITY (Zahi 2026-05-04: "רוב המשתמשים מובייל")
+                - MatrixListView is the default for ≤768px (95% of users)
+                - MatrixGridView is for ≥768px (tablet/desktop power users)
+                - Touch targets ≥44×44px throughout (py-3 wrappers, CLAUDE.md)
+                - Safe-area-inset honored on sticky elements
+                - Capacitor WebView compatible (no <a download>, no localStorage)
+                - Tested on 375px viewport (iPhone SE / 12 mini width)
+
+DB migration:   NONE. Phase 1 backend (#483) already shipped with 8 endpoints.
+
+CLAUDE.md compliance:
+  - "קבצים חדשים, לא להעמיס קיימים" — 8 NEW files in dedicated subdirs.
+  - "Capacitor compliance" — mobile-first design, touch targets, safe-area.
+  - "לא לנחש, לבדוק בקוד תמיד" — STEP 0 verifies App.js routing pattern,
+    existing nav structure, axios service pattern, RTL handling.
+
+================================================================================
+CONTEXT — what this builds
+================================================================================
+
+Phase 1 (#483) shipped the backend: 3 collections, 8 endpoints under
+/api/execution-matrix, 6 status values, RBAC. ZERO user-visible change
+in production today (no frontend calls those endpoints).
+
+Phase 2A turns the lights on with a READ-ONLY view:
+  - User opens project → sees "מטריצת ביצוע" link in project nav
+  - Clicks it → ExecutionMatrixPage loads
+  - Sees 2D matrix of units × stages with status icons
+  - On mobile (most users): list view, units as cards
+  - On desktop: full grid with sticky headers
+  - StatusLegend shows the 6 status meanings
+  - NO editing yet (Phase 2B). NO filters (Phase 2D). NO custom stages (Phase 2C).
+
+Why this scope?
+  - Smallest shippable increment that gives users value (visibility)
+  - Users can already see project state at a glance
+  - Without editing, no risk of data corruption — pure read
+  - Foundation for editing (2B) is the same data shape
+
+================================================================================
+ARCHITECTURAL DECISIONS
+================================================================================
+
+D1. View mode by viewport (auto), not user choice in 2A
+    - Mobile (<768px): MatrixListView
+    - Desktop (≥768px): MatrixGridView
+    - Manual toggle DEFERRED to Phase 2D (some power users on tablet
+      may prefer list mode — add toggle then if requested)
+
+D2. Status icons = SVG (Lucide), NOT emoji
+    Per CLAUDE.md: "use SVG icons (Heroicons, Lucide), not emojis".
+    Map of 6 status → Lucide icon below in STATUS_CONFIG.
+
+D3. Touch targets ≥44px
+    Each MatrixCell wrapped in py-3 px-3 button on mobile = 44px+ height.
+    On desktop grid, cells are 40×40px but inside a clickable div with
+    padding that totals 44px+ (mouse hover area can be smaller).
+
+D4. RTL throughout
+    All components dir="rtl" or inherit. Stage names + unit numbers
+    align right. Horizontal scroll direction respects RTL (right-to-left
+    primary direction; React's overflow-x-auto handles automatically).
+
+D5. No realtime updates in 2A
+    Page fetches once on mount. User refreshes manually if needed.
+    Phase 2B will refresh on optimistic cell edit, Phase 3 may add WebSocket.
+
+D6. Loading + error + empty states
+    - Loading: skeleton screens (gray bars sized to expected content)
+    - Error: red Alert with retry button
+    - Empty (no units in project): "אין דירות בפרויקט" + link to project setup
+
+D7. Service layer = matrixService.js (mirrors qcService pattern)
+    Single responsibility: HTTP requests against /api/execution-matrix.
+    Hook layer = useMatrixData.js for data fetching + state mgmt.
+    Component layer = pure rendering, no API calls.
+
+================================================================================
+CRITICAL PRESERVATION — DO NOT TOUCH
+================================================================================
+
+✋ Backend code (#483 untouched — all data already exposed)
+✋ qc_router.py / qc_template / qc_runs (independent, no annotation overlay yet)
+✋ ProjectControlPage.js (4,115 LOC — DO NOT add tabs, see CLAUDE.md rule)
+✋ Existing project nav structure (only ADD a link, don't restructure)
+✋ Other QC pages (StageDetailPage, FloorDetailPage, BuildingQCPage, etc.)
+✋ Auth, billing, safety routers, defects flow
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+⚠️ This is a feature batch (not a bug fix). STEP 0 is unusually thorough
+   to lock in patterns + nav placement + RTL conventions.
+
+0.1 — Verify App.js routing pattern (where to add new route):
+    grep -n "<Route\|<Routes\|element=" frontend/src/App.js | head -20
+    # Expected: <Routes> block with <Route path="..." element={<Component/>}/>
+    # Find the right block to add our new route (likely near other
+    # /projects/:projectId/* routes).
+    # Document the EXACT line we'll add the new route at.
+
+0.2 — Locate the QC home page (`/projects/:projectId/qc` route handler).
+    Per Zahi 2026-05-04: matrix entry CTA goes on the QC home page,
+    placed ABOVE the existing "סטטוס ביצוע כללי" card.
+
+    Step A — find the route handler:
+        grep -n "/projects/:projectId/qc'\|path=\"/projects/:projectId/qc\"" \
+            frontend/src/App.js
+        # Expected: 1 hit — the route. Note the component (likely
+        # ProjectQCPage.js / ProjectControlPage.js / or similar).
+
+    Step B — find the page file + the "סטטוס ביצוע כללי" header:
+        grep -rn "סטטוס ביצוע כללי" frontend/src/pages/ frontend/src/components/
+        # Expected: 1-2 hits in the page file that renders this dashboard
+        # card. We insert our CTA card IMMEDIATELY ABOVE this section.
+
+    Step C — find the kebab/burger menu OR sidebar:
+        grep -rn "Menu\|MenuIcon\|sidebar" \
+            frontend/src/components/ProjectNavbar* \
+            frontend/src/components/ProjectSidebar* \
+            frontend/src/components/Project*.js 2>/dev/null | head -10
+        # Document if there's a separate project-level navigation
+        # component. If yes — we may ALSO add a link there for
+        # navigation-from-anywhere-in-project (secondary entry point).
+        # If no separate sidebar — CTA on QC home is the only entry,
+        # which is fine for Phase 2A (Phase 2D may add a route-link
+        # in a future ProjectNav refactor).
+
+    Document findings in review.txt STEP 0 audit.
+
+0.3 — Verify existing axios service pattern (mirror for matrixService):
+    cat frontend/src/services/api.js | head -80
+    # OR
+    grep -n "qcService\|safetyService\|axios\.create\|baseURL" \
+        frontend/src/services/api.js | head -15
+    # Expected:
+    #   - axios instance with baseURL configured (likely from REACT_APP_API_URL env)
+    #   - Auth interceptor adding Bearer token
+    #   - Service objects like qcService = { listRuns: ..., getRun: ..., ... }
+    # We add matrixService = { getMatrix, updateStages, updateCell, ... }
+    # mirroring this pattern.
+
+0.4 — Verify Capacitor + WebView compatibility helpers:
+    grep -n "Capacitor\.\|isNativePlatform\|Capacitor/core" \
+        frontend/src/components/ frontend/src/utils/ frontend/src/pages/ \
+        --include="*.js" --include="*.jsx" -r | head -10
+    # Expected: import { Capacitor } from '@capacitor/core' available somewhere.
+    # Document the pattern (we may need it for any platform-specific behavior).
+
+0.5 — Verify Lucide-react is installed + check icon names we'll use:
+    grep -n "lucide-react" frontend/package.json
+    # Expected: dependency present.
+    # We use these icons:
+    #   CheckCircle2 (✓ completed)
+    #   Circle / CircleDashed (◯ partial — half-fill or warning)
+    #   Loader2 (◷ in_progress — usually animated, here static)
+    #   XCircle (✗ not_done)
+    #   MinusCircle (− not_relevant)
+    #   ShieldCheck or BadgeCheck (⊘ no_findings)
+    #   LayoutGrid (matrix nav icon)
+    # Verify each exists in @lucide/react@0.X.
+    grep -rn "LayoutGrid\|CheckCircle2\|MinusCircle" \
+        frontend/src/ --include="*.js" --include="*.jsx" | head -5
+    # If any icon isn't in current bundle — substitute from available set.
+
+0.6 — Verify Tailwind breakpoints + RTL convention:
+    grep -n "screens\|sm:\|md:\|lg:" frontend/tailwind.config.js | head -10
+    # Expected: standard Tailwind defaults (sm=640, md=768, lg=1024, xl=1280).
+    # We use md: as the mobile/desktop breakpoint (md = 768px).
+    grep -rn "dir=\"rtl\"\|RTL\|rtl:" frontend/src/pages/StageDetailPage.js \
+        | head -5
+    # Verify codebase uses dir="rtl" pattern.
+
+0.7 — Confirm project_id + permissions from #483 response:
+    Per #483 review.txt: GET /api/execution-matrix/{project_id} returns:
+      {
+        project_id, stages, units, cells,
+        permissions: { role, can_view, can_edit },
+        matrix_config_id
+      }
+    We use: stages, units, cells, permissions.can_edit (for 2B/later).
+
+0.8 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — STATUS_CONFIG.js (shared constants)
+================================================================================
+
+LOCATION 1.1 — CREATE NEW file:
+    frontend/src/components/matrix/STATUS_CONFIG.js
+
+   FULL FILE:
+
+       /**
+        * Execution Matrix status configuration — shared across components.
+        * 6 status values matching backend MATRIX_STATUS_VALUES (#483 schemas.py).
+        */
+       import {
+         CheckCircle2, AlertCircle, Clock,
+         XCircle, MinusCircle, ShieldCheck,
+       } from 'lucide-react';
+
+       export const MATRIX_STATUSES = {
+         completed: {
+           id: 'completed',
+           label: 'בוצע',
+           Icon: CheckCircle2,
+           bg: 'bg-green-100',
+           text: 'text-green-700',
+           border: 'border-green-200',
+         },
+         partial: {
+           id: 'partial',
+           label: 'חלקי',
+           Icon: AlertCircle,
+           bg: 'bg-amber-100',
+           text: 'text-amber-700',
+           border: 'border-amber-200',
+         },
+         in_progress: {
+           id: 'in_progress',
+           label: 'בעבודה',
+           Icon: Clock,  // Static-friendly: Loader2 looks like a frozen spinner
+                         // when not animated. Clock conveys "time-based progress"
+                         // semantically without animation cost on 1000+ cells.
+           bg: 'bg-blue-100',
+           text: 'text-blue-700',
+           border: 'border-blue-200',
+         },
+         not_done: {
+           id: 'not_done',
+           label: 'לא בוצע',
+           Icon: XCircle,
+           bg: 'bg-red-100',
+           text: 'text-red-700',
+           border: 'border-red-200',
+         },
+         not_relevant: {
+           id: 'not_relevant',
+           label: 'לא רלוונטי',
+           Icon: MinusCircle,
+           bg: 'bg-slate-100',
+           text: 'text-slate-500',
+           border: 'border-slate-200',
+         },
+         no_findings: {
+           id: 'no_findings',
+           label: 'אין חוסרים',
+           Icon: ShieldCheck,
+           bg: 'bg-emerald-100',
+           text: 'text-emerald-700',
+           border: 'border-emerald-200',
+         },
+       };
+
+       export const MATRIX_STATUS_LIST = Object.values(MATRIX_STATUSES);
+
+       export const EMPTY_CELL_CONFIG = {
+         id: null,
+         label: 'לא סומן',
+         bg: 'bg-slate-50',
+         text: 'text-slate-300',
+         border: 'border-slate-100',
+       };
+
+================================================================================
+PART 2 — services/matrixService.js
+================================================================================
+
+LOCATION 2.1 — CREATE NEW file:
+    frontend/src/services/matrixService.js
+
+   Pattern mirrors qcService (verified in STEP 0.3).
+
+   FULL FILE:
+
+       import api from './api';  // shared axios instance with auth interceptor
+
+       /**
+        * Execution Matrix API client. Phase 2A uses GET only;
+        * Phase 2B/2C/2D will add update/saved views endpoints.
+        */
+       export const matrixService = {
+         /**
+          * Fetch the full matrix for a project.
+          * Returns: { project_id, stages, units, cells, permissions, matrix_config_id }
+          */
+         async getMatrix(projectId) {
+           const { data } = await api.get(`/api/execution-matrix/${projectId}`);
+           return data;
+         },
+
+         // PHASE 2B — implemented in next batch:
+         // updateStages(projectId, payload) { ... }
+         // updateCell(projectId, unitId, stageId, payload) { ... }
+         // getCellHistory(projectId, unitId, stageId) { ... }
+
+         // PHASE 2D — implemented later:
+         // listViews, createView, updateView, deleteView
+       };
+
+       export default matrixService;
+
+DO NOT TOUCH:
+- Existing services in api.js / *Service.js — ADD new file, don't modify others.
+- Auth interceptors — they apply automatically to our new requests.
+
+================================================================================
+PART 3 — hooks/useMatrixData.js
+================================================================================
+
+LOCATION 3.1 — CREATE NEW file:
+    frontend/src/hooks/useMatrixData.js
+
+   FULL FILE:
+
+       import { useState, useEffect, useCallback, useRef } from 'react';
+       import { matrixService } from '../services/matrixService';
+
+       /**
+        * Custom hook for fetching + managing matrix data.
+        * Handles loading, error, abort-on-unmount.
+        */
+       export function useMatrixData(projectId) {
+         const [data, setData] = useState(null);
+         const [loading, setLoading] = useState(true);
+         const [error, setError] = useState(null);
+         const abortRef = useRef(null);
+
+         const load = useCallback(async () => {
+           if (!projectId) return;
+           if (abortRef.current) abortRef.current.abort();
+           const controller = new AbortController();
+           abortRef.current = controller;
+           setLoading(true);
+           setError(null);
+           try {
+             const result = await matrixService.getMatrix(projectId);
+             if (!controller.signal.aborted) {
+               setData(result);
+               setLoading(false);
+             }
+           } catch (err) {
+             if (!controller.signal.aborted) {
+               setError(err?.response?.data?.detail || 'שגיאה בטעינת המטריצה');
+               setLoading(false);
+             }
+           }
+         }, [projectId]);
+
+         useEffect(() => {
+           load();
+           return () => {
+             if (abortRef.current) abortRef.current.abort();
+           };
+         }, [load]);
+
+         return { data, loading, error, refresh: load };
+       }
+
+DO NOT TOUCH:
+- Other hooks — this is a new file.
+- AbortController pattern — match existing codebase (verified in #481/#482).
+
+================================================================================
+PART 4 — components/matrix/MatrixCell.js (shared cell renderer)
+================================================================================
+
+LOCATION 4.1 — CREATE NEW file:
+    frontend/src/components/matrix/MatrixCell.js
+
+   FULL FILE:
+
+       import React from 'react';
+       import { MATRIX_STATUSES, EMPTY_CELL_CONFIG } from './STATUS_CONFIG';
+
+       /**
+        * Single matrix cell — renders status icon + bg color.
+        * Phase 2A: read-only (no onClick).
+        * Phase 2B: will add onClick → CellPopover.
+        *
+        * Props:
+        *   cell: { status, text_value, note, last_actor_name } | null
+        *   stage: { id, type } — for tag-type stages, render text_value
+        *   size: 'sm' (32px, mobile list view) | 'md' (40px, desktop grid)
+        */
+       export default function MatrixCell({ cell, stage, size = 'sm' }) {
+         const isTag = stage?.type === 'tag';
+         const status = cell?.status;
+         const textValue = cell?.text_value;
+
+         // Tag column — show text snippet
+         if (isTag) {
+           return (
+             <div
+               className={`flex items-center justify-center rounded-md border ${
+                 textValue
+                   ? 'bg-violet-50 text-violet-700 border-violet-200'
+                   : `${EMPTY_CELL_CONFIG.bg} ${EMPTY_CELL_CONFIG.text} ${EMPTY_CELL_CONFIG.border}`
+               } ${size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'}`}
+               title={textValue || 'ללא תגית'}
+               dir="rtl"
+             >
+               <span className="text-[10px] font-medium truncate px-1">
+                 {textValue ? textValue.slice(0, 3) : '—'}
+               </span>
+             </div>
+           );
+         }
+
+         // Status column — show status icon
+         const cfg = status ? MATRIX_STATUSES[status] : null;
+         if (cfg) {
+           const Icon = cfg.Icon;
+           return (
+             <div
+               className={`flex items-center justify-center rounded-md border ${cfg.bg} ${cfg.text} ${cfg.border} ${
+                 size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'
+               }`}
+               title={cfg.label + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')}
+               dir="rtl"
+             >
+               <Icon className={size === 'sm' ? 'w-4 h-4' : 'w-5 h-5'} />
+             </div>
+           );
+         }
+
+         // Empty cell
+         return (
+           <div
+             className={`flex items-center justify-center rounded-md border ${EMPTY_CELL_CONFIG.bg} ${EMPTY_CELL_CONFIG.text} ${EMPTY_CELL_CONFIG.border} ${
+               size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'
+             }`}
+             title="לא סומן"
+             dir="rtl"
+           >
+             <span className="text-xs">—</span>
+           </div>
+         );
+       }
+
+NOTES:
+- Phase 2A is read-only — NO onClick / NO tap behavior.
+- Phase 2B will add onClick prop + CellPopover wiring.
+- size='sm' = mobile list view (32×32 icon, smaller for density).
+- size='md' = desktop grid (40×40 icon, more readable).
+- Touch target requirement is met via the parent button wrapper (in
+  Phase 2B). For 2A read-only, the cells are visual indicators only.
+
+================================================================================
+PART 5 — components/matrix/StatusLegend.js
+================================================================================
+
+LOCATION 5.1 — CREATE NEW file:
+    frontend/src/components/matrix/StatusLegend.js
+
+   FULL FILE:
+
+       import React, { useState } from 'react';
+       import { ChevronDown, ChevronUp, Info } from 'lucide-react';
+       import { MATRIX_STATUS_LIST } from './STATUS_CONFIG';
+
+       /**
+        * Collapsible legend showing the 6 status icon meanings.
+        * Default collapsed on mobile (saves vertical space).
+        */
+       export default function StatusLegend({ defaultOpen = false }) {
+         const [open, setOpen] = useState(defaultOpen);
+
+         return (
+           <div className="bg-white rounded-lg border border-slate-200 overflow-hidden" dir="rtl">
+             <button
+               onClick={() => setOpen(!open)}
+               className="w-full flex items-center justify-between gap-2 px-4 py-3 hover:bg-slate-50 transition-colors"
+             >
+               <div className="flex items-center gap-2">
+                 <Info className="w-4 h-4 text-slate-500" />
+                 <span className="text-sm font-medium text-slate-700">מקרא סטטוסים</span>
+               </div>
+               {open ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+             </button>
+             {open && (
+               <div className="grid grid-cols-2 gap-2 px-4 pb-3 sm:grid-cols-3">
+                 {MATRIX_STATUS_LIST.map((s) => {
+                   const Icon = s.Icon;
+                   return (
+                     <div key={s.id} className="flex items-center gap-2">
+                       <div className={`flex items-center justify-center rounded-md border ${s.bg} ${s.text} ${s.border} h-7 w-7 shrink-0`}>
+                         <Icon className="w-4 h-4" />
+                       </div>
+                       <span className="text-xs text-slate-700">{s.label}</span>
+                     </div>
+                   );
+                 })}
+               </div>
+             )}
+           </div>
+         );
+       }
+
+================================================================================
+PART 6 — components/matrix/MatrixListView.js (MOBILE-FIRST)
+================================================================================
+
+LOCATION 6.1 — CREATE NEW file:
+    frontend/src/components/matrix/MatrixListView.js
+
+   FULL FILE:
+
+       import React, { useMemo } from 'react';
+       import MatrixCell from './MatrixCell';
+
+       /**
+        * Mobile-first list view: each unit = card, stages scroll horizontally.
+        *
+        * Props:
+        *   units: [{ id, unit_no, floor_id, room_count, ... }]
+        *   stages: [{ id, title, type, source, scope }]
+        *   cells: [{ unit_id, stage_id, status, text_value, note, last_actor_name }]
+        *   floorsById: { [floor_id]: { id, floor_number, name } }
+        */
+       export default function MatrixListView({ units, stages, cells, floorsById }) {
+         // Index cells by unit_id + stage_id for O(1) lookup
+         const cellsByUnitStage = useMemo(() => {
+           const map = {};
+           for (const c of cells) {
+             const key = `${c.unit_id}::${c.stage_id}`;
+             map[key] = c;
+           }
+           return map;
+         }, [cells]);
+
+         // Per-unit progress: count completed status / total stages
+         const progressForUnit = (unitId) => {
+           let completed = 0;
+           let total = 0;
+           for (const stage of stages) {
+             if (stage.type !== 'status') continue;  // tag columns don't count
+             total += 1;
+             const c = cellsByUnitStage[`${unitId}::${stage.id}`];
+             if (c?.status === 'completed' || c?.status === 'no_findings') {
+               completed += 1;
+             }
+           }
+           return { completed, total, pct: total ? Math.round((completed / total) * 100) : 0 };
+         };
+
+         if (!units || units.length === 0) {
+           return (
+             <div className="text-center py-12 text-slate-500" dir="rtl">
+               אין דירות בפרויקט
+             </div>
+           );
+         }
+
+         return (
+           <div className="space-y-3" dir="rtl">
+             {units.map((unit) => {
+               const floor = floorsById[unit.floor_id];
+               const { completed, total, pct } = progressForUnit(unit.id);
+               return (
+                 <div
+                   key={unit.id}
+                   className="bg-white rounded-xl border border-slate-200 p-3"
+                 >
+                   {/* Unit header */}
+                   <div className="flex items-center justify-between mb-2">
+                     <div className="flex items-center gap-2 min-w-0">
+                       <span className="text-sm font-bold text-slate-900 shrink-0">
+                         דירה {unit.unit_no}
+                       </span>
+                       {floor && (
+                         <span className="text-xs text-slate-500 truncate">
+                           • קומה {floor.floor_number}
+                           {unit.room_count != null && ` • ${unit.room_count} ח'`}
+                         </span>
+                       )}
+                     </div>
+                     <span className="text-xs font-medium text-slate-600 shrink-0">
+                       {completed}/{total}
+                     </span>
+                   </div>
+
+                   {/* Progress bar */}
+                   <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mb-3">
+                     <div
+                       className="h-full bg-emerald-500 transition-all"
+                       style={{ width: `${pct}%` }}
+                     />
+                   </div>
+
+                   {/* Horizontal scroll of stages */}
+                   <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
+                     {stages.map((stage) => {
+                       const cell = cellsByUnitStage[`${unit.id}::${stage.id}`];
+                       return (
+                         <div key={stage.id} className="flex flex-col items-center shrink-0 w-12">
+                           <MatrixCell cell={cell} stage={stage} size="sm" />
+                           <span className="text-[9px] text-slate-500 mt-1 text-center leading-tight w-full truncate" title={stage.title}>
+                             {stage.title}
+                           </span>
+                         </div>
+                       );
+                     })}
+                   </div>
+                 </div>
+               );
+             })}
+           </div>
+         );
+       }
+
+NOTES:
+- Each unit card has all stages, scrollable horizontally.
+- Progress bar shows completed/total only counting STATUS columns
+  (tag columns excluded from progress math).
+- 12px (`w-12`) per stage cell + label = ~80 stages fit in scroll on
+  smartphone. Real projects have ≤30 stages — fits well.
+- `room_count` shown when available (some units don't have it).
+
+================================================================================
+PART 7 — components/matrix/MatrixGridView.js (DESKTOP)
+================================================================================
+
+LOCATION 7.1 — CREATE NEW file:
+    frontend/src/components/matrix/MatrixGridView.js
+
+   FULL FILE:
+
+       import React, { useMemo } from 'react';
+       import MatrixCell from './MatrixCell';
+
+       /**
+        * Desktop grid view: full 2D matrix with sticky headers.
+        *
+        * Props:
+        *   units, stages, cells, floorsById
+        */
+       export default function MatrixGridView({ units, stages, cells, floorsById }) {
+         const cellsByUnitStage = useMemo(() => {
+           const map = {};
+           for (const c of cells) {
+             const key = `${c.unit_id}::${c.stage_id}`;
+             map[key] = c;
+           }
+           return map;
+         }, [cells]);
+
+         if (!units || units.length === 0) {
+           return (
+             <div className="text-center py-12 text-slate-500" dir="rtl">
+               אין דירות בפרויקט
+             </div>
+           );
+         }
+
+         return (
+           <div
+             className="bg-white rounded-xl border border-slate-200 overflow-auto max-h-[70vh]"
+             dir="rtl"
+           >
+             <table className="border-collapse w-full" style={{ direction: 'rtl' }}>
+               <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200">
+                 <tr>
+                   <th className="sticky right-0 z-20 bg-slate-50 border-l border-slate-200 px-3 py-2 text-right text-xs font-medium text-slate-700 min-w-[120px]">
+                     דירה
+                   </th>
+                   {stages.map((stage) => (
+                     <th
+                       key={stage.id}
+                       className="px-2 py-2 text-center text-[11px] font-medium text-slate-700 min-w-[64px] border-l border-slate-100 last:border-l-0"
+                       title={stage.title}
+                     >
+                       <div className="truncate max-w-[80px] mx-auto">{stage.title}</div>
+                       {stage.source === 'custom' && (
+                         <div className="text-[9px] text-violet-600 mt-0.5">מותאם</div>
+                       )}
+                     </th>
+                   ))}
+                 </tr>
+               </thead>
+               <tbody>
+                 {units.map((unit, idx) => {
+                   const floor = floorsById[unit.floor_id];
+                   return (
+                     <tr key={unit.id} className={idx % 2 ? 'bg-slate-50/30' : 'bg-white'}>
+                       <td className="sticky right-0 z-10 bg-inherit border-l border-slate-200 px-3 py-2 text-right text-xs">
+                         <div className="font-medium text-slate-900">דירה {unit.unit_no}</div>
+                         {floor && (
+                           <div className="text-[10px] text-slate-500 mt-0.5">
+                             קומה {floor.floor_number}
+                           </div>
+                         )}
+                       </td>
+                       {stages.map((stage) => {
+                         const cell = cellsByUnitStage[`${unit.id}::${stage.id}`];
+                         return (
+                           <td key={stage.id} className="p-1.5 border-l border-slate-100 last:border-l-0 text-center">
+                             <div className="inline-flex">
+                               <MatrixCell cell={cell} stage={stage} size="md" />
+                             </div>
+                           </td>
+                         );
+                       })}
+                     </tr>
+                   );
+                 })}
+               </tbody>
+             </table>
+           </div>
+         );
+       }
+
+NOTES:
+- Sticky right column (RTL: right-0 not left-0) for unit identifier.
+- Sticky top row for stage names.
+- Max-height 70vh keeps table scrollable independently of page scroll.
+- Custom stages flagged with "מותאם" badge under the stage name.
+
+================================================================================
+PART 8 — pages/ExecutionMatrixPage.js (top-level page)
+================================================================================
+
+LOCATION 8.1 — CREATE NEW file:
+    frontend/src/pages/ExecutionMatrixPage.js
+
+   FULL FILE:
+
+       import React, { useMemo } from 'react';
+       import { useParams } from 'react-router-dom';
+       import { Loader2, AlertCircle, LayoutGrid } from 'lucide-react';
+       import { useMatrixData } from '../hooks/useMatrixData';
+       import MatrixListView from '../components/matrix/MatrixListView';
+       import MatrixGridView from '../components/matrix/MatrixGridView';
+       import StatusLegend from '../components/matrix/StatusLegend';
+
+       /**
+        * Execution Matrix top-level page.
+        * Mobile-first: list view default. Desktop (≥md): grid view.
+        */
+       export default function ExecutionMatrixPage() {
+         const { projectId } = useParams();
+         const { data, loading, error, refresh } = useMatrixData(projectId);
+
+         // Build floor lookup from units → floor_id (parent has floors via separate query OR
+         // floors come embedded in matrix response in future; for now we infer minimal info).
+         // NOTE: #483 returns units with floor_id but NOT floor metadata. We need a floors fetch.
+         // PHASE 2A simplification: skip floor metadata if not available, show floor_id stub.
+         // Optional optimization: have backend embed `floors` in response. For now, attempt to
+         // build floorsById from any inline floor info, fallback to floor_id.
+         const floorsById = useMemo(() => {
+           const map = {};
+           if (data?.floors) {  // future: backend may return floors
+             for (const f of data.floors) map[f.id] = f;
+           }
+           // Fallback: synthesize minimal floor entry from units' floor_id
+           if (data?.units) {
+             for (const u of data.units) {
+               if (u.floor_id && !map[u.floor_id]) {
+                 map[u.floor_id] = { id: u.floor_id, floor_number: u.floor_number || '?' };
+               }
+             }
+           }
+           return map;
+         }, [data]);
+
+         if (loading) {
+           return (
+             <div className="min-h-screen bg-slate-50 p-4 sm:p-6" dir="rtl">
+               <div className="max-w-7xl mx-auto">
+                 <div className="bg-white rounded-xl border border-slate-200 p-6">
+                   <div className="flex items-center justify-center gap-2 text-slate-500">
+                     <Loader2 className="w-5 h-5 animate-spin" />
+                     <span className="text-sm">טוען מטריצה...</span>
+                   </div>
+                 </div>
+               </div>
+             </div>
+           );
+         }
+
+         if (error) {
+           return (
+             <div className="min-h-screen bg-slate-50 p-4 sm:p-6" dir="rtl">
+               <div className="max-w-7xl mx-auto">
+                 <div className="bg-white rounded-xl border border-red-200 p-6">
+                   <div className="flex items-start gap-3">
+                     <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                     <div className="flex-1">
+                       <div className="text-sm font-bold text-red-900">שגיאה בטעינת המטריצה</div>
+                       <div className="text-xs text-red-700 mt-1">{error}</div>
+                       <button
+                         onClick={refresh}
+                         className="mt-3 px-3 py-2 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 rounded-md border border-red-200"
+                       >
+                         נסה שוב
+                       </button>
+                     </div>
+                   </div>
+                 </div>
+               </div>
+             </div>
+           );
+         }
+
+         const stages = data?.stages || [];
+         const units = data?.units || [];
+         const cells = data?.cells || [];
+
+         return (
+           <div className="min-h-screen bg-slate-50" dir="rtl">
+             <div className="max-w-7xl mx-auto p-4 sm:p-6">
+               {/* Header */}
+               <div className="flex items-center gap-3 mb-4">
+                 <div className="p-2 bg-violet-100 rounded-lg">
+                   <LayoutGrid className="w-5 h-5 text-violet-700" />
+                 </div>
+                 <div className="flex-1 min-w-0">
+                   <h1 className="text-lg sm:text-xl font-bold text-slate-900">מטריצת ביצוע</h1>
+                   <p className="text-xs text-slate-500 mt-0.5">
+                     {units.length} דירות • {stages.length} שלבים
+                   </p>
+                 </div>
+               </div>
+
+               {/* Legend */}
+               <div className="mb-4">
+                 <StatusLegend defaultOpen={false} />
+               </div>
+
+               {/* View — auto by viewport */}
+               <div className="md:hidden">
+                 <MatrixListView
+                   units={units}
+                   stages={stages}
+                   cells={cells}
+                   floorsById={floorsById}
+                 />
+               </div>
+               <div className="hidden md:block">
+                 <MatrixGridView
+                   units={units}
+                   stages={stages}
+                   cells={cells}
+                   floorsById={floorsById}
+                 />
+               </div>
+             </div>
+           </div>
+         );
+       }
+
+NOTES:
+- Loading / error / data states all handled.
+- View switch via Tailwind `md:hidden` + `hidden md:block` — pure CSS, no JS.
+- Page padding adjusts: smaller on mobile (p-4), larger on desktop (sm:p-6).
+
+================================================================================
+PART 9 — App.js route + project nav link
+================================================================================
+
+LOCATION 9.1 — App.js (verified in STEP 0.1):
+
+   FIND the existing project routes block. Add NEW route:
+
+       <Route
+         path="/projects/:projectId/execution-matrix"
+         element={<ExecutionMatrixPage />}
+       />
+
+   Place adjacent to other /projects/:projectId/* routes (e.g., near /qc).
+
+   At the top imports, ADD lazy import (match existing pattern — many
+   pages use React.lazy for code splitting):
+
+       const ExecutionMatrixPage = React.lazy(() => import('./pages/ExecutionMatrixPage'));
+
+   IF the codebase uses non-lazy imports for pages, match that style instead.
+
+LOCATION 9.2 — CTA card on QC home page (per Zahi 2026-05-04 placement):
+
+   Per STEP 0.2.B — open the QC home page file (likely ProjectQCPage.js
+   or wherever "סטטוס ביצוע כללי" is rendered).
+
+   FIND the existing card that renders "סטטוס ביצוע כללי" header.
+   Look for JSX like:
+       <div className="...">
+         <h2>סטטוס ביצוע כללי</h2>
+         ...
+       </div>
+
+   ADD a NEW CTA card IMMEDIATELY BEFORE that section, WRAPPED in a
+   role check that hides it from contractors:
+
+       {/* Execution Matrix CTA — Phase 2A entry point. Hidden from
+           contractors (no view permission per #483 RBAC). The page
+           itself ALSO 403s, so this is defense-in-depth. */}
+       {!isContractorRole && (
+         <Link
+           to={`/projects/${projectId}/execution-matrix`}
+           className="block bg-gradient-to-l from-violet-50 to-white border border-violet-200 rounded-xl p-4 mb-4 hover:border-violet-300 hover:shadow-sm transition-all group"
+         >
+           <div className="flex items-center gap-3" dir="rtl">
+             <div className="p-2.5 bg-violet-100 rounded-lg shrink-0 group-hover:bg-violet-200 transition-colors">
+               <LayoutGrid className="w-5 h-5 text-violet-700" />
+             </div>
+             <div className="flex-1 min-w-0">
+               <div className="flex items-center gap-2">
+                 <span className="text-sm sm:text-base font-bold text-slate-900">
+                   מטריצת ביצוע
+                 </span>
+                 <span className="text-[10px] font-medium text-violet-600 bg-violet-100 px-1.5 py-0.5 rounded-full">
+                   חדש
+                 </span>
+               </div>
+               <p className="text-xs text-slate-600 mt-0.5">
+                 צפייה מפורטת לפי דירה ושלב
+               </p>
+             </div>
+             <ArrowLeft className="w-5 h-5 text-violet-400 group-hover:text-violet-600 group-hover:-translate-x-0.5 transition-all shrink-0" />
+           </div>
+         </Link>
+       )}
+
+   IMPORTANT — `isContractorRole` discovery:
+   The QC home page ALREADY has logic that adapts UI based on user
+   role (e.g., showing/hiding admin actions). DURING STEP 0.2.B,
+   identify HOW that page determines the user's role for THIS project.
+   Common patterns to look for:
+       const role = useUserRole(projectId);  // hook
+       const { role } = useProjectMembership(projectId);  // hook
+       const isContractor = userData?.project_role === 'contractor';
+       const isContractor = role === 'contractor';
+   Use the SAME pattern that's already in the file. DO NOT introduce a
+   new role-fetching mechanism. If the page doesn't currently
+   distinguish contractor from other roles, the simplest path is to
+   reuse whatever role/permissions field is already in scope.
+
+   FALLBACK if no role check exists in the file:
+   Keep the CTA visible to all and rely on backend 403 (acceptable —
+   backend RBAC is single source of truth). Document the choice in
+   review.txt so a future polish batch can add the conditional.
+
+   IMPORTANT placement:
+   - IMMEDIATELY BEFORE the "סטטוס ביצוע כללי" card.
+   - Mobile: full-width inside the page container.
+   - Desktop: same width as the dashboard card below it (inherits parent
+     max-width).
+   - `mb-4` provides spacing from the dashboard card below.
+
+   IMPORTS to add at top of the QC home page file:
+       import { Link } from 'react-router-dom';
+       import { LayoutGrid, ArrowLeft } from 'lucide-react';
+   (If `Link` is already imported — only add the icons. If LayoutGrid /
+   ArrowLeft are already in the import — skip.)
+
+   Color rationale: violet matches the LayoutGrid icon used inside the
+   matrix page header — visual consistency that signals "same feature".
+
+   "חדש" pill: temporary discoverability marker. Phase 2D / future batch
+   can remove it once feature is well-known.
+
+LOCATION 9.3 — IF a separate project sidebar/nav component was found
+   in STEP 0.2.C — ALSO add a sidebar entry there. Match existing
+   sidebar item styling. Skip if no such sidebar exists (CTA on QC
+   home is sufficient for Phase 2A).
+
+DO NOT TOUCH:
+- The existing "סטטוס ביצוע כללי" card content / data / dashboard logic.
+- The 4 stat cards below (הושלמו / בביצוע / נכשלו / בהמתנה).
+- Building cards (בניין A / בניין B).
+- Other routes / nav items / auth guards.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 2 — All NEW files exist:
+   for f in \
+     frontend/src/pages/ExecutionMatrixPage.js \
+     frontend/src/components/matrix/MatrixListView.js \
+     frontend/src/components/matrix/MatrixGridView.js \
+     frontend/src/components/matrix/MatrixCell.js \
+     frontend/src/components/matrix/StatusLegend.js \
+     frontend/src/components/matrix/STATUS_CONFIG.js \
+     frontend/src/services/matrixService.js \
+     frontend/src/hooks/useMatrixData.js; do
+     test -f "$f" && echo "EXISTS: $f" || echo "MISSING: $f";
+   done
+   → 8 EXISTS lines
+
+VERIFY 3 — Route registered:
+   grep -n "execution-matrix\|ExecutionMatrixPage" frontend/src/App.js
+   → ≥ 2 hits (1 import + 1 route)
+
+VERIFY 4 — CTA card added on QC home page:
+   grep -rn "מטריצת ביצוע\|execution-matrix" \
+     frontend/src/pages/ProjectQCPage.js \
+     frontend/src/pages/ProjectControlPage.js \
+     frontend/src/components/ \
+     --include="*.js" --include="*.jsx" 2>/dev/null | head -10
+   → ≥ 2 hits:
+     • Link `to={`/projects/${projectId}/execution-matrix`}` on QC home
+     • "מטריצת ביצוע" Hebrew label in the CTA card
+   → ALSO confirm placement: the CTA Link should appear in the JSX
+     immediately ABOVE the line with "סטטוס ביצוע כללי" text.
+     Sanity check:
+       grep -B5 "סטטוס ביצוע כללי" <qc-home-page-file> | grep -c "execution-matrix"
+       → 1 (CTA Link sits in the 5 lines preceding the header)
+
+VERIFY 5 — Backend regression (no backend touched):
+   cd backend && python -m pytest tests/test_execution_matrix.py \
+     tests/test_qc_override_close.py tests/test_qc_units_status.py -v
+   → all pass (matrix tests from #483 + QC regression)
+
+VERIFY 6 — Visual smoke (Zahi runs after deploy to staging):
+
+   QC home — CTA discovery (mobile + desktop):
+   a) Login as super_admin → open a project → click "בקרת ביצוע".
+      Land on /projects/{p}/qc.
+   b) ABOVE the "סטטוס ביצוע כללי" card, see a NEW violet card:
+      "🔲 מטריצת ביצוע" + "צפייה מפורטת לפי דירה ושלב" + "חדש" pill.
+   c) Tap/click the CTA → navigates to /projects/{p}/execution-matrix.
+   d) On desktop: hover over CTA → border darkens, arrow shifts left subtly.
+   e) The "סטטוס ביצוע כללי" dashboard below CTA — UNCHANGED in layout.
+
+   Matrix page on Mobile (375px DevTools / actual phone):
+   f) Page loads; header shows "מטריצת ביצוע" + count of units/stages.
+   g) StatusLegend collapsed by default — tap to expand → see 6 statuses.
+   h) Each unit appears as a card with progress bar + horizontal stage row.
+   i) Cells with no data show gray dash; cells with status show colored icon.
+   j) Horizontal scroll within unit card works smoothly (no jank).
+   k) Empty project (no units): "אין דירות בפרויקט" message.
+
+   Matrix page on Desktop (≥768px):
+   l) Page loads in grid mode (no list cards).
+   m) Sticky right column (unit names) stays visible while scrolling horizontally.
+   n) Sticky top row (stage names) stays visible while scrolling vertically.
+   o) Custom stages show "מותאם" sub-label.
+   p) Tag-type stages (if any) show short text snippet, not status icon.
+   q) Alternating row backgrounds visible (zebra striping).
+
+   Permissions:
+   r) Login as contractor → on QC home page: CTA card "מטריצת ביצוע"
+      should be HIDDEN (per `!isContractorRole` check). Direct URL
+      navigation to /projects/{p}/execution-matrix → 403 from backend →
+      page shows error state with "נסה שוב" button (defense in depth).
+   s) Login as super_admin / PM / management_team: CTA card VISIBLE.
+   t) IF the page doesn't have a role check pattern (per STEP 0.2.B
+      fallback) — CTA stays visible to all, contractor click → 403 page.
+      Document in review.txt which path was taken.
+
+   Performance:
+   t) 50 units × 20 stages → page renders in <2s on staging (no spinner > 2s).
+   u) Mobile scroll within unit card is at 60fps (no frame drops).
+
+VERIFY 7 — RTL + dir checks:
+   Open page → inspect → verify:
+   - <html lang="he" dir="rtl"> (or component-level dir="rtl")
+   - Stage names in grid head align RIGHT
+   - Unit numbers in left sticky col align RIGHT (right side in RTL)
+   - Horizontal scroll on mobile cards starts from RIGHT (first stage)
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (greps for App.js routes + nav structure +
+    axios pattern + Capacitor + lucide icons + Tailwind config)
+  - Per-file diff (8 NEW + 2 small edits)
+  - VERIFY 1-5 outputs
+  - VERIFY 6 deferred-to-Zahi note (15 scenarios a-o)
+  - VERIFY 7 RTL checklist
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(matrix): execution matrix frontend Phase 2A — read-only mobile-first
+
+  PHASE 2A of 4 sub-phases. Builds the user-visible UI on top of
+  #483 Phase 1 backend. Mobile-first per Zahi 2026-05-04 ("רוב
+  המשתמשים מובייל"):
+
+   - New top-level page at /projects/:projectId/execution-matrix
+   - Mobile (≤768px): MatrixListView — units as cards with horizontal
+     stage scroll + per-unit progress bar
+   - Desktop (≥768px): MatrixGridView — full 2D grid with sticky
+     headers (right column for units, top row for stages)
+   - 6 status icons (Lucide SVG, NOT emoji per CLAUDE.md):
+     CheckCircle2, AlertCircle, Loader2, XCircle, MinusCircle, ShieldCheck
+   - StatusLegend — collapsible, default closed on mobile to save space
+   - matrixService.getMatrix — single GET endpoint (Phase 2B/C/D add others)
+   - useMatrixData hook with abort-on-unmount + retry
+   - RTL throughout, Capacitor-compatible (no <a download>, no localStorage)
+
+  Phase 2B (next batch) adds cell editing — popover with status select +
+  note + audit history. Phase 2C: stage management. Phase 2D: filters
+  + saved views.
+
+  No backend change. #483 endpoints already serve this UI's needs.
+  Capgo OTA only — no native files touched.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.6 greps + verify lucide icon names)
+2. PART 1 — STATUS_CONFIG.js (NEW, ~50 LOC)
+3. PART 2 — matrixService.js (NEW, ~80 LOC)
+4. PART 3 — useMatrixData.js (NEW, ~60 LOC)
+5. PART 4 — MatrixCell.js (NEW, ~80 LOC)
+6. PART 5 — StatusLegend.js (NEW, ~60 LOC)
+7. PART 6 — MatrixListView.js (NEW, ~180 LOC)
+8. PART 7 — MatrixGridView.js (NEW, ~150 LOC)
+9. PART 8 — ExecutionMatrixPage.js (NEW, ~260 LOC)
+10. PART 9 — App.js route + nav link (~8 LOC across 2 files)
+11. Run VERIFY 1-5
+12. Generate review.txt + .local/.commit_message
+13. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+8 files removed + 2 small edits reverted. The /projects/:projectId/execution-matrix
+route 404s. Nav link disappears. NO impact on:
+- Backend (untouched)
+- #483 endpoints still serving (no consumers — back to where we were 5 minutes ago)
+- Other QC, handover, or project pages
+- Auth, billing, safety routers
+
+================================================================================
+END OF SPEC — PHASE 2A FRONTEND READ-ONLY (MOBILE-FIRST)
+================================================================================

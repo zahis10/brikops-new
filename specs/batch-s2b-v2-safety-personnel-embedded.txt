@@ -1,0 +1,817 @@
+================================================================================
+BATCH S2B v2 — Safety Project Personnel (embedded on registration document)
+================================================================================
+SUPERSEDES:    Batch S2B v1 / #473 (CANCELLED 2026-05-03)
+                v1 invented `safety_consultant` role (not in VALID_SUB_ROLES),
+                missed `execution_engineer` + `work_manager`, AND created a
+                separate collection (architecturally risky for Phase 1).
+
+Date:           2026-05-03
+Branch:         staging  (NOT main)
+Severity:       P2 — feature gap discovered during S2A (#468) V9 visual smoke.
+                Section 3 captures company directors generically; we need a
+                separate section for project-level safety roles required by
+                Israeli regulation.
+
+Files changed:  4 files (2 backend extend + 1 frontend NEW + 1 frontend extend)
+                  Backend (extend): backend/contractor_ops/schemas.py
+                  Backend (extend): backend/contractor_ops/safety_registration_router.py
+                  Frontend (NEW):   frontend/src/components/safety/SafetyProjectPersonnelSection.js
+                  Frontend (extend): frontend/src/pages/SafetyProjectRegistrationPage.js
+
+Tests:          NO new test file. The existing test_safety_registration.py
+                from #468 already exercises the upsert endpoint. This batch
+                only adds a field to the same endpoint — covered by existing
+                contract tests + the new field is exercised by V9 visual
+                smoke. Optional: add 2 mock tests if Replit prefers (see
+                PART 5).
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+                All inputs/buttons py-3 → ≥44px touch targets.
+                NO PDF in this batch (deferred to S2B v3).
+DB migration:   NONE — `personnel: []` added to lazy init dict.
+                Existing registration docs without the field deserialize as
+                `personnel = []` (Pydantic default). MongoDB schemaless.
+
+================================================================================
+WHY THIS IS THE LOW-RISK PATH (vs v1 which we cancelled)
+================================================================================
+
+Risk comparison:
+
+                                    v1 (CANCELLED)    v2 (THIS SPEC)
+New collections                     1                 0
+New routers                         1                 0
+New routes                          4                 0 (uses existing PUT)
+New tests                           6                 0-2 (optional)
+Touches memberships/auth/RBAC       NO                NO
+Role enum                           INVENTED          5 canonical from VALID_SUB_ROLES
+Coupling to existing systems        Low               Low
+Pattern precedent in codebase       NONE              YES (managers from #468)
+
+Why v2 is safer:
+- v2 is structurally IDENTICAL to the `managers` handling shipped by #468.
+  We are literally cloning a pattern that already runs in staging today.
+- ZERO new wiring in server.py — uses the registration router that's
+  already registered.
+- ZERO new collections — extends `safety_project_settings` lazily.
+- Embedded data = atomic upsert. No multi-document race conditions.
+- Rollback is trivial: revert removes the field; existing data is unaffected
+  (MongoDB ignores unknown fields).
+
+What v2 does NOT do (deferred):
+- PDF integration (Section 4 of the regulatory PDF) — S2B v3.
+- Sync with project memberships (autocomplete from existing team) — Phase 2.
+- Linkage between personnel and incidents/tours — Phase 2.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify safety_registration_router.py exists (created by #468 addendum):
+    test -f backend/contractor_ops/safety_registration_router.py && echo "EXISTS" || echo "MISSING"
+    # Expected: EXISTS. Read this file FIRST — it is the template we extend.
+
+0.2 — Read the upsert endpoint to confirm the managers handling pattern:
+    grep -n "if \"managers\" in updates\|_hash_id_number\|_get_or_init_registration\|def upsert_registration" \
+        backend/contractor_ops/safety_registration_router.py
+    # Expected:
+    #   def upsert_registration(...) — the PUT handler
+    #   if "managers" in updates and updates["managers"] is not None:
+    #     for mgr in updates["managers"]:
+    #       raw_id = mgr.get("id_number")
+    #       if raw_id:
+    #         mgr["id_number_hash"] = _hash_id_number(raw_id)
+    #         ... inline mask ...
+    #   _get_or_init_registration(db, project_id) — lazy init helper
+    # CRITICAL: copy the EXACT shape of this code for personnel handling.
+
+0.3 — Verify existing init dict for safety_project_settings:
+    grep -n -A 15 "_get_or_init_registration\|def _get_or_init_registration" \
+        backend/contractor_ops/safety_registration_router.py | head -25
+    # Expected: a dict with keys including managers: [], permit_number: None, etc.
+    # We add "personnel": [] to this same dict.
+
+0.4 — Verify schemas.py current state for SafetyProjectRegistration:
+    grep -n "class SafetyProjectRegistration\|class SafetyProjectRegistrationUpsert\|class SafetyProjectManager\|^from typing import" \
+        backend/contractor_ops/schemas.py | head -10
+    # Expected:
+    #   from typing import Optional, List, Dict   ← need to add Literal here
+    #   class SafetyProjectManager(BaseModel):    ← keep as-is
+    #   class SafetyProjectRegistration(BaseModel):    ← add personnel field
+    #   class SafetyProjectRegistrationUpsert(BaseModel):    ← add personnel field
+
+0.5 — Verify VALID_SUB_ROLES is the source of truth for the role enum:
+    grep -n "VALID_SUB_ROLES" backend/contractor_ops/invites_router.py
+    # Expected at line 145:
+    #   VALID_SUB_ROLES = ['site_manager', 'execution_engineer',
+    #                      'safety_assistant', 'work_manager', 'safety_officer']
+    # Our 5 personnel role values MUST be a subset/equal to this list.
+    # DO NOT INVENT ROLES (CLAUDE.md rule).
+
+0.6 — Verify SafetyProjectRegistrationPage.js section structure (after #468):
+    grep -n "Section title=\|toggleSection\|openSections" \
+        frontend/src/pages/SafetyProjectRegistrationPage.js | head -10
+    # Expected: 4 sections (1.כללי / 2.מען / 3.מנהלי / 4.אסמכתאות)
+    # Note exact line numbers — we insert between current 3 and current 4.
+
+0.7 — Verify there's no existing personnel naming collision:
+    grep -rn "SafetyProjectPersonnel\|personnel_role\|safety_personnel" \
+        backend/ frontend/src/
+    # Expected: 0 hits. Greenfield.
+
+0.8 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — SCHEMA EXTENSION (file 1 of 4)
+================================================================================
+
+FILE 1 of 4: backend/contractor_ops/schemas.py
+-----------------------------------------------
+
+LOCATION 1.1 — Add `Literal` to the typing import line at top of file:
+
+   CURRENT:
+       from typing import Optional, List, Dict
+
+   REPLACE WITH:
+       from typing import Optional, List, Dict, Literal
+
+LOCATION 1.2 — Add NEW class `SafetyProjectPersonnel` IMMEDIATELY AFTER
+   the existing `SafetyProjectManager` class (added by #468):
+
+   FIND (existing from #468):
+       class SafetyProjectManager(BaseModel):
+           """One manager entry in the registration document.
+           Repeat group — a project can have N managers."""
+           first_name: str = Field(..., min_length=1, max_length=60)
+           last_name: str = Field(..., min_length=1, max_length=60)
+           id_number: Optional[str] = None
+           address: Optional[str] = Field(None, max_length=200)
+           notes: Optional[str] = Field(None, max_length=500)
+
+   ADD AFTER (new class, mirrors structure):
+       class SafetyProjectPersonnel(BaseModel):
+           """One project-level safety role assignee.
+           Repeat group — a project can have N personnel per role
+           (multiple site managers, multiple safety assistants, etc.).
+
+           Roles are the canonical 5 from VALID_SUB_ROLES (invites_router.py:145).
+           Document-only (regulatory) — does NOT grant any system permissions.
+           For permissions, use project_memberships + sub_role separately."""
+           role: Literal[
+               'site_manager',       # מנהל אתר
+               'execution_engineer', # מהנדס ביצוע
+               'safety_assistant',   # עוזר בטיחות
+               'work_manager',       # מנהל עבודה
+               'safety_officer',     # ממונה בטיחות
+           ]
+           first_name: str = Field(..., min_length=1, max_length=60)
+           last_name: str = Field(..., min_length=1, max_length=60)
+           id_number: Optional[str] = None  # PII — hashed on persist (same pattern as managers)
+           license_number: Optional[str] = Field(None, max_length=30)  # רישיון בטיחות
+           notes: Optional[str] = Field(None, max_length=500)
+
+LOCATION 1.3 — Add `personnel` field to `SafetyProjectRegistration` class
+   (existing from #468 — we add ONE line):
+
+   FIND:
+       class SafetyProjectRegistration(BaseModel):
+           """One registration record per project (1:1).
+           Persisted in collection `safety_project_settings`."""
+           # Section 1 — כללי
+           developer_name: Optional[str] = Field(None, max_length=200)
+           main_contractor_name: Optional[str] = Field(None, max_length=200)
+           contractor_registry_number: Optional[str] = Field(None, max_length=20)
+           # Section 2 — מען
+           office_address: Optional[SafetyProjectAddress] = None
+           # Section 3 — מנהלים (repeat group)
+           managers: List[SafetyProjectManager] = Field(default_factory=list)
+           # Additional regulatory fields
+           permit_number: Optional[str] = Field(None, max_length=30)
+           form_4_target_date: Optional[str] = None
+           # Server-managed
+           updated_at: Optional[str] = None
+           updated_by: Optional[str] = None
+
+   REPLACE WITH (insert ONE LINE between managers and permit_number):
+       class SafetyProjectRegistration(BaseModel):
+           """One registration record per project (1:1).
+           Persisted in collection `safety_project_settings`."""
+           # Section 1 — כללי
+           developer_name: Optional[str] = Field(None, max_length=200)
+           main_contractor_name: Optional[str] = Field(None, max_length=200)
+           contractor_registry_number: Optional[str] = Field(None, max_length=20)
+           # Section 2 — מען
+           office_address: Optional[SafetyProjectAddress] = None
+           # Section 3 — מנהלי החברה (company directors — repeat group)
+           managers: List[SafetyProjectManager] = Field(default_factory=list)
+           # Section 4 — אחראי בטיחות בפרויקט (project safety personnel — Batch S2B v2)
+           personnel: List[SafetyProjectPersonnel] = Field(default_factory=list)
+           # Additional regulatory fields
+           permit_number: Optional[str] = Field(None, max_length=30)
+           form_4_target_date: Optional[str] = None
+           # Server-managed
+           updated_at: Optional[str] = None
+           updated_by: Optional[str] = None
+
+LOCATION 1.4 — Add `personnel` field to `SafetyProjectRegistrationUpsert` class:
+
+   FIND:
+       class SafetyProjectRegistrationUpsert(BaseModel):
+           """PATCH-style upsert. All fields optional — partial updates allowed."""
+           developer_name: Optional[str] = None
+           main_contractor_name: Optional[str] = None
+           contractor_registry_number: Optional[str] = None
+           office_address: Optional[SafetyProjectAddress] = None
+           managers: Optional[List[SafetyProjectManager]] = None
+           permit_number: Optional[str] = None
+           form_4_target_date: Optional[str] = None
+
+   REPLACE WITH (insert ONE LINE between managers and permit_number):
+       class SafetyProjectRegistrationUpsert(BaseModel):
+           """PATCH-style upsert. All fields optional — partial updates allowed."""
+           developer_name: Optional[str] = None
+           main_contractor_name: Optional[str] = None
+           contractor_registry_number: Optional[str] = None
+           office_address: Optional[SafetyProjectAddress] = None
+           managers: Optional[List[SafetyProjectManager]] = None
+           personnel: Optional[List[SafetyProjectPersonnel]] = None
+           permit_number: Optional[str] = None
+           form_4_target_date: Optional[str] = None
+
+DO NOT TOUCH:
+- Any other model in schemas.py.
+- The existing `SafetyProjectManager` class — stays as-is (company directors).
+- The existing `SafetyProjectAddress` class — stays as-is.
+
+================================================================================
+PART 2 — ROUTER EXTENSION (file 2 of 4)
+================================================================================
+
+FILE 2 of 4: backend/contractor_ops/safety_registration_router.py
+------------------------------------------------------------------
+
+This file was created by the #468 addendum. We extend it in TWO places.
+
+LOCATION 2.1 — Add `personnel: []` to the lazy init dict in
+   `_get_or_init_registration`. Find the function — it builds a dict
+   with keys like `developer_name, managers, permit_number, ...`.
+
+   FIND the dict that's inserted on first init (looks like):
+       doc = {
+           "id": ...,
+           "project_id": project_id,
+           "developer_name": None,
+           ...
+           "managers": [],
+           "permit_number": None,
+           ...
+       }
+
+   ADD a single key `"personnel": []` immediately after `"managers": []`:
+       doc = {
+           ...
+           "managers": [],
+           "personnel": [],   # ← new line (Batch S2B v2)
+           "permit_number": None,
+           ...
+       }
+
+   Reason: ensures freshly initialized registration docs have personnel
+   as an empty list, not missing/null.
+
+LOCATION 2.2 — Inside the `upsert_registration` PUT handler, add a
+   parallel block for `personnel` IMMEDIATELY AFTER the existing
+   `managers` handling block:
+
+   FIND the existing `managers` handling block (after `updates = payload.dict(...)`):
+       if "managers" in updates and updates["managers"] is not None:
+           for mgr in updates["managers"]:
+               raw_id = mgr.get("id_number")
+               if raw_id:
+                   mgr["id_number_hash"] = _hash_id_number(raw_id)
+                   stripped = raw_id.strip()
+                   if len(stripped) >= 4:
+                       mgr["id_number"] = f"{stripped[:1]}***{stripped[-3:]}"
+                   else:
+                       mgr["id_number"] = "***"
+
+   ADD IMMEDIATELY AFTER (parallel block for personnel):
+       # Batch S2B v2 — personnel handling (mirror of managers).
+       # Same PII pattern: hash + mask id_number on persist; never store raw.
+       if "personnel" in updates and updates["personnel"] is not None:
+           for person in updates["personnel"]:
+               raw_id = person.get("id_number")
+               if raw_id:
+                   person["id_number_hash"] = _hash_id_number(raw_id)
+                   stripped = raw_id.strip()
+                   if len(stripped) >= 4:
+                       person["id_number"] = f"{stripped[:1]}***{stripped[-3:]}"
+                   else:
+                       person["id_number"] = "***"
+
+DO NOT TOUCH:
+- The `required-fields` endpoint — personnel is OPTIONAL, must NOT count
+  toward completion %. The endpoint stays as-is, returning the existing
+  required list (developer_name, main_contractor_name, etc., + managers).
+- The PDF export endpoint (`/registration/export/pdf`) — deferred to S2B v3.
+- The `SAFETY_VIEWERS` / `SAFETY_WRITERS` / auth setup — unchanged.
+- The audit log call — already covers the whole document delta.
+
+================================================================================
+PART 3 — FRONTEND COMPONENT (NEW FILE — file 3 of 4)
+================================================================================
+
+FILE 3 of 4: frontend/src/components/safety/SafetyProjectPersonnelSection.js (NEW)
+----------------------------------------------------------------------------------
+
+CREATE NEW FILE. This component mirrors the managers section UI pattern
+from #468 but groups by role with per-role "+ הוסף" buttons.
+
+DATA FLOW: parent (SafetyProjectRegistrationPage) owns the personnel array
+in its form state and saves via the existing upsertRegistration call.
+This component receives `personnel` + `onChange(newPersonnelArray)` as
+props — fully controlled, no internal data fetching.
+
+   FULL FILE CONTENTS:
+
+       /**
+        * Safety Project Personnel Section — Batch S2B v2 (2026-05-03).
+        *
+        * Renders a collapsible section grouped by 5 safety roles. Each
+        * role has its own "+ הוסף" button and inline list of assignees.
+        * Multiple personnel per role allowed (no count limit).
+        *
+        * Data flow: fully controlled by parent — receives `personnel`
+        * array + `onChange` callback. No internal fetch / save. Saves
+        * happen via the parent's upsertRegistration flow.
+        *
+        * Roles match VALID_SUB_ROLES (invites_router.py:145) — document
+        * labels only, NOT permissions.
+        *
+        * Capacitor: all touch targets py-3 (≥44px). ID inputs type="text"
+        * to preserve leading zeros. PII id_number is masked by server on
+        * save (1***789); raw value never persisted.
+        */
+       import React, { useState } from 'react';
+       import { Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+
+       const ROLE_LABELS = {
+         site_manager:       'מנהל אתר',
+         execution_engineer: 'מהנדס ביצוע',
+         safety_assistant:   'עוזר בטיחות',
+         work_manager:       'מנהל עבודה',
+         safety_officer:     'ממונה בטיחות',
+       };
+
+       const ROLE_ORDER = [
+         'site_manager',
+         'execution_engineer',
+         'safety_assistant',
+         'work_manager',
+         'safety_officer',
+       ];
+
+       const EMPTY_PERSON = (role) => ({
+         role,
+         first_name: '',
+         last_name: '',
+         id_number: '',
+         license_number: '',
+         notes: '',
+       });
+
+       export default function SafetyProjectPersonnelSection({
+         personnel = [],
+         onChange,
+         isOpen,
+         onToggle,
+       }) {
+         // Group personnel by role for display
+         const grouped = ROLE_ORDER.reduce((acc, role) => {
+           acc[role] = personnel
+             .map((p, i) => ({ ...p, _idx: i }))
+             .filter(p => p.role === role);
+           return acc;
+         }, {});
+
+         const totalCount = personnel.length;
+
+         const addPerson = (role) => {
+           onChange([...personnel, EMPTY_PERSON(role)]);
+         };
+
+         const removePerson = (idx) => {
+           if (!window.confirm('להסיר את האחראי הזה?')) return;
+           const next = personnel.filter((_, i) => i !== idx);
+           onChange(next);
+         };
+
+         const updatePerson = (idx, field, value) => {
+           const next = personnel.map((p, i) => (
+             i === idx ? { ...p, [field]: value } : p
+           ));
+           onChange(next);
+         };
+
+         return (
+           <div className="border border-slate-200 rounded-lg bg-white">
+             {/* Header — collapsible */}
+             <button
+               type="button"
+               onClick={onToggle}
+               className="w-full flex items-center justify-between py-3 px-4 text-right"
+             >
+               <span className="text-slate-500">
+                 {isOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+               </span>
+               <span className="font-semibold text-slate-800">
+                 4. אחראי בטיחות בפרויקט ({totalCount})
+               </span>
+             </button>
+
+             {isOpen && (
+               <div className="px-4 pb-4 space-y-4">
+                 {ROLE_ORDER.map(role => (
+                   <div
+                     key={role}
+                     className="border-t border-slate-100 pt-3 first:border-t-0 first:pt-0"
+                   >
+                     <div className="flex items-center justify-between mb-2">
+                       <span className="text-xs text-slate-500">
+                         ({grouped[role].length})
+                       </span>
+                       <h4 className="font-medium text-slate-700">{ROLE_LABELS[role]}</h4>
+                     </div>
+
+                     {/* Existing personnel for this role */}
+                     {grouped[role].length === 0 && (
+                       <p className="text-xs text-slate-400 mb-2">לא הוגדרו {ROLE_LABELS[role]}</p>
+                     )}
+
+                     <div className="space-y-3 mb-2">
+                       {grouped[role].map(person => (
+                         <div
+                           key={person._idx}
+                           className="border border-slate-200 rounded p-3 bg-slate-50 space-y-2"
+                         >
+                           <div className="flex items-start justify-between">
+                             <button
+                               type="button"
+                               onClick={() => removePerson(person._idx)}
+                               className="text-red-500 hover:text-red-700 p-2"
+                               aria-label="הסר"
+                             >
+                               <Trash2 className="w-4 h-4" />
+                             </button>
+                             <span className="text-xs text-slate-500">
+                               #{grouped[role].indexOf(person) + 1}
+                             </span>
+                           </div>
+                           <div className="grid grid-cols-2 gap-2">
+                             <input
+                               type="text"
+                               placeholder="שם פרטי *"
+                               value={person.first_name}
+                               onChange={(e) => updatePerson(person._idx, 'first_name', e.target.value)}
+                               className="border border-slate-300 rounded px-3 py-3 text-right text-sm bg-white"
+                             />
+                             <input
+                               type="text"
+                               placeholder="שם משפחה *"
+                               value={person.last_name}
+                               onChange={(e) => updatePerson(person._idx, 'last_name', e.target.value)}
+                               className="border border-slate-300 rounded px-3 py-3 text-right text-sm bg-white"
+                             />
+                           </div>
+                           <input
+                             type="text"
+                             placeholder="ת.ז (אופציונלי)"
+                             value={person.id_number}
+                             onChange={(e) => updatePerson(person._idx, 'id_number', e.target.value)}
+                             className="w-full border border-slate-300 rounded px-3 py-3 text-right text-sm bg-white"
+                           />
+                           <input
+                             type="text"
+                             placeholder="מספר רישיון בטיחות (אופציונלי)"
+                             value={person.license_number}
+                             onChange={(e) => updatePerson(person._idx, 'license_number', e.target.value)}
+                             className="w-full border border-slate-300 rounded px-3 py-3 text-right text-sm bg-white"
+                           />
+                           <textarea
+                             placeholder="הערות"
+                             value={person.notes}
+                             onChange={(e) => updatePerson(person._idx, 'notes', e.target.value)}
+                             rows={2}
+                             className="w-full border border-slate-300 rounded px-3 py-3 text-right text-sm bg-white"
+                           />
+                         </div>
+                       ))}
+                     </div>
+
+                     <button
+                       type="button"
+                       onClick={() => addPerson(role)}
+                       className="w-full flex items-center justify-center gap-2 py-3 px-4 border border-dashed border-slate-300 rounded text-sm text-slate-600 hover:bg-slate-50"
+                     >
+                       <Plus className="w-4 h-4" /> הוסף {ROLE_LABELS[role]}
+                     </button>
+                   </div>
+                 ))}
+               </div>
+             )}
+           </div>
+         );
+       }
+
+NOTES:
+- All inputs use py-3 → ≥44px touch target (CLAUDE.md Capacitor rule).
+- ID input is type="text" (not "number") to preserve leading zeros.
+- The `_idx` injected via map+filter is a positional index in the parent's
+  full array — used for update/remove to mutate the right entry across
+  role groups.
+- No internal fetch/save — fully controlled by parent. This is intentional
+  and matches the managers section pattern from #468.
+
+================================================================================
+PART 4 — REGISTRATION PAGE EXTENSION (file 4 of 4)
+================================================================================
+
+FILE 4 of 4: frontend/src/pages/SafetyProjectRegistrationPage.js
+-----------------------------------------------------------------
+
+LOCATION 4.1 — Add import for the new component near other component imports:
+
+   ADD (place near other component imports — likely after the lucide-react
+   import and other component imports):
+       import SafetyProjectPersonnelSection from '../components/safety/SafetyProjectPersonnelSection';
+
+LOCATION 4.2 — Extend the openSections initial state to include `personnel`:
+
+   FIND the openSections useState (current keys: general, address, managers,
+   regulatory):
+       const [openSections, setOpenSections] = useState({
+         general: true,
+         address: false,
+         managers: false,
+         regulatory: false,
+       });
+
+   REPLACE WITH (insert `personnel: false` between `managers` and `regulatory`):
+       const [openSections, setOpenSections] = useState({
+         general: true,
+         address: false,
+         managers: false,
+         personnel: false,
+         regulatory: false,
+       });
+
+LOCATION 4.3 — Extend the form state init to include `personnel: []`.
+
+   The form likely has a state variable like `reg` (or similar) that
+   mirrors the SafetyProjectRegistration document. Find where it's
+   initialized (probably with `useState({...})` or similar):
+
+   FIND something like (managers exists; we add personnel next to it):
+       const [reg, setReg] = useState({
+         developer_name: '',
+         ...
+         managers: [],
+         ...
+       });
+
+   ADD `personnel: []` immediately after `managers: []` in the same shape.
+
+   ALSO — wherever the GET response is loaded into state:
+   Make sure it includes `personnel: data.personnel || []` so existing
+   docs without the field initialize as empty array, not undefined.
+
+LOCATION 4.4 — Insert the personnel section between Section 3 (managers)
+   and Section 4 (regulatory). Renumber regulatory section title from
+   "4. אסמכתאות..." to "5. אסמכתאות...".
+
+   FIND the existing structure:
+       {/* Section 3 — מנהלים */}
+       <Section title={`3. מנהלי החברה (${reg.managers.length})`} ...>
+         ...
+       </Section>
+
+       {/* Section 4 — אסמכתאות */}
+       <Section title="4. אסמכתאות רגולטוריות" ...>
+         ...
+       </Section>
+
+   REPLACE WITH:
+       {/* Section 3 — מנהלי החברה (Batch S2A — company directors) */}
+       <Section title={`3. מנהלי החברה (${reg.managers.length})`} ...>
+         ...
+       </Section>
+
+       {/* Section 4 — אחראי בטיחות בפרויקט (Batch S2B v2) */}
+       <SafetyProjectPersonnelSection
+         personnel={reg.personnel || []}
+         onChange={(newPersonnel) => setReg(prev => ({ ...prev, personnel: newPersonnel }))}
+         isOpen={openSections.personnel}
+         onToggle={() => toggleSection('personnel')}
+       />
+
+       {/* Section 5 — אסמכתאות (renumbered from 4) */}
+       <Section title="5. אסמכתאות רגולטוריות" ...>
+         ...
+       </Section>
+
+   IMPORTANT: keep the spacing wrapper between sections consistent with
+   what's already there.
+
+LOCATION 4.5 — Make sure the existing save handler (the one that calls
+   `safetyService.upsertRegistration`) sends `personnel` as part of the
+   payload. If it currently builds the payload with `{ ...reg }` or
+   spreads the form state — no change needed (personnel goes through
+   automatically). If it picks specific fields — add `personnel: reg.personnel`.
+
+   Verify by inspecting the save handler. If unclear, default to the
+   spread approach (match existing managers handling).
+
+DO NOT TOUCH:
+- The completion bar logic / required-fields endpoint — personnel is
+  optional and does NOT count toward completion %.
+- The PDF download button — deferred to S2B v3.
+- The save flow itself — personnel saves atomically with the rest of the
+  form via the existing PUT.
+
+================================================================================
+PART 5 — TESTS (OPTIONAL)
+================================================================================
+
+The existing `test_safety_registration.py` (from #468) already covers:
+- Upsert endpoint contract
+- ID number masking on managers
+- Lazy init of registration doc
+
+This batch adds a parallel field with the same handling. Optional Replit
+addition (2 quick mock tests):
+
+   def test_upsert_persists_personnel():
+       """Personnel field persists through upsert (mirror of managers)."""
+       # ... mock pattern from existing test_safety_registration.py ...
+       payload = {"personnel": [{"role": "site_manager",
+                                 "first_name": "א", "last_name": "ב"}]}
+       result = await upsert_registration(...)
+       assert any(p["role"] == "site_manager" for p in result["personnel"])
+
+   def test_upsert_hashes_personnel_id_numbers():
+       """Personnel ID numbers are hashed + masked on persist."""
+       payload = {"personnel": [{"role": "safety_officer",
+                                 "first_name": "א", "last_name": "ב",
+                                 "id_number": "123456789"}]}
+       result = await upsert_registration(...)
+       p = result["personnel"][0]
+       assert p["id_number"] == "1***789"  # masked
+       assert "id_number_hash" in p  # hash stored
+       assert p["id_number_hash"] != "123456789"  # not raw
+
+If tests time-budget is tight, SKIP the new tests — V9 visual smoke covers
+the user-facing behavior. The existing managers tests cover the shared
+hashing+upsert plumbing.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend syntax + import resolution:
+   cd backend && python -c "from contractor_ops.schemas import \
+       SafetyProjectPersonnel, SafetyProjectRegistration, SafetyProjectRegistrationUpsert; \
+       print('OK')"
+   → prints OK with no ImportError
+
+VERIFY 2 — Personnel field exists on the registration model:
+   cd backend && python -c "from contractor_ops.schemas import SafetyProjectRegistration; \
+       fields = SafetyProjectRegistration.__fields__ if hasattr(SafetyProjectRegistration, '__fields__') else SafetyProjectRegistration.model_fields; \
+       assert 'personnel' in fields; print('OK')"
+   → prints OK
+
+VERIFY 3 — Existing #468 registration tests still pass (no regression):
+   cd backend && python -m pytest tests/test_safety_registration.py -v
+   → all tests pass (same count as before)
+
+VERIFY 4 — Frontend syntax (Babel parse):
+   cd frontend && yarn build
+   → no new warnings or errors
+   (Fall back to babel parse on the 2 changed files if yarn build times
+   out at 120s in sandbox.)
+
+VERIFY 5 — New component file exists + uses py-3 (Capacitor compliance):
+   test -f frontend/src/components/safety/SafetyProjectPersonnelSection.js && echo "EXISTS"
+   grep -c "py-3" frontend/src/components/safety/SafetyProjectPersonnelSection.js
+   → ≥10
+
+VERIFY 6 — Page imports + uses the new section:
+   grep -c "SafetyProjectPersonnelSection" frontend/src/pages/SafetyProjectRegistrationPage.js
+   → ≥2 (1 import, 1 instance)
+
+VERIFY 7 — Regulatory section renumbered to 5:
+   grep -c "5\. אסמכתאות" frontend/src/pages/SafetyProjectRegistrationPage.js
+   → ≥1
+
+VERIFY 8 — Role enum matches VALID_SUB_ROLES (no inventions):
+   grep -E "site_manager|execution_engineer|safety_assistant|work_manager|safety_officer" \
+       frontend/src/components/safety/SafetyProjectPersonnelSection.js | wc -l
+   → ≥10 (5 in ROLE_LABELS keys, 5 in ROLE_ORDER)
+   AND verify NO occurrence of `safety_consultant`:
+   grep -c "safety_consultant" frontend/src/components/safety/SafetyProjectPersonnelSection.js \
+       backend/contractor_ops/schemas.py
+   → 0 (must NOT appear)
+
+VERIFY 9 — Visual smoke (Zahi runs after deploy to staging):
+   a) Login → /projects/{id}/safety/registration → page loads with 5
+      sections visible (1 כללי, 2 מען, 3 מנהלי החברה, 4 אחראי בטיחות,
+      5 אסמכתאות).
+   b) Open section 4 → see 5 role groups: מנהל אתר / מהנדס ביצוע /
+      עוזר בטיחות / מנהל עבודה / ממונה בטיחות. Each shows "(0)" + button.
+   c) Click "+ הוסף מהנדס ביצוע" → empty inline form appears with name,
+      ID, license, notes inputs. All ≥44px tall.
+   d) Fill name "ישראל ישראלי" + ID "123456789" → click main "שמור"
+      at bottom of page → success toast.
+   e) Reload page (F5) → personnel persists. ID shown as "1***789".
+   f) Add second מהנדס ביצוע → both appear under same role group "(2)".
+   g) Add 1 ממונה בטיחות → appears under ממונה group with "(1)".
+   h) Click trash on one row → confirm → row disappears. Click שמור →
+      removal persists after reload.
+   i) Section 5 (אסמכתאות) loads + saves correctly (no regression).
+   j) Section 3 (מנהלי החברה) loads + saves correctly (no regression).
+   k) Mobile viewport (375px DevTools): role groups stack vertically,
+      no horizontal scroll, "+ הוסף" buttons full width.
+   l) PDF download button still works (downloads existing PDF without
+      personnel section — that's S2B v3).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Drift summary if any (compared to spec)
+  - Per-file diff (4 files: 2 backend extend + 1 frontend NEW + 1 frontend extend)
+  - VERIFY 1-8 outputs
+  - VERIFY 9 deferred-to-Zahi note (12 scenarios a-l)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(safety): project safety personnel section (Batch S2B v2)
+
+  Adds a 5-role safety personnel section to the project registration
+  form. Roles match VALID_SUB_ROLES (site_manager, execution_engineer,
+  safety_assistant, work_manager, safety_officer). Multiple per role
+  allowed. Document-only (regulatory) — does NOT grant any system
+  permissions; for permissions use project_memberships + sub_role.
+
+  Architecture: embedded list on safety_project_settings document
+  (mirrors managers from #468). NO new collection, NO new router,
+  NO new API surface — extends the existing PUT /api/safety/{id}/
+  registration endpoint with one parallel handling block.
+
+  PII: id_number hashed (SHA-256) + masked on display (1***789).
+  Same pattern as managers and workers. Raw id_number never persisted.
+
+  Capacitor: all touch targets py-3 (≥44px). Inputs use type="text"
+  for ID to preserve leading zeros.
+
+  PDF integration deferred to S2B v3 (separate batch — keeps risk
+  isolated). Memberships sync deferred to Phase 2.
+
+  Supersedes cancelled S2B v1 (#473) which invented safety_consultant
+  role and created a separate collection.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.7 greps + read safety_registration_router.py)
+2. PART 1 — schemas.py additions (Literal import + new class + 2 field additions)
+3. PART 2 — safety_registration_router.py extension (lazy init + upsert handler)
+4. PART 3 — NEW SafetyProjectPersonnelSection.js
+5. PART 4 — SafetyProjectRegistrationPage.js (import + state + section + renumber)
+6. PART 5 (optional) — 2 mock tests
+7. Run VERIFY 1-8
+8. Generate review.txt + .local/.commit_message
+9. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+4 files revert. The `personnel` field on the model becomes invalid; existing
+docs in DB that already have `personnel` data simply have an extra field
+that Pydantic ignores (no error). The frontend section disappears.
+
+NO data loss. NO migration. NO impact on:
+- Existing managers section (#468)
+- Workers / trainings / incidents (other safety domains)
+- Memberships / auth / RBAC
+- Tasks / handover / billing / QC
+
+================================================================================
+END OF SPEC
+================================================================================

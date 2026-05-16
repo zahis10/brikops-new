@@ -1,0 +1,432 @@
+================================================================================
+HOTFIX FOLLOWUP — Mobile MatrixListView: collapsible cards + vertical stage list
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — UX redesign for mobile (≤768px). Current ListView has
+                horizontal scroll within each card with truncated 9px labels
+                that Zahi reported as "barely readable, unclear, requires
+                tons of scrolling left and down".
+
+Files changed:  1 file
+                  Frontend: components/matrix/MatrixListView.js (~50 LOC)
+
+Tests:          NO new tests. UI redesign only. Backend unchanged.
+Backend:        ZERO changes.
+Mobile:         Frontend OTA via Capgo. No native files.
+DB migration:   NONE.
+
+Family:         Followup to #487 (which was followup to #486 / #485 / #484
+                Phase 2A). Mobile UX polish per Zahi 2026-05-04.
+
+================================================================================
+ROOT CAUSE — Zahi's prod mobile test 2026-05-04
+================================================================================
+
+After #487 deployed to prod, Zahi tested matrix on actual phone and
+reported 4 mobile UX pain points:
+
+1. "צריך לרדת המון למטה" — too much vertical scroll.
+   Current: each card ~130px (header + progress + stages row). 30 units
+   × 130 = 3,900px page.
+
+2. "צריך ללכת המון שמאלה" — too much horizontal scroll within cards.
+   Current: 10 stages × ~50px = 500px wide row, on ~340px viewport.
+
+3. "הכתב קטן בקושי קריא" — text barely readable.
+   Current: stage labels at `text-[9px]`. Way below 12px minimum
+   for mobile readability.
+
+4. "לא ברור מה כל סעיף בצ׳ק ליסט אומר" — unclear what each stage is.
+   Current: labels truncate to "אטי...", "חש...", "אינס..." in narrow
+   ~50px columns.
+
+All 4 stem from the same root: cells laid out HORIZONTALLY in a
+fixed-width row that doesn't fit a phone screen.
+
+================================================================================
+DESIGN DECISION — collapsible cards with vertical stage list
+================================================================================
+
+Per Zahi mockup approval 2026-05-04:
+
+Default state (collapsed) — ~70px per card:
+  ┌─────────────────────────────────┐
+  │ [▼] בניין A · דירה 1 · קומה 1  3/10│
+  │ ──── progress bar ────              │
+  └─────────────────────────────────┘
+
+Expanded state (after tap) — ~480px per card:
+  ┌─────────────────────────────────┐
+  │ [▲] בניין A · דירה 1 · קומה 1  3/10│
+  │ ──── progress bar ────              │
+  │ ──────                              │
+  │ ✓ הכנה ליציקת תקרה              ✅  │
+  │ ✓ בלוקים — שורה ראשונה          ✅  │
+  │ ◷ הכנות אינסטלציה                ⏰  │
+  │ ○ הכנות חשמל בקומה               —  │
+  │ ○ טיח בקומה                      —  │
+  │ ⚠ הצפה/אטימות                   ⚠  │
+  │ ✓ אישור סומסום אחרי בלוקים     ✅  │
+  │ ○ אמבטיה + אינטרפוץ              —  │
+  │ ○ ריצוף דירה                     —  │
+  │ ○ מטבחים                         —  │
+  └─────────────────────────────────┘
+
+D1. Default collapsed — gives at-a-glance scan of all units in compact
+    height. 30 units × 70px = 2,100px (vs current 3,900px).
+
+D2. Vertical stage list when expanded — full names visible, no
+    horizontal scroll, font size 13px (readable).
+
+D3. Tap target = the whole card header (large, mobile-friendly).
+    Chevron icon (▼/▲) on the side as visual affordance.
+
+D4. State per-unit, NOT global. User can have multiple units expanded
+    at once. Useful for comparing 2-3 units.
+
+D5. Phase 2D adds "פתח/סגור הכל" buttons at top — out of scope for
+    this batch. Current batch keeps state per-card simple.
+
+D6. Status icons remain identical to MatrixCell from #484 — just
+    rendered larger (28×28 vs 32×32) and on the LEFT of the row instead
+    of below.
+
+D7. NO change to MatrixGridView (desktop). Desktop's 2D grid pattern
+    is correct for wider viewports.
+
+================================================================================
+CRITICAL PRESERVATION — DO NOT TOUCH
+================================================================================
+
+✋ MatrixGridView.js — desktop grid layout unchanged
+✋ MatrixCell.js — still used for individual status icons
+✋ STATUS_CONFIG.js — 6 status types unchanged
+✋ Backend — zero changes
+✋ ExecutionMatrixPage.js — orchestrator unchanged
+✋ Other pages or components
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify current MatrixListView structure (post-#487):
+    grep -n "overflow-x-auto\|text-\[9px\]\|w-12\|truncate" \
+        frontend/src/components/matrix/MatrixListView.js | head -10
+    # Expected:
+    #   L82: overflow-x-auto on stage row container
+    #   L86: w-12 per stage cell column
+    #   L88: text-[9px] truncate for stage label
+    # These are the elements being replaced.
+
+0.2 — Verify MatrixCell supports the size we'll use:
+    grep -n "size === 'sm'\|h-8 w-8\|h-10 w-10" \
+        frontend/src/components/matrix/MatrixCell.js
+    # Expected: 'sm' = 32x32 (h-8 w-8), 'md' = 40x40 (h-10 w-10).
+    # We use a slightly larger 28x28 (h-7 w-7) inline OR pass 'sm' for
+    # consistency. Decision: pass 'sm' (use existing). Document.
+
+0.3 — Verify React hooks already imported:
+    grep -n "useMemo\|useState\|from 'react'" \
+        frontend/src/components/matrix/MatrixListView.js | head -5
+    # Expected: only useMemo + React imported. We add useState.
+
+0.4 — Verify lucide-react icons available for chevron:
+    grep -rn "ChevronDown\|ChevronUp" \
+        frontend/src/components/matrix/ | head -5
+    # Expected: hits in StatusLegend.js (already used). Same import path.
+
+0.5 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — MatrixListView: collapsible state + vertical stage list
+================================================================================
+
+FILE: frontend/src/components/matrix/MatrixListView.js
+-------------------------------------------------------
+
+LOCATION 1.1 — Update imports (top of file):
+
+   FIND:
+       import React, { useMemo } from 'react';
+       import MatrixCell from './MatrixCell';
+
+   REPLACE WITH:
+       import React, { useMemo, useState } from 'react';
+       import { ChevronDown, ChevronUp } from 'lucide-react';
+       import MatrixCell from './MatrixCell';
+
+LOCATION 1.2 — Add expanded state per unit at component top
+   (right after the `cellsByUnitStage` useMemo):
+
+   ADD (after L12 `}, [cells]);`):
+       // Track expanded state per unit. Default all collapsed.
+       const [expandedUnits, setExpandedUnits] = useState(new Set());
+
+       const toggleUnit = (unitId) => {
+         setExpandedUnits((prev) => {
+           const next = new Set(prev);
+           if (next.has(unitId)) next.delete(unitId);
+           else next.add(unitId);
+           return next;
+         });
+       };
+
+LOCATION 1.3 — Replace the unit card rendering body
+   (current L41-95 — the entire `<div key={unit.id}>` block):
+
+   FIND:
+       <div
+         key={unit.id}
+         className="bg-white rounded-xl border border-slate-200 p-3"
+       >
+         <div className="flex items-center justify-between mb-2">
+           ...header with building badge, unit, floor, count...
+         </div>
+
+         <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mb-3">
+           ...progress bar...
+         </div>
+
+         <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
+           {stages.map((stage) => {
+             ...horizontal stage cell with truncated label...
+           })}
+         </div>
+       </div>
+
+   REPLACE WITH:
+       <div
+         key={unit.id}
+         className="bg-white rounded-xl border border-slate-200 overflow-hidden"
+       >
+         {/* Header — entire row is the tap target */}
+         <button
+           onClick={() => toggleUnit(unit.id)}
+           className="w-full px-3 py-3 hover:bg-slate-50 active:bg-slate-100 transition-colors"
+         >
+           <div className="flex items-center justify-between mb-2">
+             <div className="flex items-center gap-2 min-w-0">
+               {(() => {
+                 const building = buildingsById?.[unit.building_id];
+                 if (!building) return null;
+                 return (
+                   <span
+                     className="inline-flex items-center px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 font-medium text-[11px] shrink-0 max-w-[120px] truncate"
+                     title={building.name}
+                   >
+                     {building.name}
+                   </span>
+                 );
+               })()}
+               <span className="text-sm font-bold text-slate-900 shrink-0">
+                 דירה {unit.unit_no}
+               </span>
+               {floor && (
+                 <span className="text-xs text-slate-500 truncate">
+                   • קומה {floor.floor_number}
+                   {unit.room_count != null && ` • ${unit.room_count} ח'`}
+                 </span>
+               )}
+             </div>
+             <div className="flex items-center gap-2 shrink-0">
+               <span className="text-xs font-medium text-slate-600">
+                 {completed}/{total}
+               </span>
+               {expandedUnits.has(unit.id)
+                 ? <ChevronUp className="w-4 h-4 text-slate-400" />
+                 : <ChevronDown className="w-4 h-4 text-slate-400" />
+               }
+             </div>
+           </div>
+
+           {/* Progress bar — always visible (in collapsed + expanded) */}
+           <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+             <div
+               className="h-full bg-emerald-500 transition-all"
+               style={{ width: `${pct}%` }}
+             />
+           </div>
+         </button>
+
+         {/* Expanded body — vertical stage list */}
+         {expandedUnits.has(unit.id) && (
+           <div className="border-t border-slate-100 px-3 py-2">
+             {stages.map((stage, idx) => {
+               const cell = cellsByUnitStage[`${unit.id}::${stage.id}`];
+               return (
+                 <div
+                   key={stage.id}
+                   className={`flex items-center justify-between gap-3 py-3 ${
+                     idx < stages.length - 1 ? 'border-b border-slate-50' : ''
+                   }`}
+                 >
+                   <span className="text-[13px] text-slate-700 leading-snug min-w-0 flex-1">
+                     {stage.title}
+                   </span>
+                   <div className="shrink-0">
+                     <MatrixCell cell={cell} stage={stage} size="sm" />
+                   </div>
+                 </div>
+               );
+             })}
+           </div>
+         )}
+       </div>
+
+   IMPORTANT:
+   - The entire header IS the tap target — `<button>` wrapper covers
+     building badge + unit + floor + count + progress bar.
+   - Touch target: header padding `py-3` × 2 + content ≈ 56px height.
+     Far above the 44px minimum.
+   - Progress bar visible in BOTH states — gives at-a-glance scan
+     without expansion.
+   - Stage rows have `py-3` (~48px each) for tap target compliance
+     (Phase 2B will add tap-to-edit popover).
+   - `border-b border-slate-50` between stage rows — visual separator
+     without heavy lines.
+   - Last stage skips bottom border (idx check).
+   - `<MatrixCell size="sm">` reuses existing 32×32 status icon — no
+     new size needed.
+
+LOCATION 1.4 — DELETE the unused horizontal stage row code (now lives
+   inside the expanded conditional, no leftover code):
+
+   This is implicit in the REPLACE above. Verify post-edit:
+       grep -c "overflow-x-auto" frontend/src/components/matrix/MatrixListView.js
+       → 0 (was 1)
+       grep -c "text-\[9px\]" frontend/src/components/matrix/MatrixListView.js
+       → 0 (was 1, dropped — now using text-[13px])
+       grep -c "w-12" frontend/src/components/matrix/MatrixListView.js
+       → 0 (was 1, dropped — vertical layout no longer needs fixed-width column)
+
+DO NOT TOUCH:
+- Empty state ("אין דירות בפרויקט")
+- progressForUnit function logic
+- cellsByUnitStage memo
+- Component signature / props (units, stages, cells, floorsById, buildingsById)
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 2 — Stale horizontal-scroll code removed:
+   grep -c "overflow-x-auto\|text-\[9px\]\|shrink-0 w-12" \
+       frontend/src/components/matrix/MatrixListView.js
+   → 0 (all 3 patterns gone)
+   Note: `shrink-0 w-12` (more specific than just `w-12`) avoids
+   false matches if `w-12` appears elsewhere in unrelated context.
+
+VERIFY 3 — New collapsible state present:
+   grep -c "useState\|expandedUnits\|toggleUnit\|ChevronDown\|ChevronUp" \
+       frontend/src/components/matrix/MatrixListView.js
+   → ≥ 5
+
+VERIFY 4 — Stage labels now use readable font (text-[13px]):
+   grep -c "text-\[13px\]" frontend/src/components/matrix/MatrixListView.js
+   → ≥ 1
+
+VERIFY 5 — Backend regression (none touched):
+   cd backend && python -m pytest tests/test_execution_matrix.py \
+       tests/test_qc_override_close.py tests/test_qc_units_status.py -q
+   → all pass (matrix + QC unchanged)
+
+VERIFY 6 — Visual smoke (Zahi runs after deploy to staging):
+
+   Default collapsed state (mobile 375px DevTools / actual phone):
+   a) /projects/{p}/execution-matrix on mobile → all cards default
+      to COLLAPSED. Each card shows: building badge + unit + floor +
+      count + progress bar + chevron-down. ~70px tall.
+   b) Total page height for 30 units = ~2,100px (down from ~3,900px).
+   c) NO horizontal scroll inside any card.
+   d) Stage names NOT visible in collapsed state (intentional).
+
+   Expand interaction:
+   e) Tap any unit card → expands smoothly. Chevron flips to up.
+      Vertical list of all stages appears below progress bar.
+   f) Each stage row shows: full Hebrew name on the right (text-[13px],
+      readable), status icon on the left (32×32).
+   g) Tap card header again → collapses.
+   h) Multiple units can be expanded simultaneously (per-unit state).
+
+   Stage names readable:
+   i) "הכנה ליציקת תקרה" — full text, no truncation.
+   j) "בלוקים — שורה ראשונה" — full text.
+   k) "אישור סומסום אחרי בלוקים" — full text.
+
+   Touch targets:
+   l) Header tap area ≥56px (well above 44px minimum).
+   m) Each stage row ≥48px (ready for Phase 2B tap-to-edit).
+
+   Desktop unchanged:
+   n) ≥768px viewport: MatrixGridView still rendered (no list view).
+      No regression on desktop layout.
+
+   Edge cases:
+   o) Project with 0 units → "אין דירות בפרויקט" still shown.
+   p) Unit with no stages → expanded body is empty (clean).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top
+  - Per-file diff (1 file, ~50 LOC delta)
+  - VERIFY 1-5 outputs
+  - VERIFY 6 deferred-to-Zahi note (16 scenarios a-p)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(matrix): mobile redesign — collapsible cards with vertical stage list
+
+  Followup to #487. Zahi's prod mobile test 2026-05-04 found 4 UX
+  pain points in MatrixListView:
+   1. Cards too tall (130px each) → vertical scroll fatigue
+   2. Horizontal scroll inside cards (10 stages × 50px = 500px)
+   3. Stage labels at text-[9px] — barely readable
+   4. Truncated names ("אטי...", "חש...") — unclear
+
+  Per Zahi mockup approval: collapsible card pattern.
+   - Default: collapsed (header + progress bar only) ~70px height
+   - Tap card → expanded vertical stage list with full names + icons
+   - Stage labels at text-[13px], no truncation
+   - Per-unit state (multiple expanded simultaneously OK)
+   - Whole header is tap target (>56px), each stage row >48px
+
+  Page height reduced from ~3,900px to ~2,100px (default state).
+  Zero horizontal scroll. Full stage names readable. Touch targets
+  compliant with Capacitor / Apple HIG.
+
+  Single file change (MatrixListView.js, ~50 LOC). No backend.
+  Desktop GridView unchanged. Phase 2B's tap-to-edit will plug
+  cleanly into the per-stage row touch target.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (greps + readability)
+2. PART 1 — MatrixListView redesign (~50 LOC)
+3. Run VERIFY 1-5
+4. Generate review.txt + .local/.commit_message
+5. STOP. Zahi reviews. Then he runs:
+     git checkout staging && ./deploy.sh --stag
+   ⚠️ COMMIT ON `staging` BRANCH.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+1 file revert. MatrixListView returns to horizontal scroll layout.
+NO impact on desktop, backend, sort, data, RTL, or any other
+matrix functionality.
+
+================================================================================
+END OF SPEC
+================================================================================

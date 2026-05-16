@@ -1,0 +1,1145 @@
+================================================================================
+BATCH S2A v3 — Safety Project Registration (form + schema + PDF export)
+================================================================================
+V3 SUPERSEDES V2 — Capacitor-native PDF download path (Zahi feedback 2026-05-04):
+  - V2 used `window.URL.createObjectURL(blob)` + programmatic `<a download>`.
+    This is WEB-ONLY. On Capacitor (iOS/Android WebView), `<a download>`
+    does NOT trigger downloads — file goes nowhere visible to user.
+  - V3 uses `downloadBlob()` from `utils/fileDownload.js` (verified at
+    line 14): handles BOTH web AND native via Capacitor.isNativePlatform()
+    detection. Native path: base64 → Filesystem.writeFile to Documents →
+    Share sheet for save/share.
+  - V3 adds `paddingBottom: env(safe-area-inset-bottom)` to the sticky
+    bottom action bar (iOS notch handling — pattern verified in
+    SafetyBulkActionBar.js:9 + QCApproversTab.js:403).
+
+V2 SUPERSEDES V1 — fixed 2 helper-name bugs + Hebrew font wrapping per
+verified code reading (Cowork chat #2 feedback 2026-05-04):
+  - V1 used `_hash_id` — actual is `_hash_id_number` (safety_router.py:71).
+  - V1 used `_mask_id` — DOES NOT EXIST. Use inline masking instead.
+  - V1 used `'HebrewFont'` — actual font is `'Rubik'` / `'Rubik-Bold'`
+    (safety_pdf.py:40,44), and ALL Hebrew strings must be wrapped with
+    `hebrew(text)` helper (pdf_service.py:58) for proper RTL.
+
+Stream: Safety Phase 1 finishing batch (1 of 3-4 remaining sub-batches).
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — feature work, not bug. Closes a foundation gap so other
+                Phase 1 sub-batches can build on top.
+Files changed:  4 files (3 backend, 1 frontend) + 1 NEW test file
+                  Backend: backend/contractor_ops/safety_router.py
+                            backend/contractor_ops/schemas.py
+                            backend/services/safety_pdf.py
+                  Frontend: frontend/src/pages/SafetyProjectRegistrationPage.js (NEW)
+                            frontend/src/services/api.js
+                            frontend/src/App.js
+                  Tests:   backend/tests/test_safety_registration.py (NEW)
+Mobile:         N/A — backend + frontend OTA only.
+DB migration:   NONE — new collection `safety_project_settings`. Documents
+                created on first GET if missing (lazy init), so existing
+                projects keep working seamlessly.
+Pre-flight:     Phase 1 of the safety module already shipped: workers,
+                trainings, documents, tasks, incidents, score, exports.
+                But the project itself has no formal registration record
+                — needed to generate the Israeli "פנקס כללי" / "טופס 4"
+                regulatory documents that make Cemento parity possible.
+
+================================================================================
+CONTEXT
+================================================================================
+
+Current state (verified in code):
+- safety_router.py (1912 lines) implements: workers / trainings / documents /
+  tasks / incidents / score / 3 export endpoints / upload.
+- Frontend SafetyHomePage.js + safetyService in api.js wired to the above.
+- safety_officer sub-role check exists.
+- Soft-delete + audit + retention patterns established.
+
+What's missing (verified absent in code):
+- No `safety_project_settings` collection.
+- No registration-related schema in schemas.py.
+- No "rישומי זיהוי" form in the frontend.
+- The existing PDF exports (excel / filtered / pdf-register) work on
+  workers/trainings data but cannot generate a formal "פנקס כללי" header
+  because there's no developer/contractor/manager metadata.
+
+Per the concept document (`future-features/safety-and-worklog-concept.md`
+lines 701-748) — Israeli law requires the safety project to have a formal
+registration record matching the Ministry of Economy "פנקס הקבלנים" format
+with these EXACT fields:
+
+  Section 1 — כללי (General):
+    - שם היזם (developer name)
+    - שם המבצע (main contractor name)
+    - מספר רישום בפנקס הקבלנים (contractor registry number)
+
+  Section 2 — מען המשרד הראשי (Office address):
+    - הישוב (city)
+    - מיקוד (postal_code)
+    - רח' / ת.ד (street or PO box)
+    - מס' בית (house number)
+    - דואר אלקטרוני (email)
+    - טלפון (phone)
+    - נייד (mobile)
+    - פקס (fax)
+
+  Section 3 — מנהלי החברה (Company managers, repeat group):
+    - שם פרטי (first_name)
+    - שם משפחה (last_name)
+    - מספר ת"ז (id_number — PII; same masking pattern as workers)
+    - המען (address)
+    - הערות (notes)
+
+Plus 2 additional fields not in concept doc but required by Israeli
+regulation:
+  - permit_number (היתר בנייה — building permit number)
+  - form_4_target_date (תאריך יעד טופס 4 — Form 4 target date)
+
+This batch creates that missing record + the form to fill it + the PDF
+export. Future batches (Defect tag, Bottom nav) build on this foundation.
+
+Per Zahi 2026-05-04 (decision): manual entry only. No external API to
+contractor registry — same approach as Phase 1 #1 decision (Workers were
+also manual entry with autocomplete grown from organic DB usage).
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify safety_router.py existing patterns (anchors for new code):
+    grep -n "class SafetyWorkerCreate\|require_roles(\*SAFETY_WRITERS)\|_check_project_access\|SAFETY_WRITERS\s*=" \
+        backend/contractor_ops/safety_router.py | head -10
+    # Expected:
+    #   SAFETY_WRITERS constant defined near top
+    #   class SafetyWorkerCreate at line ~166 (template for our new schema)
+    #   require_roles(*SAFETY_WRITERS) used in POST/PATCH/DELETE
+    #   _check_project_access called in every route
+
+0.2 — Verify there's NO existing registration schema or collection:
+    grep -n "safety_project_settings\|SafetyProjectRegistration\|ProjectRegistration" \
+        backend/contractor_ops/safety_router.py backend/contractor_ops/schemas.py
+    # Expected: 0 hits. If anything is there, STOP and report.
+
+0.3 — Verify safety_pdf.py existing helpers (we'll add to it, not replace):
+    grep -n "^def \|^async def " backend/services/safety_pdf.py | head -10
+    # Expected: existing helpers for current PDF exports (pdf-register, excel).
+    # We add a new helper without touching existing ones.
+
+0.4 — Verify frontend safety routes exist in App.js:
+    grep -n "/safety\|SafetyHomePage" frontend/src/App.js | head -5
+    # Expected: at least 1 existing route under /safety/ — we add a sibling
+    # /registration route.
+
+0.5 — Verify safetyService in api.js to know what to extend:
+    grep -n "export const safetyService" frontend/src/services/api.js
+    # Expected: 1 hit. We'll add 4 new methods (get, save, getPdf, listRequiredFields).
+
+0.6 — V2 — Verify _hash_id_number helper (NOT _hash_id) exists:
+    grep -n "def _hash_id_number\|def _hash_id\|_mask_id" backend/contractor_ops/safety_router.py | head -5
+    # Expected:
+    #   line 70: def _hash_id_number(id_number: Optional[str]) -> Optional[str]:
+    # NOTE: there's NO _hash_id and NO _mask_id helper. Spec uses
+    # _hash_id_number directly + inline masking (no helper).
+
+0.7 — V2 — Verify Hebrew font + RTL helper for PDF:
+    grep -n "registerFont.*Rubik\|from services.pdf_service import hebrew" backend/services/safety_pdf.py | head -5
+    # Expected:
+    #   line 21: from services.pdf_service import hebrew
+    #   line 40: pdfmetrics.registerFont(TTFont("Rubik", regular))
+    #   line 44: pdfmetrics.registerFont(TTFont("Rubik-Bold", bold))
+    # The font name used in c.setFont() calls MUST be 'Rubik' or 'Rubik-Bold'
+    # (NOT 'HebrewFont'). Every Hebrew text string passed to c.drawXxx()
+    # MUST be wrapped with hebrew(text) for correct bidi+RTL rendering.
+
+0.8 — V3 — Verify downloadBlob helper exists (Capacitor PDF download):
+    grep -n "export async function downloadBlob\|@capacitor/filesystem\|@capacitor/share" frontend/src/utils/fileDownload.js | head -5
+    # Expected:
+    #   line 1: import { Capacitor } from '@capacitor/core';
+    #   line 2: import { Filesystem, Directory } from '@capacitor/filesystem';
+    #   line 3: import { Share } from '@capacitor/share';
+    #   line 14: export async function downloadBlob(blob, filename, mimeType) {
+    # If file does NOT exist or function NOT exported — STOP and report.
+    # The new SafetyProjectRegistrationPage MUST use this helper for the
+    # PDF download button instead of raw createObjectURL.
+
+0.9 — V3 — Verify safe-area-inset CSS pattern usage in codebase:
+    grep -rn "safe-area-inset-bottom" frontend/src/components/ | head -3
+    # Expected: at least 2 hits (SafetyBulkActionBar.js + QCApproversTab.js
+    # are known examples). Confirms the pattern to copy.
+
+0.10 — Output STEP 0 audit at the TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — BACKEND SCHEMAS (file 1 of 4)
+================================================================================
+
+FILE 1 of 4: backend/contractor_ops/schemas.py
+-----------------------------------------------
+
+LOCATION 1.1 — Add 3 new Pydantic models at the end of the file (after the
+   last existing safety-related model). If safety models are grouped
+   together, append within that group; otherwise append at end of file.
+
+   ADD:
+       # =====================================================================
+       # Safety Project Registration (Batch S2A 2026-05-04)
+       # Implements Israeli Ministry of Economy "פנקס הקבלנים" format.
+       # Manual entry only (per Zahi decision — no external API).
+       # =====================================================================
+
+       class SafetyProjectManager(BaseModel):
+           """One manager entry in the registration document.
+           Repeat group — a project can have N managers."""
+           first_name: str = Field(..., min_length=1, max_length=60)
+           last_name: str = Field(..., min_length=1, max_length=60)
+           id_number: Optional[str] = None  # PII — hashed on persist (same pattern as workers)
+           address: Optional[str] = Field(None, max_length=200)
+           notes: Optional[str] = Field(None, max_length=500)
+
+       class SafetyProjectAddress(BaseModel):
+           """Section 2 — מען המשרד הראשי / המשרד הרשום."""
+           city: Optional[str] = Field(None, max_length=80)
+           postal_code: Optional[str] = Field(None, max_length=10)
+           street: Optional[str] = Field(None, max_length=120)
+           house_number: Optional[str] = Field(None, max_length=10)
+           email: Optional[str] = Field(None, max_length=120)
+           phone: Optional[str] = Field(None, max_length=20)
+           mobile: Optional[str] = Field(None, max_length=20)
+           fax: Optional[str] = Field(None, max_length=20)
+
+       class SafetyProjectRegistration(BaseModel):
+           """One registration record per project (1:1).
+           Persisted in collection `safety_project_settings`."""
+           # Section 1 — כללי
+           developer_name: Optional[str] = Field(None, max_length=200)
+           main_contractor_name: Optional[str] = Field(None, max_length=200)
+           contractor_registry_number: Optional[str] = Field(None, max_length=20)
+           # Section 2 — מען
+           office_address: Optional[SafetyProjectAddress] = None
+           # Section 3 — מנהלים (repeat group)
+           managers: List[SafetyProjectManager] = Field(default_factory=list)
+           # Additional regulatory fields (not in concept doc but required)
+           permit_number: Optional[str] = Field(None, max_length=30)
+           form_4_target_date: Optional[str] = None  # ISO date string
+           # Server-managed
+           updated_at: Optional[str] = None
+           updated_by: Optional[str] = None
+
+       class SafetyProjectRegistrationUpsert(BaseModel):
+           """PATCH-style upsert. All fields optional — partial updates allowed."""
+           developer_name: Optional[str] = None
+           main_contractor_name: Optional[str] = None
+           contractor_registry_number: Optional[str] = None
+           office_address: Optional[SafetyProjectAddress] = None
+           managers: Optional[List[SafetyProjectManager]] = None
+           permit_number: Optional[str] = None
+           form_4_target_date: Optional[str] = None
+
+DO NOT TOUCH:
+- Any existing model in schemas.py.
+- The Imports at top — `Optional`, `List`, `Field`, `BaseModel` all already
+  imported per existing safety models. Verify with grep before assuming.
+
+================================================================================
+PART 2 — BACKEND ROUTES (file 2 of 4)
+================================================================================
+
+FILE 2 of 4: backend/contractor_ops/safety_router.py
+------------------------------------------------------
+
+LOCATION 2.1 — Add new section + 4 routes at the END of the file (after the
+   last route, before any final code like `__all__`).
+
+   ADD:
+       # =====================================================================
+       # Safety Project Registration (Batch S2A 2026-05-04)
+       # =====================================================================
+
+       async def _get_or_init_registration(db, project_id: str) -> dict:
+           """Lazy init: if no registration doc exists for this project,
+           create an empty one. Idempotent."""
+           existing = await db.safety_project_settings.find_one(
+               {"project_id": project_id, "deletedAt": None}, {"_id": 0}
+           )
+           if existing:
+               return existing
+           now = _now_iso()
+           doc = {
+               "id": str(uuid.uuid4()),
+               "project_id": project_id,
+               "developer_name": None,
+               "main_contractor_name": None,
+               "contractor_registry_number": None,
+               "office_address": None,
+               "managers": [],
+               "permit_number": None,
+               "form_4_target_date": None,
+               "created_at": now,
+               "updated_at": now,
+               "updated_by": None,
+               "deletedAt": None,
+           }
+           await db.safety_project_settings.insert_one(doc)
+           return doc
+
+       @router.get("/{project_id}/registration")
+       async def get_registration(
+           project_id: str,
+           user: dict = Depends(require_roles(*SAFETY_VIEWERS)),
+       ):
+           db = get_db()
+           await _check_project_access(user, project_id)
+           doc = await _get_or_init_registration(db, project_id)
+           return doc
+
+       @router.put("/{project_id}/registration", response_model=SafetyProjectRegistration)
+       async def upsert_registration(
+           project_id: str,
+           payload: SafetyProjectRegistrationUpsert,
+           user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+       ):
+           db = get_db()
+           await _check_project_access(user, project_id)
+
+           existing = await _get_or_init_registration(db, project_id)
+           updates = payload.dict(exclude_unset=True)
+
+           # V2 fix: helper is _hash_id_number (not _hash_id). _mask_id does
+           # NOT exist — use inline masking. PII pattern matches workers
+           # (safety_router.py:71, where _hash_id_number is defined).
+           if "managers" in updates and updates["managers"] is not None:
+               for mgr in updates["managers"]:
+                   raw_id = mgr.get("id_number")
+                   if raw_id:
+                       mgr["id_number_hash"] = _hash_id_number(raw_id)
+                       # Inline mask: keep first 1 + last 3 digits only
+                       # ("123456789" → "1***6789"). Never persist raw id_number.
+                       stripped = raw_id.strip()
+                       if len(stripped) >= 4:
+                           mgr["id_number"] = f"{stripped[:1]}***{stripped[-3:]}"
+                       else:
+                           mgr["id_number"] = "***"  # too short to mask sensibly
+
+           updates["updated_at"] = _now_iso()
+           updates["updated_by"] = user["id"]
+
+           await db.safety_project_settings.update_one(
+               {"project_id": project_id, "deletedAt": None},
+               {"$set": updates}
+           )
+           await _audit_log(
+               db, "safety_project_settings.upsert",
+               actor_id=user["id"], project_id=project_id,
+               before=existing, after=updates,
+           )
+           after = await db.safety_project_settings.find_one(
+               {"project_id": project_id, "deletedAt": None}, {"_id": 0}
+           )
+           return after
+
+       @router.get("/{project_id}/registration/export/pdf")
+       async def export_registration_pdf(
+           project_id: str,
+           user: dict = Depends(require_roles(*SAFETY_VIEWERS)),
+       ):
+           """Export the registration record as a formal Israeli-format PDF
+           (פנקס הקבלנים). Layout matches Ministry of Economy template."""
+           db = get_db()
+           await _check_project_access(user, project_id)
+           doc = await _get_or_init_registration(db, project_id)
+           project = await db.projects.find_one({"id": project_id}, {"_id": 0})
+           from services.safety_pdf import generate_registration_pdf
+           pdf_bytes = generate_registration_pdf(doc, project)
+           return Response(
+               content=pdf_bytes,
+               media_type="application/pdf",
+               headers={
+                   "Content-Disposition": f'attachment; filename="registration_{project_id}.pdf"'
+               },
+           )
+
+       @router.get("/{project_id}/registration/required-fields")
+       async def get_required_fields(
+           project_id: str,
+           user: dict = Depends(require_roles(*SAFETY_VIEWERS)),
+       ):
+           """Returns which fields are missing for a complete registration.
+           Used by frontend to show a 'completion %' indicator."""
+           db = get_db()
+           await _check_project_access(user, project_id)
+           doc = await _get_or_init_registration(db, project_id)
+           required = [
+               "developer_name", "main_contractor_name",
+               "contractor_registry_number", "permit_number",
+           ]
+           required_address = ["city", "street", "house_number"]
+           missing = [f for f in required if not doc.get(f)]
+           addr = doc.get("office_address") or {}
+           for f in required_address:
+               if not addr.get(f):
+                   missing.append(f"office_address.{f}")
+           if not doc.get("managers"):
+               missing.append("managers")
+           total_required = len(required) + len(required_address) + 1  # +1 for managers
+           filled = total_required - len(missing)
+           return {
+               "missing_fields": missing,
+               "completion_pct": int((filled / total_required) * 100),
+               "is_complete": len(missing) == 0,
+           }
+
+   IMPORTANT: imports at top of file may need to add `Response` from fastapi
+   if not already there. Verify with grep before editing.
+
+DO NOT TOUCH:
+- Any existing route or schema in safety_router.py.
+- SAFETY_VIEWERS / SAFETY_WRITERS constants — use as-is.
+- _check_project_access / _audit_log / _hash_id_number / _now_iso —
+  reuse as-is (they exist per other safety routes).
+  NOTE V2: helper is `_hash_id_number` (NOT `_hash_id`). And `_mask_id`
+  does NOT exist — use inline masking as shown above.
+
+================================================================================
+PART 3 — PDF GENERATOR (file 3 of 4)
+================================================================================
+
+FILE 3 of 4: backend/services/safety_pdf.py
+---------------------------------------------
+
+LOCATION 3.1 — Add a new function `generate_registration_pdf` at the end of
+   the file. Reuse existing helpers (font setup, RTL handling, header/footer
+   if present in the existing PDF code).
+
+   ADD (full implementation — V2 uses correct font name 'Rubik' + hebrew() wrapper):
+       def generate_registration_pdf(registration: dict, project: dict) -> bytes:
+           """Generate the formal Israeli safety project registration PDF.
+           Layout matches Ministry of Economy 'פנקס הקבלנים' template:
+             - Cover with project name + date
+             - Section 1: כללי (developer, contractor, registry number)
+             - Section 2: מען המשרד
+             - Section 3: מנהלים (repeat group)
+             - Footer: permit number + form 4 target date
+
+           V2 (Replit feedback): font is 'Rubik' (registered at module top of
+           this file at line 40). All Hebrew strings wrapped via hebrew()
+           helper for proper RTL/bidi rendering. DO NOT use 'HebrewFont'
+           (doesn't exist) and DO NOT pass raw strings to drawRightString
+           (will render as boxes/reversed).
+           """
+           import io
+           from reportlab.lib.pagesizes import A4
+           from reportlab.pdfgen import canvas
+           from reportlab.lib.units import cm
+           # hebrew() is already imported at top of safety_pdf.py:
+           # from services.pdf_service import hebrew
+
+           buffer = io.BytesIO()
+           c = canvas.Canvas(buffer, pagesize=A4)
+           width, height = A4
+
+           # No need to register fonts — already done at module top
+           # (safety_pdf.py:40 registers 'Rubik', :44 registers 'Rubik-Bold').
+
+           # Title
+           c.setFont('Rubik-Bold', 18)
+           project_name = project.get('name', '') if project else ''
+           c.drawRightString(width - 2*cm, height - 2*cm,
+                             hebrew(f"רישומי זיהוי — {project_name}"))
+
+           # Date
+           c.setFont('Rubik', 10)
+           c.drawRightString(width - 2*cm, height - 3*cm,
+                             hebrew(f"תאריך הפקה: {_today_iso()}"))
+
+           y = height - 5*cm
+
+           # Section 1 — כללי
+           c.setFont('Rubik-Bold', 14)
+           c.drawRightString(width - 2*cm, y, hebrew("1. כללי"))
+           y -= 0.8*cm
+           c.setFont('Rubik', 11)
+           _draw_field(c, width, y, "שם היזם", registration.get("developer_name", "—"))
+           y -= 0.6*cm
+           _draw_field(c, width, y, "שם המבצע", registration.get("main_contractor_name", "—"))
+           y -= 0.6*cm
+           _draw_field(c, width, y, "מספר רישום בפנקס הקבלנים",
+                       registration.get("contractor_registry_number", "—"))
+
+           y -= 1*cm
+
+           # Section 2 — מען
+           c.setFont('Rubik-Bold', 14)
+           c.drawRightString(width - 2*cm, y, hebrew("2. מען המשרד הראשי / המשרד הרשום"))
+           y -= 0.8*cm
+           c.setFont('Rubik', 11)
+           addr = registration.get("office_address") or {}
+           _draw_field(c, width, y, "הישוב", addr.get("city", "—")); y -= 0.6*cm
+           _draw_field(c, width, y, "רחוב / ת.ד", addr.get("street", "—")); y -= 0.6*cm
+           _draw_field(c, width, y, "מס' בית", addr.get("house_number", "—")); y -= 0.6*cm
+           _draw_field(c, width, y, "מיקוד", addr.get("postal_code", "—")); y -= 0.6*cm
+           _draw_field(c, width, y, "דואר אלקטרוני", addr.get("email", "—")); y -= 0.6*cm
+           _draw_field(c, width, y, "טלפון", addr.get("phone", "—")); y -= 0.6*cm
+           _draw_field(c, width, y, "נייד", addr.get("mobile", "—")); y -= 0.6*cm
+           _draw_field(c, width, y, "פקס", addr.get("fax", "—"))
+
+           y -= 1.2*cm
+
+           # Section 3 — מנהלים
+           c.setFont('Rubik-Bold', 14)
+           c.drawRightString(width - 2*cm, y, hebrew("3. מנהלי החברה / האגודה / השותפות"))
+           y -= 0.8*cm
+           c.setFont('Rubik', 11)
+           managers = registration.get("managers") or []
+           if not managers:
+               c.drawRightString(width - 2*cm, y, hebrew("(לא הוזנו מנהלים)"))
+           else:
+               for i, mgr in enumerate(managers, 1):
+                   c.setFont('Rubik-Bold', 12)
+                   c.drawRightString(width - 2*cm, y, hebrew(f"מנהל #{i}"))
+                   y -= 0.5*cm
+                   c.setFont('Rubik', 11)
+                   full = f"{mgr.get('first_name','')} {mgr.get('last_name','')}".strip()
+                   _draw_field(c, width, y, "שם מלא", full or "—"); y -= 0.5*cm
+                   _draw_field(c, width, y, "ת.ז (מוסתרת)", mgr.get("id_number", "—")); y -= 0.5*cm
+                   _draw_field(c, width, y, "מען", mgr.get("address", "—")); y -= 0.7*cm
+
+           # Footer (permit + form 4)
+           y = 2*cm  # near bottom
+           c.setFont('Rubik', 10)
+           _draw_field(c, width, y, "מספר היתר בנייה",
+                       registration.get("permit_number", "—"))
+           _draw_field(c, width, y - 0.5*cm, "תאריך יעד טופס 4",
+                       registration.get("form_4_target_date", "—"))
+
+           c.showPage()
+           c.save()
+           return buffer.getvalue()
+
+
+       def _draw_field(c, width, y, label: str, value: str):
+           """Helper: draws "label: value" right-aligned for RTL Hebrew.
+           Wraps the full string with hebrew() for bidi handling."""
+           from reportlab.lib.units import cm
+           c.drawRightString(width - 2*cm, y, hebrew(f"{label}: {value}"))
+
+
+       def _today_iso() -> str:
+           from datetime import datetime
+           return datetime.now().strftime("%d/%m/%Y")
+
+DO NOT TOUCH:
+- Any existing PDF generator function in safety_pdf.py.
+- Imports — only add what's missing for the new function (probably none new).
+
+================================================================================
+PART 4 — FRONTEND (3 files: NEW page + api.js + App.js)
+================================================================================
+
+FILE 4 of 4: frontend/src/services/api.js
+-------------------------------------------
+
+LOCATION 4.1 — Extend `safetyService` with 4 new methods. Find the existing
+   `safetyService` object and append these methods to it:
+
+   ADD (inside safetyService):
+       async getRegistration(projectId) {
+         const response = await axios.get(
+           `${API}/safety/${projectId}/registration`,
+           { headers: getAuthHeader() }
+         );
+         return response.data;
+       },
+       async upsertRegistration(projectId, payload) {
+         const response = await axios.put(
+           `${API}/safety/${projectId}/registration`,
+           payload,
+           { headers: getAuthHeader() }
+         );
+         return response.data;
+       },
+       async getRegistrationRequiredFields(projectId) {
+         const response = await axios.get(
+           `${API}/safety/${projectId}/registration/required-fields`,
+           { headers: getAuthHeader() }
+         );
+         return response.data;
+       },
+       async exportRegistrationPdf(projectId) {
+         const response = await axios.get(
+           `${API}/safety/${projectId}/registration/export/pdf`,
+           { headers: getAuthHeader(), responseType: 'blob' }
+         );
+         return response.data;  // blob
+       },
+
+DO NOT TOUCH:
+- Other methods in safetyService.
+- Other services in api.js.
+
+LOCATION 4.2 — frontend/src/pages/SafetyProjectRegistrationPage.js  (NEW FILE)
+
+CREATE FILE WITH CONTENT (full component, ~280 LOC):
+
+    import React, { useState, useEffect, useCallback } from 'react';
+    import { useParams, useNavigate } from 'react-router-dom';
+    import { ChevronDown, ChevronUp, Save, Download, Trash2, Plus } from 'lucide-react';
+    import { toast } from 'sonner';
+    import { useAuth } from '../contexts/AuthContext';
+    import { safetyService } from '../services/api';
+    // V3: Capacitor-aware PDF download (handles native + web)
+    import { downloadBlob } from '../utils/fileDownload';
+
+    const EMPTY_MANAGER = {
+      first_name: '',
+      last_name: '',
+      id_number: '',
+      address: '',
+      notes: '',
+    };
+
+    const EMPTY_ADDRESS = {
+      city: '',
+      postal_code: '',
+      street: '',
+      house_number: '',
+      email: '',
+      phone: '',
+      mobile: '',
+      fax: '',
+    };
+
+    const Section = ({ title, isOpen, onToggle, children }) => (
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-3">
+        <button
+          onClick={onToggle}
+          className="w-full px-4 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors"
+        >
+          <span className="font-bold text-slate-800">{title}</span>
+          {isOpen ? <ChevronUp className="w-5 h-5 text-slate-500" /> :
+                    <ChevronDown className="w-5 h-5 text-slate-500" />}
+        </button>
+        {isOpen && (
+          <div className="px-4 pb-4 border-t border-slate-100 pt-3" dir="rtl">
+            {children}
+          </div>
+        )}
+      </div>
+    );
+
+    const Field = ({ label, value, onChange, type = 'text', placeholder = '' }) => (
+      <div className="mb-3">
+        <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
+        <input
+          type={type}
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          dir="rtl"
+          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        />
+      </div>
+    );
+
+    export default function SafetyProjectRegistrationPage() {
+      const { projectId } = useParams();
+      const navigate = useNavigate();
+      const { user } = useAuth();
+
+      const [loading, setLoading] = useState(true);
+      const [saving, setSaving] = useState(false);
+      const [reg, setReg] = useState({
+        developer_name: '',
+        main_contractor_name: '',
+        contractor_registry_number: '',
+        office_address: { ...EMPTY_ADDRESS },
+        managers: [],
+        permit_number: '',
+        form_4_target_date: '',
+      });
+      const [completion, setCompletion] = useState({ completion_pct: 0, missing_fields: [], is_complete: false });
+      const [openSections, setOpenSections] = useState({
+        general: true,
+        address: false,
+        managers: false,
+        regulatory: false,
+      });
+
+      const load = useCallback(async () => {
+        setLoading(true);
+        try {
+          const data = await safetyService.getRegistration(projectId);
+          setReg({
+            ...data,
+            office_address: data.office_address || { ...EMPTY_ADDRESS },
+            managers: data.managers || [],
+          });
+          const required = await safetyService.getRegistrationRequiredFields(projectId);
+          setCompletion(required);
+        } catch (err) {
+          console.error('Failed to load registration:', err);
+          toast.error('שגיאה בטעינת רישום הפרויקט');
+        } finally {
+          setLoading(false);
+        }
+      }, [projectId]);
+
+      useEffect(() => { load(); }, [load]);
+
+      const handleSave = async () => {
+        setSaving(true);
+        try {
+          await safetyService.upsertRegistration(projectId, reg);
+          toast.success('רישום הפרויקט נשמר');
+          await load();  // reload to get refreshed completion
+        } catch (err) {
+          console.error('Failed to save registration:', err);
+          toast.error('שגיאה בשמירה');
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      const handleDownloadPdf = async () => {
+        try {
+          const blob = await safetyService.exportRegistrationPdf(projectId);
+          // V3: use downloadBlob helper (works on web + Capacitor native).
+          // Web → blob URL + anchor click. Native → Filesystem.writeFile +
+          // Share sheet. See utils/fileDownload.js:14.
+          await downloadBlob(blob, `registration_${projectId}.pdf`, 'application/pdf');
+          toast.success('הקובץ נשמר');
+        } catch (err) {
+          console.error('Failed to export PDF:', err);
+          toast.error('שגיאה בייצוא PDF');
+        }
+      };
+
+      const setField = (field, value) => setReg(prev => ({ ...prev, [field]: value }));
+      const setAddrField = (field, value) =>
+        setReg(prev => ({ ...prev, office_address: { ...prev.office_address, [field]: value } }));
+      const addManager = () =>
+        setReg(prev => ({ ...prev, managers: [...prev.managers, { ...EMPTY_MANAGER }] }));
+      const removeManager = (idx) =>
+        setReg(prev => ({ ...prev, managers: prev.managers.filter((_, i) => i !== idx) }));
+      const setManagerField = (idx, field, value) =>
+        setReg(prev => ({
+          ...prev,
+          managers: prev.managers.map((m, i) => i === idx ? { ...m, [field]: value } : m),
+        }));
+      const toggleSection = (key) =>
+        setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
+
+      if (loading) {
+        return <div className="p-8 text-center text-slate-500">טוען...</div>;
+      }
+
+      return (
+        <div className="min-h-screen bg-slate-50" dir="rtl">
+          <div className="max-w-2xl mx-auto px-4 py-6">
+            {/* Header */}
+            <div className="mb-6">
+              <h1 className="text-2xl font-bold text-slate-900 mb-2">רישום פרויקט בטיחות</h1>
+              <p className="text-sm text-slate-600">פרטי הפרויקט לפי דרישות פנקס הקבלנים</p>
+              {/* Completion bar */}
+              <div className="mt-3 bg-slate-200 rounded-full h-2 overflow-hidden">
+                <div
+                  className={`h-full transition-all ${completion.is_complete ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                  style={{ width: `${completion.completion_pct}%` }}
+                />
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                {completion.completion_pct}% הושלם ({completion.missing_fields.length} שדות חסרים)
+              </p>
+            </div>
+
+            {/* Section 1 — כללי */}
+            <Section title="1. כללי" isOpen={openSections.general} onToggle={() => toggleSection('general')}>
+              <Field label="שם היזם" value={reg.developer_name} onChange={(v) => setField('developer_name', v)} placeholder="לדוגמה: ארזי הנגב ייזום ובניה בע״מ" />
+              <Field label="שם המבצע (קבלן ראשי)" value={reg.main_contractor_name} onChange={(v) => setField('main_contractor_name', v)} />
+              <Field label="מספר רישום בפנקס הקבלנים" value={reg.contractor_registry_number} onChange={(v) => setField('contractor_registry_number', v)} placeholder="לדוגמה: 24914" />
+            </Section>
+
+            {/* Section 2 — מען */}
+            <Section title="2. מען המשרד הראשי" isOpen={openSections.address} onToggle={() => toggleSection('address')}>
+              <Field label="הישוב" value={reg.office_address?.city} onChange={(v) => setAddrField('city', v)} />
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="רחוב / ת.ד" value={reg.office_address?.street} onChange={(v) => setAddrField('street', v)} />
+                <Field label="מס' בית" value={reg.office_address?.house_number} onChange={(v) => setAddrField('house_number', v)} />
+              </div>
+              <Field label="מיקוד" value={reg.office_address?.postal_code} onChange={(v) => setAddrField('postal_code', v)} />
+              <Field label="דואר אלקטרוני" value={reg.office_address?.email} onChange={(v) => setAddrField('email', v)} type="email" />
+              <div className="grid grid-cols-3 gap-3">
+                <Field label="טלפון" value={reg.office_address?.phone} onChange={(v) => setAddrField('phone', v)} />
+                <Field label="נייד" value={reg.office_address?.mobile} onChange={(v) => setAddrField('mobile', v)} />
+                <Field label="פקס" value={reg.office_address?.fax} onChange={(v) => setAddrField('fax', v)} />
+              </div>
+            </Section>
+
+            {/* Section 3 — מנהלים */}
+            <Section title={`3. מנהלי החברה (${reg.managers.length})`} isOpen={openSections.managers} onToggle={() => toggleSection('managers')}>
+              {reg.managers.length === 0 && (
+                <p className="text-sm text-slate-500 mb-3">לא הוזנו מנהלים. הוסף לפחות מנהל אחד.</p>
+              )}
+              {reg.managers.map((mgr, idx) => (
+                <div key={idx} className="bg-slate-50 rounded-lg p-3 mb-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium text-slate-700">מנהל #{idx + 1}</span>
+                    <button onClick={() => removeManager(idx)} className="text-red-500 hover:text-red-700">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="שם פרטי" value={mgr.first_name} onChange={(v) => setManagerField(idx, 'first_name', v)} />
+                    <Field label="שם משפחה" value={mgr.last_name} onChange={(v) => setManagerField(idx, 'last_name', v)} />
+                  </div>
+                  <Field label="ת.ז" value={mgr.id_number} onChange={(v) => setManagerField(idx, 'id_number', v)} placeholder="9 ספרות (יוצפן בשמירה)" />
+                  <Field label="מען" value={mgr.address} onChange={(v) => setManagerField(idx, 'address', v)} />
+                  <Field label="הערות" value={mgr.notes} onChange={(v) => setManagerField(idx, 'notes', v)} />
+                </div>
+              ))}
+              <button onClick={addManager} className="w-full py-2 border-2 border-dashed border-slate-300 rounded-lg text-slate-600 hover:border-blue-500 hover:text-blue-600 flex items-center justify-center gap-2">
+                <Plus className="w-4 h-4" /> הוסף מנהל
+              </button>
+            </Section>
+
+            {/* Section 4 — Regulatory */}
+            <Section title="4. אסמכתאות רגולטוריות" isOpen={openSections.regulatory} onToggle={() => toggleSection('regulatory')}>
+              <Field label="מספר היתר בנייה" value={reg.permit_number} onChange={(v) => setField('permit_number', v)} />
+              <Field label="תאריך יעד טופס 4" value={reg.form_4_target_date} onChange={(v) => setField('form_4_target_date', v)} type="date" />
+            </Section>
+
+            {/* Action bar — V3: safe-area-inset-bottom for iOS notch + py-3 for ≥44px touch target */}
+            <div
+              className="sticky bottom-0 bg-white border-t border-slate-200 -mx-4 px-4 pt-3 mt-4 flex gap-3"
+              style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+            >
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2"
+              >
+                <Save className="w-4 h-4" /> {saving ? 'שומר...' : 'שמור'}
+              </button>
+              <button
+                onClick={handleDownloadPdf}
+                className="px-4 bg-slate-700 hover:bg-slate-800 text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2"
+                title="הורד את הרישום כ-PDF"
+              >
+                <Download className="w-4 h-4" /> PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+LOCATION 4.3 — frontend/src/App.js (add new route)
+
+   FIND the existing safety route(s) — likely:
+       <Route path="/projects/:projectId/safety" element={<SafetyHomePage />} />
+
+   ADD a sibling route IMMEDIATELY AFTER it:
+       <Route path="/projects/:projectId/safety/registration" element={
+         <ProtectedRoute><SafetyProjectRegistrationPage /></ProtectedRoute>
+       } />
+
+   ADD the import at the top of App.js (near other lazy imports):
+       const SafetyProjectRegistrationPage = React.lazy(() =>
+         import('./pages/SafetyProjectRegistrationPage'));
+
+DO NOT TOUCH:
+- Existing safety route — just add a sibling.
+- ProtectedRoute / Routes structure.
+
+================================================================================
+PART 5 — TESTS (NEW file)
+================================================================================
+
+FILE 5 of 5: backend/tests/test_safety_registration.py  (CREATE NEW)
+
+Use the asyncio.run(run()) pattern (per Batch 6A v2 Finding B — no
+pytest-asyncio plugin in the codebase).
+
+Required tests (10 total):
+
+    """Tests for Batch S2A — Safety Project Registration."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from contractor_ops import safety_router
+
+
+    def test_get_initializes_empty_registration_if_missing():
+        """First GET creates an empty doc lazily."""
+        async def run():
+            db = MagicMock()
+            db.safety_project_settings.find_one = AsyncMock(side_effect=[None, {
+                "id": "x", "project_id": "p1", "deletedAt": None,
+                "developer_name": None, "main_contractor_name": None,
+                "contractor_registry_number": None, "office_address": None,
+                "managers": [], "permit_number": None, "form_4_target_date": None,
+            }])
+            db.safety_project_settings.insert_one = AsyncMock()
+            doc = await safety_router._get_or_init_registration(db, "p1")
+            assert doc["project_id"] == "p1"
+            assert doc["managers"] == []
+            db.safety_project_settings.insert_one.assert_called_once()
+        asyncio.run(run())
+
+    def test_get_returns_existing_registration():
+        """If doc exists, GET returns it without insert."""
+        async def run():
+            db = MagicMock()
+            existing = {"id": "x", "project_id": "p1", "deletedAt": None, "developer_name": "Acme"}
+            db.safety_project_settings.find_one = AsyncMock(return_value=existing)
+            db.safety_project_settings.insert_one = AsyncMock()
+            doc = await safety_router._get_or_init_registration(db, "p1")
+            assert doc["developer_name"] == "Acme"
+            db.safety_project_settings.insert_one.assert_not_called()
+        asyncio.run(run())
+
+    def test_required_fields_all_missing_returns_zero_pct():
+        async def run():
+            db = MagicMock()
+            db.safety_project_settings.find_one = AsyncMock(return_value={
+                "id": "x", "project_id": "p1", "deletedAt": None,
+                "developer_name": None, "main_contractor_name": None,
+                "contractor_registry_number": None, "office_address": None,
+                "managers": [], "permit_number": None, "form_4_target_date": None,
+            })
+            # Simulate the inner endpoint logic
+            doc = await safety_router._get_or_init_registration(db, "p1")
+            required = ["developer_name", "main_contractor_name",
+                        "contractor_registry_number", "permit_number"]
+            required_address = ["city", "street", "house_number"]
+            missing = [f for f in required if not doc.get(f)]
+            addr = doc.get("office_address") or {}
+            for f in required_address:
+                if not addr.get(f):
+                    missing.append(f"office_address.{f}")
+            if not doc.get("managers"):
+                missing.append("managers")
+            assert len(missing) == 8  # 4 + 3 + 1
+        asyncio.run(run())
+
+    def test_required_fields_all_filled_returns_complete():
+        async def run():
+            doc = {
+                "developer_name": "Acme",
+                "main_contractor_name": "Acme",
+                "contractor_registry_number": "12345",
+                "permit_number": "P-001",
+                "office_address": {"city": "TLV", "street": "Main", "house_number": "1"},
+                "managers": [{"first_name": "A", "last_name": "B"}],
+            }
+            required = ["developer_name", "main_contractor_name",
+                        "contractor_registry_number", "permit_number"]
+            required_address = ["city", "street", "house_number"]
+            missing = [f for f in required if not doc.get(f)]
+            addr = doc.get("office_address") or {}
+            for f in required_address:
+                if not addr.get(f):
+                    missing.append(f"office_address.{f}")
+            if not doc.get("managers"):
+                missing.append("managers")
+            assert missing == []
+        asyncio.run(run())
+
+    def test_upsert_hashes_manager_id_numbers():
+        """V2 fix — uses _hash_id_number (real helper) + inline masking
+        (no _mask_id helper exists). Verifies PII pattern matches workers."""
+        async def run():
+            from unittest.mock import patch
+            with patch.object(safety_router, '_hash_id_number', return_value='HASHED'):
+                # The hashing logic happens inside upsert_registration.
+                # We test the building blocks since the route depends on auth.
+                manager = {"first_name": "A", "last_name": "B", "id_number": "123456789"}
+                # Simulate what the route does
+                raw_id = manager.get("id_number")
+                if raw_id:
+                    manager["id_number_hash"] = safety_router._hash_id_number(raw_id)
+                    stripped = raw_id.strip()
+                    if len(stripped) >= 4:
+                        manager["id_number"] = f"{stripped[:1]}***{stripped[-3:]}"
+                    else:
+                        manager["id_number"] = "***"
+                assert manager["id_number_hash"] == "HASHED"
+                # Inline mask: "123456789" → "1***789"
+                assert manager["id_number"] == "1***789"
+        asyncio.run(run())
+
+    def test_inline_mask_short_id_falls_back_to_stars():
+        """Edge: id < 4 chars → "***" instead of substring slicing."""
+        raw = "12"
+        stripped = raw.strip()
+        masked = f"{stripped[:1]}***{stripped[-3:]}" if len(stripped) >= 4 else "***"
+        assert masked == "***"
+
+    def test_pdf_export_returns_bytes_for_empty_registration():
+        from services.safety_pdf import generate_registration_pdf
+        empty_reg = {
+            "developer_name": None,
+            "main_contractor_name": None,
+            "contractor_registry_number": None,
+            "office_address": None,
+            "managers": [],
+            "permit_number": None,
+            "form_4_target_date": None,
+        }
+        project = {"id": "p1", "name": "Test Project"}
+        pdf = generate_registration_pdf(empty_reg, project)
+        assert isinstance(pdf, bytes)
+        assert len(pdf) > 1000  # at least non-trivial PDF size
+        assert pdf[:4] == b"%PDF"  # PDF magic header
+
+    def test_pdf_export_includes_developer_name_when_present():
+        from services.safety_pdf import generate_registration_pdf
+        reg = {
+            "developer_name": "ארזי הנגב ייזום ובניה בע״מ",
+            "main_contractor_name": None,
+            "contractor_registry_number": "24914",
+            "office_address": None, "managers": [],
+            "permit_number": None, "form_4_target_date": None,
+        }
+        project = {"id": "p1", "name": "Test"}
+        pdf = generate_registration_pdf(reg, project)
+        assert pdf[:4] == b"%PDF"
+        # Note: We don't assert text content because PDF text encoding
+        # makes string search unreliable. Verify visually in VERIFY 6.
+
+    def test_managers_can_be_empty_list():
+        """Empty managers list is valid (not required for save, only for completion)."""
+        # Pydantic schema allows empty list per default_factory=list
+        from contractor_ops.schemas import SafetyProjectRegistrationUpsert
+        payload = SafetyProjectRegistrationUpsert(managers=[])
+        assert payload.managers == []
+
+    def test_registration_schema_accepts_partial_update():
+        """PATCH-style — only updated fields included."""
+        from contractor_ops.schemas import SafetyProjectRegistrationUpsert
+        payload = SafetyProjectRegistrationUpsert(developer_name="Just this")
+        as_dict = payload.dict(exclude_unset=True)
+        assert "developer_name" in as_dict
+        assert "main_contractor_name" not in as_dict  # not set, excluded
+
+    def test_registration_address_optional():
+        """Office address is optional — can be None."""
+        from contractor_ops.schemas import SafetyProjectRegistration
+        reg = SafetyProjectRegistration(office_address=None, managers=[])
+        assert reg.office_address is None
+        assert reg.managers == []
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend imports cleanly:
+   cd backend && python -c "from contractor_ops import safety_router; print('OK')"
+   cd backend && python -c "from contractor_ops.schemas import SafetyProjectRegistration, SafetyProjectRegistrationUpsert, SafetyProjectAddress, SafetyProjectManager; print('OK')"
+   cd backend && python -c "from services.safety_pdf import generate_registration_pdf; print('OK')"
+
+VERIFY 2 — pytest:
+   cd backend && python -m pytest tests/test_safety_registration.py -v
+   → 10 passed
+
+VERIFY 3 — New routes registered:
+   grep -c "/registration" backend/contractor_ops/safety_router.py
+   → at least 4 (GET, PUT, export/pdf, required-fields)
+
+VERIFY 4 — New collection name used:
+   grep -c "safety_project_settings" backend/contractor_ops/safety_router.py
+   → at least 3 (find_one + insert_one + update_one)
+
+VERIFY 5 — New schemas exported:
+   grep -c "class SafetyProjectRegistration\|class SafetyProjectRegistrationUpsert\|class SafetyProjectAddress\|class SafetyProjectManager" backend/contractor_ops/schemas.py
+   → 4
+
+VERIFY 6 — Frontend builds:
+   cd frontend && yarn build
+   → no new warnings or errors. (If timeout in sandbox, fall back to babel
+   parse on the new SafetyProjectRegistrationPage.js file.)
+
+VERIFY 7 — Frontend route registered:
+   grep -c "SafetyProjectRegistrationPage\|/safety/registration" frontend/src/App.js
+   → at least 2 (1 lazy import + 1 Route)
+
+VERIFY 8 — safetyService extended:
+   grep -c "getRegistration\|upsertRegistration\|exportRegistrationPdf\|getRegistrationRequiredFields" frontend/src/services/api.js
+   → 4 (one per new method)
+
+VERIFY 9 — Visual smoke test (Zahi runs after deploy to staging):
+   a) Login as project_manager.
+   b) Navigate to /projects/X/safety/registration → form loads with empty state, completion bar shows 0%.
+   c) Fill in developer_name + contractor_registry_number → click Save → toast "נשמר", completion bar updates.
+   d) Add 1 manager with name + ID → save → completion bar updates further.
+   e) Click PDF button → file downloads, PDF opens with the formal registration layout.
+   f) Refresh page → all entered data persists.
+   g) Login as a sub_role user (e.g. site_manager) → page still loads (read access OK).
+   h) sub_role user tries to Save → 403 (writes blocked).
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (output of greps 0.1-0.5)
+  - Per-file diff (5 files):
+      * schemas.py: ~50 LOC added (4 new Pydantic models)
+      * safety_router.py: ~120 LOC added (1 helper + 4 new routes)
+      * safety_pdf.py: ~100 LOC added (1 new function + 2 helpers)
+      * api.js: ~30 LOC added (4 new methods on safetyService)
+      * App.js: ~3 LOC added (lazy import + new Route)
+      * SafetyProjectRegistrationPage.js: NEW FILE (~280 LOC)
+      * tests/test_safety_registration.py: NEW FILE (~180 LOC, 10 tests)
+  - VERIFY 1-8 outputs (skip 9 — Zahi runs visually after deploy)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(safety): project registration form + PDF export (Batch S2A)
+
+  First sub-batch finishing Phase 1 of the safety module. Adds the
+  formal "פנקס הקבלנים" registration record per Israeli regulation:
+  developer/contractor name + registry number, office address,
+  managers (repeat group), permit number, Form 4 target date.
+
+  - New collection safety_project_settings (1:1 with project, lazy-init)
+  - 4 new endpoints under /safety/{id}/registration: GET, PUT,
+    export/pdf, required-fields (completion %)
+  - PDF export matches Israeli ministerial format
+  - Manager ID numbers hashed (PII pattern from workers)
+  - Frontend page with 4 collapsible sections + completion bar
+  - 10 unit tests
+
+  Per Zahi 2026-05-04: manual entry only, no external API.
+
+  Next sub-batches (separate specs): Defect "בטיחות" tag integration,
+  Bottom nav update, dashboard polish. None blocked by this batch.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.5 greps, paste output to top of review.txt)
+2. PART 1 — schemas.py: add 4 new Pydantic models
+3. PART 2 — safety_router.py: add helper + 4 new routes
+4. PART 3 — safety_pdf.py: add generate_registration_pdf + helpers
+5. PART 4.1 — api.js: extend safetyService with 4 methods
+6. PART 4.2 — create SafetyProjectRegistrationPage.js
+7. PART 4.3 — App.js: add route + lazy import
+8. PART 5 — create tests/test_safety_registration.py with 10 tests
+9. Run VERIFY 1-8 (VERIFY 9 is Zahi visual)
+10. Generate review.txt + .local/.commit_message
+11. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+6 files revert. The new collection safety_project_settings can be left in
+the DB — orphaned but harmless. To clean up:
+  db.safety_project_settings.deleteMany({})
+But not required.
+
+================================================================================
+END OF SPEC
+================================================================================

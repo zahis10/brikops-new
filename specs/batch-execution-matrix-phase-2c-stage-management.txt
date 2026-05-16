@@ -1,0 +1,1295 @@
+================================================================================
+BATCH — Execution Matrix Phase 2C: Stage Management (custom columns + hide/reorder)
+================================================================================
+Date:           2026-05-05
+Branch:         staging  (NOT main)
+Severity:       P2 — major UX feature on top of Phase 2A+2B. Lets PMs add
+                their own metadata columns (room count, sale type, etc.)
+                next to execution-control template stages — turning the
+                matrix into a real Excel replacement.
+
+This is PHASE 2C of 4 sub-phases:
+  - PHASE 2A ✅ shipped (#484-#487, #490, #492): Read-only mobile + desktop
+  - PHASE 2B ✅ shipped (#494): Cell editing — popover/sheet + audit
+  - PHASE 2C (THIS): Stage management — add/hide/reorder columns
+  - PHASE 2D: Filters + saved views
+
+Files changed:  3 NEW frontend files + 3 frontend edits + 2 backend edits
+                  Frontend NEW: components/matrix/StageManagementDialog.js (~310 LOC)
+                  Frontend NEW: components/matrix/StageRow.js (~125 LOC)
+                  Frontend NEW: components/matrix/AddStageForm.js (~80 LOC)
+                  Frontend edit: pages/ExecutionMatrixPage.js (~25 LOC for settings icon + dialog state)
+                  Frontend edit: services/matrixService.js (~10 LOC for updateStages)
+                  Frontend edit: hooks/useMatrixData.js (~30 LOC for updateStages action)
+                  Backend edit: contractor_ops/schemas.py (~3 LOC — add id field to MatrixStageCreate)
+                  Backend edit: contractor_ops/execution_matrix_router.py (~15 LOC —
+                                ID validation + expose base_stages_removed in response)
+
+NEW dependency:  @dnd-kit/core + @dnd-kit/sortable (~12KB, modern Drag-and-drop)
+
+Tests:          1-2 new backend tests for ID preservation + base_stages_removed
+                exposure. Visual smoke deferred to Zahi.
+
+Backend:        SMALL changes (NOT zero — corrects 2 latent bugs from #483):
+                  1. `MatrixStageCreate` accepts optional `id` field — required
+                     for preserving custom stage IDs across saves (else cells
+                     get orphaned every time PM saves the dialog).
+                  2. `GET /matrix` response includes `base_stages_removed` —
+                     required so frontend knows which base stages are hidden
+                     and doesn't accidentally un-hide them on save.
+                  See "CRITICAL DATA-INTEGRITY BUG FIXES" section below.
+
+Mobile:         Frontend OTA via Capgo. No native files.
+DB migration:   NONE.
+
+Family:         Phase 2 of Execution Matrix. Continues mobile-first design.
+
+================================================================================
+APPROVED UX DECISIONS (Zahi 2026-05-05)
+================================================================================
+
+D1. **Settings icon (⚙️) in matrix header** — visible only to users with
+    `permissions.can_edit === true`. Click opens StageManagementDialog.
+    Same Radix Dialog pattern as Phase 2B CellEditDialog.
+
+D2. **Modal/Sheet** — bottom sheet on mobile (`bottom-0 rounded-t-2xl`),
+    centered modal on desktop (`md:top-1/2 md:left-1/2`). Same pattern
+    as CellEditDialog from #494.
+
+D3. **Drag-and-drop reorder** for custom stages — `@dnd-kit/core` +
+    `@dnd-kit/sortable`. Touch-friendly. Long-press on mobile.
+
+D4. **Inline expandable AddStageForm** — title input + status/tag
+    radio. Default collapsed. "+ הוסף עמודה" → expand. Submit appends
+    to local custom list (preview, not saved until SAVE).
+
+D5. **Type change blocked** after creation. Backend would orphan data.
+    Type fixed at create time.
+
+D6. **2 separate sections in dialog:**
+      - Section 1: "עמודות מטה-דאטה" (custom stages) — drag-and-drop,
+        add, delete. Render FIRST in matrix (right side, RTL natural).
+      - Section 2: "עמודות בקרת ביצוע" (template stages) — hide/show
+        toggle only. Order fixed by qc_template.
+
+D7. **Custom stages render BEFORE template stages** in the matrix
+    (right side in RTL display). Frontend assigns NEGATIVE orders
+    on save: `order = i - N` for custom stage at index `i` of `N`
+    total. Backend sorts ASC, so all custom (negative) precede
+    all template (positive). Zero backend change required.
+
+D8. **Permissions** — dialog only opens for users with `can_edit`
+    (settings icon hidden otherwise). Backend RBAC remains source
+    of truth for the actual PATCH call (returns 403 for blocked
+    users — defense in depth).
+
+D9. **Save flow** — single PATCH with `{custom_stages_added,
+    base_stages_removed}`. On success: refresh matrix data
+    (re-fetch GET /matrix). On error: toast + dialog stays open.
+
+D10. **Touch targets ≥44px**, safe-area-inset on footer. Same Apple
+     HIG / Capacitor compliance as #490 + #494. **Drag handle MUST also
+     have `min-w-[44px] min-h-[44px]`** (was missed in initial spec).
+
+================================================================================
+🚨 CRITICAL DATA-INTEGRITY BUG FIXES (added per second-chat review 2026-05-05)
+================================================================================
+
+These 2 latent bugs from #483 would cause DATA LOSS if Phase 2C ships
+without backend fixes. Both are small (~5-15 LOC each) and must be in
+this batch.
+
+══════════════════════════════════════════════════════════════
+BUG 1 — Custom stage IDs regenerated on every PATCH /stages save
+══════════════════════════════════════════════════════════════
+
+ROOT CAUSE — verified by reading #483 code:
+
+  schemas.py L170:
+    class MatrixStageCreate(BaseModel):
+        title: str = Field(...)
+        type: Literal['status', 'tag'] = 'status'
+        order: Optional[int] = None
+        # ← NO `id` field
+
+  execution_matrix_router.py PATCH /stages handler:
+    updates = payload.dict(exclude_unset=True)  # Pydantic strips unknown fields
+    if "custom_stages_added" in updates:
+        for i, s in enumerate(updates["custom_stages_added"]):
+            new_custom.append({
+                "id": s.get("id") or f"custom_{uuid.uuid4().hex[:12]}",  # ← .get() always None
+                ...
+            })
+
+  The handler clearly INTENDS to preserve existing IDs (`s.get("id") or ...`),
+  but Pydantic v1 strips `id` from MatrixStageCreate before the handler
+  sees it. Result: every save generates fresh UUIDs for every stage.
+
+IMPACT — DATA LOSS:
+  1. PM creates "סוג מכירה" stage → backend gives it id `custom_abc123`
+  2. PM enters values for 30 units (cells with stage_id=`custom_abc123`)
+  3. PM opens dialog later → reorders something → saves
+  4. Backend regenerates id → stage now `custom_xyz789`
+  5. The 30 cells still reference `custom_abc123` — ORPHANED, never rendered
+
+FIX (3 backend edits):
+
+  1. schemas.py L170 — add `id` field:
+       class MatrixStageCreate(BaseModel):
+           id: Optional[str] = None  # ← NEW: preserves existing custom stage ID
+           title: str = Field(..., min_length=1, max_length=80)
+           type: Literal['status', 'tag'] = 'status'
+           order: Optional[int] = None
+
+  2. execution_matrix_router.py PATCH handler — validate ID against
+     existing stages (security: prevent ID hijacking):
+
+       FIND:
+           if "custom_stages_added" in updates:
+               max_existing_order = max(
+                   (s.get("order", 0) for s in matrix_config.get("custom_stages", [])),
+                   default=999,
+               )
+               new_custom = []
+               for i, s in enumerate(updates["custom_stages_added"]):
+                   new_custom.append({
+                       "id": s.get("id") or f"custom_{uuid.uuid4().hex[:12]}",
+                       ...
+                   })
+
+       REPLACE WITH:
+           if "custom_stages_added" in updates:
+               max_existing_order = max(
+                   (s.get("order", 0) for s in matrix_config.get("custom_stages", [])),
+                   default=999,
+               )
+               # Validate ID preservation: only honor IDs that already exist
+               # in this project's custom_stages (security: prevent ID hijacking).
+               existing_custom_ids = {
+                   s["id"] for s in matrix_config.get("custom_stages", [])
+                   if s.get("id")
+               }
+               new_custom = []
+               for i, s in enumerate(updates["custom_stages_added"]):
+                   sid = s.get("id")
+                   if sid and sid in existing_custom_ids:
+                       keep_id = sid  # preserve — stage existed before
+                   else:
+                       keep_id = f"custom_{uuid.uuid4().hex[:12]}"  # fresh
+                   new_custom.append({
+                       "id": keep_id,
+                       ...
+                   })
+
+  3. NEW backend test in test_execution_matrix.py:
+
+       async def test_update_stages_preserves_existing_custom_ids():
+           """When PATCH /stages includes existing custom IDs, backend
+           preserves them. Cells of these stages stay reachable.
+           Regression guard for #483 latent ID-loss bug."""
+           # Setup: project with 1 custom stage (id="custom_aaa", order=-1)
+           # PATCH with {custom_stages_added: [{id: "custom_aaa", title, type, order: -1}]}
+           # Assert: matrix_config.custom_stages[0].id == "custom_aaa" (preserved)
+           # Optional: PATCH again with {custom_stages_added: [{title, type}]} (no id)
+           # Assert: new id generated, NOT "custom_aaa"
+
+══════════════════════════════════════════════════════════════
+BUG 2 — Hidden base stages get un-hidden on every save
+══════════════════════════════════════════════════════════════
+
+ROOT CAUSE:
+  Frontend (initial Phase 2C draft):
+    const [hiddenBaseIds, setHiddenBaseIds] = useState(new Set());  // ← always empty on open
+    ...
+    const base_stages_removed = Array.from(hiddenBaseIds);  // → []
+    onSave({ ..., base_stages_removed: [] });
+
+  Backend with `exclude_unset=True`: if frontend SENDS the field (even as
+  empty array), backend updates it to empty array. Result: previously
+  hidden stages become visible again.
+
+IMPACT — DESTRUCTIVE BEHAVIOR:
+  1. PM hides "טיח" stage → saved with base_stages_removed=["stage_taich"]
+  2. PM opens dialog later (just to add a new column)
+  3. hiddenBaseIds resets to empty (frontend doesn't know "טיח" is hidden)
+  4. PM adds new column, clicks save
+  5. Frontend sends base_stages_removed=[] → "טיח" un-hidden
+  6. Now PM has to find and re-hide "טיח" — confusing + data churn
+
+FIX (1 backend edit + frontend init):
+
+  1. execution_matrix_router.py GET /matrix handler — expose
+     base_stages_removed in the response:
+
+       FIND the response dict at end of get_matrix():
+           return {
+               "project_id": project_id,
+               "stages": stages,
+               "units": units,
+               "cells": cells_summary,
+               "floors": floors,
+               "buildings": buildings,
+               "permissions": {...},
+               "matrix_config_id": matrix_config["id"],
+           }
+
+       ADD `base_stages_removed`:
+           return {
+               "project_id": project_id,
+               "stages": stages,
+               "units": units,
+               "cells": cells_summary,
+               "floors": floors,
+               "buildings": buildings,
+               "base_stages_removed": matrix_config.get("base_stages_removed", []),  # ← NEW
+               "permissions": {...},
+               "matrix_config_id": matrix_config["id"],
+           }
+
+  2. Frontend StageManagementDialog (PART 6) — initialize hiddenBaseIds
+     from the matrix data, not empty:
+
+       FIND in `useEffect` reset block:
+           setHiddenBaseIds(new Set());  // reset
+
+       REPLACE WITH:
+           setHiddenBaseIds(new Set(initialBaseRemoved));  // hydrated from response
+
+       Where `initialBaseRemoved` is a new prop passed from
+       ExecutionMatrixPage:
+           initialBaseRemoved={data?.base_stages_removed || []}
+
+  3. Update ExecutionMatrixPage (PART 7) to pass the prop:
+
+       <StageManagementDialog
+         ...
+         initialBaseRemoved={data?.base_stages_removed || []}
+       />
+
+  4. NEW backend test:
+
+       async def test_get_matrix_returns_base_stages_removed():
+           """GET /matrix response includes base_stages_removed array
+           so frontend can hydrate dialog state correctly."""
+           # Setup: matrix_config with base_stages_removed=["stage_a", "stage_b"]
+           # Assert: response includes "base_stages_removed": ["stage_a", "stage_b"]
+
+═══════════════════════════════════════════════════════════════════════════════
+
+Both fixes are SMALL but ESSENTIAL. Without them, Phase 2C is destructive:
+- Save 1: PM adds column → 30 cells. ✅
+- Save 2: PM reorders → 30 cells now ORPHANED + hidden stages un-hidden. ❌
+
+================================================================================
+CRITICAL PRESERVATION — DO NOT TOUCH
+================================================================================
+
+✋ Backend code (#483 endpoint serves everything)
+✋ qc_router.py / qc_template / qc_runs (matrix is independent)
+✋ STATUS_CONFIG.js (read-only consumer for type badges)
+✋ MatrixCell, MatrixListView, MatrixGridView render logic
+✋ ExecutionMatrixPage existing back button (#492), CTA layout (#484),
+   StatusLegend, loading/error states
+✋ Phase 2B CellEditDialog / StatusButtonGrid / CellHistoryList
+✋ Auth, billing, safety routers, plans
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify @dnd-kit packages availability:
+    grep -E "dnd-kit|dnd" frontend/package.json
+    # Expected: NOT installed (verified during planning).
+    # ACTION: Replit installs both packages BEFORE writing code:
+    #   yarn add @dnd-kit/core @dnd-kit/sortable
+    # Versions: ^6.x.x (latest stable). Adds ~12KB gzipped.
+    # If somehow already installed (rare), skip the install step and
+    # use the existing version.
+
+0.2 — Verify Radix Dialog pattern (reuse CellEditDialog setup from #494):
+    grep -n "@radix-ui/react-dialog\|Dialog.Root\|Dialog.Content" \
+        frontend/src/components/matrix/CellEditDialog.js | head -5
+    # Expected: existing usage from #494. Same import pattern + Tailwind
+    # classes for mobile sheet vs desktop popover responsiveness.
+
+0.3 — Verify matrixService current shape (post-#494):
+    grep -n "matrixService\|getMatrix\|updateCell" \
+        frontend/src/services/matrixService.js
+    # Expected (post-#494): getMatrix + updateCell + getCellHistory.
+    # We add updateStages.
+
+0.4 — Verify useMatrixData current shape (post-#494):
+    grep -n "useState\|updateCell\|return.*data" \
+        frontend/src/hooks/useMatrixData.js | head -10
+    # Expected (post-#494): data, loading, error, refresh, updateCell
+    # in returned object. We add updateStages.
+
+0.5 — Verify ExecutionMatrixPage header layout (post-#492):
+    grep -n "LayoutGrid\|ArrowRight\|h1.*מטריצת" \
+        frontend/src/pages/ExecutionMatrixPage.js | head -5
+    # Expected: header with back button (ArrowRight) + LayoutGrid icon
+    # + h1 title + subtitle. We add Settings icon AFTER LayoutGrid box.
+
+0.6 — Verify can_edit availability:
+    grep -n "permissions\|can_edit\|canEdit" \
+        frontend/src/pages/ExecutionMatrixPage.js
+    # Expected (post-#494): canEdit derived from data.permissions.can_edit.
+    # We reuse the same flag — settings icon hidden if !canEdit.
+
+0.7 — Verify lucide-react icons we'll use:
+    grep -n "Settings\|Eye\|EyeOff\|Trash2\|GripVertical\|Plus" \
+        frontend/src/pages/StageDetailPage.js \
+        frontend/src/components/matrix/StatusLegend.js | head -5
+    # Note which icons are NEW (need to add to imports). We use:
+    #   - Settings (⚙️ entry icon)
+    #   - GripVertical (≡ drag handle)
+    #   - Eye / EyeOff (👁 / 🚫 hide toggle)
+    #   - Trash2 (🗑 delete)
+    #   - Plus (+ add)
+    # All standard Lucide icons. Confirm package version supports them.
+
+0.8 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — Install @dnd-kit packages
+================================================================================
+
+Run from frontend directory:
+
+    cd frontend && yarn add @dnd-kit/core @dnd-kit/sortable
+
+This installs:
+  - @dnd-kit/core (drag-and-drop primitives, ~10KB)
+  - @dnd-kit/sortable (sortable list helpers, ~2KB)
+
+Confirm package.json updated; commit the lock file change with the rest
+of the batch.
+
+================================================================================
+PART 2 — matrixService.updateStages
+================================================================================
+
+FILE: frontend/src/services/matrixService.js
+---------------------------------------------
+
+LOCATION 2.1 — Add after the existing `getCellHistory` method:
+
+   ADD:
+       async updateStages(projectId, payload) {
+         // payload: {
+         //   custom_stages_added: [{ title, type, order }],
+         //   base_stages_removed: [stage_id, ...]
+         // }
+         // Returns: { project_id, stages: [...resolved stages] }
+         const response = await axios.patch(
+           `${API}/execution-matrix/${projectId}/stages`,
+           payload,
+           { headers: getAuthHeader() }
+         );
+         return response.data;
+       },
+
+   IMPORTANT — uses `${API}/execution-matrix/...` (no `/api/` prefix —
+   per #494 D-svc finding, API constant already includes `/api`).
+
+================================================================================
+PART 3 — useMatrixData.updateStages action
+================================================================================
+
+FILE: frontend/src/hooks/useMatrixData.js
+------------------------------------------
+
+LOCATION 3.1 — Add `updateStages` action inside the hook (after `updateCell`):
+
+   ADD:
+       const updateStages = useCallback(async (payload) => {
+         if (!projectId) return { ok: false, error: 'no_project' };
+         try {
+           await matrixService.updateStages(projectId, payload);
+           // Refetch full matrix to pick up the new stage list + cells
+           // (some cells may have been hidden by base_stages_removed).
+           await load();
+           return { ok: true };
+         } catch (err) {
+           const detail = err?.response?.data?.detail || 'שגיאה בשמירת העמודות';
+           return { ok: false, error: detail };
+         }
+       }, [projectId, load]);
+
+LOCATION 3.2 — Update the return value:
+
+   FIND:
+       return { data, loading, error, refresh: load, updateCell };
+
+   REPLACE WITH:
+       return { data, loading, error, refresh: load, updateCell, updateStages };
+
+   IMPORTANT — `load` (the existing fetch fn) is reused for the refetch
+   on success. No optimistic update for stage management because the
+   server reshapes the entire stage list (e.g., reorders, hides cells of
+   removed bases). Simpler + correct than trying to mirror.
+
+DO NOT TOUCH:
+- Existing useEffect / AbortController / updateCell logic.
+
+================================================================================
+PART 4 — StageRow component (NEW)
+================================================================================
+
+FILE: frontend/src/components/matrix/StageRow.js (NEW)
+-------------------------------------------------------
+
+   FULL FILE:
+
+       import React from 'react';
+       import { useSortable } from '@dnd-kit/sortable';
+       import { CSS } from '@dnd-kit/utilities';
+       import { GripVertical, Eye, EyeOff, Trash2 } from 'lucide-react';
+
+       /**
+        * Single stage row inside StageManagementDialog.
+        *
+        * Two modes by `mode` prop:
+        *   'custom' → sortable (drag handle), with Trash2 delete button.
+        *   'base'   → not sortable (template order is fixed), with Eye/EyeOff toggle.
+        *
+        * Props:
+        *   stage: { id, title, type, source, scope? }
+        *   mode: 'custom' | 'base'
+        *   isHidden: bool (only meaningful for base stages)
+        *   onToggleHide: () => void (base mode)
+        *   onDelete: () => void (custom mode)
+        */
+       export default function StageRow({ stage, mode, isHidden = false, onToggleHide, onDelete }) {
+         const isCustom = mode === 'custom';
+
+         // Sortable hook — only used for custom rows; for base rows we still
+         // call it to keep the hook order stable, but pass `disabled: true`.
+         const sortable = useSortable({
+           id: stage.id,
+           disabled: !isCustom,
+         });
+         const style = {
+           transform: CSS.Transform.toString(sortable.transform),
+           transition: sortable.transition,
+           opacity: sortable.isDragging ? 0.5 : 1,
+         };
+
+         const typeLabel = stage.type === 'tag' ? 'תגית' : 'סטטוס';
+         const typeColor = stage.type === 'tag'
+           ? 'bg-amber-50 text-amber-800 border-amber-200'
+           : 'bg-emerald-50 text-emerald-800 border-emerald-200';
+
+         return (
+           <div
+             ref={sortable.setNodeRef}
+             style={style}
+             className={`
+               flex items-center gap-2 py-2 px-2 rounded-lg
+               ${isCustom ? 'bg-violet-50 border border-violet-200' : 'bg-slate-50 border border-slate-200'}
+               ${isHidden ? 'opacity-60' : ''}
+             `}
+             dir="rtl"
+           >
+             {/* Drag handle (custom only). MUST be ≥44×44px for mobile touch. */}
+             {isCustom ? (
+               <button
+                 type="button"
+                 className="p-2 -m-2 cursor-grab active:cursor-grabbing touch-none text-slate-400 hover:text-slate-600 min-w-[44px] min-h-[44px] inline-flex items-center justify-center"
+                 {...sortable.attributes}
+                 {...sortable.listeners}
+                 aria-label="גרור לשינוי סדר"
+               >
+                 <GripVertical className="w-4 h-4" />
+               </button>
+             ) : (
+               <span className="w-6 h-6 inline-flex items-center justify-center text-slate-300">
+                 <Eye className="w-4 h-4" />
+               </span>
+             )}
+
+             {/* Title */}
+             <span className={`flex-1 text-sm font-medium truncate ${isHidden ? 'line-through text-slate-500' : 'text-slate-900'}`}>
+               {stage.title}
+             </span>
+
+             {/* Type badge */}
+             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${typeColor} shrink-0`}>
+               {typeLabel}
+             </span>
+
+             {/* Action icon */}
+             {isCustom ? (
+               <button
+                 type="button"
+                 onClick={onDelete}
+                 className="p-2 -m-2 text-red-500 hover:bg-red-50 rounded-lg min-w-[44px] min-h-[44px] inline-flex items-center justify-center"
+                 aria-label="מחק עמודה"
+               >
+                 <Trash2 className="w-4 h-4" />
+               </button>
+             ) : (
+               <button
+                 type="button"
+                 onClick={onToggleHide}
+                 className={`p-2 -m-2 rounded-lg min-w-[44px] min-h-[44px] inline-flex items-center justify-center ${
+                   isHidden
+                     ? 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
+                     : 'text-slate-700 hover:bg-slate-100'
+                 }`}
+                 aria-label={isHidden ? 'הצג עמודה' : 'הסתר עמודה'}
+               >
+                 {isHidden ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+               </button>
+             )}
+           </div>
+         );
+       }
+
+   IMPORTANT:
+   - `useSortable` always called (React rules-of-hooks); `disabled: true`
+     for base rows preserves hook order without enabling drag.
+   - `touch-none` on drag handle — required by @dnd-kit for mobile.
+   - Action button has explicit min-w/h-[44px] for touch target.
+   - `line-through` on title when hidden gives visual cue.
+
+================================================================================
+PART 5 — AddStageForm component (NEW)
+================================================================================
+
+FILE: frontend/src/components/matrix/AddStageForm.js (NEW)
+-----------------------------------------------------------
+
+   FULL FILE:
+
+       import React, { useState } from 'react';
+       import { Plus, ChevronDown, ChevronUp } from 'lucide-react';
+
+       /**
+        * Inline expandable form for adding a new custom stage.
+        * Default collapsed; "+ הוסף עמודה חדשה" expands the form.
+        *
+        * Props:
+        *   onAdd: (newStage) => void
+        *     newStage: { title, type }
+        */
+       export default function AddStageForm({ onAdd }) {
+         const [open, setOpen] = useState(false);
+         const [title, setTitle] = useState('');
+         const [type, setType] = useState('tag'); // default tag for metadata
+
+         const canSubmit = title.trim().length > 0;
+
+         const handleSubmit = (e) => {
+           e?.preventDefault();
+           if (!canSubmit) return;
+           onAdd({ title: title.trim(), type });
+           setTitle('');
+           setType('tag');
+           setOpen(false);
+         };
+
+         if (!open) {
+           return (
+             <button
+               type="button"
+               onClick={() => setOpen(true)}
+               className="w-full flex items-center justify-center gap-2 py-3 px-3 rounded-lg border-2 border-dashed border-violet-300 text-violet-700 hover:bg-violet-50 active:bg-violet-100 transition-colors text-sm font-medium min-h-[44px]"
+               dir="rtl"
+             >
+               <Plus className="w-4 h-4" />
+               הוסף עמודה חדשה
+             </button>
+           );
+         }
+
+         return (
+           <form
+             onSubmit={handleSubmit}
+             className="bg-violet-50 border border-violet-200 rounded-lg p-3 space-y-3"
+             dir="rtl"
+           >
+             <div className="flex items-center justify-between">
+               <span className="text-xs font-bold text-violet-900">עמודה חדשה</span>
+               <button
+                 type="button"
+                 onClick={() => { setOpen(false); setTitle(''); setType('tag'); }}
+                 className="text-xs text-slate-500 hover:text-slate-900"
+                 aria-label="סגור טופס"
+               >
+                 <ChevronUp className="w-4 h-4" />
+               </button>
+             </div>
+             <input
+               type="text"
+               value={title}
+               onChange={(e) => setTitle(e.target.value)}
+               placeholder="שם העמודה"
+               maxLength={80}
+               autoFocus
+               className="w-full px-3 py-2 rounded-lg border border-violet-300 text-sm focus:outline-none focus:border-violet-500 bg-white"
+             />
+             <div className="flex gap-3 text-xs">
+               <label className="flex items-center gap-1.5 cursor-pointer">
+                 <input
+                   type="radio"
+                   name="stageType"
+                   value="tag"
+                   checked={type === 'tag'}
+                   onChange={() => setType('tag')}
+                 />
+                 <span>תגית (טקסט חופשי)</span>
+               </label>
+               <label className="flex items-center gap-1.5 cursor-pointer">
+                 <input
+                   type="radio"
+                   name="stageType"
+                   value="status"
+                   checked={type === 'status'}
+                   onChange={() => setType('status')}
+                 />
+                 <span>סטטוס (6 ערכים)</span>
+               </label>
+             </div>
+             <button
+               type="submit"
+               disabled={!canSubmit}
+               className="w-full py-2.5 rounded-lg bg-violet-600 hover:bg-violet-700 active:bg-violet-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-sm font-bold transition-colors min-h-[44px]"
+             >
+               הוסף לרשימה
+             </button>
+           </form>
+         );
+       }
+
+   IMPORTANT:
+   - Default collapsed (single line) → minimal UI noise.
+   - Default type = 'tag' (PM most common case for metadata).
+   - "Add to list" submit doesn't save to backend; just appends to
+     the parent's local state. Save happens via dialog's "שמור" button.
+
+================================================================================
+PART 6 — StageManagementDialog component (NEW, the main piece)
+================================================================================
+
+FILE: frontend/src/components/matrix/StageManagementDialog.js (NEW)
+--------------------------------------------------------------------
+
+   FULL FILE:
+
+       import React, { useState, useEffect } from 'react';
+       import * as Dialog from '@radix-ui/react-dialog';
+       import { X, Loader2 } from 'lucide-react';
+       import { toast } from 'sonner';
+       import {
+         DndContext, closestCenter, PointerSensor, KeyboardSensor,
+         useSensor, useSensors,
+       } from '@dnd-kit/core';
+       import {
+         arrayMove, SortableContext, verticalListSortingStrategy,
+       } from '@dnd-kit/sortable';
+       import StageRow from './StageRow';
+       import AddStageForm from './AddStageForm';
+
+       /**
+        * Stage management dialog — modal/sheet for adding/hiding/reordering columns.
+        *
+        * Props:
+        *   open: bool
+        *   onClose: () => void
+        *   onSave: (payload) => Promise<{ok, error?}>
+        *     payload: { custom_stages_added, base_stages_removed }
+        *   stages: [{ id, title, type, source, scope?, order }]
+        *   initialBaseRemoved: [stage_id, ...] — base stage IDs currently hidden
+        *     (from /matrix response, see CRITICAL FIX 2)
+        */
+       export default function StageManagementDialog({
+         open, onClose, onSave, stages, initialBaseRemoved = [],
+       }) {
+         // Initial split: base vs custom
+         const initialBase = (stages || []).filter(s => s.source === 'base');
+         const initialCustom = (stages || []).filter(s => s.source === 'custom');
+
+         // Local state — reset when dialog opens
+         const [customStages, setCustomStages] = useState([]);
+         const [hiddenBaseIds, setHiddenBaseIds] = useState(new Set());
+         const [saving, setSaving] = useState(false);
+
+         useEffect(() => {
+           if (open) {
+             setCustomStages(initialCustom.map(s => ({ ...s }))); // shallow clone
+             // CRITICAL FIX 2 — hydrate from response, NOT empty.
+             // Without this, every save un-hides previously hidden stages.
+             setHiddenBaseIds(new Set(initialBaseRemoved));
+             setSaving(false);
+           }
+           // eslint-disable-next-line react-hooks/exhaustive-deps
+         }, [open, stages, initialBaseRemoved]);
+
+         // dnd-kit sensors — pointer (mouse/touch) + keyboard for a11y
+         const sensors = useSensors(
+           useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+           useSensor(KeyboardSensor),
+         );
+
+         const handleDragEnd = (event) => {
+           const { active, over } = event;
+           if (!over || active.id === over.id) return;
+           const oldIndex = customStages.findIndex(s => s.id === active.id);
+           const newIndex = customStages.findIndex(s => s.id === over.id);
+           if (oldIndex < 0 || newIndex < 0) return;
+           setCustomStages((prev) => arrayMove(prev, oldIndex, newIndex));
+         };
+
+         const handleDeleteCustom = (stageId) => {
+           setCustomStages((prev) => prev.filter(s => s.id !== stageId));
+         };
+
+         const handleToggleHideBase = (stageId) => {
+           setHiddenBaseIds((prev) => {
+             const next = new Set(prev);
+             if (next.has(stageId)) next.delete(stageId);
+             else next.add(stageId);
+             return next;
+           });
+         };
+
+         const handleAdd = ({ title, type }) => {
+           // Generate a temporary client-side id (backend will replace on save)
+           const tempId = `__new_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+           setCustomStages((prev) => [
+             ...prev,
+             {
+               id: tempId,
+               title,
+               type,
+               source: 'custom',
+               _isNew: true, // marker
+             },
+           ]);
+         };
+
+         const handleSave = async () => {
+           if (saving) return;
+           setSaving(true);
+
+           // Compute negative orders so custom stages render BEFORE
+           // template stages (right side in RTL display).
+           // i=0 → most negative (rightmost), last → -1.
+           const N = customStages.length;
+           const custom_stages_added = customStages.map((s, i) => ({
+             // CRITICAL FIX 1 — preserve existing custom stage IDs so
+             // their cells stay reachable. Only NEW stages (added in
+             // this dialog session, marker `_isNew: true`) get fresh
+             // backend IDs. Existing stages keep their server-assigned ID.
+             ...(s._isNew ? {} : { id: s.id }),
+             title: s.title,
+             type: s.type,
+             order: i - N, // -N..-1 ascending
+           }));
+           const base_stages_removed = Array.from(hiddenBaseIds);
+
+           const result = await onSave({ custom_stages_added, base_stages_removed });
+           setSaving(false);
+           if (result.ok) {
+             onClose();
+           } else {
+             toast.error(result.error || 'שגיאה בשמירת העמודות');
+           }
+         };
+
+         if (!open) return null;
+
+         return (
+           <Dialog.Root open={open} onOpenChange={(o) => !o && onClose()}>
+             <Dialog.Portal>
+               <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50" />
+               <Dialog.Content
+                 className="
+                   fixed z-50 bg-white shadow-2xl
+                   inset-x-0 bottom-0 rounded-t-2xl max-h-[90vh]
+                   md:inset-auto md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2
+                   md:rounded-2xl md:max-w-lg md:w-full md:max-h-[85vh]
+                   flex flex-col overflow-hidden
+                 "
+                 dir="rtl"
+               >
+                 {/* Mobile drag handle */}
+                 <div className="md:hidden flex justify-center py-2">
+                   <div className="w-10 h-1 bg-slate-300 rounded-full" />
+                 </div>
+
+                 {/* Header */}
+                 <div className="flex items-start justify-between gap-2 px-4 pt-2 pb-3 border-b border-slate-200">
+                   <Dialog.Title className="text-base font-bold text-slate-900">
+                     ניהול עמודות
+                   </Dialog.Title>
+                   <Dialog.Close asChild>
+                     <button
+                       className="p-1.5 -m-1.5 hover:bg-slate-100 rounded-lg transition-colors shrink-0"
+                       aria-label="סגור"
+                     >
+                       <X className="w-5 h-5 text-slate-500" />
+                     </button>
+                   </Dialog.Close>
+                 </div>
+
+                 {/* Body — scrollable */}
+                 <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+
+                   {/* Section 1: Custom (metadata) stages */}
+                   <section>
+                     <h3 className="text-xs font-bold text-slate-700 mb-2">
+                       📋 עמודות מטה-דאטה
+                       <span className="text-[10px] font-normal text-slate-500 mr-2">
+                         (יוצגו ראשונות, מימין לשמאל)
+                       </span>
+                     </h3>
+                     <div className="mb-3">
+                       <AddStageForm onAdd={handleAdd} />
+                     </div>
+                     {customStages.length === 0 ? (
+                       <div className="text-xs text-slate-400 py-4 text-center leading-relaxed">
+                         אין עדיין עמודות מותאמות.
+                         <br />
+                         הוסף עמודה ראשונה למעלה ↑
+                       </div>
+                     ) : (
+                       <DndContext
+                         sensors={sensors}
+                         collisionDetection={closestCenter}
+                         onDragEnd={handleDragEnd}
+                       >
+                         <SortableContext
+                           items={customStages.map(s => s.id)}
+                           strategy={verticalListSortingStrategy}
+                         >
+                           <div className="space-y-2">
+                             {customStages.map((stage) => (
+                               <StageRow
+                                 key={stage.id}
+                                 stage={stage}
+                                 mode="custom"
+                                 onDelete={() => handleDeleteCustom(stage.id)}
+                               />
+                             ))}
+                           </div>
+                         </SortableContext>
+                       </DndContext>
+                     )}
+                   </section>
+
+                   {/* Divider */}
+                   <div className="border-t border-slate-200" />
+
+                   {/* Section 2: Template (base) stages */}
+                   <section>
+                     <h3 className="text-xs font-bold text-slate-700 mb-2">
+                       🔨 עמודות בקרת ביצוע
+                       <span className="text-[10px] font-normal text-slate-500 mr-2">
+                         (מהתבנית — סדר קבוע, אפשר רק להציג/להסתיר)
+                       </span>
+                     </h3>
+                     {initialBase.length === 0 ? (
+                       <div className="text-xs text-slate-400 py-3 text-center">
+                         אין שלבים בתבנית
+                       </div>
+                     ) : (
+                       <div className="space-y-2">
+                         {initialBase.map((stage) => (
+                           <StageRow
+                             key={stage.id}
+                             stage={stage}
+                             mode="base"
+                             isHidden={hiddenBaseIds.has(stage.id)}
+                             onToggleHide={() => handleToggleHideBase(stage.id)}
+                           />
+                         ))}
+                       </div>
+                     )}
+                   </section>
+                 </div>
+
+                 {/* Footer — sticky */}
+                 <div
+                   className="flex items-center justify-end gap-2 px-4 py-3 border-t border-slate-200 bg-white"
+                   style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+                 >
+                   <Dialog.Close asChild>
+                     <button
+                       type="button"
+                       className="px-4 py-3 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors min-h-[44px]"
+                     >
+                       ביטול
+                     </button>
+                   </Dialog.Close>
+                   <button
+                     type="button"
+                     onClick={handleSave}
+                     disabled={saving}
+                     className="px-5 py-3 rounded-lg text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 active:bg-violet-800 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors min-h-[44px] inline-flex items-center gap-2"
+                   >
+                     {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                     {saving ? 'שומר...' : 'שמור'}
+                   </button>
+                 </div>
+               </Dialog.Content>
+             </Dialog.Portal>
+           </Dialog.Root>
+         );
+       }
+
+   IMPORTANT:
+   - Same Radix Dialog responsive pattern as #494 CellEditDialog.
+   - DndContext only wraps the custom stages list (base list isn't sortable).
+   - PointerSensor with `distance: 4` — drag activates after 4px movement
+     (prevents accidental drags from taps).
+   - On save, custom stages get NEGATIVE orders `i - N` so they sort
+     before template stages. Backend handles the rest.
+   - hiddenBaseIds is HYDRATED from `initialBaseRemoved` prop on each
+     open (Bug 2 fix — see CRITICAL section above). Backend exposes
+     `base_stages_removed` in /matrix response; ExecutionMatrixPage
+     passes it down. Hidden state persists correctly across saves.
+   - "שמור" closes dialog on success; toast.error + stays open on fail.
+   - Footer uses `env(safe-area-inset-bottom)` per CLAUDE.md Capacitor rule.
+
+NOTE: An earlier draft of this spec described an "open empty Set" pattern
+for hiddenBaseIds with a known limitation (every save unhid previously
+hidden stages). That approach was REJECTED — see "🚨 CRITICAL DATA-INTEGRITY
+BUG FIXES" section above for the corrected design. Current implementation
+hydrates `hiddenBaseIds` from `initialBaseRemoved` prop on every dialog
+open, with the prop fed by `data.base_stages_removed` from the /matrix
+response (Bug 2 fix). State persists correctly across saves.
+
+================================================================================
+PART 7 — ExecutionMatrixPage: settings icon + dialog wiring
+================================================================================
+
+FILE: frontend/src/pages/ExecutionMatrixPage.js
+------------------------------------------------
+
+LOCATION 7.1 — Update imports (top of file):
+
+   FIND:
+       import React, { useMemo, useState, useCallback } from 'react';
+       import { useParams, useNavigate } from 'react-router-dom';
+       import { Loader2, AlertCircle, LayoutGrid, ArrowRight } from 'lucide-react';
+       import { useMatrixData } from '../hooks/useMatrixData';
+       import MatrixListView from '../components/matrix/MatrixListView';
+       import MatrixGridView from '../components/matrix/MatrixGridView';
+       import StatusLegend from '../components/matrix/StatusLegend';
+       import CellEditDialog from '../components/matrix/CellEditDialog';
+
+   REPLACE WITH:
+       import React, { useMemo, useState, useCallback } from 'react';
+       import { useParams, useNavigate } from 'react-router-dom';
+       import { Loader2, AlertCircle, LayoutGrid, ArrowRight, Settings } from 'lucide-react';
+       import { useMatrixData } from '../hooks/useMatrixData';
+       import MatrixListView from '../components/matrix/MatrixListView';
+       import MatrixGridView from '../components/matrix/MatrixGridView';
+       import StatusLegend from '../components/matrix/StatusLegend';
+       import CellEditDialog from '../components/matrix/CellEditDialog';
+       import StageManagementDialog from '../components/matrix/StageManagementDialog';
+
+LOCATION 7.2 — Destructure `updateStages` from `useMatrixData`:
+
+   FIND (post-#494):
+       const { data, loading, error, refresh, updateCell } = useMatrixData(projectId);
+
+   REPLACE WITH:
+       const { data, loading, error, refresh, updateCell, updateStages } = useMatrixData(projectId);
+
+LOCATION 7.3 — Add stage management state + handler (after the `editing`
+   state and `canEdit` declaration):
+
+   ADD:
+       // Stage management dialog state
+       const [stageManageOpen, setStageManageOpen] = useState(false);
+
+       const handleSaveStages = useCallback(async (payload) => {
+         return updateStages(payload);
+       }, [updateStages]);
+
+LOCATION 7.4 — Add Settings icon button to the header (only if canEdit).
+
+   FIND (the existing header — should have ArrowRight back button +
+   LayoutGrid icon + h1 + p subtitle):
+       <div className="flex items-center gap-3 mb-4">
+         <button onClick={() => navigate(`/projects/${projectId}/qc`)} ...>
+           <ArrowRight ... />
+         </button>
+         <div className="p-2 bg-violet-100 rounded-lg">
+           <LayoutGrid className="w-5 h-5 text-violet-700" />
+         </div>
+         <div className="flex-1 min-w-0">
+           <h1 className="text-lg sm:text-xl font-bold text-slate-900">מטריצת ביצוע</h1>
+           <p className="text-xs text-slate-500 mt-0.5">
+             {buildingCount > 0 && `${buildingCount} מבנים • `}
+             {units.length} דירות • {stages.length} שלבים
+           </p>
+         </div>
+       </div>
+
+   ADD a Settings button at the END of the header div (after the
+   subtitle div):
+
+       <div className="flex items-center gap-3 mb-4">
+         <button onClick={() => navigate(`/projects/${projectId}/qc`)} ...>
+           <ArrowRight ... />
+         </button>
+         <div className="p-2 bg-violet-100 rounded-lg">
+           <LayoutGrid className="w-5 h-5 text-violet-700" />
+         </div>
+         <div className="flex-1 min-w-0">
+           <h1 className="text-lg sm:text-xl font-bold text-slate-900">מטריצת ביצוע</h1>
+           <p className="text-xs text-slate-500 mt-0.5">
+             {buildingCount > 0 && `${buildingCount} מבנים • `}
+             {units.length} דירות • {stages.length} שלבים
+           </p>
+         </div>
+         {canEdit && (
+           <button
+             onClick={() => setStageManageOpen(true)}
+             className="p-2 hover:bg-slate-100 active:bg-slate-200 rounded-lg transition-colors"
+             aria-label="ניהול עמודות"
+             title="ניהול עמודות"
+           >
+             <Settings className="w-5 h-5 text-slate-600" />
+           </button>
+         )}
+       </div>
+
+LOCATION 7.5 — Render StageManagementDialog at the end of the outer
+   container (right after the existing CellEditDialog):
+
+   FIND:
+       <CellEditDialog
+         open={editing !== null}
+         ...
+       />
+
+   ADD AFTER:
+       <StageManagementDialog
+         open={stageManageOpen}
+         onClose={() => setStageManageOpen(false)}
+         onSave={handleSaveStages}
+         stages={stages}
+         initialBaseRemoved={data?.base_stages_removed || []}
+       />
+
+DO NOT TOUCH:
+- Back button (#492) — same place, same logic.
+- StatusLegend.
+- Loading / error states.
+- MatrixListView / MatrixGridView render.
+- CellEditDialog wiring.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 2 — All NEW files exist:
+   for f in \
+     frontend/src/components/matrix/StageManagementDialog.js \
+     frontend/src/components/matrix/StageRow.js \
+     frontend/src/components/matrix/AddStageForm.js; do
+     test -f "$f" && echo "EXISTS: $f" || echo "MISSING: $f";
+   done
+   → 3 EXISTS
+
+VERIFY 3 — @dnd-kit packages installed:
+   grep -E "@dnd-kit/core|@dnd-kit/sortable" frontend/package.json
+   → 2 hits
+
+VERIFY 4 — matrixService.updateStages added:
+   grep -c "updateStages" frontend/src/services/matrixService.js
+   → ≥ 1
+
+VERIFY 5 — useMatrixData.updateStages added + returned:
+   grep -c "updateStages" frontend/src/hooks/useMatrixData.js
+   → ≥ 3 (declaration + return + callback dep)
+
+VERIFY 6 — ExecutionMatrixPage wires settings icon + dialog:
+   grep -c "Settings\|StageManagementDialog\|stageManageOpen\|handleSaveStages" \
+       frontend/src/pages/ExecutionMatrixPage.js
+   → ≥ 6
+
+VERIFY 7 — Backend tests (2 new, fixes Bug 1+2):
+   cd backend && python -m pytest tests/test_execution_matrix.py -q
+   → 16 passed (was 14, +2 new):
+     - test_update_stages_preserves_existing_custom_ids (Bug 1 fix)
+     - test_get_matrix_returns_base_stages_removed (Bug 2 fix)
+
+VERIFY 8 — Visual smoke (Zahi runs after deploy to staging):
+
+   Entry point:
+   a) Login as super_admin → /projects/{p}/execution-matrix.
+   b) Top-right of header (after the LayoutGrid icon): Settings ⚙️ icon visible.
+   c) Click → dialog opens (mobile sheet ≤md, centered modal ≥md).
+
+   Default state:
+   d) Section 1 "📋 עמודות מטה-דאטה" with "+ הוסף עמודה חדשה" button.
+   e) If project has any custom stages — they appear below.
+   f) Section 2 "🔨 עמודות בקרת ביצוע" with all base stages, each with
+      eye icon for hide toggle.
+
+   Add custom stage:
+   g) Click "+ הוסף עמודה חדשה" → form expands.
+   h) Type "דירה מכורה", select "תגית", click "הוסף לרשימה" → form
+      closes, new row appears in section 1.
+   i) Add "סוג מכירה" → 2 custom rows.
+
+   Drag-and-drop:
+   j) Long-press on drag handle of "סוג מכירה" → grab works.
+   k) Drag above "דירה מכורה" → list reorders. Visual feedback (opacity).
+   l) Release → new order persists in local state.
+
+   Hide template stage:
+   m) Click eye icon on "טיח" → icon flips to crossed-out, row dims,
+      title shows strikethrough.
+   n) Click again → un-hides.
+
+   Save:
+   o) Click "שמור" → spinner briefly → dialog closes → matrix view
+      re-renders with the new columns visible (right side, RTL):
+      "[חדרים? sample] [סוג מכירה] [דירה מכורה] [(template stages...)]"
+   p) Hidden template stage column is no longer rendered.
+
+   Permissions:
+   q) Login as contractor → settings icon NOT visible.
+   r) Direct dialog trigger via DevTools / hack → backend rejects PATCH
+      with 403 (defense in depth).
+
+   Edge cases:
+   s) Try saving with 0 custom stages and 0 hidden bases → no-op, dialog
+      closes without error.
+   t) Add 5 custom stages and reorder them → save → matrix shows them
+      in the correct right-to-left order.
+   u) Mobile (375px DevTools): dialog renders as bottom sheet, drag
+      handles work via long-press, footer respects safe-area-inset.
+
+   🚨 CRITICAL data-preservation tests (CANNOT skip — proves Bug 1+2 fixed):
+
+   v) DATA PRESERVATION ON RESAVE (Bug 1 fix):
+      1. Add stage "סוג מכירה", click שמור → dialog closes.
+      2. In matrix, fill values for 5 units in "סוג מכירה" column
+         (e.g., "שוק חופשי", "מחיר מופחת", etc.).
+      3. Open stage management dialog again. Verify "סוג מכירה" appears
+         in the custom section.
+      4. Drag-reorder existing stages (don't touch "סוג מכירה").
+      5. Click שמור.
+      6. ✅ EXPECTED: The 5 unit values in "סוג מכירה" still visible
+         after dialog closes and matrix re-renders.
+      7. ❌ REGRESSION: If values disappear, ID preservation is broken.
+
+   w) HIDDEN STATES PRESERVED ON RESAVE (Bug 2 fix):
+      1. Hide "טיח" stage, click שמור → matrix re-renders without
+         "טיח" column. ✅
+      2. Open stage management dialog again. Verify "טיח" row shows
+         eye-off icon + dimmed/strikethrough title (was hidden).
+      3. Add a new custom column (don't toggle "טיח" hide state).
+      4. Click שמור.
+      5. ✅ EXPECTED: "טיח" still hidden in matrix after dialog closes.
+      6. ❌ REGRESSION: If "טיח" reappears, base_stages_removed isn't
+         being hydrated correctly OR isn't being preserved across saves.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (greps + @dnd-kit install confirmation)
+  - Per-file diff (3 NEW + 3 small edits + package.json + yarn.lock)
+  - VERIFY 1-7 outputs
+  - VERIFY 8 deferred-to-Zahi note (21 scenarios a-u)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(matrix): Phase 2C — stage management (custom columns + hide/reorder)
+
+  Phase 2C of 4 sub-phases. Lets PMs add their own metadata columns
+  (room count, sale type, "sold y/n", etc.) next to the
+  execution-control template stages — turning the matrix into a real
+  Excel replacement.
+
+  Approved UX (Zahi 2026-05-05, 5 decisions):
+   - Settings ⚙️ icon in matrix header (only if can_edit) → opens dialog
+   - Modal/Sheet pattern (same as Phase 2B CellEditDialog)
+   - Drag-and-drop reorder via @dnd-kit (custom stages only)
+   - Inline AddStageForm (collapsed by default)
+   - Type fixed at create time (status/tag, no later conversion)
+   - 2 sections: Custom (top, drag/add/delete) + Template (bottom, hide/show)
+   - Custom stages render BEFORE template (right side in RTL) via
+     negative `order` values (i - N) on save — zero backend change
+
+  3 NEW components (~515 LOC):
+   - StageManagementDialog (~310 LOC) — Radix Dialog with 2 sections
+   - StageRow (~125 LOC) — sortable for custom, simple toggle for base
+   - AddStageForm (~80 LOC) — inline expandable form
+
+  3 frontend edits:
+   - matrixService — updateStages method
+   - useMatrixData — updateStages action + refresh on success
+   - ExecutionMatrixPage — settings icon + dialog state + initialBaseRemoved prop
+
+  2 backend edits (CRITICAL data-integrity bug fixes from #483):
+   - schemas.py — MatrixStageCreate gets optional `id` field (preserves
+     custom stage IDs across saves; without this, every save orphans
+     all cells).
+   - execution_matrix_router.py — validate ID against existing stages
+     (prevent ID hijacking) + expose `base_stages_removed` in /matrix
+     response (so frontend can hydrate hide state correctly).
+
+  2 new backend tests:
+   - test_update_stages_preserves_existing_custom_ids
+   - test_get_matrix_returns_base_stages_removed
+
+  NEW dep: @dnd-kit/core + @dnd-kit/sortable (~12KB gzipped).
+  Backend RBAC remains source of truth (contractor PATCH returns 403 —
+  defense in depth on top of UI hide).
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (8 greps + @dnd-kit version check)
+2. PART 1 — `yarn add @dnd-kit/core @dnd-kit/sortable`
+3. PART 2 — matrixService.updateStages (~10 LOC)
+4. PART 3 — useMatrixData.updateStages action (~30 LOC)
+5. PART 4 — StageRow NEW (~120 LOC)
+6. PART 5 — AddStageForm NEW (~80 LOC)
+7. PART 6 — StageManagementDialog NEW (~300 LOC)
+8. PART 7 — ExecutionMatrixPage settings icon + dialog wiring (~25 LOC)
+9. Run VERIFY 1-7
+10. Generate review.txt + .local/.commit_message
+11. STOP. Zahi reviews. Then he runs:
+      git checkout staging && git merge main && ./deploy.sh --stag
+    ⚠️ COMMIT ON `staging` BRANCH.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+3 NEW files removed + 3 edits reverted. Settings icon disappears, no
+way to add/hide/reorder columns. Existing custom stages stay in DB.
+Existing hidden base stages stay hidden (no UI to undo, but backend
+state preserved).
+
+NO impact on:
+- Cell editing (#494 stays)
+- MatrixListView / MatrixGridView render
+- Sticky columns (#486 + #487)
+- Numeric building sort (#489)
+- Mobile collapsible (#490)
+- Back button (#492)
+- Backend (#483 endpoints unchanged)
+- Auth, billing, safety routers, plans
+
+================================================================================
+END OF SPEC — PHASE 2C STAGE MANAGEMENT
+================================================================================

@@ -1,0 +1,465 @@
+================================================================================
+BATCH A+C+D — Combined sweep: 4 UX bugs (#28, #30, #31, #34)
+================================================================================
+Date:           2026-05-11
+Branch:         staging  (NOT main)
+Severity:       P2 — 4 UX bugs from real-device testing. None block
+                workflow but all degrade trust/usability.
+
+Bugs in scope:
+  #28 — Unit list lex sort: "10, 11, 7, 8, 9" instead of "7, 8, 9, 10, 11"
+        (confirmed by Zahi's screenshot of floor 0).
+  #30 — Unit-scope stages displayed on floors with 0 units (e.g. floor
+        -3 mechanical) showing meaningless "0/0 דירות הושלמו" cards.
+        Confirmed by Zahi's screenshot of floor -3.
+  #31 — Back arrow on StageDetailPage skips UnitQCSelectionPage and
+        jumps to FloorDetailPage. PM loses stage context, has to re-
+        click. Confirmed by Zahi's URL trace.
+  #34 — On iPhone Safari + Capacitor WebView, header row of unit card
+        overflows on long unit names + status badges, causing page-
+        level horizontal scroll.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Backend:
+                  - backend/contractor_ops/qc_router.py
+                    (~3 LOC: import + sort line)
+                Frontend:
+                  - frontend/src/pages/UnitQCSelectionPage.js
+                    (~8 LOC across 3 locations: sort, overflow guard,
+                     header truncate)
+                  - frontend/src/pages/StageDetailPage.js
+                    (~20 LOC: replace goBack body with URL-based
+                     idempotent query construction + try/catch)
+                  - frontend/src/pages/FloorDetailPage.js
+                    (1 LOC: add .filter() before .map())
+                Total: 4 files, ~32 LOC.
+
+All 4 fixes are independent — no shared file beyond category. Can be
+applied in any order. Combined here because Zahi prefers single
+deploy / smoke pass.
+
+================================================================================
+STEP 0 — PRE-FLIGHT (all 4 bugs)
+================================================================================
+
+──────────────────  Bug #28 — Unit lex sort ──────────────────
+
+1. Backend lex sort confirmed at qc_router.py:911:
+   $ grep -n "units.sort" backend/contractor_ops/qc_router.py
+   →  911: units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
+   ✓ Lex sort exists.
+
+2. _natural_sort_key helper exists in projects_router.py — REUSE:
+   $ grep -n "def _natural_sort_key" backend/contractor_ops/projects_router.py
+   →  112: def _natural_sort_key(name: str):
+   $ grep -n "from .qc_router\|from contractor_ops.qc_router" \
+       backend/contractor_ops/projects_router.py
+   →  (empty) — no circular import risk.
+   ✓ Safe to import.
+
+3. UnitQCSelectionPage produces Map.values() in insertion order at L140:
+   $ grep -n "Array.from.unitAggMap" frontend/src/pages/UnitQCSelectionPage.js
+   →  140: const units = Array.from(unitAggMap.values()).map(u => {
+   ✓ No sort applied — relies on backend order.
+
+──────────────────  Bug #34 — Progress bar / card overflow ──────────────────
+
+4. UnitQCSelectionPage outer wrapper missing overflow-x-hidden:
+   $ grep -n "min-h-screen bg-slate-50\|overflow-x" \
+       frontend/src/pages/UnitQCSelectionPage.js
+   →  156: <div className="min-h-screen bg-slate-50">
+   ✓ No horizontal overflow guard.
+
+5. Card header row uses flex with no min-w-0/truncate/flex-shrink-0:
+   $ grep -n "STATUS_ICONS\[unit.status\]\|flex items-center justify-between mb-2" \
+       frontend/src/pages/UnitQCSelectionPage.js
+   →  ~207: <div className="flex items-center justify-between mb-2">
+   ✓ Flex container without shrink/truncate hints.
+
+──────────────────  Bug #31 — Stage back-nav ──────────────────
+
+6. goBack ignores returnToPath at StageDetailPage.js:1603-1607:
+   $ grep -nA 4 "const goBack = ()" frontend/src/pages/StageDetailPage.js
+   →  1603-1607: goes to /projects/${projectId}/floors/${floorId}
+   ✓ Bug confirmed. returnToPath read at L766 but never used.
+
+7. UnitQCSelectionPage already sends returnTo via React Router state:
+   $ grep -nA 6 "navigate.*qc/floors.*run" \
+       frontend/src/pages/UnitQCSelectionPage.js
+   →  61-68: state: { returnTo, unitName, scope: 'unit' }
+   ✓ Source side already correct — only goBack needs the fix.
+
+7b. Verify returnTo paths from UnitQCSelectionPage are CLEAN (no
+    existing query params). This determines whether we can safely
+    string-concat `?stage_id=...&from=qc` to the path:
+    $ grep -B2 -A8 "returnTo:" frontend/src/pages/UnitQCSelectionPage.js
+    →  L64: returnTo: `/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units`
+    ✓ TODAY: clean path, no query params. String concat would work.
+
+    BUT — other parts of the codebase send returnTo WITH query strings:
+    $ grep -rn 'returnTo:.*?\$\|returnTo:.*searchParams' frontend/src/
+    →  ProjectControlPage.js:3897: returnTo with ?${searchParams.toString()}
+    →  ProjectTasksPage.js:528: returnTo with ?${searchParams.toString()}
+    →  Several others — pattern exists across codebase.
+
+    Future risk: if someone adds query state to UnitQCSelectionPage's
+    returnTo (e.g. remembering filter/scroll state), the simple
+    string-concat approach would produce duplicate query keys like
+    `?stage_id=old&stage_id=new` — last one wins per HTTP spec, but
+    URL is ugly and breaks any backend that reads `getAll('stage_id')`.
+
+    DEFENSIVE APPROACH (chosen for this spec): use URL object with
+    .searchParams.set() which is idempotent. See LOCATION 3.1 below
+    for the implementation.
+
+──────────────────  Bug #30 — Empty unit-scope stages ──────────────────
+
+8. Unit-scope stages render at FloorDetailPage.js:301:
+   $ grep -n "unitsStatus.stages.length > 0" \
+       frontend/src/pages/FloorDetailPage.js
+   →  301: {unitsStatus && Array.isArray(unitsStatus.stages) &&
+   →       unitsStatus.stages.length > 0 && unitsStatus.stages.map(unitStage => {
+   ✓ Confirmed location of map.
+
+9. unitStage has total_units field:
+   $ grep -n "total_units" frontend/src/pages/FloorDetailPage.js
+   →  302: const total = unitStage.total_units || 0;
+   ✓ Field available.
+
+10. No other place displays per-floor unit-scope stages:
+    $ grep -rn "unitsStatus.stages\|unitStage\." frontend/src/
+    →  only FloorDetailPage.js
+    ✓ Filter is local.
+
+================================================================================
+LOCATION SET 1 — Backend: Natural sort of units (#28)
+================================================================================
+
+LOCATION 1.1 — Add import in qc_router.py
+─────────────────────────────────────────
+File: backend/contractor_ops/qc_router.py
+Action: Find the existing block of `from contractor_ops.*` imports near
+the top of the file. After the last one, add:
+
+  + from contractor_ops.projects_router import _natural_sort_key
+
+LOCATION 1.2 — Replace lex sort with natural sort
+─────────────────────────────────────────────────
+File: backend/contractor_ops/qc_router.py
+Line: 911
+
+BEFORE:
+    units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
+
+AFTER:
+    units.sort(key=lambda u: _natural_sort_key(u.get("unit_no") or u.get("name") or ""))
+
+Effect on display ("1", "2", "10", "20", "A1", "A10"):
+- BEFORE: 1, 10, 2, 20, A1, A10 (lex)
+- AFTER:  1, 2, 10, 20, A1, A10 (natural)
+
+================================================================================
+LOCATION SET 2 — Frontend UnitQCSelectionPage: sort + overflow + truncate
+              (#28 frontend + #34)
+================================================================================
+
+LOCATION 2.1 — Add explicit sort to unit aggregate (#28 frontend)
+─────────────────────────────────────────────────────────────────
+File: frontend/src/pages/UnitQCSelectionPage.js
+Line: ~140-148 (anchor: "const allApproved = u._statuses.length")
+
+BEFORE:
+   const units = Array.from(unitAggMap.values()).map(u => {
+     const allApproved = u._statuses.length > 0 && u._statuses.every(s => s === 'approved');
+     const anyInProgress = u._statuses.some(s => s === 'in_progress' || s === 'approved');
+     const status = allApproved ? 'approved'
+                  : anyInProgress ? 'in_progress'
+                  : 'not_started';
+     const { _statuses, ...rest } = u;
+     return { ...rest, status };
+   });
+
+AFTER:
+   const units = Array.from(unitAggMap.values()).map(u => {
+     const allApproved = u._statuses.length > 0 && u._statuses.every(s => s === 'approved');
+     const anyInProgress = u._statuses.some(s => s === 'in_progress' || s === 'approved');
+     const status = allApproved ? 'approved'
+                  : anyInProgress ? 'in_progress'
+                  : 'not_started';
+     const { _statuses, ...rest } = u;
+     return { ...rest, status };
+   }).sort((a, b) => {
+     // Natural sort (numeric-aware). "10" sorts after "2", not after "1".
+     // Hebrew locale for predictable "ק-901" ordering.
+     const aKey = String(a.unit_no || a.unit_name || '');
+     const bKey = String(b.unit_no || b.unit_name || '');
+     return aKey.localeCompare(bKey, 'he', { numeric: true });
+   });
+
+LOCATION 2.2 — Add overflow-x-hidden to outer wrapper (#34 safety net)
+──────────────────────────────────────────────────────────────────────
+File: frontend/src/pages/UnitQCSelectionPage.js
+Line: 156
+
+BEFORE:
+    <div className="min-h-screen bg-slate-50">
+
+AFTER:
+    <div className="min-h-screen bg-slate-50 overflow-x-hidden">
+
+LOCATION 2.3 — Header row truncate + flex-shrink (#34 structural)
+─────────────────────────────────────────────────────────────────
+File: frontend/src/pages/UnitQCSelectionPage.js
+Lines: 207-224 (anchor: "STATUS_ICONS[unit.status]")
+
+BEFORE:
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    {isNavigating ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                    ) : (
+                      <Home className="w-4 h-4 text-slate-400" />
+                    )}
+                    <span className="text-sm font-bold text-slate-700">
+                      {unit.unit_name || `דירה ${unit.unit_no}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border ${cfg.color}`}>
+                      <Icon className="w-3 h-3" />
+                      {cfg.label}
+                    </span>
+                    <span className="text-xs font-medium text-slate-500">{unit.handled_count}/{unit.total}</span>
+                  </div>
+                </div>
+
+AFTER (5 class additions across the block):
+                <div className="flex items-center justify-between mb-2 gap-2">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    {isNavigating ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-500 flex-shrink-0" />
+                    ) : (
+                      <Home className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    )}
+                    <span className="text-sm font-bold text-slate-700 truncate">
+                      {unit.unit_name || `דירה ${unit.unit_no}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border ${cfg.color}`}>
+                      <Icon className="w-3 h-3" />
+                      {cfg.label}
+                    </span>
+                    <span className="text-xs font-medium text-slate-500">{unit.handled_count}/{unit.total}</span>
+                  </div>
+                </div>
+
+Changes summary:
+- outer flex: + gap-2 (separation when truncated)
+- left group: + min-w-0 flex-1 (allows shrink + truncate)
+- icons:      + flex-shrink-0 (icons stay fixed size)
+- unit name:  + truncate (ellipsis when overflow)
+- right group: + flex-shrink-0 (badge + count always visible)
+
+================================================================================
+LOCATION SET 3 — Frontend StageDetailPage: goBack respects returnToPath (#31)
+================================================================================
+
+LOCATION 3.1 — Replace goBack body
+──────────────────────────────────
+File: frontend/src/pages/StageDetailPage.js
+Lines: 1603-1607
+
+BEFORE:
+  const goBack = () => {
+    const url = `/projects/${projectId}/floors/${floorId}`;
+    const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+    navigate(withFrom);
+  };
+
+AFTER:
+  const goBack = () => {
+    // PRIMARY PATH: returnToPath was set by source page (e.g.
+    // UnitQCSelectionPage L60-67) via React Router state. Append
+    // stage_id + from=qc using URL object so we get idempotent
+    // query-param handling (no duplicate keys if returnToPath
+    // already contains stage_id from a future caller).
+    if (returnToPath) {
+      try {
+        // Use URL constructor with a dummy origin to parse the path.
+        // `react-router-dom`'s navigate() takes path + search, no origin.
+        const parsed = new URL(returnToPath, window.location.origin);
+        if (stageId) parsed.searchParams.set('stage_id', stageId);
+        if (fromParam === 'qc') parsed.searchParams.set('from', 'qc');
+        // pathname + search avoids leaking the dummy origin into
+        // navigate(). hash (if any) is preserved separately.
+        navigate(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+      } catch (parseErr) {
+        // Defensive: URL parse should never fail for our paths, but
+        // if it does, fall back to plain navigate without appending
+        // query params (loses stage_id context but doesn't crash).
+        // eslint-disable-next-line no-console
+        console.warn('[StageDetailPage goBack] URL parse failed; using plain navigate', parseErr);
+        navigate(returnToPath);
+      }
+      return;
+    }
+    // FALLBACK PATH: returnToPath empty (refresh wiped state, OR
+    // deep link, OR floor-scope stage). Original behavior — go to
+    // FloorDetailPage.
+    const url = `/projects/${projectId}/floors/${floorId}`;
+    const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+    navigate(withFrom);
+  };
+
+Why URL.searchParams.set() is the right tool:
+- `.set(key, value)` REPLACES existing key if present; never duplicates.
+- Compare with string-concat `${path}?stage_id=${new}` which would
+  produce `path?stage_id=old&stage_id=new` if path already had it.
+- Browser-native, no dependencies, fully supported in all targets.
+
+Why the try/catch:
+- `new URL()` throws on malformed input (rare for our paths but
+  cheap insurance against future breakage).
+- Console.warn for observability without breaking the user's nav.
+
+Why this is safe:
+- PRIMARY path triggers only when state.returnTo is set, which today
+  happens ONLY in UnitQCSelectionPage. No other call site sends it.
+- URL.searchParams.set() preserves any existing params other than
+  stage_id and from (e.g. if returnTo gains `?filter=approved` in
+  the future, it stays).
+- FALLBACK path is bit-for-bit identical to current behavior.
+
+KNOWN LIMITATION (documented, not fixed in this batch):
+If the user refreshes the browser tab on StageDetailPage,
+location.state is wiped → returnToPath is empty → falls back to
+FloorDetailPage. Same as today's behavior. Future batch can add
+runData.scope + building_id support for refresh recovery.
+
+================================================================================
+LOCATION SET 4 — Frontend FloorDetailPage: filter empty unit-scope (#30)
+================================================================================
+
+LOCATION 4.1 — Single .filter() insertion
+─────────────────────────────────────────
+File: frontend/src/pages/FloorDetailPage.js
+Line: 301
+
+BEFORE:
+        {unitsStatus && Array.isArray(unitsStatus.stages) && unitsStatus.stages.length > 0 && unitsStatus.stages.map(unitStage => {
+
+AFTER:
+        {unitsStatus && Array.isArray(unitsStatus.stages) && unitsStatus.stages.length > 0 && unitsStatus.stages.filter(s => (s.total_units || 0) > 0).map(unitStage => {
+
+Single change: insert `.filter(s => (s.total_units || 0) > 0)` before `.map(`.
+
+Effect:
+- Floor WITH units → filter passes → all stages render as before.
+- Floor with 0 units (e.g. floor -3 mechanical) → unit-scope stages
+  hidden entirely; only floor-scope stages visible.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ Sort logic outside qc_router.py:911 — backend hierarchy at
+     projects_router.py:1047 already sorts units correctly by sort_index.
+- ❌ ExecutionMatrixPage.js / ProjectControlPage.js — they use
+     hierarchy directly, no per-page sort issue.
+- ❌ Progress bar fill div / outer container max-w / sticky header /
+     status badge colors / etc. in UnitQCSelectionPage.
+- ❌ navState.scope / unitName / isUnitMode usage in StageDetailPage —
+     unrelated, used for UI labels.
+- ❌ Error state UI in StageDetailPage (L1622, L1633) — same goBack
+     applies but no other change.
+- ❌ Floor-scope stages render at FloorDetailPage:284 — separate map,
+     unaffected by Location 4.1.
+- ❌ Backend `is_empty` flag — different concept (no template items),
+     stays. Different from "no units on floor".
+
+================================================================================
+VERIFY 1 — Build / import sanity
+================================================================================
+$ cd backend && python -c "from contractor_ops.qc_router import *"
+   →  EXIT=0 expected. No ImportError.
+
+$ cd frontend && CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — Smoke (DEFERRED TO ZAHI on staging)
+================================================================================
+
+Focus areas — 4 distinct flows:
+
+(A) #28 unit sort:
+  - Open a project with floor that has units 7-11 (or similar mix
+    of single-digit and two-digit numbers).
+  - Navigate to בקרת ביצוע → building → floor → "לפי דירות".
+  - EXPECT: units appear in order 7, 8, 9, 10, 11 (not 10, 11, 7, 8, 9).
+
+(B) #34 progress bar / overflow on iPhone:
+  - Same page above, on iPhone Capacitor app.
+  - EXPECT: NO horizontal scroll. Long unit names truncate with "...".
+  - Status badge + count remain fully visible.
+
+(C) #31 stage back-nav:
+  - On any unit-scope stage like "טיח דירתי":
+    - UnitQCSelectionPage (qc/units?stage_id=stage_plaster)
+    - Click on דירה 18 → StageDetailPage
+    - Click back arrow in header.
+  - EXPECT: returns to UnitQCSelectionPage with stage_id and from=qc
+    preserved. NOT to FloorDetailPage.
+  - Loop: open דירה 19, back, דירה 20, back. Should work for every unit.
+  - EXPECT URL HYGIENE: address bar after back should be exactly
+    `.../qc/units?stage_id=stage_plaster&from=qc` (single stage_id,
+    single from, no duplicates). If you see `?stage_id=X&stage_id=Y`
+    that's the bug case → URL.searchParams.set() didn't run.
+
+(D) #30 empty unit-scope stages:
+  - Open the project's floor -3 (mechanical, 0 דירות).
+  - EXPECT: floor-scope stages display (like "הצפה/אטימות").
+  - EXPECT: unit-scope stages (e.g. "ריצוף דירה" cards) DO NOT appear.
+
+Regression sweep:
+  - Open a normal floor with units (e.g. floor 2 with 6 דירות).
+    Confirm full stage list still renders (floor + unit scope, with
+    proper progress per stage).
+  - Open a unit-scope stage from FloorDetailPage (not from
+    UnitQCSelectionPage) → click back.
+    EXPECT: goes to FloorDetailPage (fallback path, no regression).
+  - Refresh StageDetailPage browser tab → click back.
+    EXPECT: goes to FloorDetailPage (known limitation, same as today).
+
+================================================================================
+RISK
+================================================================================
+Low across all 4 bugs.
+
+#28: Pure sort change. localeCompare with numeric:true is well-supported
+     (all evergreen + Safari 10+). Capacitor WebView = iOS Safari.
+
+#30: Pure display filter. Backend untouched. No data mutation.
+
+#31: Function-level change with original behavior preserved in fallback
+     path. New behavior triggers ONLY when source page sent returnTo,
+     which today only UnitQCSelectionPage does.
+
+#34: Additive CSS classes only. No removed classes. iOS Safari + Chrome
+     desktop both support min-w-0 / flex-shrink-0 / truncate.
+
+Bundle size impact: zero (no new dependencies).
+Backend code size impact: ~3 LOC.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+(Reverts all 4 fixes in a single commit. No data state changes.
+ Each fix can be partially un-reverted by editing the affected lines
+ manually if needed.)
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

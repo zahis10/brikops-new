@@ -1,0 +1,523 @@
+================================================================================
+BATCH P1.1-HOTFIX-4 — Native pinch-to-zoom on touch devices (P1)
+================================================================================
+Date:           2026-05-10
+Branch:         staging  (NOT main)
+Severity:       P1 — blocks mobile UX of P1.1 (the feature shipped today).
+                Without pinch-zoom that re-renders react-pdf at higher
+                scale, iPhone users either:
+                  - Can't pinch-zoom AT ALL (touchAction set but
+                    browser-level pinch is what fires) → tasks #32
+                  - OR pinch triggers CSS-scale of existing rasterized
+                    canvas → text appears pixelated/illegible → task #33
+                Both bugs are the same underlying issue with one fix.
+Files changed:  Frontend only:
+                  - frontend/package.json (+1 dep: @use-gesture/react)
+                  - frontend/src/components/PlanViewer.js (~30 LOC)
+                Total: 1 dep + 1 file edited.
+Pre-flight:     P1.1 + 3 hotfixes shipped to prod 2026-05-10. PlanViewer
+                is at 326 LOC. Math.floor + dir="ltr" + visible scrollbars
+                + w-fit + thumbnail preview all working on desktop.
+                Mobile (iPhone Capacitor + iOS Safari) untested
+                end-to-end; pinch was the discovered gap.
+
+CONTEXT — root cause analysis
+=============================
+
+The root cause of #32 (no pinch on iPhone) AND #33 (pixelated text on
+browser pinch) is identical: the current viewer relies on the BROWSER's
+native pinch-zoom. There are two failure modes depending on context:
+
+  Mode A — In Capacitor app (WKWebView), or iOS Safari with the modal
+  fullscreen: browser-level pinch may be disabled or scoped, so the
+  user sees no zoom response at all → reads as "pinch broken".
+
+  Mode B — In normal Safari, browser-level pinch DOES fire, but it's a
+  CSS `transform: scale()` on the rasterized canvas. The canvas was
+  rendered by react-pdf at `scale={0.6}` (fit-scale) producing a
+  ~1500x1000 px image. Browser pinch to 200% turns it into a
+  3000x2000 px image VISUALLY but the underlying pixels haven't
+  changed → blurry/pixelated. react-pdf is unaware of the pinch and
+  doesn't re-render the page at higher scale.
+
+The same fix solves both: capture the pinch gesture in our app, update
+the `scale` state programmatically, and let react-pdf re-render at the
+new scale (which produces a sharp 3000x2000 canvas natively).
+
+CONTEXT — chosen approach
+=========================
+
+Library: **@use-gesture/react** v10.3+
+  - 13KB gzipped, used by Spring/Framer Motion
+  - React 16.8+ → React 19 supported via stable APIs (useRef, useEffect)
+  - Clean unified API for pinch + drag + wheel
+  - **Cross-platform, both iOS AND Android** — see "Platform coverage"
+    section below for details
+
+Platform coverage (both required to ship):
+  - **iOS Safari + Capacitor (WKWebView)** — primary target. iOS has
+    its own GestureEvent API in addition to touch events; @use-gesture
+    detects and uses whichever fires.
+  - **Android Chrome + Capacitor Android (Chromium WebView)** — also
+    primary target. Android only has touch events (no GestureEvent);
+    @use-gesture computes pinch ratio from two-touch positions.
+  - **Desktop browsers** — wheel zoom (Ctrl/⌘ + scroll) and Magic
+    Trackpad pinch are also handled by @use-gesture's wheel/pinch
+    detection. Already works via existing +/- buttons.
+
+Why @use-gesture handles both:
+  - On iOS: subscribes to `gesturestart/gesturechange/gestureend`
+    (Apple-specific) AND `touchstart/touchmove/touchend` as fallback.
+  - On Android: subscribes to `touchstart/touchmove/touchend` and
+    computes pinch ratio from `event.touches[0]` and `event.touches[1]`
+    coordinates each frame.
+  - On desktop: subscribes to `wheel` events for Ctrl-scroll zoom +
+    pointer events for trackpad pinch.
+
+This means the SAME `usePinch` hook fires for all three. Our handler
+reads `offset[0]` (the scale ratio) regardless of source — touch,
+gesture, or wheel.
+
+Two changes:
+  1. Update `touch-action` from `'pan-x pan-y pinch-zoom'` to
+     `'pan-x pan-y'`. This DISABLES browser-native pinch on the
+     container so we own the gesture. One-finger pan/scroll still
+     works (that's `pan-x pan-y`).
+  2. Add `usePinch` hook bound to `containerRef`. On pinch, update
+     `scale` state with multiplicative delta (matching the existing
+     ×1.25 / ×0.8 zoom button convention from hotfix-1).
+
+Drag-to-pan (one-finger drag to pan) is OUT of scope for this hotfix.
+The visible scrollbars from hotfix-2 + native one-finger touch scroll
+are sufficient for pan. Adding drag-to-pan would risk conflicting with
+text selection, link clicks, and annotation interactions in P1.2.
+Defer to P1.2 if needed.
+
+STEP 0 — MANDATORY PRE-FLIGHT
+=============================
+
+  # 1. Confirm P1.1 + 3 hotfixes shipped (PlanViewer at 326 LOC)
+  git fetch origin staging
+  git show origin/staging:frontend/src/components/PlanViewer.js | wc -l
+  # EXPECT: ~326 lines
+
+  # 2. Confirm current touchAction setting (the bug)
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep -n "touchAction"
+  # EXPECT: 1 hit on `'pan-x pan-y pinch-zoom'`
+
+  # 3. Confirm scale state + zoomIn/zoomOut bounds (we'll reuse same bounds)
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep -nE "zoomIn|zoomOut|setScale.*Math\."
+  # EXPECT: zoomIn ×1.25, zoomOut ×0.8, bounds [0.1, 4.0]
+
+  # 4. Confirm @use-gesture/react NOT already installed
+  grep -E '"@use-gesture' frontend/package.json
+  # EXPECT: empty (fresh add)
+
+  # 5. Verify React 19 + @use-gesture/react compat
+  # @use-gesture/react v10.3.1 is the latest stable. According to their
+  # changelog, v10.x supports React 16.8+. They use stable hooks (useRef,
+  # useEffect) so React 19 should work. If install fails with peer-dep
+  # error, STOP and escalate to Zahi — don't use --force or --legacy-peer-deps.
+
+  # 6. **CRITICAL** — Verify usePinch API after install, BEFORE LOCATION 1.3.
+  # The spec was drafted from memory; the v10 API specifics must be
+  # confirmed against installed package types.
+  cat node_modules/@use-gesture/react/dist/use-gesture-react.d.ts \
+    | grep -A 30 "PinchHandler\|usePinch\|UsePinchConfig" | head -80
+  # OR if .d.ts location differs:
+  find node_modules/@use-gesture -name "*.d.ts" -exec grep -l "usePinch" {} +
+  # Document the EXACT shape of:
+  #   - Gesture state object (offset / movement / delta — which is what?)
+  #   - scaleBounds config syntax
+  #   - `from` config support and signature
+  #   - Whether `first` flag is in the state
+  #   - Whether event.preventDefault is callable on cancelable events
+  #
+  # Compare against LOCATION 1.3 below. If API differs, ADJUST LOCATION 1.3
+  # before applying. Do NOT proceed with the spec's code if the API doesn't
+  # match — implement using the verified API instead. The semantic intent
+  # is documented in LOCATION 1.3 — translate that intent to whatever the
+  # real v10 API supports.
+
+If ANY pre-flight returns different content → STOP and report.
+
+PART 1 — FRONTEND
+=================
+
+LOCATION 1.1 — Install @use-gesture/react
+
+   $ cd frontend && yarn add @use-gesture/react
+
+   Expected:
+     "@use-gesture/react": "^10.3.1"
+
+   If yarn rejects (peer-dep error with React 19), STOP. Do NOT use
+   --force or --legacy-peer-deps. Escalate to Zahi for compat decision.
+
+LOCATION 1.2 — Import + usePinch hook in PlanViewer.js
+
+   At top of file, near other React imports (~L1-2):
+
+   CURRENT:
+     import React, { useState, useCallback, useRef, useEffect } from 'react';
+     import { Document, Page, pdfjs } from 'react-pdf';
+
+   REPLACE WITH:
+     import React, { useState, useCallback, useRef, useEffect } from 'react';
+     import { Document, Page, pdfjs } from 'react-pdf';
+     import { usePinch } from '@use-gesture/react';
+
+
+LOCATION 1.3 — Add usePinch hook inside the PlanViewer component
+                 (after existing useEffect that resets state on plan
+                 change, ~L43, BEFORE handleLoadSuccess)
+
+   ⚠️ CRITICAL — Pinch math correctness:
+
+   `offset[0]` from @use-gesture/react usePinch is **cumulative from
+   gesture start**, not frame-to-frame delta. If we naively multiply
+   it by the LATEST `scale` state, we get exponential drift:
+
+     Frame 1: offset=1.10, prev=1.0  → new=1.10  ✓
+     Frame 2: offset=1.20, prev=1.10 → new=1.32  ❌ (should be 1.20)
+     Frame 3: offset=1.30, prev=1.32 → new=1.72  ❌ (should be 1.30)
+
+   The fix is to anchor `offset` to the scale value AT GESTURE START,
+   not the live `scale` state.
+
+   Two valid patterns; **Replit should pick whichever the verified v10
+   API supports** (per STEP 0.6).
+
+   ── PATTERN A — `from` config (cleanest, if v10 supports it) ───────
+
+   With `from: () => [scale ?? 1.0, 0]`, @use-gesture treats `offset`
+   as the ABSOLUTE current pinch state — anchored to whatever `from`
+   returned at gesture start. `offset[0]` IS the new scale directly,
+   not a multiplier.
+
+     usePinch(
+       ({ offset: [s], event }) => {
+         if (event && event.cancelable) event.preventDefault();
+         setScale(Math.min(Math.max(s, 0.1), 4.0));
+       },
+       {
+         target: containerRef,
+         eventOptions: { passive: false },
+         scaleBounds: { min: 0.1, max: 4.0 },
+         rubberband: true,
+         from: () => [scale ?? 1.0, 0],
+       }
+     );
+
+   ── PATTERN B — explicit ref + `first` flag (always works) ────────
+
+   If `from` config isn't supported in the installed v10, use a ref
+   to remember the scale at gesture start. The handler reads
+   `gestureStartScaleRef.current` (frozen at gesture start) and
+   multiplies by `offset[0]` (cumulative ratio).
+
+     // Add ref ABOVE the usePinch call (alongside other refs):
+     const gestureStartScaleRef = useRef(1.0);
+
+     usePinch(
+       ({ offset: [s], first, event }) => {
+         if (event && event.cancelable) event.preventDefault();
+         if (first) {
+           gestureStartScaleRef.current = scale ?? 1.0;
+         }
+         const next = gestureStartScaleRef.current * s;
+         setScale(Math.min(Math.max(next, 0.1), 4.0));
+       },
+       {
+         target: containerRef,
+         eventOptions: { passive: false },
+         scaleBounds: { min: 0.1, max: 4.0 },
+         rubberband: true,
+       }
+     );
+
+   ── Why both patterns are correct ─────────────────────────────────
+
+   PATTERN A: `from` re-evaluates at each gesture start; offset is
+   relative to that anchor; absolute new scale comes out directly.
+   PATTERN B: ref captures scale at gesture start (`first === true`);
+   each frame multiplies that frozen value by the cumulative offset
+   ratio. Same math, different mechanism.
+
+   ── DO NOT do this (the broken pattern from spec v1) ─────────────
+
+     setScale(prev => {
+       const next = (prev ?? 1.0) * s;  // ← compounding error
+       return Math.min(Math.max(next, 0.1), 4.0);
+     });
+
+   This compounds because `prev` mutates between frames, and `s` is
+   already cumulative. Avoid.
+
+   ── Common context for both patterns ──────────────────────────────
+
+   - target: containerRef → gesture bound to scrolling div via
+     addEventListener (bypasses React synthetic event system, works
+     with non-passive event option needed for preventDefault).
+   - eventOptions.passive: false → required for preventDefault to
+     stop browser-level pinch on iOS Safari edge cases.
+   - scaleBounds [0.1, 4.0] → matches +/- button bounds.
+   - rubberband → soft-bounce visual feedback when pinching past
+     bounds (the "I've hit the limit" feeling).
+   - usePinch returns no value when bound via `target`; it's a
+     side-effect hook. Just call and discard the return.
+
+   API DRIFT FALLBACK: if both `from` config AND `first` flag are
+   absent in v10 (unlikely), use `delta` (frame-to-frame ratio change)
+   and accumulate manually each frame:
+     setScale(prev => {
+       const ratio = delta[0];  // small frame-to-frame multiplier
+       return Math.min(Math.max((prev ?? 1.0) * ratio, 0.1), 4.0);
+     });
+   This is mathematically equivalent because each frame multiplies the
+   PREVIOUS scale by the FRAME's small delta — no cumulative offset
+   confusion.
+
+LOCATION 1.4 — Update touchAction to disable native pinch
+                  (only on the scrolling container, NOT globally)
+
+   CURRENT (the scroll container, ~L189):
+     style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
+
+   REPLACE WITH:
+     // 2026-05-10 hotfix-4 — `touch-action: pan-x pan-y` (without
+     // pinch-zoom) tells the browser: "allow ONE-finger pan/scroll on
+     // this element, but DON'T handle pinch yourself." Pinch is now
+     // captured by our usePinch hook above, which calls setScale to
+     // trigger react-pdf to re-render at higher resolution = sharp text.
+     style={{ touchAction: 'pan-x pan-y' }}
+
+DO NOT TOUCH
+============
+- ❌ Backend (zero changes).
+- ❌ ProjectPlansPage / UnitPlansPage — they consume PlanViewer via
+     props only; their integration is correct.
+- ❌ The +/- zoom buttons — they continue to work (same multiplicative
+     bounds as the new pinch handler).
+- ❌ scroll behavior — pan via scrollbar + one-finger swipe still works
+     (touch-action: pan-x pan-y allows one-finger scroll natively).
+- ❌ Math.floor fit-scale calc — keep as-is.
+- ❌ dir="ltr" on scroll container — keep as-is.
+- ❌ w-fit on inner wrapper — keep as-is.
+- ❌ Tailwind arbitrary scrollbar modifiers — keep as-is.
+- ❌ Image rendering branch (uses width-based scaling, doesn't suffer
+     the pixelation issue because <img> natively re-rasterizes with
+     CSS transform).
+- ❌ The viewport meta tag in index.html — DON'T change. Adding
+     `user-scalable=no` would disable native pinch GLOBALLY in the
+     app, including for any future feature that wants it. Disabling
+     pinch only on the PlanViewer container (via touch-action) is
+     the targeted fix.
+
+GLOBAL VERIFY
+=============
+
+VERIFY 1 — Lint (implicit via build, no separate npm run lint).
+
+VERIFY 2 — Build
+    cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
+        REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com \
+        yarn build 2>&1 | tail -10
+    EXPECT: "Compiled successfully", no new errors.
+    Bundle delta: +~13KB gzipped (the @use-gesture/react package).
+    May go into the existing PlanViewer chunk (lazy-loaded, doesn't
+    affect first paint).
+
+VERIFY 3 — Manual smoke (Zahi runs after staging deploy)
+
+  ⭐ This MUST be tested on a real device, not Chrome DevTools mobile mode.
+     DevTools touch emulation doesn't accurately simulate native iOS
+     gesture events.
+
+  Test cases (real iPhone):
+
+    A. Open A1 PDF (e.g. 801A-6-003.pdf or any production plan).
+       Click "צפייה במסך מלא".
+       EXPECT: viewer opens at fit-scale (~25-30% on phone), whole
+       plan visible.
+
+    B. Pinch OUT (two fingers, spread apart) on the canvas — slow + steady.
+       EXPECT:
+       - Page zooms IN smoothly with the gesture, scale tracks finger
+         spread proportionally (NOT exponentially)
+       - Bottom-bar percentage increases linearly with finger spread
+       - Text and lines remain SHARP (re-rendered, not raster-scaled)
+       - When fingers stop moving, page stays at the new scale
+       - 60fps gesture tracking, no lag
+
+    B-CRITICAL — Compounding-bug check:
+       Slow steady pinch out from fit-scale (e.g. 60%) over ~2 seconds.
+       At rest, look at the bottom-bar percentage.
+       EXPECT (correct math): percentage gradually rises, e.g. 60% → 90%
+                              → 130%, smoothly tracking finger movement.
+       BROKEN (compounding): percentage rockets to 400% (max) within
+                              the first second of the gesture.
+       If you see the second pattern → the math is broken (offset
+       multiplied against fresh scale state). Stop and revert.
+
+    B-MULTI — Repeat-pinch check:
+       Pinch out (release fingers), THEN pinch out again from the new
+       scale.
+       EXPECT: second pinch starts from current scale. e.g. zoomed to
+       150% from first pinch → second pinch starts at 150%, grows
+       proportionally as fingers spread.
+       BROKEN: second pinch resets to fit-scale or jumps unexpectedly.
+       This catches the "didn't anchor to current scale at gesture
+       start" bug (i.e., `from` config or ref pattern not working).
+
+    C. Pinch IN (two fingers, pinch together).
+       EXPECT: page zooms OUT smoothly, scale decreases proportionally.
+       Text stays sharp (each scale change triggers re-render).
+
+    D. Pinch past 400% (the upper bound).
+       EXPECT: rubber-band effect — page zooms but bounces back to 4.0
+       when fingers release. No infinite zoom.
+
+    E. Pinch past 10% (the lower bound).
+       EXPECT: similar rubber-band behavior at 0.1.
+
+    F. Mix gestures: pinch IN, then with one finger SWIPE around to pan.
+       EXPECT: pan works (one finger = native scroll). Pinch + pan in
+       same gesture is browser-default behavior; we don't interfere.
+
+    G. After pinching, click + (zoom button).
+       EXPECT: scale increases by ×1.25 from the pinched-to scale (not
+       reset to 1.0 or fit-scale). Buttons and pinch share the same
+       state.
+
+    H. Open + close + reopen the viewer with the same plan.
+       EXPECT: scale resets to fit-scale on each reopen (existing
+       behavior from useEffect on plan change).
+
+    I. iOS Safari + Capacitor (NOT just Safari mobile):
+       Same A1 plan via the BrikOps Capacitor build (via Capgo OTA, no
+       ./ship.sh needed since this is JS-only).
+       EXPECT: same pinch behavior as Safari. Critical because
+       Capacitor uses WKWebView which can have different gesture
+       handling than Safari proper.
+
+    I-ANDROID — **Android Chrome + Capacitor Android** (REQUIRED):
+       Same A1 plan on a real Android phone:
+       (a) Open https://app.brikops.com in Android Chrome → pinch test.
+       (b) Open BrikOps Capacitor Android app → same pinch test.
+       EXPECT for both: pinch zooms react-pdf re-renders at higher
+       resolution → sharp text. Same as iOS.
+
+       Why Android is a SEPARATE checkpoint:
+       - iOS uses GestureEvent API (Apple-specific). Android does NOT —
+         only touch events. @use-gesture handles both, but the touch-
+         events path on Android is a different code branch from the
+         gesture-events path on iOS. Bugs may surface on one platform
+         but not the other.
+       - Android Capacitor WebView is Chromium-based; touch handling is
+         essentially Android Chrome behavior. Worth verifying both web
+         AND native app on Android because Capacitor's WebView config
+         may add subtle differences (e.g. some plugins inject CSS).
+       - Android touch-action support is solid (Chromium follows spec
+         strictly), but worth checking that `pan-x pan-y` actually
+         disables native pinch on Android Chrome — some older Android
+         versions had partial touch-action support.
+
+       If pinch works on iOS but NOT on Android (or vice versa), this
+       is a known platform-specific gesture issue. Fix likely involves
+       adjusting @use-gesture's `pointer.touch` config or falling back
+       to manual touch event handling.
+
+       If you don't have a physical Android device, deploy to staging
+       and ask a contractor or team member with Android to test.
+       Don't rely on emulator — touch emulation isn't accurate.
+
+    J. Regression checks (existing functionality preserved on BOTH
+       platforms):
+       - +/- zoom buttons still work
+       - Scrollbars visible and pan to all corners
+       - Page navigation (prev/next) works for multi-page PDFs
+       - Image plans (jpg/png) still render correctly
+       - Detail-modal thumbnail preview still works
+       - "פתח בכרטיסייה חדשה" still works as fallback
+
+
+VERIFY 4 — Bundle inspection
+    grep -E '@use-gesture|use-gesture' frontend/build/static/js/*.js | head -3
+    EXPECT: at least one chunk references @use-gesture identifiers.
+
+    ls -lh frontend/build/static/js/*.chunk.js | head -10
+    EXPECT: PlanViewer chunk grew by ~13KB (the gesture lib).
+
+
+DELIVERABLES
+============
+review.txt with:
+  - Rollback SHA (origin/staging HEAD before this commit)
+  - STEP 0 grep outputs at top (5 checks)
+  - LOCATION 1.1 install output (yarn add result)
+  - LOCATION 1.2 + 1.3 + 1.4 diffs
+  - VERIFY 2 (build), VERIFY 4 (bundle) outputs
+  - VERIFY 3 manual smoke deferred to Zahi
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(plans): native pinch-to-zoom on touch devices (P1.1-hotfix-4)
+
+  Captures pinch gesture in PlanViewer and updates scale state, so
+  react-pdf re-renders at higher resolution → sharp text. Resolves
+  two related mobile bugs:
+
+  - #32: no native pinch on iPhone (touch-action: pinch-zoom alone
+    didn't trigger any zoom in Capacitor / Safari)
+  - #33: browser-level pinch CSS-scaled the rasterized canvas →
+    pixelated text
+
+  Both fixed by the same change:
+  1. Add @use-gesture/react (~13KB gzipped, used by Spring/Framer)
+  2. usePinch hook bound to PlanViewer's scroll container; updates
+     `scale` state multiplicatively (×1.25 / ×0.8 from button
+     convention)
+  3. touch-action: 'pan-x pan-y' (was 'pan-x pan-y pinch-zoom') so
+     browser doesn't try to handle pinch itself
+  4. Rubber-band at scale bounds [0.1, 4.0]
+
+  Drag-to-pan with one finger is out of scope here — visible scrollbars
+  + native one-finger scroll cover panning. Adding drag-to-pan would
+  risk conflicts with future tap-to-pin (P1.2) and annotation features.
+
+  No backend changes, no CSP change. Bundle delta +~13KB in the
+  lazy-loaded PlanViewer chunk (doesn't affect first paint).
+
+STEPS
+=====
+1. STEP 0 pre-flight (5 greps).
+2. LOCATION 1.1: yarn add @use-gesture/react. If install fails, STOP.
+3. LOCATION 1.2: import usePinch.
+4. LOCATION 1.3: add usePinch hook inside the component.
+5. LOCATION 1.4: update touchAction to remove pinch-zoom.
+6. VERIFY 2 (build).
+7. VERIFY 4 (bundle).
+8. Generate review.txt + commit message.
+9. STOP. AWAITING ZAHI APPROVAL.
+
+ROLLBACK
+========
+git revert <commit-sha>
+git checkout staging && ./deploy.sh --stag
+
+Risk profile: low. The gesture library is well-established (Spring,
+Framer Motion, hundreds of production apps). usePinch is a stable hook.
+Worst case: pinch doesn't fire on some browser → falls back to
++/- buttons (current pre-hotfix behavior).
+
+There IS a small risk that @use-gesture/react v10 has API differences
+from what I documented (movement vs offset). Replit should verify
+against the latest @use-gesture/react docs before implementing
+LOCATION 1.3 and adjust if needed. The semantic intent is clear:
+multiplicative scale update on each pinch frame, bounded to [0.1, 4.0].
+
+================================================================================
+END OF SPEC
+================================================================================

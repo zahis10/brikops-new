@@ -1,0 +1,763 @@
+================================================================================
+BATCH F.1 — Photo text labels: size picker + drag-to-move + tap-to-edit
+================================================================================
+Date:           2026-05-12
+Branch:         staging  (NOT main)
+Severity:       P3 — UX enhancements to Batch F (shipped 2026-05-12).
+                Field-driven by Zahi after testing v1 on staging:
+                "אני חייב שתהיה לי שליטה על הגודל של הטקסט, ויותר
+                חשוב על המיקום שלו, כרגע אין לי אפשרות להזיז אותו
+                בכלל".
+
+                v1 deferred size + edit/move; v1.5 brings them back
+                because real field use proved they're essential, not
+                luxury.
+
+Approach:       Three coordinated features in one batch (single
+                gesture handles all):
+                1. **Size:** 3-button picker in overlay (S=14 / M=18
+                   default / L=24 display px). Captured at commit time
+                   like color.
+                2. **Drag-to-move:** in text mode, tap+hold+drag on
+                   an existing text label → label follows finger.
+                   Release commits new position.
+                3. **Tap-to-edit:** in text mode, quick tap on an
+                   existing label (no drag) → opens overlay
+                   pre-filled with current text/size/color. Editing
+                   updates the existing stroke in place; deleting
+                   removes it from `strokes`.
+
+                Tap vs drag distinguished by movement threshold:
+                onTouchMove > 5px = drag; onTouchEnd with <5px total
+                movement = tap.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+Files changed:  Frontend only:
+                  - frontend/src/components/PhotoAnnotation.js
+                    (+150 LOC; 522 → ~672 lines)
+                Total: 1 file. No backend, no DB, no env vars, no
+                new dependencies.
+
+================================================================================
+SCOPE — what's IN, what's OUT
+================================================================================
+
+IN this batch:
+  ✅ Size picker (3 buttons: ק / ב / ג mapping to 14/18/24 display px)
+     in the text overlay, next to color/commit/cancel buttons.
+     Default = M (18px), matching v1.
+  ✅ Drag-to-move existing text labels via tap+hold+drag (threshold 5px).
+  ✅ Tap-to-edit existing text labels via quick tap (<5px movement).
+  ✅ Edit overlay variant: pre-filled input with current text +
+     active size button + active color. "אישור" updates the existing
+     stroke in place. "מחק" button removes the stroke entirely.
+  ✅ Backward compat: v1 text strokes without `size` field default
+     to 'M' on render and hit test.
+  ✅ Hit testing helper `getTextBBox(ctx, stroke, scale)` reused by
+     both `redraw` (rendering) and tap detection.
+
+OUT of this batch (separate batches if requested):
+  ❌ Pinch-to-resize on selected text (gesture-based).
+  ❌ Multi-text selection (select multiple, batch move).
+  ❌ Free-form rotation.
+  ❌ Z-order (bring forward / send back).
+  ❌ Persistent vector storage post-save — text still rasterizes
+     into JPEG on save, like v1.
+
+================================================================================
+STEP 0 — PRE-FLIGHT (4 PASS)
+================================================================================
+
+1. Confirm Batch F state is in place (size constants, redraw branching,
+   commitPendingText, "T" toolbar button, overlay):
+   $ grep -n "BATCH F\|TEXT_FONT_SIZE\|toolRef\|pendingText\|commitPendingText" \
+       frontend/src/components/PhotoAnnotation.js | head -20
+   →  Multiple matches confirming F is shipped.
+   ✓ F.1 builds on top of F state.
+
+2. Confirm `redraw` text branch uses ctx.measureText for pill width:
+   $ grep -nA 2 "metrics = ctx.measureText" frontend/src/components/PhotoAnnotation.js
+   →  L171: const metrics = ctx.measureText(stroke.text || '');
+   ✓ Width calculation exists. We extract into shared `getTextBBox`
+     helper used by both rendering AND hit testing.
+
+3. Confirm touch event handlers in useEffect (~L230 after F):
+   $ grep -nA 3 "const handleTouchStart\|const handleTouchMove\|const handleTouchEnd" \
+       frontend/src/components/PhotoAnnotation.js
+   →  Existing handlers call startStroke / moveStroke / endStroke.
+   ✓ We extend startStroke to hit-test text labels, and add drag
+     tracking via dragRef state.
+
+4. Confirm overlay structure (Batch F):
+   $ grep -nA 10 "pending-text input overlay" frontend/src/components/PhotoAnnotation.js
+   →  L454+: overlay div with input + אישור + ביטול buttons.
+   ✓ We extend this overlay with: 3 size buttons, 3 color buttons,
+     "מחק" button when in edit mode, and a "editing existing" mode
+     flag.
+
+================================================================================
+LOCATION 1 — Size constants
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Lines: near existing TEXT_FONT_SIZE constants (~L18-22)
+
+BEFORE:
+  const TEXT_FONT_SIZE = 18;
+  const TEXT_PADDING_X = 10;
+  const TEXT_PADDING_Y = 6;
+  const TEXT_PILL_RADIUS = 8;
+
+AFTER:
+  // BATCH F.1 (2026-05-12) — size picker: 3 fixed sizes mapped to
+  // display px. Default 'M' matches v1's TEXT_FONT_SIZE=18 exactly
+  // so v1 strokes without `size` field render identically.
+  const TEXT_SIZE_PX = { S: 14, M: 18, L: 24 };
+  const TEXT_SIZE_LABELS = { S: 'ק', M: 'ב', L: 'ג' };  // קטן/בינוני/גדול
+  const TEXT_DEFAULT_SIZE = 'M';
+  const TEXT_PADDING_X = 10;
+  const TEXT_PADDING_Y = 6;
+  const TEXT_PILL_RADIUS = 8;
+  // BATCH F.1 (2026-05-12) — drag threshold = 10px in canvas coords.
+  // 5px was too sensitive: Android budget devices (~5-8px jitter) +
+  // field conditions (gloves, dirty hands, ~10-15px jitter) would
+  // turn every tap into a drag → user can't tap-to-edit. Asymmetric
+  // risk favors edit-friendly threshold: too low = broken UX, too
+  // high = slight friction. Tune down if field reports show users
+  // can't move labels easily.
+  const DRAG_THRESHOLD_PX = 10;
+
+  // BATCH F (kept for back-compat with stored strokes that pre-date F.1)
+  const TEXT_FONT_SIZE = TEXT_SIZE_PX[TEXT_DEFAULT_SIZE];
+
+Why removing single `TEXT_FONT_SIZE` is breaking: we don't remove it,
+we re-export the default value so any in-file reference still works.
+
+================================================================================
+LOCATION 2 — New state for drag tracking
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Lines: near existing pendingText state (~L60-66)
+
+ADD after `const [pendingText, setPendingText] = useState(null);`:
+
+  // BATCH F.1 (2026-05-12) — drag tracking + edit mode.
+  // dragRef: { index, startPos, hasMoved } | null
+  //   - index: which stroke in strokesRef is being dragged
+  //   - startPos: tap start position (canvas coords) for threshold
+  //   - hasMoved: true once movement exceeded DRAG_THRESHOLD_PX
+  const dragRef = useRef(null);
+
+  // BATCH F.1 (2026-05-12) — save the global color before edit-mode
+  // syncs the picker to the target's color. Restored when overlay
+  // commits/cancels so user's "current" color choice isn't silently
+  // overwritten by editing a label of a different color.
+  const savedColorRef = useRef(null);
+
+  // Re-used pendingText state but now with optional editIndex:
+  //   { x, y, value, size, editIndex? }
+  //   - editIndex absent: creating new text (existing v1 flow)
+  //   - editIndex present: editing existing stroke; commit updates
+  //     instead of appending; "מחק" button visible.
+
+================================================================================
+LOCATION 3 — Hit-testing helper `getTextBBox`
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Lines: insert before `redraw` useCallback (~L120)
+
+ADD:
+  // BATCH F.1 (2026-05-12) — compute text-pill bbox in canvas coords.
+  // Used by both redraw (rendering) and hit testing (tap on existing
+  // text). Mutates ctx font but always restores via save/restore.
+  const getTextBBox = useCallback((ctx, stroke) => {
+    const scale = scaleRef.current || 1;
+    const sizeKey = stroke.size || TEXT_DEFAULT_SIZE;
+    const fontSize = TEXT_SIZE_PX[sizeKey] / scale;
+    const padX = TEXT_PADDING_X / scale;
+    const padY = TEXT_PADDING_Y / scale;
+
+    ctx.save();
+    ctx.font = `bold ${fontSize}px ${FONT_STACK}`;
+    const textWidth = ctx.measureText(stroke.text || '').width;
+    ctx.restore();
+
+    const width = textWidth + padX * 2;
+    const height = fontSize + padY * 2;
+    return {
+      x: stroke.x - width / 2,
+      y: stroke.y - height / 2,
+      width,
+      height,
+      fontSize,
+      padX,
+      padY,
+    };
+  }, []);
+
+  // Hit test: returns stroke index of the top-most text label
+  // containing the point, or -1 if none.
+  const hitTestText = useCallback((pos) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return -1;
+    const ctx = canvas.getContext('2d');
+    const all = strokesRef.current;
+    for (let i = all.length - 1; i >= 0; i--) {
+      const s = all[i];
+      if (s.type !== 'text') continue;
+      const bbox = getTextBBox(ctx, s);
+      if (
+        pos.x >= bbox.x && pos.x <= bbox.x + bbox.width &&
+        pos.y >= bbox.y && pos.y <= bbox.y + bbox.height
+      ) {
+        return i;
+      }
+    }
+    return -1;
+  }, [getTextBBox]);
+
+================================================================================
+LOCATION 4 — Update `redraw` to use `getTextBBox` and respect `size`
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Lines: text branch inside the for-loop (~L155-200 after F)
+
+Refactor the text rendering block to use getTextBBox (DRY) and read
+stroke.size for font size:
+
+BEFORE (Batch F):
+  if (strokeType === 'text') {
+    const scale = scaleRef.current || 1;
+    const fontSize = TEXT_FONT_SIZE / scale;
+    const padX = TEXT_PADDING_X / scale;
+    const padY = TEXT_PADDING_Y / scale;
+    const radius = TEXT_PILL_RADIUS / scale;
+
+    ctx.save();
+    ctx.font = `bold ${fontSize}px ${FONT_STACK}`;
+    ctx.direction = 'rtl';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+
+    const metrics = ctx.measureText(stroke.text || '');
+    const rectWidth = metrics.width + padX * 2;
+    const rectHeight = fontSize + padY * 2;
+    const rectX = stroke.x - rectWidth / 2;
+    const rectY = stroke.y - rectHeight / 2;
+    /* ...draw pill + text... */
+    ctx.restore();
+    continue;
+  }
+
+AFTER:
+  if (strokeType === 'text') {
+    const bbox = getTextBBox(ctx, stroke);
+    const scale = scaleRef.current || 1;
+    const radius = TEXT_PILL_RADIUS / scale;
+
+    ctx.save();
+    ctx.font = `bold ${bbox.fontSize}px ${FONT_STACK}`;
+    ctx.direction = 'rtl';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(bbox.x, bbox.y, bbox.width, bbox.height, radius);
+    } else {
+      ctx.rect(bbox.x, bbox.y, bbox.width, bbox.height);
+    }
+    ctx.fill();
+
+    ctx.lineWidth = Math.max(1, 1.5 / scale);
+    ctx.strokeStyle = '#1f2937';
+    ctx.stroke();
+
+    ctx.fillStyle = stroke.color || '#000000';
+    ctx.fillText(stroke.text || '', stroke.x, stroke.y);
+    ctx.restore();
+    continue;
+  }
+
+Changes:
+- getTextBBox extracted (DRY shared with hit test).
+- Reads `stroke.size` via helper (default 'M' for backward compat).
+- All other behavior identical to F.
+
+================================================================================
+LOCATION 5 — Rewrite `startStroke`/`moveStroke`/`endStroke` for text mode
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Lines: ~L230-260 (the three handler functions in the touch useEffect)
+
+BEFORE (Batch F):
+  const startStroke = (pos) => {
+    if (toolRef.current === 'text') {
+      setPendingText(prev =>
+        prev
+          ? { ...prev, x: pos.x, y: pos.y }
+          : { x: pos.x, y: pos.y, value: '' }
+      );
+      return;
+    }
+    const newStroke = { type: 'stroke', color: colorRef.current, points: [pos] };
+    currentStrokeRef.current = newStroke;
+    drawingRef.current = true;
+  };
+
+  const moveStroke = (pos) => {
+    if (!drawingRef.current || !currentStrokeRef.current) return;
+    /* ...append point to current stroke... */
+  };
+
+  const endStroke = () => {
+    if (!drawingRef.current) return;
+    /* ...commit current stroke if has points... */
+  };
+
+AFTER:
+  const startStroke = (pos) => {
+    if (toolRef.current === 'text') {
+      // BATCH F.1 — first check if tap landed on an existing text
+      // label. If yes → enter "possible drag/edit" state. If no →
+      // continue F's create-new flow.
+      const hitIndex = hitTestText(pos);
+      if (hitIndex >= 0) {
+        dragRef.current = {
+          index: hitIndex,
+          startPos: { x: pos.x, y: pos.y },
+          hasMoved: false,
+        };
+        return;
+      }
+      // No hit — create new label (existing F behavior).
+      setPendingText(prev =>
+        prev
+          ? { ...prev, x: pos.x, y: pos.y }
+          : { x: pos.x, y: pos.y, value: '', size: TEXT_DEFAULT_SIZE }
+      );
+      return;
+    }
+    const newStroke = { type: 'stroke', color: colorRef.current, points: [pos] };
+    currentStrokeRef.current = newStroke;
+    drawingRef.current = true;
+  };
+
+  const moveStroke = (pos) => {
+    // BATCH F.1 — if dragging an existing text, update its x/y.
+    if (dragRef.current) {
+      const drag = dragRef.current;
+      const dx = pos.x - drag.startPos.x;
+      const dy = pos.y - drag.startPos.y;
+      if (!drag.hasMoved && Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) {
+        drag.hasMoved = true;
+      }
+      if (drag.hasMoved) {
+        // Move the target stroke to follow the finger.
+        const all = strokesRef.current;
+        const target = all[drag.index];
+        if (target && target.type === 'text') {
+          target.x = pos.x;
+          target.y = pos.y;
+          // No need to re-set strokesRef; we mutated in place.
+          // Trigger re-render via redraw — and bump state so React
+          // tree updates (for undo button disable logic etc.).
+          redraw([...all]);
+        }
+      }
+      return;
+    }
+    if (!drawingRef.current || !currentStrokeRef.current) return;
+    /* ...existing freehand move logic UNCHANGED... */
+  };
+
+  const endStroke = () => {
+    // BATCH F.1 — if we were dragging:
+    if (dragRef.current) {
+      const drag = dragRef.current;
+      const targetIndex = drag.index;
+      const wasDrag = drag.hasMoved;
+      dragRef.current = null;
+
+      if (wasDrag) {
+        // Position already updated in moveStroke. Commit by updating
+        // setStrokes (so React state matches mutated ref) and exit.
+        setStrokes([...strokesRef.current]);
+        return;
+      }
+      // Quick tap (no movement) → open edit overlay for that stroke.
+      const target = strokesRef.current[targetIndex];
+      if (target && target.type === 'text') {
+        setPendingText({
+          x: target.x,
+          y: target.y,
+          value: target.text || '',
+          size: target.size || TEXT_DEFAULT_SIZE,
+          editIndex: targetIndex,
+        });
+        // BATCH F.1 — sync color picker to target's color so the user
+        // sees which color is "current" while editing. SAVE the user's
+        // previously-selected color first so it can be restored on
+        // commit/cancel (prevents silent global state mutation).
+        if (target.color) {
+          savedColorRef.current = colorRef.current;
+          setColor(target.color);
+        }
+      }
+      return;
+    }
+    if (!drawingRef.current) return;
+    /* ...existing freehand end logic UNCHANGED... */
+  };
+
+Note: `setColor` is reused from F (existing color picker setter).
+`strokesRef.current` is mutated in place during drag for performance
+(avoids re-creating array 60 times per second). At end of drag,
+setStrokes([...]) creates a fresh array to sync React state.
+
+================================================================================
+LOCATION 6 — Update `commitPendingText` to handle edit-in-place
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Lines: existing commitPendingText callback (~L340-360 after F)
+
+BEFORE (Batch F):
+  const commitPendingText = useCallback(() => {
+    setPendingText(curr => {
+      if (!curr || !curr.value.trim()) return null;
+      const textStroke = {
+        type: 'text',
+        color: colorRef.current,
+        x: curr.x,
+        y: curr.y,
+        text: curr.value.trim(),
+      };
+      strokesRef.current = [...strokesRef.current, textStroke];
+      setStrokes(prev => [...prev, textStroke]);
+      redraw([...strokesRef.current]);
+      return null;
+    });
+  }, [redraw]);
+
+AFTER:
+  // BATCH F.1 — helper: restore saved color after edit overlay closes.
+  // Called from commit, cancel, AND delete paths so the global picker
+  // returns to whatever the user had selected before tapping a label.
+  const restoreSavedColor = useCallback(() => {
+    if (savedColorRef.current !== null) {
+      setColor(savedColorRef.current);
+      savedColorRef.current = null;
+    }
+  }, []);
+
+  const commitPendingText = useCallback(() => {
+    setPendingText(curr => {
+      if (!curr || !curr.value.trim()) {
+        restoreSavedColor();  // cancel-like exit if value is empty
+        return null;
+      }
+      const textStroke = {
+        type: 'text',
+        color: colorRef.current,
+        size: curr.size || TEXT_DEFAULT_SIZE,
+        x: curr.x,
+        y: curr.y,
+        text: curr.value.trim(),
+      };
+      // BATCH F.1 — edit-in-place vs append-new.
+      if (Number.isInteger(curr.editIndex)) {
+        const all = strokesRef.current.slice();
+        all[curr.editIndex] = textStroke;
+        strokesRef.current = all;
+        setStrokes(all);
+      } else {
+        strokesRef.current = [...strokesRef.current, textStroke];
+        setStrokes(prev => [...prev, textStroke]);
+      }
+      redraw([...strokesRef.current]);
+      restoreSavedColor();  // BATCH F.1 — restore user's pre-edit color
+      return null;
+    });
+  }, [redraw, restoreSavedColor]);
+
+  // BATCH F.1 — cancel the overlay (ביטול button OR Escape key).
+  // Closes overlay, restores saved color, no stroke change.
+  const cancelPendingText = useCallback(() => {
+    setPendingText(null);
+    restoreSavedColor();
+  }, [restoreSavedColor]);
+
+  // BATCH F.1 — delete the currently-edited text stroke.
+  // Caller (delete button) wraps with window.confirm to prevent
+  // accidental clicks. Per Zahi's UX call 2026-05-12: confirmation
+  // is sufficient for v1.5; richer undo-aware delete deferred.
+  const deletePendingText = useCallback(() => {
+    setPendingText(curr => {
+      if (!curr || !Number.isInteger(curr.editIndex)) return null;
+      const all = strokesRef.current.filter((_, i) => i !== curr.editIndex);
+      strokesRef.current = all;
+      setStrokes(all);
+      redraw([...all]);
+      restoreSavedColor();  // BATCH F.1 — restore user's pre-edit color
+      return null;
+    });
+  }, [redraw, restoreSavedColor]);
+
+================================================================================
+LOCATION 7 — Overlay UI: size buttons + "מחק" button (when editing)
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Lines: existing overlay div (~L454-495 after F)
+
+Insert size buttons BETWEEN input and אישור button. Add "מחק" button
+on the FAR LEFT (RTL: far left = first read after ביטול) ONLY when
+editing.
+
+BEFORE (Batch F overlay structure):
+  {pendingText && (
+    <div className="flex items-center gap-2 ...">
+      <input ... />
+      <button onClick={commitPendingText} ...>אישור</button>
+      <button onClick={() => setPendingText(null)} ...>ביטול</button>
+    </div>
+  )}
+
+AFTER:
+  {pendingText && (
+    <div className="flex items-center gap-2 px-4 py-2 bg-slate-800 border-t border-slate-700 shrink-0"
+         style={{ position: 'relative', zIndex: 20 }}>
+      <input
+        type="text"
+        autoFocus
+        maxLength={30}
+        value={pendingText.value}
+        onChange={(e) => setPendingText(p => p ? { ...p, value: e.target.value } : p)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && pendingText.value.trim()) commitPendingText();
+          else if (e.key === 'Escape') cancelPendingText();
+        }}
+        placeholder="תווית קצרה (עד 30 תווים)"
+        dir="auto"
+        className="flex-1 px-3 py-2 rounded-lg bg-slate-900 text-white border border-slate-600 focus:border-amber-500 focus:outline-none"
+        style={{
+          fontSize: '16px',
+          fontFamily: 'Heebo, "Arial Hebrew", system-ui, sans-serif',
+        }}
+      />
+
+      {/* BATCH F.1 — size picker. 3 buttons. Active state highlighted. */}
+      <div className="flex items-center gap-1">
+        {(['S', 'M', 'L']).map(sz => {
+          const isActive = (pendingText.size || TEXT_DEFAULT_SIZE) === sz;
+          return (
+            <button
+              key={sz}
+              onClick={(e) => {
+                e.stopPropagation();
+                setPendingText(p => p ? { ...p, size: sz } : p);
+              }}
+              aria-label={`גודל ${TEXT_SIZE_LABELS[sz]}`}
+              className={`w-9 h-9 rounded-lg text-sm font-bold transition-colors ${
+                isActive
+                  ? 'bg-amber-500 text-white'
+                  : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+              }`}
+            >
+              {TEXT_SIZE_LABELS[sz]}
+            </button>
+          );
+        })}
+      </div>
+
+      <button
+        onClick={(e) => { e.stopPropagation(); commitPendingText(); }}
+        disabled={!pendingText.value.trim()}
+        className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium disabled:opacity-40"
+      >
+        אישור
+      </button>
+      <button
+        onClick={(e) => { e.stopPropagation(); cancelPendingText(); }}
+        className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm"
+      >
+        ביטול
+      </button>
+
+      {/* BATCH F.1 — delete button, ONLY in edit mode. window.confirm
+          guards against accidental click (label has user's full
+          context: text + size + color + position — too costly to lose
+          to a mistap). */}
+      {Number.isInteger(pendingText.editIndex) && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (window.confirm('למחוק את התווית?')) {
+              deletePendingText();
+            }
+          }}
+          aria-label="מחק תווית"
+          className="px-3 py-2 rounded-lg bg-red-700 text-white text-sm hover:bg-red-800"
+        >
+          מחק
+        </button>
+      )}
+    </div>
+  )}
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- ❌ Touch/mouse handler attachment logic (passive:false, etc.).
+- ❌ Viewport lock useEffect.
+- ❌ loadImageFromFile, MAX_CANVAS_SIZE, getPos, scaleRef math.
+- ❌ Color picker UI (still 3 colors).
+- ❌ "T" toolbar button.
+- ❌ Save/Undo handlers (Undo still pops strokes array; works for
+  text/drag/edit results too).
+- ❌ Existing saved JPEG blobs.
+- ❌ Backend, schema, env vars, dependencies.
+
+================================================================================
+VERIFY 1 — Frontend build
+================================================================================
+$ cd frontend && CI=true yarn build
+   →  EXIT=0 expected. No new ESLint warnings.
+
+================================================================================
+VERIFY 2 — Manual smoke (DEFERRED TO ZAHI on staging or device)
+================================================================================
+
+**A — Size picker (new):**
+  1. Tap T → tap canvas → type "ABC".
+  2. Tap "ג" (large) → "אישור".
+  EXPECT: text rendered in LARGE size (24px display).
+  3. Tap T → tap canvas → type "abc" (don't change size).
+  EXPECT: text rendered in MEDIUM (18px, default).
+
+**B — Drag-to-move (new):**
+  1. Place a text label.
+  2. Tap T → tap+hold on the existing text label, drag finger.
+  EXPECT: text follows finger smoothly.
+  3. Release.
+  EXPECT: text stays at new position. Save uploads with new position.
+
+**C — Tap-to-edit (new):**
+  1. Place a text label "old".
+  2. Tap T → quick tap on the label (no drag).
+  EXPECT: overlay opens with "old" pre-filled. Size button reflects
+  current size. Color picker reflects current color. "מחק" button visible.
+  3. Change text to "new" → "אישור".
+  EXPECT: label updated to "new" at SAME position. No new label created.
+
+**D — Delete via edit overlay (with confirmation):**
+  1. Edit a label (Test C steps 1-2).
+  2. Tap "מחק".
+  EXPECT: `window.confirm` dialog: "למחוק את התווית?"
+  3a. Tap OK/Confirm.
+  EXPECT: label removed. Overlay closes.
+  3b. Tap Cancel.
+  EXPECT: nothing happens. Overlay stays open. Label still present.
+  Note: confirmation guards against accidental click. v1.5 behavior:
+  confirmed delete is permanent within session (Undo doesn't restore
+  text deletes). If users want richer undo → follow-up.
+
+**E — Drag vs tap threshold (most critical — verify on real Android budget device):**
+  1. Tap on existing label and INSTANTLY release (no movement).
+  EXPECT: edit overlay opens.
+  2. Tap on existing label and move >10px THEN release.
+  EXPECT: drag (label repositioned), no overlay.
+  ⚠ If users report "every tap becomes a drag" → bump threshold to
+  15px. Field-test on Android budget specifically (more finger jitter).
+  ⚠ If users report "can't move labels easily" → lower threshold
+  to 8px. Asymmetric: too-low is broken UX; too-high is friction.
+
+**E.1 — Color picker restore after edit (NEW):**
+  1. Color picker = blue.
+  2. Create text label A (blue).
+  3. Change color picker to red.
+  4. Create text label B (red).
+  5. Tap label A (quick tap, no drag) → edit overlay opens.
+  EXPECT: color picker syncs to BLUE (matches label A's color).
+  6. Tap "אישור" without changing color.
+  EXPECT: overlay closes, label A unchanged. Color picker reverts
+  to RED (user's pre-edit selection — preserved across the edit).
+  Same expectation for "ביטול" path AND for "מחק" path.
+  Reason: editing a label shouldn't silently change the user's
+  global color selection.
+
+**F — Backward compat with v1 strokes:**
+  1. (If you have a session where text labels were created in v1
+     before this batch) — verify they render at default M size.
+
+**G — Regression — draw mode unchanged:**
+  1. Default tool = draw. Freehand-draw. Undo. Save.
+  EXPECT: identical to v1 (and pre-F).
+
+**H — Regression — create new text in empty space:**
+  1. T → tap on EMPTY space → create label (existing F flow).
+  EXPECT: unchanged.
+
+**I — Cross-platform check:**
+  - Verify B and C on iPhone AND Android.
+  - Drag responsiveness should be smooth (no jank) at common screen
+    sizes.
+
+================================================================================
+KNOWN LIMITATIONS (documented, not fixed)
+================================================================================
+- Delete: window.confirm guards against accidental clicks, but
+  confirmed delete IS permanent within session (not added to undo
+  stack). Richer history model deferred. If user mis-confirms →
+  re-create. Pre-confirmation = no risk thanks to dialog.
+- Drag during multi-touch (e.g. user tries to pinch while dragging
+  text) — second touch is ignored by existing event handlers.
+  Acceptable: user is unlikely to do this on small images.
+- If user starts dragging then tool changes to "draw" mid-drag —
+  edge case. Behavior: drag continues until release (tool is
+  captured at drag start). Acceptable.
+- Hit testing is rectangular bbox. If two text labels overlap, the
+  one on top (last in strokes) wins. Acceptable.
+- Drag threshold = 10px in canvas coords. Tunable per field reports.
+
+================================================================================
+RISK
+================================================================================
+Medium. Frontend-only but several state interactions:
+
+- ⚠ Drag mutates strokes array in place (perf) — must call
+  setStrokes([...]) at end to sync React state. Verified in the
+  endStroke handler.
+- ⚠ Movement threshold = 10px in CANVAS coords (raised from initial
+  5px draft per pre-spec review). High-DPI displays + Android budget
+  + field conditions (gloves, dirty hands) → 5px would turn every
+  tap into a drag, breaking tap-to-edit. 10px favors edit-friendly
+  UX; tune to 8 (looser drag) or 15 (looser tap) per field reports.
+- ⚠ Tap-to-edit on existing label might be unintuitive at first.
+  Document in field smoke. If users want a separate "Edit" tool,
+  add follow-up batch.
+- ⚠ Backward compat for v1 strokes: `stroke.size` default 'M' via
+  `||` chain. Verified.
+- ⚠ Delete confirmation via window.confirm — native dialog. Different
+  visual on iOS vs Android vs desktop. Functional on all. If the
+  alert bypasses focus (rare), user can still cancel by tap-outside
+  on most platforms.
+- ⚠ Color picker restore via savedColorRef — single-level save
+  (no stack). Editing one label while another's edit was already
+  open shouldn't happen (overlay is modal), so single-level is
+  sufficient.
+
+Bundle size: zero (no new deps).
+Performance: drag adds 60Hz redraws. On low-end Android, may see
+slight lag for very dense canvases (many strokes). Acceptable for v1.5.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>
+- Reverts to v1 Batch F behavior (size fixed at 18, no drag, no edit).
+- Existing saved JPEG blobs unaffected (text rasterized into image).
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

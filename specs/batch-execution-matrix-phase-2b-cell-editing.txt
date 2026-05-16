@@ -1,0 +1,1128 @@
+================================================================================
+BATCH — Execution Matrix Phase 2B: Cell editing (popover/sheet + audit history)
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — major user-facing feature on top of Phase 2A read-only.
+                Turns the matrix from "view" to "use". Critical for adoption
+                — this is what replaces Eli's external Excel for execution
+                tracking.
+
+This is PHASE 2B of 4 sub-phases (per Zahi 2026-05-04):
+  - PHASE 2A ✅ shipped: Read-only mobile + desktop view (#484-#487, #490)
+  - PHASE 2B (THIS): Cell editing — status select, note, audit history.
+  - PHASE 2C: Stage management (add custom, hide base, reorder).
+  - PHASE 2D: Filters + saved views.
+
+Files changed:  3 NEW frontend files + 5 small edits
+                  Frontend NEW: components/matrix/CellEditDialog.js (~220 LOC)
+                  Frontend NEW: components/matrix/StatusButtonGrid.js (~70 LOC)
+                  Frontend NEW: components/matrix/CellHistoryList.js (~70 LOC)
+                  Frontend edit: components/matrix/MatrixCell.js (~5 LOC for onClick prop)
+                  Frontend edit: components/matrix/MatrixListView.js (~10 LOC for click wiring)
+                  Frontend edit: components/matrix/MatrixGridView.js (~10 LOC for click wiring)
+                  Frontend edit: pages/ExecutionMatrixPage.js (~30 LOC for state management)
+                  Frontend edit: services/matrixService.js (~15 LOC for updateCell + getCellHistory)
+                  Frontend edit: hooks/useMatrixData.js (~30 LOC for optimistic update mutation)
+
+Tests:          NO new tests. UI feature only. Backend endpoints already
+                covered by #483 tests (`PUT /cells/{u}/{s}` + `GET history`).
+                Visual smoke deferred to Zahi.
+
+Backend:        ZERO changes. #483 already exposes:
+                  PUT /api/execution-matrix/{project_id}/cells/{unit_id}/{stage_id}
+                  GET /api/execution-matrix/{project_id}/cells/{unit_id}/{stage_id}/history
+
+Mobile:         Frontend OTA via Capgo. No native files.
+DB migration:   NONE.
+
+Family:         Phase 2 of Execution Matrix. Continues mobile-first design
+                from Phase 2A.
+
+================================================================================
+APPROVED UX DECISIONS (Zahi 2026-05-04)
+================================================================================
+
+D1. **Bottom sheet on mobile + popover on desktop** — single dialog
+    component using Radix Dialog with responsive Tailwind:
+      - Mobile (≤md): `bottom-0 rounded-t-2xl translate-y-0` slide up
+      - Desktop (≥md): `top-1/2 left-1/2 -translate-1/2 rounded-2xl` centered
+    Single component, conditional Tailwind classes — no separate files.
+
+D2. **2×3 grid of status buttons** — quick tap selection. Each button
+    shows icon (Lucide from STATUS_CONFIG) + Hebrew label. Selected
+    state: bg color + bold border. Layout matches iOS share sheet.
+
+D3. **Explicit "שמור" button** — not auto-save. Allows experimentation
+    + cancel. Save = explicit audit entry. Clear UX.
+
+D4. **Collapsible history below form** — collapsed by default with
+    summary "▼ היסטוריה (X)". Expanded shows reverse-chronological
+    list with actor + timestamp + change.
+
+D5. **Tag cells use same dialog** — when `stage.type === 'tag'`,
+    StatusButtonGrid replaced with text input. Same note + history
+    + save flow.
+
+================================================================================
+ADDITIONAL UX DECISIONS (locked at spec time)
+================================================================================
+
+D6. **Permissions** — `permissions.can_edit: false` users see the
+    dialog with controls disabled (read-only mode) and a banner
+    "צפייה בלבד — אין לך הרשאת עריכה". Backend RBAC is the source
+    of truth (returns 403); UI disables controls preemptively.
+
+D7. **Optimistic update** — on save click:
+      1. Local state updated immediately (cell shows new status).
+      2. Dialog closes.
+      3. API call fires in background.
+      4. On error: revert + toast "שגיאה בשמירה. נסה שוב" + reopen dialog.
+      5. On success: silent (cell already shows new value).
+    Pattern: similar to existing optimistic patterns in the codebase
+    (e.g., qcService stage approval).
+
+D8. **History fetched on demand** — when user expands the history
+    section, fire a single `GET /history` call. Cache the result in
+    the dialog's local state (re-fetch on next open).
+
+D9. **Note field** — `<textarea>` with 3-row default, max 500 chars,
+    character counter "0/500" below. RTL `dir="rtl"`. Required: NO
+    (note is optional).
+
+D10. **Touch targets** — every button ≥44px (Apple HIG). Status
+     button cells ~80×56px. Save/cancel buttons `py-3` (≥44px).
+     Touch tested.
+
+D11. **Save button states**:
+     - Disabled if no change from current state
+     - Loading spinner + disabled while API call in flight
+     - Hebrew label "שמור" / loading: "שומר..."
+
+================================================================================
+CRITICAL PRESERVATION — DO NOT TOUCH
+================================================================================
+
+✋ Backend code (#483 endpoints already serve everything)
+✋ qc_router.py / qc_template / qc_runs (matrix is independent)
+✋ STATUS_CONFIG.js (used as-is — same 6 statuses)
+✋ MatrixCell.js render logic (only adding onClick prop)
+✋ Empty state, loading, error in ExecutionMatrixPage
+✋ MatrixListView collapsible behavior (onClick attaches to stage rows
+   inside expanded body)
+✋ MatrixGridView sticky columns + zebra stripes
+✋ ProjectControlPage / TaskDetailPage / any other QC page
+✋ Auth, billing, safety routers, plans
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify Radix Dialog package + import pattern in codebase:
+
+    Step A — confirm package installed:
+        grep "@radix-ui" frontend/package.json
+    # Expected: at least `@radix-ui/react-dialog` listed in dependencies.
+    # If MISSING — STOP. Need to install via `yarn add @radix-ui/react-dialog`
+    # before proceeding. Replit's `yarn build` will fail otherwise.
+
+    Step B — locate canonical Dialog usage pattern:
+        grep -rn "@radix-ui/react-dialog\|DialogContent\|Dialog.Root" \
+            frontend/src/components/ frontend/src/pages/StageDetailPage.js | head -10
+    # Expected: existing usage somewhere (e.g., StageDetailPage's reopen
+    # confirm modal uses Radix Dialog). Document the import path + any
+    # standard wrapper component (e.g., shadcn/ui Dialog wrapper).
+    # If a project-level Dialog wrapper exists, USE IT for consistency.
+
+0.2 — Verify matrixService current shape (post-#484):
+    grep -n "matrixService\|API\|getAuthHeader" \
+        frontend/src/services/matrixService.js
+    # Expected: existing `getMatrix(projectId)` method using axios+API+
+    # getAuthHeader pattern (per #484 D-svc drift). New methods follow
+    # same pattern.
+
+0.3 — Verify useMatrixData hook current shape:
+    grep -n "useState\|useCallback\|useEffect\|abortRef" \
+        frontend/src/hooks/useMatrixData.js | head -10
+    # Expected: data + loading + error + refresh; useEffect with
+    # AbortController. We extend with `updateCell` action.
+
+0.4 — Verify MatrixCell current props:
+    grep -n "export default function MatrixCell\|props" \
+        frontend/src/components/matrix/MatrixCell.js | head -5
+    # Expected (per #484): props { cell, stage, size }. We add onClick
+    # (optional) — when present, wraps in `<button>`; otherwise renders
+    # static `<div>` (preserves Phase 2A read-only behavior for any
+    # context where onClick isn't passed).
+
+0.5 — Verify MatrixListView expanded body structure (post-#490):
+    grep -n "expandedUnits.has\|stages.map\|toggleUnit" \
+        frontend/src/components/matrix/MatrixListView.js | head -10
+    # Expected (per #490): conditional expanded body renders a list of
+    # stage rows with full title + MatrixCell. We attach onClick to the
+    # stage row for tap-to-edit.
+
+0.6 — Verify MatrixGridView cell render:
+    grep -n "MatrixCell\|tbody\|cells" \
+        frontend/src/components/matrix/MatrixGridView.js | head -10
+    # Expected (per #486+#487): cells rendered inside <td> elements.
+    # We pass onClick to MatrixCell for click-to-edit.
+
+0.7 — Verify toast library available:
+    grep -rn "import.*toast\|from 'sonner'\|from 'react-hot-toast'" \
+        frontend/src/pages/StageDetailPage.js \
+        frontend/src/pages/UnitDetailPage.js | head -5
+    # Expected: `sonner` used (verified earlier in UnitDetailPage L4).
+    # Use `toast.error(...)` / `toast.success(...)` for save feedback.
+
+0.8 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — matrixService extensions
+================================================================================
+
+FILE: frontend/src/services/matrixService.js
+---------------------------------------------
+
+LOCATION 1.1 — Add 2 new methods to the existing `matrixService` object
+(after `getMatrix`):
+
+   ADD:
+       async updateCell(projectId, unitId, stageId, payload) {
+         // payload: { status?, note?, text_value? }
+         // Returns: { project_id, unit_id, stage_id, status, note, text_value,
+         //           last_updated_at, last_updated_by, last_actor_name }
+         const response = await axios.put(
+           `${API}/api/execution-matrix/${projectId}/cells/${unitId}/${stageId}`,
+           payload,
+           { headers: getAuthHeader() }
+         );
+         return response.data;
+       },
+
+       async getCellHistory(projectId, unitId, stageId, opts = {}) {
+         // Returns: { history: [{ actor_id, actor_name, timestamp,
+         //   status_before, status_after, note_before, note_after,
+         //   text_before, text_after }] }
+         // opts.signal: optional AbortSignal for cancellation
+         const response = await axios.get(
+           `${API}/api/execution-matrix/${projectId}/cells/${unitId}/${stageId}/history`,
+           { headers: getAuthHeader(), signal: opts.signal }
+         );
+         return response.data;
+       },
+
+DO NOT TOUCH:
+- Existing `getMatrix` method.
+- Existing `API` and `getAuthHeader` imports.
+
+================================================================================
+PART 2 — useMatrixData hook extension (optimistic update)
+================================================================================
+
+FILE: frontend/src/hooks/useMatrixData.js
+------------------------------------------
+
+LOCATION 2.1 — Add `updateCell` action to the hook's return value:
+
+   ADD INSIDE the hook (before the `return` statement):
+
+       const updateCell = useCallback(async (unitId, stageId, payload) => {
+         if (!projectId || !data) return { ok: false, error: 'no_data' };
+         // Compute the optimistic next state for `cells` array
+         const prevCells = data.cells || [];
+         const cellKey = `${unitId}::${stageId}`;
+         const existingIdx = prevCells.findIndex(
+           c => `${c.unit_id}::${c.stage_id}` === cellKey
+         );
+         const optimisticCell = {
+           unit_id: unitId,
+           stage_id: stageId,
+           status: payload.status ?? null,
+           note: payload.note ?? null,
+           text_value: payload.text_value ?? null,
+           last_updated_at: new Date().toISOString(),
+           last_updated_by: '__optimistic__',  // marker for UI
+           last_actor_name: 'אתה',
+         };
+         const optimisticCells = existingIdx >= 0
+           ? prevCells.map((c, i) => i === existingIdx ? optimisticCell : c)
+           : [...prevCells, optimisticCell];
+         setData(prev => prev ? { ...prev, cells: optimisticCells } : prev);
+
+         try {
+           const result = await matrixService.updateCell(projectId, unitId, stageId, payload);
+           // Replace optimistic with actual response
+           setData(prev => {
+             if (!prev) return prev;
+             const cells = (prev.cells || []).map(c =>
+               `${c.unit_id}::${c.stage_id}` === cellKey ? { ...c, ...result } : c
+             );
+             return { ...prev, cells };
+           });
+           return { ok: true, cell: result };
+         } catch (err) {
+           // Revert on error
+           setData(prev => prev ? { ...prev, cells: prevCells } : prev);
+           const detail = err?.response?.data?.detail || 'שגיאה בשמירה';
+           return { ok: false, error: detail };
+         }
+       }, [projectId, data]);
+
+   UPDATE the return value:
+
+       return { data, loading, error, refresh: load, updateCell };
+
+   IMPORTANT:
+   - Optimistic update mutates `data.cells` IMMEDIATELY (UI updates).
+   - On API error: revert `data.cells` to `prevCells` snapshot.
+   - Caller decides whether to show toast (we do it from the dialog).
+
+DO NOT TOUCH:
+- Existing useEffect / AbortController logic.
+- `loading` / `error` state.
+
+================================================================================
+PART 3 — StatusButtonGrid component (NEW)
+================================================================================
+
+FILE: frontend/src/components/matrix/StatusButtonGrid.js (NEW)
+---------------------------------------------------------------
+
+   FULL FILE:
+
+       import React from 'react';
+       import { MATRIX_STATUS_LIST } from './STATUS_CONFIG';
+
+       /**
+        * 2×3 grid of status buttons. Tap to select.
+        * Selected state: full opacity + 2px border.
+        * Disabled state: 50% opacity + cursor-not-allowed.
+        *
+        * Props:
+        *   value: current status id (string or null)
+        *   onChange: (statusId) => void
+        *   disabled: bool (read-only mode)
+        */
+       export default function StatusButtonGrid({ value, onChange, disabled = false }) {
+         return (
+           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" dir="rtl">
+             {MATRIX_STATUS_LIST.map((s) => {
+               const Icon = s.Icon;
+               const isSelected = value === s.id;
+               return (
+                 <button
+                   key={s.id}
+                   type="button"
+                   onClick={() => !disabled && onChange(s.id)}
+                   disabled={disabled}
+                   className={`
+                     flex flex-col items-center justify-center gap-1
+                     px-3 py-3 min-h-[56px] rounded-lg transition-all
+                     ${isSelected
+                       ? `${s.bg} ${s.text} border-2 ${s.border} font-bold`
+                       : `bg-white border border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50`
+                     }
+                     ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                   `}
+                 >
+                   <Icon className={`w-5 h-5 ${isSelected ? s.text : 'text-slate-400'}`} />
+                   <span className="text-xs">{s.label}</span>
+                 </button>
+               );
+             })}
+           </div>
+         );
+       }
+
+   IMPORTANT:
+   - 2 cols on mobile (`grid-cols-2`), 3 cols on small+ (`sm:grid-cols-3`).
+   - Min height 56px → comfortable thumb target on mobile.
+   - Selected state: bg color + 2px border (visible delta from unselected).
+   - Disabled state: opacity-50 + cursor-not-allowed.
+
+================================================================================
+PART 4 — CellHistoryList component (NEW)
+================================================================================
+
+FILE: frontend/src/components/matrix/CellHistoryList.js (NEW)
+-------------------------------------------------------------
+
+   FULL FILE:
+
+       import React from 'react';
+       import { Loader2 } from 'lucide-react';
+       import { MATRIX_STATUSES } from './STATUS_CONFIG';
+
+       /**
+        * Reverse-chronological audit history for a cell.
+        *
+        * Props:
+        *   history: [{ actor_id, actor_name, timestamp, status_before,
+        *               status_after, note_before, note_after,
+        *               text_before, text_after }]
+        *   loading: bool
+        */
+       export default function CellHistoryList({ history, loading }) {
+         if (loading) {
+           return (
+             <div className="flex items-center justify-center gap-2 py-4 text-slate-500" dir="rtl">
+               <Loader2 className="w-4 h-4 animate-spin" />
+               <span className="text-xs">טוען היסטוריה...</span>
+             </div>
+           );
+         }
+         if (!history || history.length === 0) {
+           return (
+             <div className="text-center py-4 text-xs text-slate-400" dir="rtl">
+               אין עדיין שינויים
+             </div>
+           );
+         }
+         // Reverse-chronological (newest first)
+         const sorted = [...history].reverse();
+         return (
+           <div className="space-y-2 max-h-[200px] overflow-y-auto" dir="rtl">
+             {sorted.map((entry, idx) => {
+               const before = entry.status_before
+                 ? MATRIX_STATUSES[entry.status_before]?.label || entry.status_before
+                 : '—';
+               const after = entry.status_after
+                 ? MATRIX_STATUSES[entry.status_after]?.label || entry.status_after
+                 : '—';
+               const dt = entry.timestamp ? new Date(entry.timestamp) : null;
+               const dtStr = dt ? dt.toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' }) : '';
+               return (
+                 <div key={idx} className="border-r-2 border-slate-200 pr-3 py-1">
+                   <div className="text-xs text-slate-700 font-medium">
+                     {entry.actor_name || 'משתמש לא ידוע'}
+                   </div>
+                   <div className="text-[11px] text-slate-500 mt-0.5">
+                     {dtStr}
+                   </div>
+                   <div className="text-xs text-slate-600 mt-1">
+                     {before} → <span className="font-medium">{after}</span>
+                     {entry.note_after && entry.note_after !== entry.note_before && (
+                       <div className="text-[11px] text-slate-500 mt-0.5">
+                         הערה: {entry.note_after}
+                       </div>
+                     )}
+                   </div>
+                 </div>
+               );
+             })}
+           </div>
+         );
+       }
+
+   IMPORTANT:
+   - Newest first (reverse-chronological).
+   - Max-height 200px with scroll for long histories.
+   - "—" for null status (e.g., first creation when before was null).
+   - Note shown only if changed (avoids noise).
+
+================================================================================
+PART 5 — CellEditDialog component (NEW, the main piece)
+================================================================================
+
+FILE: frontend/src/components/matrix/CellEditDialog.js (NEW)
+-------------------------------------------------------------
+
+   FULL FILE:
+
+       import React, { useState, useEffect, useCallback, useRef } from 'react';
+       import * as Dialog from '@radix-ui/react-dialog';
+       import { X, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+       import { toast } from 'sonner';
+       import StatusButtonGrid from './StatusButtonGrid';
+       import CellHistoryList from './CellHistoryList';
+       import { matrixService } from '../../services/matrixService';
+
+       /**
+        * Cell edit dialog — bottom sheet on mobile, centered popover on desktop.
+        *
+        * Props:
+        *   open: bool — controls visibility
+        *   onClose: () => void — fires when dialog closes
+        *   onSave: (payload) => Promise<{ok, error?}> — wired to useMatrixData.updateCell
+        *   projectId: string
+        *   unit: { id, unit_no, building_id, floor_id }
+        *   stage: { id, title, type } — type='status' or 'tag'
+        *   cell: existing cell or null
+        *   building: optional { name } for header
+        *   floor: optional { floor_number } for header
+        *   canEdit: bool (from permissions.can_edit)
+        */
+       export default function CellEditDialog({
+         open, onClose, onSave, projectId, unit, stage, cell, building, floor, canEdit,
+       }) {
+         const isTag = stage?.type === 'tag';
+         const [status, setStatus] = useState(cell?.status || null);
+         const [note, setNote] = useState(cell?.note || '');
+         const [textValue, setTextValue] = useState(cell?.text_value || '');
+         const [historyOpen, setHistoryOpen] = useState(false);
+         const [history, setHistory] = useState(null);
+         const [historyLoading, setHistoryLoading] = useState(false);
+         const [saving, setSaving] = useState(false);
+
+         // AbortController for in-flight history request — prevents
+         // setState-on-unmounted-component warning when user closes
+         // dialog mid-fetch (or saves before history returns).
+         const abortRef = useRef(null);
+
+         // Reset form when opening with a different cell
+         useEffect(() => {
+           if (open) {
+             setStatus(cell?.status || null);
+             setNote(cell?.note || '');
+             setTextValue(cell?.text_value || '');
+             setHistoryOpen(false);
+             setHistory(null);
+           }
+         }, [open, cell]);
+
+         // Cleanup: abort any in-flight history fetch on unmount/close
+         useEffect(() => {
+           if (!open && abortRef.current) {
+             abortRef.current.abort();
+             abortRef.current = null;
+           }
+           return () => {
+             if (abortRef.current) abortRef.current.abort();
+           };
+         }, [open]);
+
+         const fetchHistory = useCallback(async () => {
+           if (!projectId || !unit || !stage) return;
+           // Abort any prior in-flight request for this dialog
+           if (abortRef.current) abortRef.current.abort();
+           const controller = new AbortController();
+           abortRef.current = controller;
+           setHistoryLoading(true);
+           try {
+             const result = await matrixService.getCellHistory(
+               projectId, unit.id, stage.id,
+               { signal: controller.signal },
+             );
+             if (!controller.signal.aborted) {
+               setHistory(result.history || []);
+             }
+           } catch (err) {
+             if (!controller.signal.aborted) {
+               setHistory([]);
+               toast.error('שגיאה בטעינת היסטוריה');
+             }
+           } finally {
+             if (!controller.signal.aborted) {
+               setHistoryLoading(false);
+             }
+           }
+         }, [projectId, unit, stage]);
+
+         const toggleHistory = () => {
+           const next = !historyOpen;
+           setHistoryOpen(next);
+           if (next && history === null) fetchHistory();
+         };
+
+         // Detect any change vs current cell state
+         const hasChange = isTag
+           ? textValue !== (cell?.text_value || '')
+             || note !== (cell?.note || '')
+           : status !== (cell?.status || null)
+             || note !== (cell?.note || '');
+
+         const handleSave = async () => {
+           if (!hasChange || !canEdit || saving) return;
+           setSaving(true);
+           const payload = isTag
+             ? { text_value: textValue, note }
+             : { status, note };
+           const result = await onSave(payload);
+           setSaving(false);
+           if (result.ok) {
+             onClose();
+           } else {
+             toast.error(result.error || 'שגיאה בשמירה. נסה שוב');
+           }
+         };
+
+         if (!open) return null;
+
+         return (
+           <Dialog.Root open={open} onOpenChange={(o) => !o && onClose()}>
+             <Dialog.Portal>
+               <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50 data-[state=open]:animate-in data-[state=open]:fade-in" />
+               <Dialog.Content
+                 className="
+                   fixed z-50 bg-white shadow-2xl
+                   inset-x-0 bottom-0 rounded-t-2xl max-h-[85vh]
+                   md:inset-auto md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2
+                   md:rounded-2xl md:max-w-md md:w-full md:max-h-[85vh]
+                   flex flex-col overflow-hidden
+                 "
+                 dir="rtl"
+               >
+                 {/* Mobile drag handle */}
+                 <div className="md:hidden flex justify-center py-2">
+                   <div className="w-10 h-1 bg-slate-300 rounded-full" />
+                 </div>
+
+                 {/* Header */}
+                 <div className="flex items-start justify-between gap-2 px-4 pt-2 pb-3 border-b border-slate-200">
+                   <div className="flex-1 min-w-0">
+                     <div className="text-xs text-slate-500">
+                       {building?.name && <span>{building.name}</span>}
+                       {floor && <span> • קומה {floor.floor_number}</span>}
+                       {unit && <span> • דירה {unit.unit_no}</span>}
+                     </div>
+                     <Dialog.Title className="text-base font-bold text-slate-900 mt-0.5 truncate">
+                       {stage?.title || 'שלב'}
+                     </Dialog.Title>
+                   </div>
+                   <Dialog.Close asChild>
+                     <button
+                       className="p-1.5 -m-1.5 hover:bg-slate-100 rounded-lg transition-colors shrink-0"
+                       aria-label="סגור"
+                     >
+                       <X className="w-5 h-5 text-slate-500" />
+                     </button>
+                   </Dialog.Close>
+                 </div>
+
+                 {/* Read-only banner */}
+                 {!canEdit && (
+                   <div className="px-4 py-2 bg-amber-50 border-b border-amber-100 text-xs text-amber-800">
+                     צפייה בלבד — אין לך הרשאת עריכה
+                   </div>
+                 )}
+
+                 {/* Body — scrollable */}
+                 <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+                   {/* Status / Tag input */}
+                   {isTag ? (
+                     <div>
+                       <label className="block text-xs font-medium text-slate-700 mb-2">
+                         ערך:
+                       </label>
+                       <input
+                         type="text"
+                         value={textValue}
+                         onChange={(e) => setTextValue(e.target.value)}
+                         disabled={!canEdit}
+                         maxLength={200}
+                         className="w-full px-3 py-3 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-violet-500 disabled:bg-slate-50 disabled:text-slate-500"
+                         placeholder="הזן ערך..."
+                       />
+                       <div className="text-[11px] text-slate-400 mt-1 text-left">
+                         {textValue.length}/200
+                       </div>
+                     </div>
+                   ) : (
+                     <div>
+                       <label className="block text-xs font-medium text-slate-700 mb-2">
+                         סטטוס:
+                       </label>
+                       <StatusButtonGrid
+                         value={status}
+                         onChange={setStatus}
+                         disabled={!canEdit}
+                       />
+                     </div>
+                   )}
+
+                   {/* Note */}
+                   <div>
+                     <label className="block text-xs font-medium text-slate-700 mb-2">
+                       הערה:
+                     </label>
+                     <textarea
+                       value={note}
+                       onChange={(e) => setNote(e.target.value)}
+                       disabled={!canEdit}
+                       maxLength={500}
+                       rows={3}
+                       className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-violet-500 disabled:bg-slate-50 disabled:text-slate-500 resize-none"
+                       placeholder="הוסף הערה (אופציונלי)..."
+                     />
+                     <div className="text-[11px] text-slate-400 mt-1 text-left">
+                       {note.length}/500
+                     </div>
+                   </div>
+
+                   {/* History — collapsible. Note: backend's cell summary
+                       (#483) doesn't return audit_count. Count shown ONLY
+                       after expand (computed from `history.length`). */}
+                   <div className="border-t border-slate-100 pt-3">
+                     <button
+                       type="button"
+                       onClick={toggleHistory}
+                       className="w-full flex items-center justify-between gap-2 py-2 text-xs font-medium text-slate-600 hover:text-slate-900"
+                     >
+                       <span>
+                         {historyOpen
+                           ? `היסטוריה${history?.length != null ? ` (${history.length})` : ''}`
+                           : '▼ היסטוריה'}
+                       </span>
+                       {historyOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                     </button>
+                     {historyOpen && (
+                       <div className="mt-2">
+                         <CellHistoryList history={history} loading={historyLoading} />
+                       </div>
+                     )}
+                   </div>
+                 </div>
+
+                 {/* Footer — sticky */}
+                 <div
+                   className="flex items-center justify-end gap-2 px-4 py-3 border-t border-slate-200 bg-white"
+                   style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+                 >
+                   <Dialog.Close asChild>
+                     <button
+                       type="button"
+                       className="px-4 py-3 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors min-h-[44px]"
+                     >
+                       ביטול
+                     </button>
+                   </Dialog.Close>
+                   <button
+                     type="button"
+                     onClick={handleSave}
+                     disabled={!canEdit || !hasChange || saving}
+                     className="px-5 py-3 rounded-lg text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 active:bg-violet-800 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors min-h-[44px] inline-flex items-center gap-2"
+                   >
+                     {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                     {saving ? 'שומר...' : 'שמור'}
+                   </button>
+                 </div>
+               </Dialog.Content>
+             </Dialog.Portal>
+           </Dialog.Root>
+         );
+       }
+
+   IMPORTANT:
+   - Single component, conditional Tailwind for mobile (bottom sheet) vs
+     desktop (centered popover) — D1.
+   - Mobile drag handle (`md:hidden`) — visual cue for sheet pattern.
+   - Footer uses `env(safe-area-inset-bottom)` per CLAUDE.md Capacitor rule.
+   - History fetched lazily on first expand (D8).
+   - `hasChange` detection: status/text_value OR note differs from current cell.
+   - Read-only banner shown for users without `can_edit`.
+   - `Dialog.Close asChild` wraps the X and ביטול buttons (Radix handles ESC).
+   - Toast on save error; close on success.
+
+DO NOT TOUCH:
+- StatusButtonGrid / CellHistoryList — they're new files in this batch.
+- STATUS_CONFIG.js (read-only constants).
+
+================================================================================
+PART 6 — MatrixCell: add onClick prop
+================================================================================
+
+FILE: frontend/src/components/matrix/MatrixCell.js
+---------------------------------------------------
+
+LOCATION 6.1 — Add `onClick` to the function signature:
+
+   FIND:
+       export default function MatrixCell({ cell, stage, size = 'sm' }) {
+
+   REPLACE WITH:
+       export default function MatrixCell({ cell, stage, size = 'sm', onClick = null }) {
+
+LOCATION 6.2 — Wrap the rendered output in a `<button>` when onClick is
+   provided. The 3 render branches (tag / status / empty) all return a
+   single `<div className="...">` — wrap that with a click handler:
+
+   The cleanest approach: extract the inner content into a renderInner()
+   IIFE, then wrap with conditional `<button>` or `<div>`:
+
+       export default function MatrixCell({ cell, stage, size = 'sm', onClick = null }) {
+         const isTag = stage?.type === 'tag';
+         const status = cell?.status;
+         const textValue = cell?.text_value;
+
+         // ... existing logic computing classes + content ...
+
+         const inner = (() => {
+           if (isTag) { /* existing tag JSX, just the inner div */ }
+           const cfg = status ? MATRIX_STATUSES[status] : null;
+           if (cfg) { /* existing status JSX, just the inner div */ }
+           // empty cell ... existing JSX
+         })();
+
+         if (onClick) {
+           return (
+             <button
+               type="button"
+               onClick={onClick}
+               className="cursor-pointer hover:opacity-80 active:scale-95 transition-all"
+               aria-label={`ערוך ${stage?.title || ''}`}
+             >
+               {inner}
+             </button>
+           );
+         }
+         return inner;
+       }
+
+   IMPORTANT — refactor preserves Phase 2A behavior exactly:
+   - When `onClick` is NOT passed (read-only contexts): renders identical
+     `<div>` as before.
+   - When `onClick` IS passed: wraps in `<button>` with hover + active
+     visual feedback.
+   - aria-label includes stage title for accessibility.
+
+DO NOT TOUCH:
+- MATRIX_STATUSES / EMPTY_CELL_CONFIG imports.
+- The 3 render variants (tag / status / empty).
+- Size handling (sm / md).
+
+================================================================================
+PART 7 — MatrixListView: wire stage row tap → onClick
+================================================================================
+
+FILE: frontend/src/components/matrix/MatrixListView.js
+-------------------------------------------------------
+
+LOCATION 7.1 — Add `onCellClick` prop:
+
+   FIND (post-#490):
+       export default function MatrixListView({ units, stages, cells, floorsById, buildingsById }) {
+
+   REPLACE WITH:
+       export default function MatrixListView({ units, stages, cells, floorsById, buildingsById, onCellClick = null }) {
+
+LOCATION 7.2 — Inside the expanded body's stage row map, change the
+   inner `<MatrixCell>` to receive an onClick handler:
+
+   FIND (per #490 PART 1.3):
+       <div className="shrink-0">
+         <MatrixCell cell={cell} stage={stage} size="sm" />
+       </div>
+
+   REPLACE WITH:
+       <div className="shrink-0">
+         <MatrixCell
+           cell={cell}
+           stage={stage}
+           size="sm"
+           onClick={onCellClick ? () => onCellClick(unit, stage, cell) : null}
+         />
+       </div>
+
+   IMPORTANT — onClick only attached when caller provides `onCellClick`.
+   Phase 2A read-only contexts pass null → cells stay non-interactive.
+
+DO NOT TOUCH:
+- expandedUnits / toggleUnit state.
+- Card header / progress bar.
+- Empty state.
+
+================================================================================
+PART 8 — MatrixGridView: wire cell click → onClick
+================================================================================
+
+FILE: frontend/src/components/matrix/MatrixGridView.js
+-------------------------------------------------------
+
+LOCATION 8.1 — Add `onCellClick` prop:
+
+   FIND (post-#486+#487):
+       export default function MatrixGridView({ units, stages, cells, floorsById, buildingsById }) {
+
+   REPLACE WITH:
+       export default function MatrixGridView({ units, stages, cells, floorsById, buildingsById, onCellClick = null }) {
+
+LOCATION 8.2 — Inside the tbody td map, attach onClick to MatrixCell:
+
+   FIND:
+       <td key={stage.id} className="p-1.5 border-l border-slate-100 last:border-l-0 text-center">
+         <div className="inline-flex">
+           <MatrixCell cell={cell} stage={stage} size="md" />
+         </div>
+       </td>
+
+   REPLACE WITH:
+       <td key={stage.id} className="p-1.5 border-l border-slate-100 last:border-l-0 text-center">
+         <div className="inline-flex">
+           <MatrixCell
+             cell={cell}
+             stage={stage}
+             size="md"
+             onClick={onCellClick ? () => onCellClick(unit, stage, cell) : null}
+           />
+         </div>
+       </td>
+
+DO NOT TOUCH:
+- Sticky columns (building + unit).
+- thead rendering.
+- Zebra stripes.
+
+================================================================================
+PART 9 — ExecutionMatrixPage: state management + dialog rendering
+================================================================================
+
+FILE: frontend/src/pages/ExecutionMatrixPage.js
+------------------------------------------------
+
+LOCATION 9.1 — Imports:
+
+   FIND:
+       import React, { useMemo } from 'react';
+       import { useParams, useNavigate } from 'react-router-dom';
+       import { Loader2, AlertCircle, LayoutGrid, ArrowRight } from 'lucide-react';
+       import { useMatrixData } from '../hooks/useMatrixData';
+       import MatrixListView from '../components/matrix/MatrixListView';
+       import MatrixGridView from '../components/matrix/MatrixGridView';
+       import StatusLegend from '../components/matrix/StatusLegend';
+
+   REPLACE WITH:
+       import React, { useMemo, useState, useCallback } from 'react';
+       import { useParams, useNavigate } from 'react-router-dom';
+       import { Loader2, AlertCircle, LayoutGrid, ArrowRight } from 'lucide-react';
+       import { useMatrixData } from '../hooks/useMatrixData';
+       import MatrixListView from '../components/matrix/MatrixListView';
+       import MatrixGridView from '../components/matrix/MatrixGridView';
+       import StatusLegend from '../components/matrix/StatusLegend';
+       import CellEditDialog from '../components/matrix/CellEditDialog';
+
+LOCATION 9.2 — Inside the component, after the existing memos, add
+   editing state + handler:
+
+   ADD:
+       // Cell edit dialog state
+       const [editing, setEditing] = useState(null); // { unit, stage, cell } | null
+
+       const canEdit = data?.permissions?.can_edit ?? false;
+
+       const handleCellClick = useCallback((unit, stage, cell) => {
+         setEditing({ unit, stage, cell });
+       }, []);
+
+       const handleSaveCell = useCallback(async (payload) => {
+         if (!editing) return { ok: false, error: 'no_editing' };
+         const result = await updateCell(editing.unit.id, editing.stage.id, payload);
+         return result;
+       }, [editing, updateCell]);
+
+   IMPORTANT — destructure `updateCell` from `useMatrixData`:
+       const { data, loading, error, refresh, updateCell } = useMatrixData(projectId);
+
+LOCATION 9.3 — Pass `onCellClick={handleCellClick}` to BOTH MatrixListView
+   and MatrixGridView:
+
+   FIND (post-#486):
+       <div className="md:hidden">
+         <MatrixListView
+           units={units}
+           stages={stages}
+           cells={cells}
+           floorsById={floorsById}
+           buildingsById={buildingsById}
+         />
+       </div>
+       <div className="hidden md:block">
+         <MatrixGridView ... />
+       </div>
+
+   ADD onCellClick prop to both. Pass the handler unconditionally —
+   the dialog itself handles read-only mode via `canEdit` prop:
+
+       <div className="md:hidden">
+         <MatrixListView
+           units={units}
+           stages={stages}
+           cells={cells}
+           floorsById={floorsById}
+           buildingsById={buildingsById}
+           onCellClick={handleCellClick}
+         />
+       </div>
+       <div className="hidden md:block">
+         <MatrixGridView
+           units={units}
+           stages={stages}
+           cells={cells}
+           floorsById={floorsById}
+           buildingsById={buildingsById}
+           onCellClick={handleCellClick}
+         />
+       </div>
+
+LOCATION 9.4 — Render the CellEditDialog at the end of the component
+   (right before the closing `</div>` of the outer container):
+
+   ADD:
+       <CellEditDialog
+         open={editing !== null}
+         onClose={() => setEditing(null)}
+         onSave={handleSaveCell}
+         projectId={projectId}
+         unit={editing?.unit}
+         stage={editing?.stage}
+         cell={editing?.cell}
+         building={editing ? buildingsById[editing.unit.building_id] : null}
+         floor={editing ? floorsById[editing.unit.floor_id] : null}
+         canEdit={canEdit}
+       />
+
+DO NOT TOUCH:
+- StatusLegend.
+- Header back button (#492).
+- Loading / error states (the dialog only renders when editing !== null,
+  so it's invisible during loading/error).
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 2 — All NEW files exist:
+   for f in \
+     frontend/src/components/matrix/CellEditDialog.js \
+     frontend/src/components/matrix/StatusButtonGrid.js \
+     frontend/src/components/matrix/CellHistoryList.js; do
+     test -f "$f" && echo "EXISTS: $f" || echo "MISSING: $f";
+   done
+   → 3 EXISTS
+
+VERIFY 3 — matrixService extensions:
+   grep -c "updateCell\|getCellHistory" frontend/src/services/matrixService.js
+   → ≥ 2
+
+VERIFY 4 — useMatrixData returns updateCell:
+   grep -c "updateCell" frontend/src/hooks/useMatrixData.js
+   → ≥ 3 (declaration + return + dependency)
+
+VERIFY 5 — MatrixCell accepts onClick:
+   grep -c "onClick" frontend/src/components/matrix/MatrixCell.js
+   → ≥ 2 (prop + button wrapper)
+
+VERIFY 6 — Backend regression (no backend touched):
+   cd backend && python -m pytest tests/test_execution_matrix.py -q
+   → 14 passed (unchanged from #489)
+
+VERIFY 7 — Visual smoke (Zahi runs after deploy to staging):
+
+   Mobile (375px DevTools / actual phone):
+   a) Navigate to /projects/{p}/execution-matrix.
+   b) Tap a unit card → expands to vertical stage list.
+   c) Tap a stage row → bottom sheet slides up with the cell editor.
+   d) Header shows "{building} • קומה N • דירה M" + stage title.
+   e) Tap a status button → button highlighted with bg + bold border.
+   f) Type in note field → character counter updates "0/500".
+   g) Expand history → "אין עדיין שינויים" if first edit.
+   h) Tap "שמור" → spinner briefly → sheet closes → cell shows new
+      status icon in the matrix.
+   i) Open cell again → status persisted, last_actor_name shows.
+   j) Expand history → 1 entry visible: "[user] • [timestamp] •
+      — → [status]".
+   k) Edit again, change status → save → history grows to 2 entries.
+
+   Desktop (≥768px):
+   l) Click a cell in the grid → centered popover opens (max-w-md).
+   m) Same flow as mobile (status grid, note, history, save).
+   n) Click outside or X → closes (no save).
+   o) Press ESC → closes.
+
+   Permissions:
+   p) Login as contractor → tap a cell → dialog opens with "צפייה בלבד"
+      banner + all controls disabled. Save button disabled.
+
+   Optimistic update:
+   q) Save with slow network (DevTools throttle "Slow 3G") →
+      sheet closes IMMEDIATELY, cell shows new status, then settles.
+   r) Disconnect network → tap save → sheet stays open, error toast
+      "שגיאה בשמירה. נסה שוב", cell reverts to previous status.
+
+   Tag cells (if any project has type='tag' stages):
+   s) Tap tag cell → dialog shows text input instead of status grid.
+   t) Type, save → text stored in `text_value`.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (greps + Radix Dialog import path verification)
+  - Per-file diff (3 NEW + 5 small edits)
+  - VERIFY 1-6 outputs
+  - VERIFY 7 deferred-to-Zahi note (20 scenarios a-t)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  feat(matrix): Phase 2B — cell editing with popover/sheet + audit history
+
+  Phase 2B of 4 sub-phases. Turns the matrix from "view" to "use".
+  Adds tap-to-edit on every cell with status/text + note + audit history.
+
+  Mobile-first per Zahi (5 UX decisions approved 2026-05-04):
+   - Bottom sheet on mobile, centered popover on desktop
+   - 2×3 status grid (tap to select)
+   - Explicit save button (with optimistic update)
+   - Collapsible history (lazy-loaded on expand)
+   - Same dialog adapts to tag cells (text input instead of grid)
+
+  3 NEW components:
+   - CellEditDialog (~220 LOC) — Radix Dialog with responsive layout
+   - StatusButtonGrid (~70 LOC) — 2×3 status selector
+   - CellHistoryList (~70 LOC) — reverse-chronological audit list
+
+  5 small edits:
+   - MatrixCell — onClick prop wraps in <button>
+   - MatrixListView / MatrixGridView — wire stage rows / cells to onClick
+   - ExecutionMatrixPage — editing state + dialog rendering
+   - matrixService — updateCell + getCellHistory methods
+   - useMatrixData — updateCell mutation with optimistic update + revert
+
+  Optimistic update pattern: UI changes immediately, API call in
+  background, revert + toast on error. Permissions: read-only banner
+  + disabled controls for users with `can_edit: false`. Touch targets
+  ≥44px throughout. Safe-area-inset on footer.
+
+  Backend untouched. #483 endpoints (PUT cell, GET history) already
+  serve everything. No new tests — covered by #483's 14 tests +
+  V7 visual smoke. ~440 LOC total.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (8 greps + Radix Dialog verification)
+2. PART 1 — matrixService extensions (~15 LOC)
+3. PART 2 — useMatrixData updateCell mutation (~30 LOC)
+4. PART 3 — StatusButtonGrid NEW (~70 LOC)
+5. PART 4 — CellHistoryList NEW (~70 LOC)
+6. PART 5 — CellEditDialog NEW (~220 LOC)
+7. PART 6 — MatrixCell onClick prop (~5 LOC)
+8. PART 7 — MatrixListView onCellClick wiring (~5 LOC)
+9. PART 8 — MatrixGridView onCellClick wiring (~5 LOC)
+10. PART 9 — ExecutionMatrixPage state + dialog rendering (~30 LOC)
+11. Run VERIFY 1-6
+12. Generate review.txt + .local/.commit_message
+13. STOP. Zahi reviews. Then he runs:
+      git checkout staging && ./deploy.sh --stag
+    ⚠️ COMMIT ON `staging` BRANCH.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+3 NEW files removed + 5 edits reverted. Matrix returns to read-only
+state. NO impact on:
+- Backend (#483 endpoints stay; just no consumers)
+- Sort, RTL, filters, navigation, sticky columns
+- Other QC, handover, safety, plans, defects, auth pages
+
+================================================================================
+END OF SPEC — PHASE 2B CELL EDITING
+================================================================================

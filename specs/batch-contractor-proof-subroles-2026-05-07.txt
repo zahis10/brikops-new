@@ -1,0 +1,388 @@
+================================================================================
+P0 HOTFIX — contractor proof flow broken for specific trade roles
+================================================================================
+Date:           2026-05-07
+Branch:         staging  (NOT main)
+Severity:       P0 — production bug. Contractors with specific trade roles
+                ('plumber', 'electrician', 'tiler' etc.) cannot submit proof.
+                Reported by Zahi 2026-05-07.
+
+Files changed:  2 backend files
+                  backend/contractor_ops/router.py        (+5 LOC, new helper)
+                  backend/contractor_ops/tasks_router.py  (+3 / -2 LOC)
+                  frontend/src/pages/TaskDetailPage.js    (+0)  ← NOT TOUCHED
+
+Tests:          1 new test (backend)
+                  backend/tests/test_contractor_proof_subroles.py
+
+Mobile:         No frontend changes. No native files. No deploy of frontend
+                bundle needed (unless we want to ship together).
+DB migration:   NONE.
+
+Family:         Standalone P0 hotfix. Mirrors the lesson from CLAUDE.md
+                (2026-05-03 Stream A v2): "בפועל בפרודקשן הroles
+                ספציפיים יותר → ה-route check נכשל".
+
+================================================================================
+BUG REPRODUCTION (Zahi 2026-05-07 production)
+================================================================================
+
+A contractor user with project membership role like 'plumber' or
+'electrician' opens an assigned defect on /tasks/{id}.
+
+Today:
+  - Frontend TaskDetailPage L786 evaluates:
+        showContractorProof = isContractor && isAssignee && status_ok
+    isContractor (L234) checks projectRole === 'contractor' OR
+    user.role === 'contractor'. Contractor's membership role is 'plumber',
+    so isContractor=false → upload card NOT rendered.
+
+  - Even if upload card were rendered and proof submitted, backend
+    tasks_router.py L861 rejects:
+        if project_role != 'contractor' and user['role'] != 'contractor':
+            raise 403 'Only contractors can submit proof'
+
+  - Manager never sees showManagerDecision because task.status never
+    advances to 'pending_manager_approval' (which depends on contractor
+    submitting proof). User-visible symptom: "המצב תמונה לא קיים גם
+    לאדמין".
+
+Root cause:
+  Backend onboarding_router.py L185 registers contractors with specific
+  SUBCONTRACTOR_ROLES = ['plumber', 'electrician', 'aluminum', 'painter',
+  'tiler', 'carpenter', 'mason', 'hvac_tech', 'glazier', 'locksmith',
+  'welder', 'insulator', 'roofer', 'landscaper', 'general_worker'].
+
+  These are all conceptually contractors, but the literal string
+  'contractor' is not their role. Both the frontend isContractor check
+  AND the backend /contractor-proof guard hardcode the literal
+  'contractor' string and miss all 15 subcontractor trade roles.
+
+Fix strategy (minimum blast radius):
+  Backend normalizes the role at the API boundary.
+    1. New helper `_is_contractor_role(role)` in router.py.
+    2. tasks_router.py L500: when computing `user_project_role` returned
+       to frontend, map any subcontractor trade to 'contractor' so
+       existing frontend code (and any future caller) treats them
+       uniformly.
+    3. tasks_router.py L861: relax the contractor-proof guard to use
+       `_is_contractor_role(project_role)` (also accepts the global
+       user.role check).
+
+  Frontend stays UNCHANGED — relies on the backend normalization.
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+⚠️ Replit MUST run STEP 0 on workspace post-`git pull`. Spec line numbers
+are approximate.
+
+0.1 — Verify SUBCONTRACTOR_ROLES list is canonical and live:
+    grep -n "SUBCONTRACTOR_ROLES\s*=" backend/contractor_ops/onboarding_router.py
+    Expected: L185, exactly 15 entries:
+      'plumber','electrician','aluminum','painter','tiler','carpenter',
+      'mason','hvac_tech','glazier','locksmith','welder','insulator',
+      'roofer','landscaper','general_worker'.
+
+0.2 — Confirm the bug locations:
+    grep -n "user_project_role.*=" backend/contractor_ops/tasks_router.py
+    Expected: L500 — the assignment that returns user_project_role.
+
+    grep -n "project_role != 'contractor'" backend/contractor_ops/tasks_router.py
+    Expected: L861 — inside contractor_proof endpoint.
+
+0.3 — Confirm frontend isContractor check:
+    grep -n "isContractor\s*=" frontend/src/pages/TaskDetailPage.js
+    Expected: L234. We are NOT modifying this line — backend
+    normalization will make projectRole='contractor' for all subroles.
+
+0.4 — Check for OTHER contractor-only mutation endpoints that hardcode
+      'contractor' (out of scope to fix in this batch — just count and
+      document for a follow-up):
+    grep -n "project_role.*'contractor'\|project_role.*\"contractor\"" \
+        backend/contractor_ops/tasks_router.py
+    grep -n "membership\['role'\]\s*==\s*'contractor'\|effective_role.*'contractor'" \
+        backend/contractor_ops/tasks_router.py
+    Expected: ~6-8 hits. Document them in review.txt as "follow-up
+    backlog: similar narrow checks at LXX, LXX, LXX". DO NOT fix in
+    this batch.
+
+0.5 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+================================================================================
+PART 1 — Add `_is_contractor_role` helper
+================================================================================
+
+FILE: backend/contractor_ops/router.py
+--------------------------------------
+
+Locate the existing `_get_contractor_trade_key` function (around L66).
+ADD immediately above or below it:
+
+  # Subcontractor trade roles. Source of truth is
+  # onboarding_router.SUBCONTRACTOR_ROLES — duplicated here intentionally
+  # to avoid a circular import (onboarding_router imports from this file).
+  # If onboarding_router.SUBCONTRACTOR_ROLES changes, update this list too.
+  _SUBCONTRACTOR_TRADE_ROLES = frozenset({
+      'plumber', 'electrician', 'aluminum', 'painter', 'tiler',
+      'carpenter', 'mason', 'hvac_tech', 'glazier', 'locksmith',
+      'welder', 'insulator', 'roofer', 'landscaper', 'general_worker',
+  })
+
+
+  def _is_contractor_role(role: Optional[str]) -> bool:
+      """True if `role` is the literal 'contractor' OR a specific
+      subcontractor trade role (plumber, electrician, etc).
+
+      All subcontractor trade roles are conceptually contractors and
+      should be granted contractor-only permissions (e.g. submitting
+      proof on assigned defects). Hardcoded checks for `role ==
+      'contractor'` miss subroles and silently break flows.
+
+      See CLAUDE.md "כלל ברזל" — production roles are more specific
+      than 'contractor'.
+      """
+      if not role:
+          return False
+      return role == 'contractor' or role in _SUBCONTRACTOR_TRADE_ROLES
+
+DO NOT TOUCH:
+- _get_contractor_trade_key (works for all roles already).
+- _trades_match (works on trade_key, not role).
+- MANAGEMENT_ROLES at L413.
+- Any other helper.
+
+================================================================================
+PART 2 — tasks_router.py: normalize user_project_role for frontend
+================================================================================
+
+FILE: backend/contractor_ops/tasks_router.py
+--------------------------------------------
+
+LOCATION 2.1 — Update import (around L8):
+
+  FIND:
+      from .router import (
+          _check_project_access, _get_project_membership, _get_project_role,
+          ...
+      )
+
+  ADD `_is_contractor_role` to the import list:
+      from .router import (
+          _check_project_access, _get_project_membership, _get_project_role,
+          _is_contractor_role,
+          ...
+      )
+
+LOCATION 2.2 — Normalize user_project_role at L500:
+
+  FIND (currently L500):
+      task_data['user_project_role'] = membership['role'] if membership['role'] != 'none' else ('contractor' if (is_assignee or is_company_member) else 'none')
+
+  REPLACE WITH:
+      _raw_role = membership['role'] if membership['role'] != 'none' else ('contractor' if (is_assignee or is_company_member) else 'none')
+      # Normalize subcontractor trade roles (plumber, electrician, etc)
+      # to 'contractor' for frontend compatibility — frontend's
+      # isContractor check expects the literal 'contractor' string.
+      task_data['user_project_role'] = 'contractor' if _is_contractor_role(_raw_role) else _raw_role
+
+  NOTE: this preserves 'none' for unauthorized callers (defensive — they
+  shouldn't reach this line anyway, but if a future code path skips the
+  guard, we don't want to silently grant contractor view).
+
+LOCATION 2.3 — Broaden contractor_proof guard at L861:
+
+  FIND (inside contractor_proof, around L860-862):
+      project_role = await _get_project_role(user, task['project_id'])
+      if project_role != 'contractor' and user['role'] != 'contractor':
+          raise HTTPException(status_code=403, detail='Only contractors can submit proof')
+
+  REPLACE WITH:
+      project_role = await _get_project_role(user, task['project_id'])
+      if not _is_contractor_role(project_role) and user['role'] != 'contractor':
+          raise HTTPException(status_code=403, detail='Only contractors can submit proof')
+
+  This rejects non-contractors (managers, viewers) but accepts plumbers,
+  electricians, etc. — anyone in SUBCONTRACTOR_ROLES.
+
+DO NOT TOUCH:
+- The is_assignee / trade_key / status checks below L862. Those are
+  separate gates and remain strict.
+- L160, L168, L287, L290, L481, L632 — these are OTHER places that
+  hardcode 'contractor'. Out of scope for this hotfix; document in
+  review.txt as follow-up backlog (see STEP 0.4).
+- The /contractor-proof endpoint body (file upload + status update).
+- /tasks/{task_id}/contractor-proof URL or method.
+- The frontend.
+
+================================================================================
+PART 3 — New backend test
+================================================================================
+
+FILE: backend/tests/test_contractor_proof_subroles.py  (NEW)
+------------------------------------------------------------
+
+Create a new test file. ~60 LOC. Covers:
+
+  T1 — _is_contractor_role unit tests:
+       - returns True for 'contractor'
+       - returns True for 'plumber', 'electrician', 'tiler', 'carpenter',
+         'aluminum', 'painter', 'mason', 'hvac_tech', 'glazier',
+         'locksmith', 'welder', 'insulator', 'roofer', 'landscaper',
+         'general_worker'
+       - returns False for 'project_manager', 'management_team',
+         'viewer', 'none', '', None.
+
+  T2 — task_data['user_project_role'] normalization:
+       Mock a membership with role='plumber' on a task. Call the GET
+       task endpoint logic (or directly the relevant block) and assert
+       returned user_project_role == 'contractor'.
+
+  T3 — contractor_proof endpoint accepts subroles:
+       Mock a contractor with role='electrician' as the assignee.
+       Call POST /tasks/{id}/contractor-proof with valid file +
+       matching trade. Assert 200 (not 403). Assert task status
+       advanced to 'pending_manager_approval'.
+
+       Also mock a manager (role='project_manager') and assert 403
+       (regression — the guard still blocks non-contractors).
+
+Use existing test fixtures pattern from test_qc_units_status.py /
+test_qc_template_upgrade.py. Mock db with AsyncMock; mock storage
+service to skip actual upload. No real DB required.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+V1 — yarn build (defensive, frontend untouched):
+     cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
+     → no new warnings.
+
+V2 — pytest the new test:
+     cd backend && python -m pytest tests/test_contractor_proof_subroles.py -v
+     → all pass (T1, T2, T3).
+
+V3 — pytest the full task suite (regression sanity):
+     cd backend && python -m pytest tests/test_qc_units_status.py \
+                                   tests/test_qc_template_upgrade.py -v
+     → all pass.
+
+V4 — grep verification:
+     grep -c "_is_contractor_role" backend/contractor_ops/router.py
+     → ≥ 2 (1 def + 1 mention in docstring).
+
+     grep -c "_is_contractor_role" backend/contractor_ops/tasks_router.py
+     → ≥ 2 (1 import + ≥1 use).
+
+     grep -c "project_role != 'contractor'" backend/contractor_ops/tasks_router.py
+     → 0 (the L861 instance was the only one we're fixing — but verify
+       this returns 0 to confirm the swap landed).
+
+V5 — Visual smoke deferred to Zahi after deploy. Two phases:
+
+  Phase A (staging — easy reproducer):
+  a) Login as super_admin in staging.
+  b) Find or create a project with a contractor user whose project
+     membership.role is one of: 'plumber', 'electrician', 'tiler',
+     'painter'. (Atlas: db.project_memberships.findOne({...,
+     role: 'plumber'}). If none exist in staging, create one in admin
+     UI.)
+  c) Open a defect assigned to that contractor with matching category.
+  d) Logout, login as that contractor.
+  e) Navigate to the defect's /tasks/{id}.
+  f) ✅ Yellow "צלם הוכחת תיקון" card visible (was hidden before fix).
+  g) ✅ "צלם עכשיו" + "בחר תמונות" buttons visible.
+  h) Click "צלם עכשיו" (or "בחר תמונות") → camera opens.
+  i) Take/select photo → annotation modal opens → save.
+  j) ✅ Photo appears in preview grid.
+  k) Click "שלח לאישור".
+  l) ✅ POST /tasks/{id}/contractor-proof returns 200.
+  m) ✅ task.status advances to 'pending_manager_approval'.
+
+  Phase B (after staging green) — production verification:
+  n) Login as super_admin in prod.
+  o) Find the defect Zahi tested with: tasks/e9463ddc-fcf2-42e6-bdf1-a0de77a8606b.
+     Confirm assignee_id is set to the contractor user id.
+  p) Login as that contractor in prod.
+  q) Visit /tasks/e9463ddc... and verify (f)-(m) above.
+
+  Negative — manager (regression check):
+  r) Login as project_manager.
+  s) Try to POST /tasks/{id}/contractor-proof directly (curl). Expect 403.
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (0.1-0.4 grep outputs, including the 0.4
+    follow-up backlog list — line numbers of OTHER narrow contractor
+    checks NOT fixed in this batch).
+  - Per-file diff (3 files, ~10 LOC backend + ~60 LOC test).
+  - V1-V4 outputs.
+  - V5 deferred-to-Zahi note (scenarios a-s).
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+
+.local/.commit_message:
+  fix(tasks): contractor proof flow accepts subcontractor trade roles
+
+  Production bug discovered 2026-05-07: contractors with specific
+  trade roles (plumber, electrician, tiler, etc — see
+  onboarding_router.SUBCONTRACTOR_ROLES) could not submit proof on
+  assigned defects.
+
+  Two narrow checks hardcoded the literal string 'contractor':
+   - tasks_router.py L500: returned user_project_role='plumber' (or
+     other trade) instead of 'contractor', so frontend
+     showContractorProof=false → upload card hidden.
+   - tasks_router.py L861: rejected POST /contractor-proof with 403
+     "Only contractors can submit proof" for any subrole.
+
+  Even managers couldn't see the proof review state because the task
+  never advanced to pending_manager_approval — contractors were
+  blocked at submission.
+
+  Fix: new _is_contractor_role() helper in router.py recognizing
+  'contractor' + 15 SUBCONTRACTOR_ROLES. Backend normalizes the role
+  at L500 (frontend stays unchanged) and uses the helper at L861.
+
+  Other narrow contractor checks (L160, L168, L287, L290, L481, L632)
+  documented as follow-up backlog. Frontend isContractor check
+  intentionally NOT widened — relies on the backend normalization.
+
+  Mirrors the CLAUDE.md "כלל ברזל" lesson from 2026-05-03 Stream A v2.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (greps 0.1-0.4; output at top of review.txt).
+2. PART 1 — _is_contractor_role helper in router.py.
+3. PART 2 — tasks_router.py import + L500 normalize + L861 broaden.
+4. PART 3 — new test file test_contractor_proof_subroles.py.
+5. Run V1-V4.
+6. Generate review.txt + .local/.commit_message.
+7. STOP. Zahi reviews. Then he runs ./deploy.sh --stag himself.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+3 files revert. Bug returns. No data corruption — the change only
+broadens an access check; reverting tightens it back. No DB writes
+introduced; no migration to undo.
+
+NO impact on:
+- Manager flows (force close, approve, reject, reopen).
+- QC flows (#503, #601, all matrix work).
+- Other endpoints that still hardcode 'contractor' (intentionally
+  out of scope; they're for OTHER mutations like assignment updates
+  that Zahi has not flagged as broken).
+- Frontend.
+
+================================================================================
+END OF SPEC
+================================================================================

@@ -1,0 +1,703 @@
+================================================================================
+HOTFIX FOLLOWUP TO #485 — Execution Matrix: separate sticky building column
+================================================================================
+Date:           2026-05-04
+Branch:         staging  (NOT main)
+Severity:       P2 — UX correctness blocking prod deploy of #484+#485.
+                Without showing building, "דירה 1, קומה 1" of Building A
+                is indistinguishable from "דירה 1, קומה 1" of Building B
+                (units of same number can exist across buildings).
+
+Files changed:  5 files
+                  Backend: backend/contractor_ops/execution_matrix_router.py (~12 LOC)
+                  Backend: backend/tests/test_execution_matrix.py (~25 LOC)
+                  Frontend: frontend/src/pages/ExecutionMatrixPage.js (~10 LOC)
+                  Frontend: frontend/src/components/matrix/MatrixGridView.js (~30 LOC)
+                  Frontend: frontend/src/components/matrix/MatrixListView.js (~6 LOC)
+
+Tests:          1 NEW test (`test_get_matrix_unit_sort_by_building`) + 2
+                assertions added to existing tests.
+
+Mobile:         Frontend OTA only via Capgo. No native files.
+DB migration:   NONE. Buildings already exist in DB (db.buildings); we
+                expose them in the response and use sort_index for ordering.
+
+Family:         Followup to #485 (which was followup to #484 Phase 2A).
+                Per Zahi 2026-05-04: "צריך את אופציה ב׳, מהסיבה הפשוטה
+                שלפעמים אני ארצה לסנן לפי בניין" — separate sticky column
+                positions us for filter UI in Phase 2D.
+
+================================================================================
+ROOT CAUSE — Zahi's staging smoke 2026-05-04 (#485 deployed)
+================================================================================
+
+After #485 deployed:
+  - Header shows "2 מבנים • 30 דירות • 10 שלבים" ✅
+  - Sort is numeric (1, 2, 3, ..., 30) ✅
+  - Floor metadata shows real numbers ("קומה 1", "קומה 2") ✅
+
+Remaining issues:
+  1. No building identifier on rows — "דירה 1, קומה 1" of Building A
+     looks identical to "דירה 1, קומה 1" of Building B. Confusing.
+  2. Sort doesn't separate buildings — Building A unit 5 (קומה 1) and
+     Building B unit 16 (קומה 1) interleaved by (floor_number, unit_no)
+     even though they're in different buildings.
+
+Visual evidence (Zahi screenshot 2026-05-04): all 10 visible rows show
+"קומה 1" — actually correct (5 units × 2 buildings = 10 rows on each
+respective floor 1), but reads as "fabricated" without building context.
+
+================================================================================
+DESIGN DECISION — separate sticky column (Option B per Zahi mockup review)
+================================================================================
+
+Option A (rejected) — building merged into unit identity column:
+  - "בניין A · דירה 1" + "קומה 1" subtitle
+  - Pro: simple layout, single sticky column
+  - Con: building name truncates with long names, NOT filterable later
+
+Option B (chosen) — separate sticky "בניין" column:
+  - Building rendered as a small badge (initial circle) in its own column
+  - Two sticky columns in desktop grid (RTL: building rightmost, unit next)
+  - Pro: future-ready for Phase 2D filter UI ("show only Building A"),
+    visually scannable, scales for long building names
+  - Con: more CSS work for two-column sticky in RTL
+
+Sort key: `(building_sort_index, floor_number, unit_no_int, unit_no_string)`
+Result: all of Building A renders first (floor 1 → floor 2 → ...), then
+Building B starts. Clear visual section break by building.
+
+For mobile (list view): no sticky column constraint — building name shown
+inline in card header: "**בניין A** • דירה 1 • קומה 1 • 4 ח'".
+
+================================================================================
+STEP 0 — MANDATORY PRE-FLIGHT
+================================================================================
+
+0.1 — Verify db.buildings collection shape:
+    grep -rn "db.buildings\|class Building\|building_id" \
+        backend/contractor_ops/schemas.py \
+        backend/contractor_ops/qc_router.py | head -20
+    # Expected: Building schema with {id, project_id, name, sort_index}.
+    # Same pattern as Floor.
+    # Document the EXACT field names (especially sort_index — may be
+    # `sort_index`, `display_order`, or `order` per project conventions).
+
+0.2 — Verify existing fetch pattern in execution_matrix_router.py:
+    grep -n "db.floors.find\|db.units.find\|floors_by_id\|floors = await" \
+        backend/contractor_ops/execution_matrix_router.py | head -10
+    # Expected: floors fetched at L217-220 (per #485 STEP 0.3).
+    # We add buildings fetch IMMEDIATELY before/after floors fetch
+    # using same pattern.
+
+0.3 — Verify _unit_sort_key location + current state (after #485):
+    grep -n "_unit_sort_key" backend/contractor_ops/execution_matrix_router.py
+    # Expected: post-#485 it returns 3-tuple
+    # (floor_number, unit_no_num, unit_no_string).
+    # We extend to 4-tuple with building first.
+
+0.4 — Verify current MatrixGridView sticky column CSS pattern:
+    grep -n "sticky\|right-0" frontend/src/components/matrix/MatrixGridView.js
+    # Expected: existing sticky right column for "דירה" with `right-0` or
+    # `inset-inline-end: 0`. Document the exact pattern + class string.
+    # We add a SECOND sticky column to the right of the existing one
+    # (rightmost in RTL).
+
+0.5 — Verify ExecutionMatrixPage floorsById/buildingCount memos:
+    grep -n "floorsById\|buildingCount\|useMemo" \
+        frontend/src/pages/ExecutionMatrixPage.js | head -10
+    # Expected: floorsById memo (#484) + buildingCount memo (#485).
+    # We add buildingsById memo after them — same pattern.
+
+0.6 — Verify MatrixListView card header structure:
+    grep -n "unit_no\|דירה\|floor_number" \
+        frontend/src/components/matrix/MatrixListView.js | head -10
+    # Document the line where the card header renders.
+    # We extend it to include building name.
+
+0.7 — Output STEP 0 audit at TOP of review.txt before any edits.
+
+0.8 — Verify Tailwind version supports arbitrary values (PART 4 uses
+    `right-[80px]`):
+    grep "tailwindcss" frontend/package.json
+    head -20 frontend/tailwind.config.js
+    # Tailwind v3+ defaults to JIT — `right-[80px]` works.
+    # Tailwind v2 or earlier — JIT must be explicitly enabled OR
+    # arbitrary values won't compile. Fallback in that case:
+    #   className="sticky z-20 ..." style={{right: '80px'}}
+    # Document the version in review.txt; choose the right syntax.
+
+================================================================================
+PART 1 — BACKEND: fetch buildings + expose + sort by building first
+================================================================================
+
+FILE: backend/contractor_ops/execution_matrix_router.py
+-------------------------------------------------------
+
+LOCATION 1.1 — Add buildings fetch (per STEP 0.2, immediately after the
+   existing floors fetch around L217-221):
+
+   FIND the floors fetch:
+       floors = await db.floors.find(
+           {"id": {"$in": floor_ids}, "archived": {"$ne": True}},
+           {"_id": 0}
+       ).to_list(500)
+       floors_by_id = {f["id"]: f for f in floors}
+
+   ADD AFTER (within the same get_matrix function):
+       # Fetch buildings for the units (used for sort + display)
+       building_ids = list({u["building_id"] for u in units if u.get("building_id")})
+       buildings = await db.buildings.find(
+           {"id": {"$in": building_ids}, "archived": {"$ne": True}},
+           {"_id": 0}
+       ).to_list(100)
+       buildings_by_id = {b["id"]: b for b in buildings}
+
+   IMPORTANT:
+   - 100-element limit is generous (typical project has 1-5 buildings).
+   - Same `archived: $ne: True` defensive pattern as floors.
+   - `building_id` from unit may be missing on legacy units — defensive
+     comprehension filter `.get("building_id")`.
+
+LOCATION 1.2 — Update `_unit_sort_key` to include building first:
+
+   FIND (per #485, currently at L223-234 — verify in STEP 0.3):
+       def _unit_sort_key(u):
+           f = floors_by_id.get(u.get("floor_id"), {})
+           unit_no_str = u.get("unit_no", "") or ""
+           try:
+               unit_no_num = int(unit_no_str)
+           except (ValueError, TypeError):
+               unit_no_num = 9999
+           return (f.get("floor_number", 0), unit_no_num, unit_no_str)
+
+   REPLACE WITH:
+       def _unit_sort_key(u):
+           b = buildings_by_id.get(u.get("building_id"), {})
+           f = floors_by_id.get(u.get("floor_id"), {})
+           unit_no_str = u.get("unit_no", "") or ""
+           try:
+               unit_no_num = int(unit_no_str)
+           except (ValueError, TypeError):
+               unit_no_num = 9999
+           return (
+               b.get("sort_index", 9999),
+               b.get("name", "") or "",  # tiebreak by building name
+               f.get("floor_number", 0),
+               unit_no_num,
+               unit_no_str,
+           )
+
+   IMPORTANT:
+   - 5-tuple key. Building dimensions come FIRST.
+   - `sort_index` per STEP 0.1 — substitute with the actual field name
+     (`display_order` / `order`) if codebase uses different name.
+   - Tiebreak on building name handles missing sort_index.
+   - Floor + unit dimensions remain as-is.
+
+LOCATION 1.3 — Add `buildings` to the response dict:
+
+   FIND (the return dict that #485 already added "floors" to):
+       return {
+           "project_id": project_id,
+           "stages": stages,
+           "units": units,
+           "cells": cells_summary,
+           "floors": floors,
+           "permissions": {...},
+           "matrix_config_id": matrix_config["id"],
+       }
+
+   ADD `buildings` field:
+       return {
+           "project_id": project_id,
+           "stages": stages,
+           "units": units,
+           "cells": cells_summary,
+           "floors": floors,
+           "buildings": buildings,                        # ← NEW
+           "permissions": {...},
+           "matrix_config_id": matrix_config["id"],
+       }
+
+DO NOT TOUCH:
+- Other endpoints (PATCH stages, PUT cell, GET history, view CRUD).
+- RBAC helpers.
+- Stage resolution.
+
+================================================================================
+PART 2 — TESTS: assert buildings in response + sort regression guard
+================================================================================
+
+FILE: backend/tests/test_execution_matrix.py
+---------------------------------------------
+
+LOCATION 2.1 — Update test_get_matrix_returns_resolved_stages
+   (already updated by #485 to assert floors). ADD assertions for
+   buildings:
+
+       # New from #486 — backend exposes buildings metadata
+       assert "buildings" in res, "Response must include buildings metadata"
+       assert isinstance(res["buildings"], list)
+
+   The fixture `_mk_db` may need a `buildings=None` parameter. Match
+   the existing pattern for `floors=None`. If fixture already supports
+   it (verify by reading neighboring tests), just pass `buildings=[]`
+   in the test.
+
+LOCATION 2.2 — Update test_get_matrix_unit_sort_numeric (added in #485)
+   to use building-first sort verification, OR ADD a NEW test:
+
+       def test_get_matrix_unit_sort_by_building():
+           """Units sorted by (building, floor, unit_no_numeric).
+           Building A unit 5 (floor 1) comes BEFORE Building B unit 1
+           (floor 1) — building dimension takes precedence."""
+           # Mock 2 buildings: A (sort_index=1), B (sort_index=2)
+           # Mock units:
+           #   {id: u1, building_id: B, floor_id: f-b1, unit_no: "1"}
+           #   {id: u2, building_id: A, floor_id: f-a1, unit_no: "1"}
+           #   {id: u3, building_id: A, floor_id: f-a2, unit_no: "1"}
+           #   {id: u4, building_id: B, floor_id: f-b2, unit_no: "1"}
+           # Expected sort:
+           #   1. u2 (A, floor 1, unit 1)
+           #   2. u3 (A, floor 2, unit 1)
+           #   3. u1 (B, floor 1, unit 1)
+           #   4. u4 (B, floor 2, unit 1)
+
+LOCATION 2.3 — Update fixture `_mk_db` to mount buildings collection:
+
+   FIND `_mk_db` (probably around L51 per #485 STEP 0.4):
+       def _mk_db(units=None, floors=None, ...):
+           db = MagicMock()
+           ...
+           db.floors.find = MagicMock(...)
+
+   EXTEND with buildings parameter:
+       def _mk_db(units=None, floors=None, buildings=None, ...):
+           db = MagicMock()
+           ...
+           db.floors.find = MagicMock(return_value=_AsyncCursor(floors or []))
+           db.buildings.find = MagicMock(return_value=_AsyncCursor(buildings or []))
+
+DO NOT TOUCH:
+- Other tests unrelated to matrix.
+- Existing test logic that doesn't reference building.
+
+================================================================================
+PART 3 — FRONTEND: buildingsById memo + pass props
+================================================================================
+
+FILE: frontend/src/pages/ExecutionMatrixPage.js
+------------------------------------------------
+
+LOCATION 3.1 — Add buildingsById memo (per STEP 0.5, after the existing
+   floorsById + buildingCount memos):
+
+   ADD:
+       const buildingsById = useMemo(() => {
+           const map = {};
+           if (data?.buildings) {
+               for (const b of data.buildings) map[b.id] = b;
+           }
+           return map;
+       }, [data]);
+
+LOCATION 3.2 — Pass buildingsById prop to MatrixListView and
+   MatrixGridView:
+
+   FIND (the rendering of both views):
+       <MatrixListView
+           units={units}
+           stages={stages}
+           cells={cells}
+           floorsById={floorsById}
+       />
+
+       <MatrixGridView
+           units={units}
+           stages={stages}
+           cells={cells}
+           floorsById={floorsById}
+       />
+
+   UPDATE BOTH:
+       <MatrixListView
+           units={units}
+           stages={stages}
+           cells={cells}
+           floorsById={floorsById}
+           buildingsById={buildingsById}    {/* NEW */}
+       />
+
+       <MatrixGridView
+           units={units}
+           stages={stages}
+           cells={cells}
+           floorsById={floorsById}
+           buildingsById={buildingsById}    {/* NEW */}
+       />
+
+DO NOT TOUCH:
+- buildingCount memo (#485) — used for header subtitle, separate concern.
+- Loading / error / empty states.
+- StatusLegend or any other component.
+
+================================================================================
+PART 4 — FRONTEND: MatrixGridView — add second sticky column
+================================================================================
+
+FILE: frontend/src/components/matrix/MatrixGridView.js
+-------------------------------------------------------
+
+LOCATION 4.1 — Add `buildingsById` prop:
+
+   FIND the function signature:
+       export default function MatrixGridView({ units, stages, cells, floorsById }) {
+
+   UPDATE:
+       export default function MatrixGridView({ units, stages, cells, floorsById, buildingsById }) {
+
+LOCATION 4.2 — Update <thead> to add "בניין" sticky column:
+
+   The current header (per #484 PART 7) has ONE sticky right column for
+   "דירה". We add ANOTHER sticky column for "בניין" — rightmost in RTL.
+
+   FIND:
+       <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200">
+         <tr>
+           <th className="sticky right-0 z-20 bg-slate-50 border-l border-slate-200 px-3 py-2 text-right text-xs font-medium text-slate-700 min-w-[120px]">
+             דירה
+           </th>
+           {stages.map((stage) => (
+             ...
+           ))}
+         </tr>
+       </thead>
+
+   REPLACE WITH:
+       <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200">
+         <tr>
+           {/* NEW sticky column — building, rightmost in RTL */}
+           <th className="sticky right-0 z-30 bg-slate-50 border-l border-slate-200 px-3 py-2 text-right text-xs font-medium text-slate-700 min-w-[80px]">
+             בניין
+           </th>
+           {/* Existing sticky column — unit, second from right */}
+           <th className="sticky right-[80px] z-20 bg-slate-50 border-l border-slate-200 px-3 py-2 text-right text-xs font-medium text-slate-700 min-w-[120px]">
+             דירה
+           </th>
+           {stages.map((stage) => (
+             ...unchanged...
+           ))}
+         </tr>
+       </thead>
+
+   IMPORTANT:
+   - Building column z-index 30 > unit column z-index 20 — building stays
+     on top during horizontal scroll edge cases.
+   - `right-[80px]` for unit column = the width of the building column.
+     Tailwind arbitrary values; may need to use `style={{right: '80px'}}`
+     if Tailwind JIT doesn't support arbitrary values in this codebase.
+
+LOCATION 4.3 — Update <tbody> rows to add building cell:
+
+   FIND each <tr> in tbody:
+       <tr ...>
+         <td className="sticky right-0 z-10 bg-inherit border-l border-slate-200 px-3 py-2 text-right text-xs">
+           <div className="font-medium text-slate-900">דירה {unit.unit_no}</div>
+           {floor && (
+             <div className="text-[10px] text-slate-500 mt-0.5">
+               קומה {floor.floor_number}
+             </div>
+           )}
+         </td>
+         {stages.map((stage) => ( ... ))}
+       </tr>
+
+   REPLACE WITH:
+       <tr ...>
+         {/* NEW building cell — sticky right=0 */}
+         <td className="sticky right-0 z-20 bg-inherit border-l border-slate-200 px-3 py-2 text-center text-xs">
+           {(() => {
+             const building = buildingsById?.[unit.building_id];
+             // Use sort_index when available — guarantees uniqueness
+             // even when building names share first letter
+             // (e.g., "מגדל הצפון" + "מגדל הדרום" both → "מ").
+             // Fallback to first letter only if sort_index missing.
+             const badgeText = (
+               building?.sort_index != null
+                 ? String(building.sort_index)
+                 : (building?.name || '?').trim().charAt(0) || '?'
+             );
+             return (
+               <span
+                 className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-violet-50 text-violet-700 border border-violet-200 font-medium"
+                 title={building?.name || 'בניין לא ידוע'}
+               >
+                 {badgeText}
+               </span>
+             );
+           })()}
+         </td>
+         {/* Existing unit cell — sticky right=80px */}
+         <td className="sticky right-[80px] z-10 bg-inherit border-l border-slate-200 px-3 py-2 text-right text-xs">
+           <div className="font-medium text-slate-900">דירה {unit.unit_no}</div>
+           {floor && (
+             <div className="text-[10px] text-slate-500 mt-0.5">
+               קומה {floor.floor_number}
+             </div>
+           )}
+         </td>
+         {stages.map((stage) => ( ... unchanged ... ))}
+       </tr>
+
+   IMPORTANT:
+   - Building badge uses violet palette (consistent with matrix theme
+     per #484).
+   - First letter of building name as the badge initial. If building name
+     is missing/empty, falls back to "?".
+   - `title` attribute on span shows full building name on hover (desktop
+     accessibility).
+   - Same pattern as the badge in CTA card — visual consistency.
+
+LOCATION 4.4 — Verify zebra stripes don't break on extra sticky column:
+
+   The existing `idx % 2 ? 'bg-slate-50/30' : 'bg-white'` on <tr> applies
+   to the entire row. With `bg-inherit` on sticky cells, the zebra stripe
+   carries to the sticky cells. Verify visually in V7 smoke that zebra
+   striping is uninterrupted.
+
+DO NOT TOUCH:
+- Stage column rendering.
+- Cell rendering (MatrixCell calls unchanged).
+- The outer table container or max-h.
+
+================================================================================
+PART 5 — FRONTEND: MatrixListView — building in card header
+================================================================================
+
+FILE: frontend/src/components/matrix/MatrixListView.js
+-------------------------------------------------------
+
+LOCATION 5.1 — Add `buildingsById` prop:
+
+   FIND:
+       export default function MatrixListView({ units, stages, cells, floorsById }) {
+
+   UPDATE:
+       export default function MatrixListView({ units, stages, cells, floorsById, buildingsById }) {
+
+LOCATION 5.2 — Update card header to include building name (per
+   STEP 0.6, the existing card header):
+
+   FIND:
+       <div className="flex items-center justify-between mb-2">
+         <div className="flex items-center gap-2 min-w-0">
+           <span className="text-sm font-bold text-slate-900 shrink-0">
+             דירה {unit.unit_no}
+           </span>
+           {floor && (
+             <span className="text-xs text-slate-500 truncate">
+               • קומה {floor.floor_number}
+               {unit.room_count != null && ` • ${unit.room_count} ח'`}
+             </span>
+           )}
+         </div>
+         <span className="text-xs font-medium text-slate-600 shrink-0">
+           {completed}/{total}
+         </span>
+       </div>
+
+   REPLACE the header content (LEFT-side flex item) WITH:
+       <div className="flex items-center gap-2 min-w-0">
+         {(() => {
+           const building = buildingsById?.[unit.building_id];
+           if (!building) return null;
+           // Same uniqueness logic as MatrixGridView — sort_index
+           // preferred, fallback to first letter
+           const badgeText = (
+             building.sort_index != null
+               ? String(building.sort_index)
+               : (building.name || '?').trim().charAt(0) || '?'
+           );
+           return (
+             <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-violet-50 text-violet-700 border border-violet-200 font-medium text-[10px] shrink-0"
+                   title={building.name}>
+               {badgeText}
+             </span>
+           );
+         })()}
+         <span className="text-sm font-bold text-slate-900 shrink-0">
+           דירה {unit.unit_no}
+         </span>
+         {floor && (
+           <span className="text-xs text-slate-500 truncate">
+             • קומה {floor.floor_number}
+             {unit.room_count != null && ` • ${unit.room_count} ח'`}
+           </span>
+         )}
+       </div>
+
+   IMPORTANT:
+   - Building badge BEFORE "דירה N" — same right-to-left visual order
+     as desktop grid.
+   - Smaller badge (w-6 h-6 vs w-7 h-7) for mobile compactness.
+   - `shrink-0` keeps the badge size fixed — only the floor info truncates.
+   - Returns `null` if no building data — graceful for edge cases.
+
+DO NOT TOUCH:
+- Progress bar logic.
+- Cells horizontal scroll.
+- Empty state.
+
+================================================================================
+GLOBAL VERIFY
+================================================================================
+
+VERIFY 1 — Backend syntax + import:
+   cd backend && python -c "from contractor_ops.execution_matrix_router import router; print('OK')"
+   → prints OK
+
+VERIFY 2 — Backend test passes:
+   cd backend && python -m pytest tests/test_execution_matrix.py -v
+   → all tests pass (12 from #485 + 1 new sort-by-building = 13)
+   AND assertions for "buildings" in response shown as passing
+
+VERIFY 3 — Backend QC regression:
+   cd backend && python -m pytest tests/test_qc_override_close.py \
+       tests/test_qc_units_status.py -v
+   → all pass (no QC code touched)
+
+VERIFY 4 — Frontend syntax (Babel parse / yarn build):
+   cd frontend && yarn build
+   → no new warnings or errors
+
+VERIFY 5 — Frontend buildingsById references:
+   grep -c "buildingsById" frontend/src/pages/ExecutionMatrixPage.js \
+       frontend/src/components/matrix/MatrixGridView.js \
+       frontend/src/components/matrix/MatrixListView.js
+   → ≥ 5 (1 memo + 2 props passes + 2 prop usages)
+
+VERIFY 6 — Two sticky columns in MatrixGridView:
+   grep -c "sticky right-0\|right-\[80px\]\|sticky.*right" \
+       frontend/src/components/matrix/MatrixGridView.js
+   → ≥ 4 (2 in thead + 2 in tbody — building column + unit column,
+   header + cell each)
+
+VERIFY 7 — Visual smoke (Zahi runs after deploy to staging):
+
+   Header check (carryover from #485):
+   a) Header still shows "2 מבנים • 30 דירות • 10 שלבים".
+
+   Desktop grid — new sticky building column:
+   b) Top header row has TWO sticky columns on the right:
+      "בניין" rightmost, "דירה" next, then stage names.
+   c) First N rows (where N = unit count of first building):
+      - Same building badge (initial OR sort_index) in rightmost column
+      - Unit numbers ascending, floor numbers ascending within building
+      - Adapt expectation to actual project data — don't assume specific
+        counts.
+   d) Once first building's units exhausted, badge changes to next
+      building's identifier — clear visual section break.
+   e) Badge content: if backend provides `sort_index` → use it (e.g.,
+      "1", "2"). Otherwise first letter of name (e.g., "מ", "א").
+   f) Hover/long-press on badge → tooltip shows full building name
+      ("מגדל הצפון", "מגדל הדרום", etc.).
+   g) Both sticky columns stay visible during HORIZONTAL scroll
+      (stage cells scroll, building + unit columns frozen on right).
+   h) Top header row (stage names) stays visible during VERTICAL scroll.
+   i) Zebra stripes uninterrupted across sticky columns.
+
+   Mobile list view:
+   j) Each unit card shows building badge BEFORE "דירה N":
+      "[1] דירה 1 • קומה 1 • 4 ח'" (sort_index badge)
+      OR "[A] דירה 1 • קומה 1 • 4 ח'" (first letter fallback)
+   k) Cards grouped by building (all of building 1, then all of building 2).
+   l) Long-press on badge (touch) or hover (mouse) → full building name.
+
+   Sort verification:
+   m) Building A's last unit immediately followed by Building B's first
+      unit — confirms sort is (building, floor, unit_no_int).
+
+   Edge cases:
+   n) Project with 1 building → still renders with badge on every row
+      (slightly redundant but consistent — Phase 2D filter UI may hide
+      the column if only 1 building exists).
+   o) Unit with missing building_id → no badge shown (graceful), unit
+      still renders with דירה + קומה only.
+   p) Unit referencing an archived building → badge falls back to "?"
+      because buildings query filters `archived: $ne: True`. Acceptable
+      edge case — archived buildings shouldn't appear in active matrix.
+      (Alternative: don't filter archived in matrix backend. Defer
+      decision to Phase 2D when filters are added.)
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+review.txt with:
+  - STEP 0 audit at top (greps + line numbers for buildings + sort + sticky CSS)
+  - Per-file diff (5 files, ~80 LOC total)
+  - VERIFY 1-6 outputs
+  - VERIFY 7 deferred-to-Zahi note (15 scenarios a-o)
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(matrix): separate sticky building column for clarity + future filter
+
+  Followup to #485. Without showing building, "דירה 1, קומה 1" of
+  Building A was indistinguishable from "דירה 1, קומה 1" of Building B
+  (units of same number can exist across buildings).
+
+  Per Zahi 2026-05-04 mockup review: separate sticky "בניין" column —
+  Option B (vs merged Option A) — chosen because:
+   - Future-ready for Phase 2D filter UI ("filter by building")
+   - Visually scannable for projects with long building names
+   - Scales beyond 2-letter initials
+
+  Changes:
+   - Backend: fetch buildings, expose in /matrix response, sort key
+     extended to (building_sort_index, floor_number, unit_no_int).
+   - Frontend: buildingsById memo + new sticky column in GridView (RTL
+     rightmost) + building badge in ListView card header.
+   - Tests: assert buildings in response + new sort-by-building test.
+
+  Visual: small violet circle badge with first letter of building name,
+  matching the matrix theme. Hover/long-press shows full name. ~80 LOC
+  across 5 files.
+
+================================================================================
+STEPS
+================================================================================
+1. STEP 0 pre-flight (run 0.1-0.6 greps)
+2. PART 1 — backend: buildings fetch + sort + response (~12 LOC)
+3. PART 2 — tests: buildings assertion + new sort test + fixture (~25 LOC)
+4. PART 3 — ExecutionMatrixPage: buildingsById memo + props (~10 LOC)
+5. PART 4 — MatrixGridView: 2 sticky columns (~30 LOC)
+6. PART 5 — MatrixListView: building badge in card header (~6 LOC)
+7. Run VERIFY 1-6
+8. Generate review.txt + .local/.commit_message
+9. STOP. Zahi reviews. Then he runs:
+     git checkout staging && ./deploy.sh --stag
+   ⚠️ COMMIT ON `staging` BRANCH — last 2 batches (#484, #485) were
+   committed to local main by mistake. Verify branch BEFORE commit.
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+
+5 files revert. The matrix loses the building column and reverts to
+post-#485 state (no building visibility, sort interleaves buildings).
+
+NO impact on:
+- Cell rendering / status icons / RTL
+- Phase 1 backend endpoints (other than removing buildings field —
+  backward compatible since frontend's `data?.buildings` check
+  silently no-ops when absent)
+- Other QC, handover, or project pages
+- Auth, billing, safety routers, plans, defects
+
+================================================================================
+END OF SPEC
+================================================================================

@@ -1,0 +1,420 @@
+================================================================================
+BATCH P1.1-HOTFIX-5 — Fix pinch not firing + scale resetting on touch
+================================================================================
+Date:           2026-05-10
+Branch:         staging  (NOT main)
+Severity:       P1 — hotfix-4 (PATTERN A) had two regressions on real
+                iPhone:
+                  (1) Pinch doesn't fire at all on iOS (the original
+                      #32 bug not actually fixed).
+                  (2) Single touch on canvas RESETS scale to fit (~15%).
+                      Means user can't zoom via +/- buttons either —
+                      moment finger touches the canvas, scale collapses.
+                Both stem from PATTERN A's `from` config being captured
+                in a closure that goes stale OR not re-evaluated by
+                @use-gesture's internal state machine.
+Files changed:  Frontend only:
+                  - frontend/src/components/PlanViewer.js (~10 LOC)
+                Total: same file, swap PATTERN A → PATTERN B + add
+                       cross-platform pointer config + temporary debug log.
+Pre-flight:     hotfix-4 deployed but observed broken on iPhone.
+                @use-gesture/react@10.3.1 already installed.
+
+CONTEXT — failure analysis
+==========================
+
+What's deployed (hotfix-4):
+  usePinch(
+    ({ offset: [s], event }) => {
+      if (event?.cancelable) event.preventDefault();
+      setScale(Math.min(Math.max(s, 0.1), 4.0));
+    },
+    {
+      target: containerRef,
+      eventOptions: { passive: false },
+      scaleBounds: { min: 0.1, max: 4.0 },
+      rubberband: true,
+      from: () => [scale ?? 1.0, 0],
+    }
+  );
+
+Observed on iPhone:
+  - Two-finger pinch: NO zoom response (#32 still broken).
+  - Touching canvas with one finger: scale instantly collapses to
+    fit-scale (~15% on iPhone) regardless of current scale.
+
+Two distinct root causes (likely):
+
+**Cause A (the touch-collapse bug):**
+
+`from: () => [scale ?? 1.0, 0]` is defined in a closure during each
+render. The closure captures `scale` from THAT render. On re-render
+(after +/- button zoom), a new closure is created with new scale.
+
+BUT — @use-gesture/react's internal state machine may cache the
+config from when the gesture was last bound, NOT re-evaluate on every
+render. If that's the case:
+  - Initial mount: scale=null → fit-scale=0.15 computed → re-render
+  - useGesture binds with from() returning [0.15, 0]
+  - User clicks + → scale=0.6 → re-render
+  - But useGesture's bound from() still returns [0.15, 0] (stale)
+  - User touches canvas → useGesture fires (perhaps even on single
+    touch as "gesture start") → offset=[0.15, 0] (the stale from value)
+  - Handler: setScale(clamp(0.15)) → scale collapses to 0.15
+
+PATTERN B (explicit ref) is immune: the ref is updated on EVERY render
+via useEffect, so reading `gestureStartScaleRef.current` always sees
+the latest scale.
+
+**Cause B (the no-pinch-on-iOS bug):**
+
+iOS Safari fires GestureEvent (Apple's proprietary multi-touch API) in
+addition to TouchEvents. @use-gesture/react v10 has two code paths:
+  - Default: subscribes to native GestureEvent on iOS, computes pinch
+    from gesture.scale (Apple's reported pinch ratio).
+  - With `pointer: { touch: true }`: uses Pointer Events / Touch Events
+    only, computes pinch from two-touch coordinates manually.
+
+On iOS Capacitor (WKWebView), GestureEvent firing is sometimes
+suppressed (especially when content is inside scroll containers with
+custom touch-action). The default code path may register zero pinches.
+
+Adding `pointer: { touch: true }` forces the cross-platform Touch Event
+path, which is what Android uses anyway and which is more reliable on
+iOS Capacitor.
+
+Defensive: also add a temporary `console.log` in the handler so Zahi
+can verify the handler IS firing (or NOT) via Safari Web Inspector +
+Capacitor debug bridge.
+
+STEP 0 — MANDATORY PRE-FLIGHT
+=============================
+
+  # 1. Confirm hotfix-4 is current state on staging
+  git fetch origin staging
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep -n "usePinch"
+  # EXPECT: 1 hit (the import) + 1 hit (the hook call). Currently has
+  # PATTERN A (`from` config).
+
+  # 2. Confirm @use-gesture/react still installed
+  grep '"@use-gesture/react"' frontend/package.json
+  # EXPECT: ^10.3.1
+
+  # 3. Confirm PATTERN A `from` config is current code
+  git show origin/staging:frontend/src/components/PlanViewer.js | grep -A 2 "from:"
+  # EXPECT: shows `from: () => [scale ?? 1.0, 0]`
+
+  # 4. Verify v10 API supports `pointer: { touch: true }` config
+  grep -A 3 "pointer" node_modules/@use-gesture/react/dist/use-gesture-react.d.ts | head -20
+  # EXPECT: `pointer?: PointerOptions { touch?: boolean; ... }` available
+
+If ANY pre-flight returns different content → STOP and report.
+
+PART 1 — FRONTEND
+=================
+
+LOCATION 1.1 — Add scale-tracking ref above usePinch
+
+   ADD near other useRef declarations (around L43, where containerRef is):
+
+     // 2026-05-10 hotfix-5 — explicit ref for pinch gesture start scale.
+     // Replaces PATTERN A's `from` closure which was vulnerable to
+     // staleness. Ref is updated on every render via useEffect below
+     // so it always reflects the latest scale.
+     const scaleRef = useRef(null);
+
+   ADD a useEffect that keeps scaleRef in sync with scale state (place
+   after the existing reset useEffect, around L52):
+
+     // 2026-05-10 hotfix-5 — keep scaleRef in sync with scale state.
+     // The pinch handler reads from this ref (NOT from the `scale`
+     // closure) so it always sees the current value, regardless of
+     // whether @use-gesture's internal binding has been re-evaluated.
+     useEffect(() => {
+       scaleRef.current = scale;
+     }, [scale]);
+
+
+LOCATION 1.2 — Replace PATTERN A with PATTERN B in usePinch
+
+   CURRENT (the usePinch hook from hotfix-4):
+     usePinch(
+       ({ offset: [s], event }) => {
+         if (event && event.cancelable) event.preventDefault();
+         setScale(Math.min(Math.max(s, 0.1), 4.0));
+       },
+       {
+         target: containerRef,
+         eventOptions: { passive: false },
+         scaleBounds: { min: 0.1, max: 4.0 },
+         rubberband: true,
+         from: () => [scale ?? 1.0, 0],
+       }
+     );
+
+   REPLACE WITH:
+     // 2026-05-10 hotfix-5 — PATTERN B (explicit ref + first flag).
+     //
+     // PATTERN A's `from` config was vulnerable to closure staleness:
+     // @use-gesture appears to cache the bound config and not re-
+     // evaluate `from()` on every render. Result: `from()` always
+     // returned the INITIAL scale (the fit-scale, e.g. 0.15), so any
+     // touch on the canvas reset scale to 0.15.
+     //
+     // PATTERN B reads scale from a ref that's updated every render
+     // via useEffect (LOCATION 1.1). On gesture start (`first` flag),
+     // we capture the current ref value into gestureStartScaleRef,
+     // then multiply by the cumulative offset[0] each frame to compute
+     // the new absolute scale.
+     //
+     // ALSO: `pointer: { touch: true }` forces the cross-platform Touch
+     // Event path. Default uses iOS GestureEvent which is sometimes
+     // suppressed on Capacitor WKWebView. Touch Events are what Android
+     // already uses; standardizing on them gives consistent behavior.
+     //
+     // Debug log: helps verify the handler IS firing on iPhone/Android.
+     // Wrapped in `process.env.NODE_ENV !== 'production'` so CRA's
+     // build-time dead-code-elimination strips it entirely from the
+     // production bundle. No manual "remember to remove" step needed,
+     // no risk of log shipping to prod.
+     const gestureStartScaleRef = useRef(1.0);
+     usePinch(
+       ({ offset: [s], first, event, type }) => {
+         if (event && event.cancelable) event.preventDefault();
+         if (first) {
+           gestureStartScaleRef.current = scaleRef.current ?? 1.0;
+         }
+         const next = gestureStartScaleRef.current * s;
+         const clamped = Math.min(Math.max(next, 0.1), 4.0);
+         if (process.env.NODE_ENV !== 'production') {
+           // eslint-disable-next-line no-console
+           console.log('[PlanViewer pinch]', {
+             type, first, offset_s: s,
+             startScale: gestureStartScaleRef.current,
+             liveScale: scaleRef.current,
+             nextClamped: clamped,
+           });
+         }
+         setScale(clamped);
+       },
+       {
+         target: containerRef,
+         eventOptions: { passive: false },
+         scaleBounds: { min: 0.1, max: 4.0 },
+         rubberband: true,
+         pointer: { touch: true },
+       }
+     );
+
+   Key differences from hotfix-4:
+   - Removed `from` config (was the staleness vector).
+   - Added `pointer: { touch: true }` to force Touch Event path on iOS.
+   - Read scale from `scaleRef.current` (always fresh) not closure.
+   - Capture gesture-start scale on `first` frame to a ref.
+   - Multiply gesture-start scale by cumulative offset[0] (PATTERN B).
+   - Added temporary console.log for debugging on real device.
+
+
+LOCATION 1.3 — DO NOT TOUCH the touch-action change from hotfix-4
+   `style={{ touchAction: 'pan-x pan-y' }}` is correct and stays as-is.
+
+
+DO NOT TOUCH
+============
+- ❌ Backend (zero changes).
+- ❌ ProjectPlansPage / UnitPlansPage.
+- ❌ +/- zoom buttons.
+- ❌ Math.floor fit-scale calc.
+- ❌ dir="ltr" on scroll container.
+- ❌ w-fit on inner wrapper.
+- ❌ Tailwind scrollbar modifiers.
+- ❌ touchAction: 'pan-x pan-y' (stays from hotfix-4).
+- ❌ Image rendering branch.
+- ❌ Worker setup, lazy chunk, thumbnail preview.
+- ❌ Viewport meta tag.
+- ❌ usePinch import statement (still imported from hotfix-4).
+
+GLOBAL VERIFY
+=============
+
+VERIFY 1 — Lint (implicit via build).
+
+VERIFY 2 — Build
+    cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
+        REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com \
+        yarn build 2>&1 | tail -10
+    EXPECT: "Compiled successfully", no new warnings. The console.log
+    is fine in CRA build (it's behind a typeof window check, not
+    stripped by minifier in CI mode).
+
+VERIFY 3 — Manual smoke (Zahi runs after staging deploy)
+
+  ⭐ MUST be tested on a REAL iPhone AND a real Android. DevTools
+     emulation insufficient.
+
+  PHASE 1 — debug log inspection (before any pinch):
+    a. iPhone: open Safari → connect to Mac via USB → Safari Web
+       Inspector → Console tab → navigate to a project plan and open
+       PlanViewer.
+       For Capacitor app: Settings → Safari → Advanced → Web Inspector
+       ON, then Mac Safari → Develop menu → iPhone → BrikOps app.
+    b. Touch the canvas with ONE FINGER (don't pinch).
+       EXPECT: NO log fires. (Single touch is not pinch.)
+       BROKEN: if log fires on single touch → handler over-firing,
+       another bug.
+
+  PHASE 2 — pinch fires (the original bug):
+    c. With Web Inspector still open, two-finger pinch on canvas.
+       EXPECT: console.log entries every frame:
+         [PlanViewer pinch] { type: "touchmove", first: true, offset_s: 1.0, ... }
+         [PlanViewer pinch] { type: "touchmove", first: false, offset_s: 1.05, ... }
+         ...
+         offset_s gradually rises (or falls) with finger spread.
+       BROKEN: if no log fires → @use-gesture isn't subscribing on iOS.
+       Need to investigate further (maybe try without `pointer: { touch }`
+       config to test which code path is alive).
+
+  PHASE 3 — scale tracks finger spread (the math):
+    d. Slow steady pinch out from fit-scale (~15%).
+       EXPECT: bottom-bar percentage rises smoothly 15% → 25% → 40% →
+       proportional to finger spread. Logs show offset_s rising.
+       BROKEN: if percentage rockets to 400% within first second →
+       compounding bug (PATTERN B handler should not produce this).
+       BROKEN: if percentage stays at 15% → ref isn't tracking, handler
+       fires but with stale start scale.
+
+  PHASE 4 — single touch DOESN'T reset (the regression bug from hotfix-4):
+    e. After pinching to e.g. 60%, RELEASE fingers, then touch the
+       canvas with one finger (single tap, no pinch).
+       EXPECT: scale STAYS at 60%. Bottom-bar percentage unchanged.
+       BROKEN: if scale collapses back to fit-scale → the staleness
+       bug from PATTERN A reappeared (shouldn't with PATTERN B + ref,
+       but verify).
+
+  PHASE 5 — Android:
+    Same flow. Android doesn't have GestureEvent so it uses the touch-
+    event path always. Should JUST WORK. If it doesn't, we have a
+    different problem (likely @use-gesture v10 + Android Chromium
+    WebView edge case).
+
+  PHASE 6 — regressions:
+    +/- buttons still work, scrollbars still pan, page nav still works,
+    image plans still render.
+
+  IF TESTS PASS: stop, ping me. I'll write hotfix-6 to remove the
+  console.log before prod deploy. Or you can comment out the log
+  manually before pushing prod.
+
+  IF TESTS FAIL: send me the console output. The log tells us EXACTLY
+  what @use-gesture is or isn't reporting. We'll triangulate.
+
+
+DELIVERABLES
+============
+review.txt with:
+  - Rollback SHA (origin/staging HEAD before this commit, post-hotfix-4)
+  - STEP 0 grep outputs (4 checks)
+  - LOCATION 1.1, 1.2 diffs
+  - VERIFY 2 (build) output
+  - VERIFY 3 deferred to Zahi with phase-by-phase test plan
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(plans): pinch handler uses explicit ref, force touch-event path
+
+  P1.1-hotfix-5 — hotfix-4's PATTERN A (`from` config) had two
+  regressions on real iPhone:
+  - Pinch didn't fire at all on iOS (likely GestureEvent path
+    suppressed in Capacitor WKWebView).
+  - Single touch on canvas reset scale to fit (~15%) — closure
+    staleness, `from()` always returned the initial scale.
+
+  Switch to PATTERN B (explicit `gestureStartScaleRef` + `first` flag,
+  reading scale via `scaleRef.current` updated on every render). Add
+  `pointer: { touch: true }` to force the cross-platform Touch Event
+  path on iOS. Add temporary console.log in the handler so we can
+  verify on real device via Safari Web Inspector — to be removed in a
+  follow-up commit before prod.
+
+  No backend, no schema. Same library. Same dep size.
+
+STEPS
+=====
+1. STEP 0 pre-flight (4 greps).
+2. LOCATION 1.1: add scaleRef + sync useEffect.
+3. LOCATION 1.2: replace usePinch with PATTERN B + pointer config + log.
+4. VERIFY 2 (build).
+5. Generate review.txt + commit message.
+6. STOP. AWAITING ZAHI APPROVAL.
+
+ROLLBACK
+========
+git revert <commit-sha>
+git checkout staging && ./deploy.sh --stag
+(Reverts to hotfix-4 state which is buggy but at least doesn't make
+things worse than hotfix-3.)
+
+
+🛑 IF HOTFIX-5 FAILS — STOP ITERATING ON @use-gesture
+=====================================================
+
+This is the 6th Plans deploy today + 2nd specifically on pinch.
+After hotfix-5, if pinch STILL doesn't work on iPhone:
+
+**DO NOT write hotfix-6 with another @use-gesture config permutation.**
+
+The library may not be the right tool for our specific stack
+(React 19 + Capacitor WKWebView + react-pdf canvas). Time to step
+back and choose ONE of these alternatives:
+
+**Option A — Native Capacitor plugin:**
+  - `@capacitor-community/pinch-zoom` or similar (verify maintenance)
+  - Works at native layer, bypasses WebView gesture issues entirely
+  - Pros: no WebView gesture quirks
+  - Cons: native build required (`./ship.sh`), Android + iOS plugin
+    parity needed, heavier dependency
+
+**Option B — Manual touch event handlers (lowest layer):**
+  - Listen to native `touchstart` / `touchmove` / `touchend` on the
+    container directly (React onTouch* props)
+  - Track two-touch distance, compute pinch ratio frame-to-frame
+  - ~50 LOC, no library dependency
+  - Pros: lowest layer = most reliable, works identically on iOS
+    and Android because both fire TouchEvent
+  - Cons: more code to maintain, doesn't get us desktop wheel zoom
+    for free (but +/- buttons cover desktop)
+
+**Option C — Defer pinch to P1.4 polish (RECOMMENDED if iterating):**
+  - Ship P1.1 with +/- buttons + scrollbar pan only
+  - Field-test for 1-2 weeks (WUyoughong + others)
+  - Real users may not even need pinch (gloves + dirty hands +
+    field conditions favor buttons over gestures anyway)
+  - If users complain, address pinch in P1.4 with fresh approach
+    informed by actual usage patterns
+  - Pros: stops the iteration spiral, gets P1.1 stable in field,
+    informed by data not theory
+  - Cons: delays "professional viewer" feel by ~2 weeks
+
+**Decision criteria after hotfix-5:**
+
+If hotfix-5 PASSES on iPhone + Android → ship, done with pinch.
+If hotfix-5 FAILS → stop, don't write hotfix-6 with @use-gesture.
+Pick A/B/C based on:
+  - C if you want to ship P1.1 stable NOW and revisit later
+  - B if you have ~3 hours and want pinch working today
+  - A if you have a day and want the "right" architecture
+  Cowork will write whichever spec you pick — but only after you
+  decide. No more @use-gesture iterations.
+
+This is the discipline-over-velocity moment. After 6 deploys today,
+each subsequent iteration is more likely to introduce subtle bugs
+than to fix the original. Stop, pick approach, execute cleanly.
+
+================================================================================
+END OF SPEC
+================================================================================
+
+================================================================================
+END OF SPEC
+================================================================================

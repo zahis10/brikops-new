@@ -1,0 +1,280 @@
+================================================================================
+BATCH 505-HOTFIX — Invite-login-needed form missing ToS checkbox (P0)
+================================================================================
+Date:           2026-05-09
+Branch:         staging  (NOT main)
+Severity:       P0 — every new contractor accepting an invite is permanently
+                blocked at "create and join" with a 400 error.
+Files changed:  1 frontend (no backend changes)
+                  Frontend: frontend/src/pages/OnboardingPage.js
+Pre-flight:     Discovered during batch 505 staging smoke test on 2026-05-09.
+                The renderInviteLoginNeeded form (L902-994) lacks the ToS
+                consent checkbox that handleAcceptInvite (L613-680) requires,
+                creating a permanent dead-end for new contractor invitees.
+================================================================================
+
+CONTEXT
+-------
+Batch 505 added a mandatory ToS consent gate (Israeli Spam Law) across all
+register/link forms. Replit added the checkbox to four forms:
+
+  Form                              | Location  | Checkbox id
+  ----------------------------------|-----------|--------------------------
+  renderInviteAccept (existing user)| L871      | "onb-invite-terms"     ✅
+  renderPhoneStep — register branch | L1193     | (in register branch)   ✅
+  renderPhoneStep — link branch     | L1193?    | (verify-otp form)      ✅
+  renderDetails                     | L1579     | (in form)              ✅
+
+But the FIFTH form — `renderInviteLoginNeeded` (L902-994), shown when an
+invite is sent to a phone with NO existing account — was MISSED. It still
+calls `handleAcceptInvite` (which enforces termsAccepted at L634), so:
+
+  1. New contractor receives WhatsApp invite link
+  2. Clicks → /onboarding?invite=<id>
+  3. Enters phone, gets OTP (debug code in staging), submits
+  4. Phone is new → backend returns no token → frontend sets
+     step='invite-login-needed' (L494)
+  5. User fills name/password/email, clicks "צור חשבון והצטרף"
+  6. handleAcceptInvite checks `if (!termsAccepted)` → toast.error(
+     'יש לאשר את תנאי השימוש') → dead-end. termsAccepted is
+     `false` by default and there is no UI in this form to flip it.
+
+Verified on staging via Chrome MCP smoke test using invite
+b010939f-58b0-40e7-a042-d1f578a1a207 (phone +972501234567) — form rendered
+without checkbox, no SSO buttons either.
+
+THIS HOTFIX adds only the ToS checkbox + button-disable. SSO buttons in the
+invite flow are a separate, larger UX item (deferred to its own spec) because
+they require careful phone-skip handling — the user's phone is already
+verified at this step, but the existing socialFlow='register' branch asks for
+phone again. That's a UX redesign, not a hotfix.
+
+STEP 0 — MANDATORY PRE-FLIGHT
+=============================
+Before editing, Replit MUST run all four greps below and confirm the line
+numbers in this spec still match HEAD on origin/staging:
+
+  # 1. Confirm renderInviteLoginNeeded function declaration
+  git fetch origin staging
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | grep -n \
+    "const renderInviteLoginNeeded = ()"
+  # EXPECT: line 902
+
+  # 2. Confirm handleAcceptInvite ToS gate
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | sed -n '634,640p'
+  # EXPECT: contains `if (!termsAccepted)` and `toast.error('יש לאשר...')`
+
+  # 3. Confirm termsAccepted state already exists
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | grep -n \
+    "termsAccepted, setTermsAccepted"
+  # EXPECT: line 63
+
+  # 4. Confirm pattern reference (existing checkbox in renderInviteAccept)
+  git show origin/staging:frontend/src/pages/OnboardingPage.js | sed -n '868,880p'
+  # EXPECT: contains id="onb-invite-terms" with terms.html + privacy.html links
+
+If ANY pre-flight returns different content → STOP. Do not edit. Report to
+Zahi with the actual content found, so the spec can be re-verified.
+
+PART 1 — FRONTEND (1 file)
+==========================
+
+FILE 1 of 1: frontend/src/pages/OnboardingPage.js
+--------------------------------------------------
+
+LOCATION 1.1 — Add ToS checkbox + disable submit button in renderInviteLoginNeeded
+                 (insert before the existing submit Button, ~line 989)
+
+   CURRENT (lines 985-993):
+       <Button type="submit" disabled={loading} className="w-full bg-green-600 hover:bg-green-700 text-white h-12 text-base font-bold">
+           {loading ? <Loader2 className="w-5 h-5 animate-spin ml-2" /> : null}
+           {t('onboarding', 'create_and_join')}
+         </Button>
+       </form>
+     </div>
+   );
+
+   REPLACE WITH:
+       {/* 2026-05-09 — Hotfix: ToS consent (Israeli Spam Law). MANDATORY.
+            Was missing in initial 505 ship — broke new-contractor invite flow
+            at the 400 gate in handleAcceptInvite L634. */}
+       <div className="flex items-start gap-2 pt-2">
+         <input
+           id="onb-invite-newuser-terms"
+           type="checkbox"
+           checked={termsAccepted}
+           onChange={(e) => setTermsAccepted(e.target.checked)}
+           className="mt-1 h-4 w-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500"
+         />
+         <label htmlFor="onb-invite-newuser-terms" className="text-xs text-slate-700">
+           אני מאשר/ת את <a href="/legal/terms.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">תנאי השימוש</a> ואת <a href="/legal/privacy.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">מדיניות הפרטיות</a>
+         </label>
+       </div>
+
+       <Button type="submit" disabled={loading || !termsAccepted} className="w-full bg-green-600 hover:bg-green-700 text-white h-12 text-base font-bold">
+           {loading ? <Loader2 className="w-5 h-5 animate-spin ml-2" /> : null}
+           {t('onboarding', 'create_and_join')}
+         </Button>
+       </form>
+     </div>
+   );
+
+NOTE: The `disabled` change adds `|| !termsAccepted` so the user can't even
+submit a request that the backend will reject. This matches the pattern used
+by the existing register/link/SSO forms (L1036, L1058, L1073).
+
+DO NOT TOUCH
+============
+- ❌ Do NOT touch `handleAcceptInvite` (L613-680). The backend gate is correct
+     and tested — only the UI was missing.
+- ❌ Do NOT change the render tree of the existing fullName/password/email/lang
+     fields. Only insert the new <div> block + modify the Button's `disabled`.
+- ❌ Do NOT add SSO buttons (Google/Apple) to this form. That's a P1 feature
+     gap deferred to a separate spec because it requires phone-skip UX work
+     (user's phone is already verified at this step).
+- ❌ Do NOT modify the four other forms that already have the checkbox
+     (L871, L1193, L1579, etc.) — they are correct.
+- ❌ Do NOT add new i18n keys. The Hebrew text "אני מאשר/ת את..." mirrors
+     exactly what the existing renderInviteAccept form uses at L877.
+     Hard-coded Hebrew here is acceptable because it matches the established
+     pattern (4 prior forms use the same hard-coded string).
+- ❌ Do NOT add a backend test. Backend already has the gate covered in
+     `backend/tests/test_unified_auth_consent.py` (T6/T7).
+
+GLOBAL VERIFY
+=============
+VERIFY 1 — Lint passes
+    cd frontend && npm run lint 2>&1 | tail -20
+    EXPECT: no new errors. ESLint react-hooks/exhaustive-deps must NOT
+    warn — termsAccepted is already in handleAcceptInvite's deps (L675)
+    and we're only modifying JSX.
+
+VERIFY 2 — Build succeeds
+    cd frontend && CI=true npm run build 2>&1 | tail -30
+    EXPECT: "Compiled successfully" or "Compiled with warnings". No errors.
+
+VERIFY 3 — Manual smoke on staging (after deploy)
+    a. Use existing pending invite (or create one via super admin):
+         POST https://api-staging.brikops.com/api/contractor-ops/invites
+         body: { phone: "+972501234599", role: "contractor",
+                 sub_role: null, full_name: "Test Hotfix",
+                 trade_key: null, company_id: null }
+         (capture invite_id from response)
+
+    b. Open in incognito Chrome:
+         https://staging.brikops-new.pages.dev/onboarding?invite=<invite_id>
+
+    c. Enter phone +972501234599 → click "שלח קוד אימות"
+       (in staging, send-otp returns otp_debug_code in API response;
+        check Network tab → /onboarding/send-otp response body for the code)
+
+    d. Enter OTP → submit
+       EXPECT: form transitions to "צור חשבון להצטרפות לפרויקט" with
+       name/password/email/lang fields AND a checkbox at the bottom labeled
+       "אני מאשר/ת את תנאי השימוש ואת מדיניות הפרטיות"
+
+    e. WITHOUT checking the box, fill name + password (8+ chars, letter + digit)
+       and try to click "צור חשבון והצטרף"
+       EXPECT: button is `disabled` (visibly grayed out, not clickable)
+
+    f. Check the checkbox
+       EXPECT: button becomes enabled
+
+    g. Click "צור חשבון והצטרף"
+       EXPECT: 200 response, navigation to project's tasks/control page,
+       toast "הצטרפת לפרויקט ..."
+
+VERIFY 4 — Regression check via grep
+    Verify no other "Button type=submit" in OnboardingPage.js calls
+    handleAcceptInvite WITHOUT termsAccepted gate:
+
+    grep -n "handleAcceptInvite\|onSubmit={handleAcceptInvite}" \
+        frontend/src/pages/OnboardingPage.js
+
+    EXPECT 2 hits:
+      L613  - const handleAcceptInvite = useCallback(async (e) => {
+      L794  - <form onSubmit={handleAcceptInvite}> (renderInviteAccept, has checkbox at L871)
+      L915  - <form onSubmit={handleAcceptInvite}> (renderInviteLoginNeeded, NOW has checkbox after this fix)
+
+    For EVERY hit, confirm the form has a termsAccepted-bound checkbox
+    visible above its submit button. Document in review.txt:
+       file:line  | form name        | checkbox id          | decision
+       902:915    | InviteLoginNeeded| onb-invite-newuser-terms | EDIT-DONE (this fix)
+       775:794   | InviteAccept     | onb-invite-terms     | KEEP (already correct)
+
+DELIVERABLES
+============
+review.txt with:
+  - Rollback SHA (origin/staging HEAD before this commit)
+  - Per-file diff (single file: OnboardingPage.js, ~15 lines added)
+  - STEP 0 grep outputs at top
+  - VERIFY 1 (lint), VERIFY 2 (build), VERIFY 4 (regression grep) outputs
+  - VERIFY 3 manual smoke deferred to Zahi (he runs the staging test)
+  - Commit message
+  - Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+.local/.commit_message:
+  fix(onboarding): add missing ToS checkbox to invite-login-needed form
+
+  Batch 505 added mandatory ToS consent across register/link forms but
+  missed renderInviteLoginNeeded (L902-994), which is the form rendered
+  to new-phone invite recipients after OTP verify. The form calls
+  handleAcceptInvite which enforces termsAccepted at L634, so without
+  a UI checkbox to flip it, every new contractor invite hit a 400
+  "יש לאשר את תנאי השימוש" with no path forward.
+
+  Hotfix adds:
+  - Checkbox id="onb-invite-newuser-terms" matching the established
+    pattern from renderInviteAccept (L871).
+  - Disable submit button until termsAccepted=true (matches L1036/1058
+    pattern).
+
+  No backend changes — backend gate is correct and tested.
+  No new i18n keys — Hebrew text mirrors existing renderInviteAccept.
+
+  Discovered during 505 staging smoke test on 2026-05-09.
+
+  Follow-up: SSO buttons (Google/Apple) in invite flow remain absent.
+  Tracked separately — requires phone-skip UX work since the phone is
+  already verified at the invite-login-needed step but socialFlow=
+  'register' branch asks for phone again.
+
+STEPS
+=====
+1. Run STEP 0 pre-flight greps. Paste outputs at top of review.txt.
+   If any line numbers drifted → STOP and report.
+2. Edit OnboardingPage.js: insert checkbox div + modify Button disabled prop
+   per LOCATION 1.1.
+3. Run VERIFY 1 (lint). Paste output.
+4. Run VERIFY 2 (build). Paste output.
+5. Run VERIFY 4 (regression grep). Paste output with classification table.
+6. Generate review.txt with the diff (one-file diff, ~15 lines added).
+7. Write .local/.commit_message per template above.
+8. STOP. Final line: AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+   Do NOT run ./deploy.sh, ./ship.sh, git commit, or git push.
+
+ROLLBACK
+========
+git revert <commit-sha>
+git checkout staging && ./deploy.sh --stag
+
+(If already promoted to prod:
+   git checkout main && git revert <commit-sha> && ./deploy.sh --prod
+ But this hotfix should be staged + smoked for ≥ 1 hour before prod.)
+
+FOLLOW-UP (NOT THIS SPEC)
+=========================
+Tracked as task #10 follow-up: Add Google/Apple SSO buttons to
+renderInviteLoginNeeded with phone-skip UX. Requires:
+  - When user clicks Google/Apple from this form, after socialAuth returns
+    'registration_required', auto-call socialSendOtp with the already-
+    verified phoneE164 (skip phone input UI).
+  - Render OTP-only socialFlow='otp' inside renderInviteLoginNeeded
+    instead of renderPhoneStep.
+  - Backend already supports invite_token through /auth/social and
+    /auth/social/verify-otp (onboarding_router.py:1830, 2128) — no
+    backend work needed.
+
+================================================================================
+END OF SPEC
+================================================================================
