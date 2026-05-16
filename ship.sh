@@ -42,23 +42,92 @@ if [[ -n "$(git status --porcelain)" ]]; then
   echo
   echo "► שומר שינויים מקומיים..."
   git add -A
+
+  # 🔒 Secret-scan: refuse to commit files containing credentials.
+  # Root-cause prevention for 2026-05-16 secrets leak incident.
+  # Override (false positives only): SHIP_SKIP_SECRET_SCAN=1 ./ship.sh
+  if [[ "${SHIP_SKIP_SECRET_SCAN:-0}" != "1" ]]; then
+    STAGED_FILES="$(git diff --cached --name-only)"
+    if [ -n "$STAGED_FILES" ]; then
+      SECRETS_FOUND=""
+      while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        [ ! -f "$f" ] && continue
+        # Skip binary files
+        file -b "$f" 2>/dev/null | grep -qE "binary|ELF|image|video" && continue
+
+        if grep -qE "mongodb(\+srv)?://[^:/]+:[^@]+@" "$f" 2>/dev/null; then
+          SECRETS_FOUND="$SECRETS_FOUND\n  $f: MongoDB credentials"
+        fi
+        if grep -qE "AKIA[A-Z0-9]{16}" "$f" 2>/dev/null; then
+          SECRETS_FOUND="$SECRETS_FOUND\n  $f: AWS access key"
+        fi
+        if grep -qE "JWT_SECRET[[:space:]]*[:=][[:space:]]*['\"]?[A-Za-z0-9+/=_-]{16,}" "$f" 2>/dev/null; then
+          SECRETS_FOUND="$SECRETS_FOUND\n  $f: JWT_SECRET with real value"
+        fi
+        if grep -qE "EAA[A-Za-z0-9_-]{100,}" "$f" 2>/dev/null; then
+          SECRETS_FOUND="$SECRETS_FOUND\n  $f: WhatsApp/Meta access token"
+        fi
+        if grep -qE "AC[a-f0-9]{32}" "$f" 2>/dev/null; then
+          SECRETS_FOUND="$SECRETS_FOUND\n  $f: Twilio SID"
+        fi
+        if grep -qE "sk_(test|live)_[A-Za-z0-9]{20,}" "$f" 2>/dev/null; then
+          SECRETS_FOUND="$SECRETS_FOUND\n  $f: Stripe key"
+        fi
+        if grep -qE "BEGIN.*PRIVATE KEY|BEGIN OPENSSH" "$f" 2>/dev/null; then
+          SECRETS_FOUND="$SECRETS_FOUND\n  $f: Private key (PEM)"
+        fi
+      done <<< "$STAGED_FILES"
+
+      if [ -n "$SECRETS_FOUND" ]; then
+        echo
+        echo "🚨 SECRETS DETECTED IN STAGED FILES — ABORTING COMMIT"
+        echo -e "$SECRETS_FOUND"
+        echo
+        echo "Root-cause prevention for 2026-05-16 incident."
+        echo "If this is a false positive:"
+        echo "  SHIP_SKIP_SECRET_SCAN=1 ./ship.sh"
+        echo
+        exit 2
+      fi
+    fi
+  else
+    echo "  ⚠️  SHIP_SKIP_SECRET_SCAN=1 — secret-scan דולג (use with care)"
+  fi
+
   MSG="chore: local native sync $(date '+%Y-%m-%d %H:%M')"
   git commit -m "$MSG" || true
   echo "  ✓ נשמר: $MSG"
+
+  # 🔒 Push immediately to prevent local-only commits (incident 2026-05-16).
+  # The root cause of the leak was that ship.sh left commits local.
+  # If push fails (non-FF), HALT loud — do NOT continue.
+  echo
+  echo "► דוחף מיד ל-origin (מניעת local-only commits)..."
+  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+  if ! git push origin "$current_branch"; then
+    echo
+    echo "🚨 git push FAILED — הקומיט עכשיו LOCAL-ONLY."
+    echo "   זו בדיוק הסיבה השורש של דליפת הסודות מ-2026-05-16."
+    echo "   חובה לפתור לפני שממשיכים:"
+    echo "   - אם non-FF: git pull --rebase origin $current_branch"
+    echo "   - אחר כך הרץ שוב ./ship.sh"
+    exit 1
+  fi
+  echo "  ✓ נדחף ל-origin/$current_branch"
 else
   echo
   echo "► אין שינויים מקומיים לקומיט."
 fi
 
-# ── 2. סנכרון דו-כיווני עם Replit ────────────────────
+# ── 2. משיכת עדכונים מ-Replit ────────────────────────
+# (Push כבר בוצע מיד אחרי הקומיט בשלב 1 — אין יותר push כפול
+#  או hardcoded "main" שעלול לדחוף את ה-staging branch ל-main.)
 if [[ "$SKIP_SYNC" == "false" ]]; then
   echo
   echo "► מושך עדכונים מ-Replit..."
-  git pull --rebase origin main
-
-  echo
-  echo "► דוחף חזרה ל-Replit..."
-  git push origin main
+  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+  git pull --rebase origin "$current_branch"
 fi
 
 # ── 3. זיהוי מה השתנה מאז ה-ship האחרון ──────────────
