@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from contractor_ops.schemas import NotificationJobResponse, ManualNotifyRequest
 from contractor_ops.notification_service import NotificationEngine
 from contractor_ops.task_image_guard import require_task_image
+from contractor_ops.rate_limit import check_reminder_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,19 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn: 
         if not task.get('assignee_id') and not task.get('company_id'):
             raise HTTPException(status_code=400, detail='Task has no assignee or company assigned')
 
+        # Rate limit: shared budget with contractor reminders + digest
+        # (HIGH-N1 followup 2026-05-17 — anti-spam for compromised PM accounts)
+        project_id = task.get('project_id')
+        if project_id:
+            rate_key = f"{user['id']}:{project_id}"
+            if not await check_reminder_rate_limit(
+                "manual_reminder", rate_key, max_requests=10, window_seconds=3600
+            ):
+                raise HTTPException(
+                    status_code=429,
+                    detail="יותר מדי תזכורות ידניות בשעה האחרונה — חכה לפני שליחה נוספת",
+                )
+
         await require_task_image(db, task_id)
 
         job = await engine.enqueue(
@@ -118,7 +132,24 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn: 
         db = engine.db
 
         job_doc = await db.notification_jobs.find_one({'id': job_id}, {'_id': 0})
+
+        # Rate limit: shared budget with contractor reminders + digest
+        # (HIGH-N1 followup 2026-05-17)
         if job_doc and job_doc.get('task_id'):
+            task_for_rl = await db.tasks.find_one(
+                {'id': job_doc['task_id']},
+                {'_id': 0, 'project_id': 1},
+            )
+            project_id = (task_for_rl or {}).get('project_id')
+            if project_id:
+                rate_key = f"{user['id']}:{project_id}"
+                if not await check_reminder_rate_limit(
+                    "manual_reminder", rate_key, max_requests=10, window_seconds=3600
+                ):
+                    raise HTTPException(
+                        status_code=429,
+                        detail="יותר מדי תזכורות ידניות בשעה האחרונה — חכה לפני שליחה נוספת",
+                    )
             await require_task_image(db, job_doc['task_id'])
 
         result = await engine.retry_job(job_id, actor_id=user['id'])

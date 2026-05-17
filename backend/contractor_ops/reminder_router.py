@@ -1,12 +1,10 @@
 import logging
-from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, Depends, HTTPException
-from pymongo import ReturnDocument
-from pymongo.errors import DuplicateKeyError
 
 from config import CRON_SECRET
 from . import reminder_service
 from contractor_ops.router import get_db
+from contractor_ops.rate_limit import check_reminder_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -31,52 +29,6 @@ async def _check_reminder_access(user: dict, project_id: str):
         raise HTTPException(status_code=403, detail="אין לך הרשאה לשלוח תזכורות בפרויקט זה")
 
 
-async def _check_reminder_rate_limit(
-    kind: str, key: str, max_requests: int, window_seconds: int
-) -> bool:
-    """
-    Per-user rate limit for manual reminder endpoints.
-    Returns True if within limit, False if exceeded.
-    Fail-open on infra errors (don't block legitimate users on DB hiccups).
-    Added 2026-05-16 from pentest HIGH-N1.
-    """
-    db = get_db()
-    now = datetime.now(timezone.utc)
-    new_expires = now + timedelta(seconds=window_seconds)
-    pipeline = [
-        {"$set": {
-            "count": {"$cond": {
-                "if": {"$lte": [{"$ifNull": ["$expires_at", now - timedelta(seconds=1)]}, now]},
-                "then": 1,
-                "else": {"$add": [{"$ifNull": ["$count", 0]}, 1]},
-            }},
-            "expires_at": {"$cond": {
-                "if": {"$lte": [{"$ifNull": ["$expires_at", now - timedelta(seconds=1)]}, now]},
-                "then": new_expires,
-                "else": {"$ifNull": ["$expires_at", new_expires]},
-            }},
-            "updated_at": now,
-        }},
-    ]
-    for attempt in range(2):
-        try:
-            result = await db.reminder_rate_limits.find_one_and_update(
-                {"kind": kind, "key": key},
-                pipeline,
-                upsert=True,
-                return_document=ReturnDocument.AFTER,
-            )
-            return result["count"] <= max_requests
-        except DuplicateKeyError:
-            if attempt == 0:
-                continue
-            return False  # fail-closed on persistent race
-        except Exception as e:
-            logger.warning(f"[REMINDER-RL] Rate limit check failed: {e} — allowing request")
-            return True  # fail-open on infra errors
-    return False
-
-
 def create_reminder_router(require_roles, get_current_user):
     global _get_current_user, _require_roles
     _get_current_user = get_current_user
@@ -92,7 +44,7 @@ def create_reminder_router(require_roles, get_current_user):
         # Rate limit: max 10 manual reminders per user per project per hour
         # (anti-spam — pentest HIGH-N1 2026-05-16, shared budget with digest)
         rate_key = f"{user['id']}:{project_id}"
-        if not await _check_reminder_rate_limit("manual_reminder", rate_key, max_requests=10, window_seconds=3600):
+        if not await check_reminder_rate_limit("manual_reminder", rate_key, max_requests=10, window_seconds=3600):
             raise HTTPException(
                 status_code=429,
                 detail="יותר מדי תזכורות ידניות בשעה האחרונה — חכה לפני שליחה נוספת"
@@ -126,7 +78,7 @@ def create_reminder_router(require_roles, get_current_user):
         await _check_reminder_access(user, project_id)
         # Rate limit: shared budget with contractor reminder (same kind/key)
         rate_key = f"{user['id']}:{project_id}"
-        if not await _check_reminder_rate_limit("manual_reminder", rate_key, max_requests=10, window_seconds=3600):
+        if not await check_reminder_rate_limit("manual_reminder", rate_key, max_requests=10, window_seconds=3600):
             raise HTTPException(
                 status_code=429,
                 detail="יותר מדי תזכורות ידניות בשעה האחרונה — חכה לפני שליחה נוספת"

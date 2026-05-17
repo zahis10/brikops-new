@@ -8,6 +8,7 @@ import logging
 import time
 import httpx
 from contractor_ops.router import get_db, get_current_user, _get_project_role, _is_super_admin, _now, _audit, MANAGEMENT_ROLES, get_notification_engine, get_public_base_url
+from contractor_ops.rate_limit import check_reminder_rate_limit
 from contractor_ops.msg_logger import mask_phone
 from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
 from contractor_ops.projects_router import _natural_sort_key
@@ -3064,6 +3065,17 @@ async def notify_rejection_whatsapp(run_id: str, stage_id: str, body: NotifyReje
 
     if role == "contractor":
         raise HTTPException(status_code=403, detail="קבלן לא יכול לשלוח הודעת דחייה")
+
+    # Rate limit: shared budget with contractor reminders + digest + manual_notify
+    # (HIGH-N1 followup 2026-05-17)
+    rate_key = f"{user['id']}:{project_id}"
+    if not await check_reminder_rate_limit(
+        "manual_reminder", rate_key, max_requests=10, window_seconds=3600
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="יותר מדי תזכורות ידניות בשעה האחרונה — חכה לפני שליחה נוספת",
+        )
 
     tpl = await _get_template(db, run=run, project_id=run.get("project_id"))
     wa_item_map = _build_item_map(tpl)

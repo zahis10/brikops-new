@@ -1,129 +1,160 @@
 ═══════════════════════════════════════════════════════════════
-BATCH reminder-rate-limit — FULL DIFF
-2026-05-16 | Branch: staging | 2 files | +73 / -1 LOC
+BATCH reminder-rate-limit-followup-1 — REVIEW
+2026-05-17 | Branch: staging | Severity: HIGH (extension of HIGH-N1)
 ═══════════════════════════════════════════════════════════════
 
-diff --git a/backend/contractor_ops/reminder_router.py b/backend/contractor_ops/reminder_router.py
-index d55fae9..b78283c 100644
---- a/backend/contractor_ops/reminder_router.py
-+++ b/backend/contractor_ops/reminder_router.py
-@@ -1,5 +1,8 @@
- import logging
-+from datetime import datetime, timezone, timedelta
- from fastapi import APIRouter, Request, Depends, HTTPException
-+from pymongo import ReturnDocument
-+from pymongo.errors import DuplicateKeyError
- 
- from config import CRON_SECRET
- from . import reminder_service
-@@ -28,6 +31,52 @@ async def _check_reminder_access(user: dict, project_id: str):
-         raise HTTPException(status_code=403, detail="אין לך הרשאה לשלוח תזכורות בפרויקט זה")
- 
- 
-+async def _check_reminder_rate_limit(
-+    kind: str, key: str, max_requests: int, window_seconds: int
-+) -> bool:
-+    """
-+    Per-user rate limit for manual reminder endpoints.
-+    Returns True if within limit, False if exceeded.
-+    Fail-open on infra errors (don't block legitimate users on DB hiccups).
-+    Added 2026-05-16 from pentest HIGH-N1.
-+    """
-+    db = get_db()
-+    now = datetime.now(timezone.utc)
-+    new_expires = now + timedelta(seconds=window_seconds)
-+    pipeline = [
-+        {"$set": {
-+            "count": {"$cond": {
-+                "if": {"$lte": [{"$ifNull": ["$expires_at", now - timedelta(seconds=1)]}, now]},
-+                "then": 1,
-+                "else": {"$add": [{"$ifNull": ["$count", 0]}, 1]},
-+            }},
-+            "expires_at": {"$cond": {
-+                "if": {"$lte": [{"$ifNull": ["$expires_at", now - timedelta(seconds=1)]}, now]},
-+                "then": new_expires,
-+                "else": {"$ifNull": ["$expires_at", new_expires]},
-+            }},
-+            "updated_at": now,
-+        }},
-+    ]
-+    for attempt in range(2):
-+        try:
-+            result = await db.reminder_rate_limits.find_one_and_update(
-+                {"kind": kind, "key": key},
-+                pipeline,
-+                upsert=True,
-+                return_document=ReturnDocument.AFTER,
-+            )
-+            return result["count"] <= max_requests
-+        except DuplicateKeyError:
-+            if attempt == 0:
-+                continue
-+            return False  # fail-closed on persistent race
-+        except Exception as e:
-+            logger.warning(f"[REMINDER-RL] Rate limit check failed: {e} — allowing request")
-+            return True  # fail-open on infra errors
-+    return False
-+
-+
- def create_reminder_router(require_roles, get_current_user):
-     global _get_current_user, _require_roles
-     _get_current_user = get_current_user
-@@ -40,6 +89,14 @@ def create_reminder_router(require_roles, get_current_user):
-         user: dict = Depends(get_current_user),
-     ):
-         await _check_reminder_access(user, project_id)
-+        # Rate limit: max 10 manual reminders per user per project per hour
-+        # (anti-spam — pentest HIGH-N1 2026-05-16, shared budget with digest)
-+        rate_key = f"{user['id']}:{project_id}"
-+        if not await _check_reminder_rate_limit("manual_reminder", rate_key, max_requests=10, window_seconds=3600):
-+            raise HTTPException(
-+                status_code=429,
-+                detail="יותר מדי תזכורות ידניות בשעה האחרונה — חכה לפני שליחה נוספת"
-+            )
-         result = await reminder_service.send_contractor_reminder(
-             project_id=project_id,
-             company_id=company_id,
-@@ -67,6 +124,13 @@ def create_reminder_router(require_roles, get_current_user):
-         user: dict = Depends(get_current_user),
-     ):
-         await _check_reminder_access(user, project_id)
-+        # Rate limit: shared budget with contractor reminder (same kind/key)
-+        rate_key = f"{user['id']}:{project_id}"
-+        if not await _check_reminder_rate_limit("manual_reminder", rate_key, max_requests=10, window_seconds=3600):
-+            raise HTTPException(
-+                status_code=429,
-+                detail="יותר מדי תזכורות ידניות בשעה האחרונה — חכה לפני שליחה נוספת"
-+            )
-         result = await reminder_service.send_pm_digest(
-             project_id=project_id,
-             triggered_by=f"manual:{user['id']}",
+PURPOSE
+───────
+Followup to d0e2942 (HIGH-N1 reminder rate limit). Audit 2026-05-17
+found 3 more user-triggered WhatsApp template endpoints with no
+rate limit:
+  POST /api/tasks/{task_id}/notify              (notification_router:61)
+  POST /api/notifications/{job_id}/retry        (notification_router:114)
+  POST /api/qc/run/{run_id}/stage/{stage_id}/notify-rejection  (qc_router:3040)
 
+Same attack model: compromised PM → spam WhatsApp templates → cost
++ Meta WA reputation. Fix: extend EXISTING kind="manual_reminder"
+10/hour shared budget to all 5 endpoints.
 
-diff --git a/backend/contractor_ops/reminder_service.py b/backend/contractor_ops/reminder_service.py
-index 326d8d0..a3c3406 100644
---- a/backend/contractor_ops/reminder_service.py
-+++ b/backend/contractor_ops/reminder_service.py
-@@ -766,6 +766,17 @@ async def ensure_indexes():
-             ("sent_at", -1),
-         ])
-         await _db.reminder_log.create_index([("wa_message_id", 1)])
--        logger.info("[REMINDER] Indexes created on reminder_log")
-+        # Rate-limit collection (pentest HIGH-N1 2026-05-16)
-+        await _db.reminder_rate_limits.create_index(
-+            "expires_at",
-+            expireAfterSeconds=0,
-+            background=True,
-+        )
-+        await _db.reminder_rate_limits.create_index(
-+            [("kind", 1), ("key", 1)],
-+            unique=True,
-+            background=True,
-+        )
-+        logger.info("[REMINDER] Indexes created on reminder_log + reminder_rate_limits")
-     except Exception as e:
-         logger.warning(f"[REMINDER] Index creation issue: {e}")
+DECISIONS (Zahi-approved)
+─────────────────────────
+Q1: Helper body = pipeline from d0e2942 (production-proven). Spec's
+    code sample was reconstruction from memory; ignored it. Copied
+    byte-for-byte from reminder_router L34-77.
+Q2: fail-open on task with no project_id (LOC 3 + 4). Task without
+    project_id is broken downstream anyway; rate limit is anti-spam,
+    not data validation. Consistent with fail-open on infra errors.
+Q3: kept logger prefix `[REMINDER-RL]` (not [RATE-LIMIT]) — low-risk.
+
+5 LOCATIONS — ALL DONE
+──────────────────────
+LOC 1: NEW backend/contractor_ops/rate_limit.py (70 LOC)
+       - Module + function docstring
+       - `check_reminder_rate_limit()` public name
+       - Body = byte-for-byte from d0e2942 (only name + docstrings)
+       - Imports: datetime/timezone/timedelta, pymongo.ReturnDocument,
+         DuplicateKeyError, logging, get_db
+
+LOC 2: backend/contractor_ops/reminder_router.py (-48 LOC net)
+       - Removed inline _check_reminder_rate_limit (45 LOC)
+       - Removed 3 imports no longer needed (datetime/timezone/timedelta,
+         pymongo.ReturnDocument, pymongo.errors.DuplicateKeyError)
+       - Added: from contractor_ops.rate_limit import check_reminder_rate_limit
+       - Renamed 2 callsites: _check_reminder_rate_limit → check_reminder_rate_limit
+
+LOC 3: backend/contractor_ops/notification_router.py manual_notify (+13 LOC)
+       - Added import at top
+       - Inserted rate-limit check after assignee check, before
+         require_task_image (so 429 fires before any I/O)
+       - fail-open if task.project_id missing
+
+LOC 4: backend/contractor_ops/notification_router.py retry_notification (+17 LOC)
+       - Restructured: lookup task to get project_id, then rate-limit,
+         then keep existing image guard (moved inside the if-block)
+       - fail-open if task_for_rl=None or project_id missing
+
+LOC 5: backend/contractor_ops/qc_router.py notify_rejection_whatsapp (+11 LOC)
+       - Added import near other contractor_ops imports
+       - Inserted rate-limit after all auth/role checks, before
+         _get_template (no fail-open — project_id always present)
+
+VERIFY GATES (5/5 PASS in Replit)
+──────────────────────────────────
+V1   py_compile × 4 files ......................... EXIT=0  ✓
+       rate_limit.py / reminder_router.py /
+       notification_router.py / qc_router.py
+V2   python -c "from rate_limit import check_..." .. "OK"   ✓
+V3   grep _check_reminder_rate_limit ............... = 0    ✓ (old name gone)
+V4   grep public name callsites (excl def/import) .. = 5    ✓
+       reminder_router L47, L81
+       notification_router L80, L146
+       qc_router L3072
+V5   grep status_code=429 in 3 target files ........ = 5    ✓
+       reminder_router: 2 (existing from d0e2942)
+       notification_router: 2 (new)
+       qc_router: 1 (new)
+
+V6-V8 (Zahi staging — cannot run in Replit):
+  V6  Smoke per-task notify (15 curls):
+      TOKEN=<pm-jwt>
+      TASK_ID=<task-id>
+      for i in {1..15}; do
+        curl -sS -o /dev/null -w "%{http_code} " \
+          -H "Authorization: Bearer $TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{"message":""}' \
+          -X POST "https://api-staging.brikops.com/api/tasks/$TASK_ID/notify"
+      done
+      Expected: req 1-10 = mix 200/400/500, req 11+ = 429.
+
+  V7  Shared budget (optional):
+      5 contractor reminders + 5 task notifies on same user+project
+      → req 11 = 429 regardless of which endpoint.
+
+  V8  Fresh PM session → first call NOT 429. ✓ sanity.
+
+DO-NOT-TOUCH (preserved)
+────────────────────────
+- 10/hour limit, 3600s window
+- kind="manual_reminder" (shared budget by design)
+- Hebrew 429 message
+- reminder_rate_limits collection or indexes (TTL + unique compound
+  from d0e2942 startup hook — STILL CREATED on backend restart)
+- ensure_indexes() in reminder_service.py (unchanged)
+- All auth checks (require_roles_fn, _get_project_role,
+  _check_reminder_access)
+- engine.enqueue / process_job / retry_job (downstream unchanged)
+- _get_template / _build_item_map / membership lookups in QC
+- Cron-triggered automated reminders (own cooldown)
+- Frontend (api.js 429 toast handler confirmed in HIGH-N1 smoke)
+
+DEPLOY ORDERING (Zahi)
+──────────────────────
+Backend-only. No frontend, no native, no mongo migration
+(indexes already exist from d0e2942).
+
+1. Commit + push (ship.sh handles).
+2. ./deploy.sh --stag — no special action; backend restart loads
+   new shared module via existing import wiring.
+3. V6 + V7 + V8 in staging.
+4. ./deploy.sh --prod.
+5. V6 + V8 sanity in production.
+
+RISK
+────
+MEDIUM-LOW.
+- Refactor (move + rename) of existing helper. V2 + V3 gates
+  confirm import-path correctness — both PASS.
+- All new logic is additive (a check that returns 429 early).
+- Fail-open on infra errors → legitimate users never blocked.
+- Shared budget intentional. 10/hour is 5-10× legitimate PM
+  workflow.
+- TTL + DuplicateKeyError handling unchanged from d0e2942.
+- Same Hebrew 429 message — frontend toast already proven.
+
+ROLLBACK
+────────
+git revert <sha> -- backend/contractor_ops/rate_limit.py \
+                    backend/contractor_ops/reminder_router.py \
+                    backend/contractor_ops/notification_router.py \
+                    backend/contractor_ops/qc_router.py
+git push origin staging
+./deploy.sh --stag && ./deploy.sh --prod
+
+(Indexes + collection survive revert harmlessly. To drop new
+ rate_limit.py file post-revert: just delete it manually if
+ git revert doesn't.)
+
+On-demand mitigation if 429 false-positives in prod:
+  Bump max_requests=10 → 20 in all 5 call-sites, single-commit
+  redeploy. Module structure + indexes unchanged.
+
+SCOPE BOUNDARY (Standing Rule)
+──────────────────────────────
+Agent does NOT: commit / push / deploy / restart / mark complete.
+Handoff: review.txt + .local/.commit_message + present_asset → DONE.
+Zahi runs git/deploy.
 
 ═══════════════════════════════════════════════════════════════
-END OF DIFF — 2 files, +73 lines added, -1 line removed
+STATUS: READY FOR ZAHI TO COMMIT + PUSH + DEPLOY
 ═══════════════════════════════════════════════════════════════
