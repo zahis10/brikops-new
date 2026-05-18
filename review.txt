@@ -18,11 +18,10 @@ SUMMARY
    Google: default-False (strict). Apple: default-True (defensive)
    + string/bool serialization handling.
 
-FILES TOUCHED (3)
+FILES TOUCHED (2)
 ================================================================================
 • backend/contractor_ops/notification_router.py   (+27/-10 net)
 • backend/contractor_ops/social_auth_service.py   (+22/-2 net)
-• security/pentest-report-2026-05-16.md           (NEW, +14)
 
 LOCATIONS
 ================================================================================
@@ -51,24 +50,21 @@ LOC 4 — social_auth_service.py L119-135 (verify_apple_token):
   • Handle string ("true"/"false") OR boolean serialization
   • Log dropped emails for observability.
 
-LOC 5 — security/pentest-report-2026-05-16.md (NEW):
-  • Created file with HIGH-N2 entry (spec referenced this filename;
-    it did not exist in the repo — created from scratch).
+LOC 5 — DROPPED per Zahi PATCH 2026-05-17:
+  • Full pentest-report-2026-05-16.md (340 LOC, CRIT-N1/HIGH-N1/MED/LOW/
+    regression/recommendations) exists on Zahi's Mac. Sync in a
+    separate documentation batch after code lands.
+  • File NOT included in this commit. No security/ changes in this batch.
 
 ⚠️ NOTES FOR ZAHI
 ================================================================================
-A) Pentest report 2026-05-16 did NOT exist in the repo (only 04-22).
-   Created `security/pentest-report-2026-05-16.md` as a new file with
-   the HIGH-N2 entry. If you maintain the pentest report elsewhere
-   (e.g., private notes), feel free to delete this file or move the
-   content. Code fixes (LOC 1-4) are independent and correct either way.
-
-B) Audit references in commit message (audit-idor-6-endpoints-2026-05-17.md
-   + audit-auth-social-email-fallback-2026-05-17.md) also do NOT exist
-   in the repo. They appear to be in your private security tracking.
+A) Audit references in commit message
+   (audit-idor-6-endpoints-2026-05-17.md +
+   audit-auth-social-email-fallback-2026-05-17.md) reference files on
+   your Mac. To be synced in a separate documentation batch.
    Commit message references them as-is per spec.
 
-C) Spec said LOC 1 import "already added by followup-1" — INCORRECT.
+B) Spec said LOC 1 import "already added by followup-1" — INCORRECT.
    The import was missing; added explicitly in this batch (L13).
 
 REPLIT VERIFY GATES (5/5 PASS)
