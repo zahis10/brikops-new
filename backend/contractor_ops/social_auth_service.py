@@ -43,9 +43,19 @@ async def verify_google_token(id_token_str: str) -> dict:
                     google_requests.Request(),
                     client_id
                 )
+
+                # P3 defense-in-depth (2026-05-17): only trust email when Google
+                # marked it as verified. Workspace admins can set arbitrary
+                # email_verified=false on provisioned users; treat such tokens as
+                # phone-only registration (existing OTP flow handles this cleanly).
+                email = idinfo.get("email", "")
+                if email and not idinfo.get("email_verified", False):
+                    logger.info("[GOOGLE] dropping unverified email for sub=%s", idinfo["sub"])
+                    email = ""
+
                 return {
                     "sub": idinfo["sub"],
-                    "email": idinfo.get("email", ""),
+                    "email": email,
                     "name": idinfo.get("name", ""),
                     "picture": idinfo.get("picture", ""),
                 }
@@ -103,9 +113,22 @@ async def verify_apple_token(id_token_str: str) -> dict:
             issuer="https://appleid.apple.com",
         )
 
+        # P3 defense-in-depth (2026-05-17): match Google's email_verified
+        # check. Apple normally sets email_verified=true (Apple verifies
+        # before issuing tokens); default-to-true on missing claim and only
+        # drop on explicit false.
+        email = decoded.get("email", "")
+        email_verified = decoded.get("email_verified", True)
+        # Apple may serialize email_verified as a string "true"/"false"
+        if isinstance(email_verified, str):
+            email_verified = email_verified.lower() == "true"
+        if email and not email_verified:
+            logger.info("[APPLE] dropping unverified email for sub=%s", decoded["sub"])
+            email = ""
+
         return {
             "sub": decoded["sub"],
-            "email": decoded.get("email", ""),
+            "email": email,
         }
     except ValueError:
         raise
