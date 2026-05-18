@@ -1,169 +1,221 @@
-BATCH idor-notify + sso-email-verified — REVIEW
-================================================================================
-Date:     2026-05-17
-Branch:   staging
-Status:   ✅ READY TO SHIP — 5/5 Replit verify gates PASS
+REVIEW — BATCH capacitor-google-signin-native
+Date: 2026-05-18
+Branch: staging
+Severity: MED (Google login fails on native app — pre-existing)
+Native rebuild: YES → ship.sh + App Store + Play Store re-submission
 
-SUMMARY
-================================================================================
-2 bundled security fixes from 2026-05-17 audit wave:
+────────────────────────────────────────────────────────────────────
+PLUGIN DECISION — PIVOTED MID-BATCH
+────────────────────────────────────────────────────────────────────
 
-1. HIGH-N2 — IDOR on manual_notify + retry_notification
-   Added _check_project_access() before existing rate-limit check
-   (auth-first ordering). Closes cross-tenant WhatsApp brand-spoof
-   vector (PM of project A → POST to task in project B).
+Spec default `@codetrix-studio/capacitor-google-auth` failed npm sanity:
+  - latest stable: 3.3.6 (Nov 2023, dormant)
+  - latest rc:     3.4.0-rc.4 (May 2024, never went stable)
+  - peerDependencies: { "@capacitor/core": "^6.0.0" }   ← we are on Cap 7.6.1
+  - Maintenance dormant since 2024-05
 
-2. P3 — SSO email_verified defense-in-depth
-   Drop email when not verified in both Google + Apple verify paths.
-   Google: default-False (strict). Apple: default-True (defensive)
-   + string/bool serialization handling.
+Zahi authorised pivot → @capgo/capacitor-social-login (same vendor as
+@capgo/capacitor-updater + @capgo/capacitor-document-scanner already in
+this app). Verified:
+  - latest 7.x: 7.20.0 (Cap 7 line still live)
+  - peerDependencies: { "@capacitor/core": ">=7.0.0" }   ✓ Cap 7 official
+  - API surface inspected via npm pack (definitions.d.ts + README):
+      SocialLogin.initialize({google: {webClientId, iOSClientId, mode}})
+      SocialLogin.login({provider:'google', options:{scopes}})
+  - Configures via JS — NO GoogleService-Info.plist, NO Android manifest
+    meta-data, NO strings.xml entry, NO Firebase needed.
 
-FILES TOUCHED (2)
-================================================================================
-• backend/contractor_ops/notification_router.py   (+27/-10 net)
-• backend/contractor_ops/social_auth_service.py   (+22/-2 net)
+Installed @capgo/capacitor-social-login@^7.6.5 → resolved 7.20.0.
 
-LOCATIONS
-================================================================================
-LOC 1 — notification_router.py L13 + L72-95:
-  • +import `from contractor_ops.router import _check_project_access`
-  • Insert `_check_project_access(user, project_id)` after assignee
-    check, before rate-limit
-  • Tighten: 500 on missing project_id (was fail-open / skip rate-limit)
+────────────────────────────────────────────────────────────────────
+FILES TOUCHED (7)
+────────────────────────────────────────────────────────────────────
 
-LOC 2 — notification_router.py L143-176:
-  • Tighten null checks: 404 on missing job_doc, missing task_id,
-    missing task_for_rl, missing project_id (was fail-open / silent
-    skip rate-limit)
-  • Insert `_check_project_access(user, project_id)` before rate-limit
-  • REVISED per spec: do NOT wrap 403 → 404. Let _check_project_access
-    raise its native 403. Enumeration oracle minor; UUIDs not
-    enumerable.
+1. frontend/package.json + yarn.lock
+   + "@capgo/capacitor-social-login": "^7.6.5" (resolves 7.20.0)
 
-LOC 3 — social_auth_service.py L49-64 (verify_google_token):
-  • email = idinfo.get("email", "")
-  • if email and not idinfo.get("email_verified", False): email = ""
-  • Log dropped emails for observability.
+2. frontend/src/index.js
+   - Add Capacitor + SocialLogin imports
+   - Early SocialLogin.initialize({google:{webClientId, iOSClientId,
+     mode:'online'}}) gated on Capacitor.isNativePlatform()
+   - Init wrapped in .catch() — non-blocking on failure
 
-LOC 4 — social_auth_service.py L119-135 (verify_apple_token):
-  • email_verified = decoded.get("email_verified", True)  # default-true
-  • Handle string ("true"/"false") OR boolean serialization
-  • Log dropped emails for observability.
+3. frontend/src/pages/LoginPage.js
+   - Add SocialLogin import
+   - GIS useEffect (L247): early-return on Capacitor.isNativePlatform()
+   - handleGoogleSignIn: useCallback → ASYNC; native branch FIRST:
+       SocialLogin.login → idToken → onboardingService.socialAuth('google', idToken)
+       → handleSocialAuthResult; silent on cancel; pending_deletion routed.
+   - Web GIS flow below — UNCHANGED.
 
-LOC 5 — DROPPED per Zahi PATCH 2026-05-17:
-  • Full pentest-report-2026-05-16.md (340 LOC, CRIT-N1/HIGH-N1/MED/LOW/
-    regression/recommendations) exists on Zahi's Mac. Sync in a
-    separate documentation batch after code lands.
-  • File NOT included in this commit. No security/ changes in this batch.
+4. frontend/src/pages/OnboardingPage.js
+   - Add SocialLogin import
+   - GIS useEffect (L127): early-return on Capacitor.isNativePlatform()
+   - handleGoogleSignIn: useCallback → ASYNC; native branch FIRST;
+     same as LoginPage BUT passes inviteToken to socialAuth() (4th arg).
 
-⚠️ NOTES FOR ZAHI
-================================================================================
-A) Audit references in commit message
-   (audit-idor-6-endpoints-2026-05-17.md +
-   audit-auth-social-email-fallback-2026-05-17.md) reference files on
-   your Mac. To be synced in a separate documentation batch.
-   Commit message references them as-is per spec.
+5. frontend/ios/App/App/Info.plist
+   - Add CFBundleURLTypes with REVERSED_CLIENT_ID URL scheme
+     (com.googleusercontent.apps.394294810491-jdlacmban1h476g531u3s1huslmhl62h)
+   - Defensive: capgo README doesn't mandate it but Google iOS SDK
+     historically uses URL callback. AppDelegate L36 open-url handler
+     (from H.2) already routes to ApplicationDelegateProxy.shared.
 
-B) Spec said LOC 1 import "already added by followup-1" — INCORRECT.
-   The import was missing; added explicitly in this batch (L13).
+6. frontend/ios/App/App.xcodeproj/project.pbxproj
+   - MARKETING_VERSION: 1.0.13 → 1.0.14 (both Debug+Release)
+   - CURRENT_PROJECT_VERSION: 11 → 12 (both Debug+Release)
 
-REPLIT VERIFY GATES (5/5 PASS)
-================================================================================
-V1: py_compile clean (notification_router.py + social_auth_service.py)
-    → EXIT=0 ✓
+7. frontend/android/app/build.gradle
+   - versionCode: 20 → 21
+   - versionName: "1.0.20" → "1.0.14" (sync iOS per Zahi Strategy C;
+     cosmetic — Play Store enforces only monotonic versionCode)
 
-V2: grep "_check_project_access" backend/contractor_ops/notification_router.py
-    → 3 matches: L13 (import) + L81 (manual_notify) + L158 (retry_notification) ✓
+────────────────────────────────────────────────────────────────────
+NOT TOUCHED (intentional)
+────────────────────────────────────────────────────────────────────
 
-V3: grep "email_verified" backend/contractor_ops/social_auth_service.py
-    → Multiple matches in both verify_google_token and verify_apple_token ✓
+- backend/* — verify_google_token already accepts WEB audience tokens
+  (capgo native returns idToken with audience = webClientId)
+- @capacitor-community/apple-sign-in — kept; Apple flow intact
+- AppDelegate.swift — H.2 open-url handler at L36 already routes correctly
+- H.2 Universal Links — we ADDED URLTypes block, no existing block to overwrite
+- GoogleService-Info.plist — NOT created (capgo doesn't read it)
+- google-services.json — NOT created (no Firebase)
+- AndroidManifest.xml — no meta-data added (capgo handles via JS)
+- strings.xml — no server_client_id added (capgo handles via JS)
+- play-services-auth:21.3.0 — already in build.gradle (SMS Retriever),
+  harmless overlap with capgo's internal Google deps
+- onboarding_router /auth/social OTP gate
+- 4 GCP OAuth clients — all kept
 
-V4: grep "check_reminder_rate_limit" backend/contractor_ops/notification_router.py
-    → 3 matches: L12 (import) + L86 (manual_notify) + L163 (retry_notification) ✓
-    → No regression vs followup-1.
+────────────────────────────────────────────────────────────────────
+ZAHI CREDENTIALS (web client ID is public OAuth identifier; iOS ID also
+public; both safe to commit in source)
+────────────────────────────────────────────────────────────────────
 
-V5: grep "from contractor_ops.router import.*_check_project_access" ...
-    → 1 match (L13) ✓
+webClientId   = 394294810491-u5q1t9vabqpumvuue42241sajbghchvh.apps.googleusercontent.com
+iOSClientId   = 394294810491-jdlacmban1h476g531u3s1huslmhl62h.apps.googleusercontent.com
+REVERSED      = com.googleusercontent.apps.394294810491-jdlacmban1h476g531u3s1huslmhl62h
 
-ZAHI STAGING/PROD GATES (V6-V8 — CRITICAL)
-================================================================================
-V6 — Cross-project IDOR (CRITICAL):
-  TOKEN_A=<PM of project A>; TASK_B=<task in project B>
-  curl -sS -w "\nHTTP: %{http_code}\n" \
-    -H "Authorization: Bearer $TOKEN_A" \
-    -H "Content-Type: application/json" \
-    -d '{"message":""}' \
-    -X POST "https://api-staging.brikops.com/api/tasks/$TASK_B/notify"
-  EXPECTED: HTTP 403 (was 200 before this fix).
-  IF 200 → IDOR not closed. HALT before prod ship.
+────────────────────────────────────────────────────────────────────
+VERSION BUMPS (Strategy C — from HEAD actuals)
+────────────────────────────────────────────────────────────────────
 
-V7 — Same-project sanity:
-  TOKEN_A=<PM of project A>; TASK_A=<task in project A>
-  curl ... -X POST "https://.../api/tasks/$TASK_A/notify"
-  EXPECTED: 200/400/500 (anything but 403 or 429 on fresh budget).
-  Catches over-tightening bug.
+iOS MARKETING_VERSION:        1.0.13 → 1.0.14
+iOS CURRENT_PROJECT_VERSION:  11     → 12
+Android versionCode:          20     → 21
+Android versionName:          1.0.20 → 1.0.14   ← cosmetic downgrade
+                                                 (Play Store monotonic
+                                                  only on versionCode ✓)
 
-V8 — SSO login still works:
-  - Sign in via Google → existing flow (link_required/register)
-  - Sign in via Apple → same as before
-  - No regression expected for verified emails (99.9%+ of real users).
+────────────────────────────────────────────────────────────────────
+VERIFY GATES — V1-V7 ALL PASS ✓
+────────────────────────────────────────────────────────────────────
 
-FAIL MODE MATRIX (CHANGES)
-================================================================================
-| Location                                  | WAS              | NOW                  |
-|-------------------------------------------|------------------|----------------------|
-| manual_notify: task missing project_id    | fail-open (skip) | 500 (fail-closed)    |
-| retry_notification: orphaned job          | fail-open (skip) | 404 (fail-closed)    |
-| retry_notification: missing task/proj_id  | fail-open (skip) | 404 (fail-closed)    |
-| cross-project notify access (BOTH)        | 200 (IDOR!)      | 403 native           |
-| Google email_verified missing             | trust            | drop email           |
-| Apple email_verified missing              | trust            | trust (Apple ok)     |
-| Apple email_verified="false" (string)     | trust            | drop email           |
+V1 grep @capgo/capacitor-social-login frontend/package.json
+   → "@capgo/capacitor-social-login": "^7.6.5"  ✓
 
-DO NOT TOUCH (PRESERVED)
-================================================================================
-✓ followup-1 rate-limit logic
-✓ /auth/social OTP gate (security anchor — "sacred")
-✓ social_auth_sessions collection + TTL
-✓ Apple cryptographic verify (RS256, JWKS, audience, issuer)
-✓ Google verify_oauth2_token library
-✓ require_roles_fn (global gate stays; per-project added on top)
-✓ rate_limit.py / check_reminder_rate_limit
-✓ Frontend (403 toast already in place from HIGH-N1)
+V2 cd frontend && npx cap sync
+   → "[info] Sync finished in 3.278s"
+   → "🔧 Configuring dynamic provider dependencies for SocialLogin"
+   → "Google: enabled, Facebook: enabled, Apple: enabled, Twitter: enabled"
+   → 11 Capacitor plugins detected for iOS, all OK  ✓
 
+V3 grep SocialLogin frontend/src/index.js
+   → import present, .initialize() called, .catch() handler  ✓
+
+V4 grep CFBundleURLTypes + com.googleusercontent.apps frontend/ios/App/App/Info.plist
+   → 2 matches (one block tag + one scheme value)  ✓
+   (PlistBuddy not available on Replit — grep used per spec footnote)
+
+V5 grep isNativePlatform + SocialLogin.login in pages
+   → LoginPage.js: 3 matches  ✓
+   → OnboardingPage.js: 3 matches  ✓
+
+V6 version bumps
+   → iOS: MARKETING_VERSION = 1.0.14 (×2), CURRENT_PROJECT_VERSION = 12 (×2)  ✓
+   → Android: versionCode 21, versionName "1.0.14"  ✓
+
+V7 cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
+   → "The build folder is ready to be deployed."
+   → "Done in 35.42s"
+   → No errors, no warnings related to SocialLogin / Capacitor  ✓
+   NOTE: REACT_APP_BACKEND_URL supplied inline because craco.config.js
+   gate requires it (pre-existing infra requirement, unrelated to batch).
+
+────────────────────────────────────────────────────────────────────
+V8 — ZAHI PHYSICAL-DEVICE TESTS (post store approval)
+────────────────────────────────────────────────────────────────────
+
+V8a iOS native: tap Google → native account picker → /auth/social → flow
+V8b Android native: tap Google → native account picker → /auth/social → flow
+V8c Web (app.brikops.com): GIS unchanged, button click works
+V8d Apple sign-in regression: iOS + Android still work (untouched)
+
+────────────────────────────────────────────────────────────────────
 RISK: MEDIUM
-================================================================================
-• IDOR fix tightens failure modes (500/404) — standard FastAPI, no
-  race conditions.
-• SSO fix drops email only when email_verified is explicitly false.
-  Real users always have email_verified=true. 0 regression for
-  99.9%+ of sign-ins.
-• All additive — no logic removed except intentional conversion of
-  fail-open → fail-closed on auth gate (correct security posture).
-• Auth FIRST (this batch) → rate limit (followup-1). Prevents
-  unauthorized requests from burning legitimate user's rate budget.
+────────────────────────────────────────────────────────────────────
 
++ Plugin pivot to capgo (active, Cap 7 official, same vendor as 2 existing
+  plugins) reduces risk vs default codetrix (Cap 6 only, dormant).
++ Web GIS flow untouched — no web regression risk.
++ Backend untouched — verify_google_token accepts WEB audience already.
++ Apple plugin untouched — Apple sign-in regression risk: low.
+- First Google native install — 7 file touchpoints
+- iOS URL scheme: README says JS init suffices, but Google iOS SDK
+  historically uses URL callback. Included defensively.
+- 24-48h × 2 store reviews per platform before V8a/b/d possible.
+
+────────────────────────────────────────────────────────────────────
 ROLLBACK
-================================================================================
-git revert <sha> -- \
-  backend/contractor_ops/notification_router.py \
-  backend/contractor_ops/social_auth_service.py
-git push origin staging
-./deploy.sh --stag && ./deploy.sh --prod
+────────────────────────────────────────────────────────────────────
 
-Edge case (Google Workspace user complaint, extremely unlikely):
-  - Temporary: revert LOC 3 only
-  - Or: instruct admin to set email_verified=true (default)
+A) Frontend-only (Capgo OTA, no native rebuild needed):
+   git revert <sha> -- frontend/src/index.js \
+     frontend/src/pages/LoginPage.js frontend/src/pages/OnboardingPage.js
+   Native Google will fail silently; Apple sign-in OK.
 
-TODO — OUT OF SCOPE (FOLLOW-UP BATCHES)
-================================================================================
-• ManualNotifyRequest.message sanitization (insider threat MEDIUM):
-  Hostile PM in own project can send misleading messages under
-  BrikOps branding. Discuss: template-only? pre-approved library?
-  URL sanitization? audit log? or accept as known risk?
-• get_unit_detail `if project_id:` fail-open (LOW, defense-in-depth)
+B) Full revert:
+   git revert <sha> -- frontend/package.json frontend/yarn.lock \
+     frontend/src/index.js \
+     frontend/src/pages/LoginPage.js frontend/src/pages/OnboardingPage.js \
+     frontend/ios/App/App/Info.plist \
+     frontend/ios/App/App.xcodeproj/project.pbxproj \
+     frontend/android/app/build.gradle
+   Then ship.sh + store re-submission.
 
+────────────────────────────────────────────────────────────────────
+DEPLOY SEQUENCE (Zahi)
+────────────────────────────────────────────────────────────────────
+
+1. git add + commit + push (Replit terminal)
+2. git checkout staging && git merge main && ./deploy.sh --stag
+   (web Capgo OTA — harmless since web flow unchanged)
+3. V8c sanity on app.brikops.com (browser)
+4. cd ~/brikops-new && ./ship.sh
+5. Xcode Archive (iOS 1.0.14 / build 12) → App Store Connect
+6. Android Studio Signed Bundle (versionCode 21, versionName 1.0.14)
+   → Play Console
+7. Wait 24-48h × 2 for store approvals
+8. V8a / V8b / V8d on physical devices post approval
+
+────────────────────────────────────────────────────────────────────
 STANDING RULE
-================================================================================
-Agent: STOP HERE (review.txt + .local/.commit_message + present_asset).
-Zahi: commit/push/ship.sh/deploy.
+────────────────────────────────────────────────────────────────────
+
+Agent stopped at: edit + V1-V7 + review.txt + .local/.commit_message
++ present_asset. NO commit, NO restart, NO deploy, NO mark_task_complete.
+Zahi handles git/deploy/ship.sh.
+
+────────────────────────────────────────────────────────────────────
+FILES IN THIS BATCH (7)
+────────────────────────────────────────────────────────────────────
+
+frontend/package.json
+frontend/yarn.lock
+frontend/src/index.js
+frontend/src/pages/LoginPage.js
+frontend/src/pages/OnboardingPage.js
+frontend/ios/App/App/Info.plist
+frontend/ios/App/App.xcodeproj/project.pbxproj
+frontend/android/app/build.gradle

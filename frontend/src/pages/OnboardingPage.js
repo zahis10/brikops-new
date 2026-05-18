@@ -14,6 +14,7 @@ import { navigateToProject } from '../utils/navigation';
 import { t } from '../i18n';
 import { Capacitor } from '@capacitor/core';
 import { SignInWithApple } from '@capacitor-community/apple-sign-in';
+import { SocialLogin } from '@capgo/capacitor-social-login';
 
 const OnboardingPage = () => {
   const [searchParams] = useSearchParams();
@@ -121,6 +122,7 @@ const OnboardingPage = () => {
   }, []);
 
   useEffect(() => {
+    if (Capacitor.isNativePlatform()) return;
     if (document.getElementById('google-gsi-script')) return;
     const script = document.createElement('script');
     script.id = 'google-gsi-script';
@@ -183,8 +185,40 @@ const OnboardingPage = () => {
     toast.error('תגובה לא צפויה');
   }, [loginWithOtp, navigate]);
 
-  const handleGoogleSignIn = useCallback(() => {
+  const handleGoogleSignIn = useCallback(async () => {
     setSocialLoading(true);
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const res = await SocialLogin.login({
+          provider: 'google',
+          options: { scopes: ['email', 'profile'] },
+        });
+        const idToken = res?.result?.idToken;
+        if (!idToken) {
+          toast.error('כניסה דרך Google נכשלה — אין token');
+          setSocialLoading(false);
+          return;
+        }
+        const result = await onboardingService.socialAuth('google', idToken, null, inviteToken || null);
+        await handleSocialAuthResult(result);
+      } catch (error) {
+        const detail = error?.response?.data?.detail;
+        if (typeof detail === 'object' && detail?.code === 'pending_deletion') {
+          navigate('/account/pending-deletion');
+        } else {
+          const msg = (typeof detail === 'string') ? detail : (error?.message || '');
+          const isCancel = /cancel|closed/i.test(msg) || error?.code === 'SIGN_IN_CANCELLED';
+          if (!isCancel) {
+            toast.error(typeof detail === 'string' ? detail : 'אימות Google נכשל');
+            console.error('[SocialLogin] native google error:', error);
+          }
+        }
+      } finally {
+        setSocialLoading(false);
+      }
+      return;
+    }
 
     if (!window.google?.accounts?.id) {
       toast.error('שירות Google לא זמין כרגע');

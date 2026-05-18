@@ -53,5 +53,18 @@
         <string>BrikOps שומר תמונות ליקויים בגלריה שלך לשמירה מקומית ותיעוד.</string>
         <key>NSContactsUsageDescription</key>
         <string>BrikOps מציג בורר אנשי קשר מקומי כדי לאפשר לך להזמין חברי צוות וקבלנים במהירות בלי להקליד מספר ידנית. אנו לא מעלים את ספר אנשי הקשר שלך לשרת — מספר הטלפון שבחרת נשמר רק על המכשיר שלך עד שתשלח את ההזמנה.</string>
+        <key>CFBundleURLTypes</key>
+        <array>
+                <dict>
+                        <key>CFBundleTypeRole</key>
+                        <string>Editor</string>
+                        <key>CFBundleURLName</key>
+                        <string>google-signin</string>
+                        <key>CFBundleURLSchemes</key>
+                        <array>
+                                <string>com.googleusercontent.apps.394294810491-jdlacmban1h476g531u3s1huslmhl62h</string>
+                        </array>
+                </dict>
+        </array>
 </dict>
 </plist>

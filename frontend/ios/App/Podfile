@@ -20,6 +20,7 @@ def capacitor_pods
   pod 'CapacitorShare', :path => '../../node_modules/@capacitor/share'
   pod 'CapacitorStatusBar', :path => '../../node_modules/@capacitor/status-bar'
   pod 'CapgoCapacitorDocumentScanner', :path => '../../node_modules/@capgo/capacitor-document-scanner'
+  pod 'CapgoCapacitorSocialLogin', :path => '../../node_modules/@capgo/capacitor-social-login'
   pod 'CapgoCapacitorUpdater', :path => '../../node_modules/@capgo/capacitor-updater'
 end
 
