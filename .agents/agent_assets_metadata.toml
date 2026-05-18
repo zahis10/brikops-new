@@ -366,3 +366,9 @@ id = "Tmoouws_USflFbrqHCGmP"
 uri = "file://.local/plans/reminder-rate-limit-2026-05-16-plan.md"
 type = "text"
 title = "reminder-rate-limit — תוכנית ביצוע (5/5 pre-flight PASS, 3 open Qs)"
+
+[[outputs]]
+id = "y7VoF_osiqZkEelWfTrA7"
+uri = "file://.local/plans/reminder-rate-limit-followup-1-2026-05-17-plan.md"
+type = "text"
+title = "reminder-rate-limit-followup-1 — plan (SHIPPED 35d05571)"
