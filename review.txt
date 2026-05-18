@@ -62,13 +62,19 @@ FILES TOUCHED (7)
      (from H.2) already routes to ApplicationDelegateProxy.shared.
 
 6. frontend/ios/App/App.xcodeproj/project.pbxproj
-   - MARKETING_VERSION: 1.0.13 → 1.0.14 (both Debug+Release)
-   - CURRENT_PROJECT_VERSION: 11 → 12 (both Debug+Release)
+   - MARKETING_VERSION: 1.0.13 → 1.0.15 (both Debug+Release)
+     [HEAD was at 1.0.13 due to H.2 ship.sh Helium quirk — native build
+      bumped Xcode locally but didn't push to git. App Store live is
+      already 1.0.14, so we jump over it to 1.0.15.]
+   - CURRENT_PROJECT_VERSION: 11 → 13 (both Debug+Release)
+     [Same drift — Play/App Store live build is 12; we jump to 13.]
 
 7. frontend/android/app/build.gradle
-   - versionCode: 20 → 21
-   - versionName: "1.0.20" → "1.0.14" (sync iOS per Zahi Strategy C;
-     cosmetic — Play Store enforces only monotonic versionCode)
+   - versionCode: 20 → 22 (Play Console live is 21; jump over it)
+   - versionName: "1.0.20" → "1.0.22"
+     [Play Console live is 1.0.21; jump over it. iOS and Android no
+      longer in lockstep — Helium native bumps diverged. Monotonic
+      versionCode is the only Play Store hard requirement ✓]
 
 ────────────────────────────────────────────────────────────────────
 NOT TOUCHED (intentional)
@@ -98,15 +104,20 @@ iOSClientId   = 394294810491-jdlacmban1h476g531u3s1huslmhl62h.apps.googleusercon
 REVERSED      = com.googleusercontent.apps.394294810491-jdlacmban1h476g531u3s1huslmhl62h
 
 ────────────────────────────────────────────────────────────────────
-VERSION BUMPS (Strategy C — from HEAD actuals)
+VERSION BUMPS (Strategy C — jump over store-live drift)
 ────────────────────────────────────────────────────────────────────
 
-iOS MARKETING_VERSION:        1.0.13 → 1.0.14
-iOS CURRENT_PROJECT_VERSION:  11     → 12
-Android versionCode:          20     → 21
-Android versionName:          1.0.20 → 1.0.14   ← cosmetic downgrade
-                                                 (Play Store monotonic
-                                                  only on versionCode ✓)
+CONTEXT: HEAD was behind the live stores. H.2 ship.sh bumped Xcode +
+Android Studio numbers locally but the changes were never pushed to
+git (Helium quirk). Live state:
+  - App Store: iOS 1.0.14
+  - Play Console: versionCode 21, versionName 1.0.21
+We jump OVER the store-live numbers (don't fix drift here).
+
+iOS MARKETING_VERSION:        1.0.13 (HEAD) → 1.0.15 (jump over 1.0.14)
+iOS CURRENT_PROJECT_VERSION:  11     (HEAD) → 13     (jump over 12)
+Android versionCode:          20     (HEAD) → 22     (jump over 21) ✓ monotonic
+Android versionName:          1.0.20 (HEAD) → 1.0.22 (jump over 1.0.21)
 
 ────────────────────────────────────────────────────────────────────
 VERIFY GATES — V1-V7 ALL PASS ✓
@@ -133,8 +144,11 @@ V5 grep isNativePlatform + SocialLogin.login in pages
    → OnboardingPage.js: 3 matches  ✓
 
 V6 version bumps
-   → iOS: MARKETING_VERSION = 1.0.14 (×2), CURRENT_PROJECT_VERSION = 12 (×2)  ✓
-   → Android: versionCode 21, versionName "1.0.14"  ✓
+   → iOS: MARKETING_VERSION = 1.0.15 (×2), CURRENT_PROJECT_VERSION = 13 (×2)  ✓
+   → Android: versionCode 22, versionName "1.0.22"  ✓
+   (Initial V6 was run at 1.0.14 / build 12 / code 21 / name 1.0.14;
+    re-bumped after Zahi flagged store-live drift. yarn build NOT re-run —
+    version strings are not compiled into the JS bundle.)
 
 V7 cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
    → "The build folder is ready to be deployed."
@@ -193,8 +207,8 @@ DEPLOY SEQUENCE (Zahi)
    (web Capgo OTA — harmless since web flow unchanged)
 3. V8c sanity on app.brikops.com (browser)
 4. cd ~/brikops-new && ./ship.sh
-5. Xcode Archive (iOS 1.0.14 / build 12) → App Store Connect
-6. Android Studio Signed Bundle (versionCode 21, versionName 1.0.14)
+5. Xcode Archive (iOS 1.0.15 / build 13) → App Store Connect
+6. Android Studio Signed Bundle (versionCode 22, versionName 1.0.22)
    → Play Console
 7. Wait 24-48h × 2 for store approvals
 8. V8a / V8b / V8d on physical devices post approval
