@@ -222,7 +222,37 @@ Agent stopped at: edit + V1-V7 + review.txt + .local/.commit_message
 Zahi handles git/deploy/ship.sh.
 
 ────────────────────────────────────────────────────────────────────
-FILES IN THIS BATCH (7)
+ANDROID SDK + AGP BUMP (Zahi follow-up — Android build failed on ship.sh)
+────────────────────────────────────────────────────────────────────
+
+ROOT CAUSE: @capgo/capacitor-social-login@7.20.0 pulls in
+androidx.browser:browser:1.9.0 which requires compileSdk 36 +
+AGP 8.9.1+. Previous setup was compileSdk 35 / AGP 8.7.2.
+
+EDITS:
+  - frontend/android/variables.gradle:
+      compileSdkVersion 35 → 36
+      targetSdkVersion  35 → 36
+      (minSdkVersion 23 untouched)
+  - frontend/android/build.gradle:
+      classpath 'com.android.tools.build:gradle:8.7.2' → 8.9.1
+  - frontend/android/gradle/wrapper/gradle-wrapper.properties:
+      NO CHANGE (already at gradle-8.11.1-all.zip, ≥ 8.10.2 required)
+
+VERIFY:
+  - V1 ./gradlew tasks — env-blocked on Replit (no JDK/Android SDK).
+    Zahi runs this implicitly via ./ship.sh on Mac.
+  - V2 npx cap sync android → "Sync finished in 1.979s", 11 plugins
+    detected, "✔ Updated gradle.properties", no errors ✓
+
+compileSdk 36 = Android 16 (latest). Google enforces this within 12
+months regardless — early bump.
+
+versionCode 22 / versionName "1.0.22" NOT re-bumped (no failed
+submission to Play Console yet — only local build failed).
+
+────────────────────────────────────────────────────────────────────
+FILES IN THIS BATCH (10)
 ────────────────────────────────────────────────────────────────────
 
 frontend/package.json
@@ -233,3 +263,5 @@ frontend/src/pages/OnboardingPage.js
 frontend/ios/App/App/Info.plist
 frontend/ios/App/App.xcodeproj/project.pbxproj
 frontend/android/app/build.gradle
+frontend/android/variables.gradle
+frontend/android/build.gradle

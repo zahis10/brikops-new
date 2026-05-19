@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH capacitor-google-signin-native — review (V1-V7 PASS)"
+title = "BATCH capacitor-google-signin-native — review (Android SDK 36 + AGP 8.9.1 patch)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
