@@ -1,267 +1,269 @@
-REVIEW — BATCH capacitor-google-signin-native
-Date: 2026-05-18
-Branch: staging
-Severity: MED (Google login fails on native app — pre-existing)
-Native rebuild: YES → ship.sh + App Store + Play Store re-submission
+================================================================================
+BATCH H.2a — iOS/Android Document Scanner — REVIEW
+================================================================================
+Date:     2026-05-20
+Branch:   staging
+Status:   ALREADY IMPLEMENTED (verified clean on re-run)
+Standing: STOP at review.txt + commit_message + present_asset. NO commit,
+          NO restart, NO deploy, NO mark_task_complete. Zahi handles
+          git/deploy/ship.sh.
 
-────────────────────────────────────────────────────────────────────
-PLUGIN DECISION — PIVOTED MID-BATCH
-────────────────────────────────────────────────────────────────────
+================================================================================
+EXECUTIVE SUMMARY
+================================================================================
 
-Spec default `@codetrix-studio/capacitor-google-auth` failed npm sanity:
-  - latest stable: 3.3.6 (Nov 2023, dormant)
-  - latest rc:     3.4.0-rc.4 (May 2024, never went stable)
-  - peerDependencies: { "@capacitor/core": "^6.0.0" }   ← we are on Cap 7.6.1
-  - Maintenance dormant since 2024-05
+Task #518 was reset to IN_PROGRESS, but the H.2a work was already merged
+to staging on 2026-05-13 (incl. a hotfix-1 for iOS WKWebView fetch).
+Re-ran the full pre-flight and verify gates — everything passes, no code
+changes needed this turn. Submitting this review.txt as a re-verification
+artifact so Zahi can confirm the on-disk state matches the spec before
+moving on to H.2b / H.2c.
 
-Zahi authorised pivot → @capgo/capacitor-social-login (same vendor as
-@capgo/capacitor-updater + @capgo/capacitor-document-scanner already in
-this app). Verified:
-  - latest 7.x: 7.20.0 (Cap 7 line still live)
-  - peerDependencies: { "@capacitor/core": ">=7.0.0" }   ✓ Cap 7 official
-  - API surface inspected via npm pack (definitions.d.ts + README):
-      SocialLogin.initialize({google: {webClientId, iOSClientId, mode}})
-      SocialLogin.login({provider:'google', options:{scopes}})
-  - Configures via JS — NO GoogleService-Info.plist, NO Android manifest
-    meta-data, NO strings.xml entry, NO Firebase needed.
+KEY PIVOT (already baked into the existing code, documented here for the
+record): the spec called for `@capacitor-mlkit/document-scanner@^7`, but
+that package's v7.x peer dep is `@capacitor/core >= 8.0.0` — incompatible
+with our Cap 7.6.1 baseline, and there is no v6 fallback on npm. Same
+vendor pivot we used for H.1 social-login: switched to
+`@capgo/capacitor-document-scanner@^7.2.5` (same vendor as the social-login
++ updater plugins already in the project). Apple VisionKit on iOS, ML Kit
+on Android — identical native backends.
 
-Installed @capgo/capacitor-social-login@^7.6.5 → resolved 7.20.0.
+================================================================================
+PRE-FLIGHT GATES (9 PASS)
+================================================================================
 
-────────────────────────────────────────────────────────────────────
-FILES TOUCHED (7)
-────────────────────────────────────────────────────────────────────
+G1  Capacitor 7.x baseline ✓
+    @capacitor/core 7.6.1, @capacitor/ios 7.6.1, @capacitor/android 7.6.1
 
-1. frontend/package.json + yarn.lock
-   + "@capgo/capacitor-social-login": "^7.6.5" (resolves 7.20.0)
+G2  Plugin INSTALLED ✓
+    @capgo/capacitor-document-scanner ^7.2.5 (resolved per yarn.lock × 2)
 
-2. frontend/src/index.js
-   - Add Capacitor + SocialLogin imports
-   - Early SocialLogin.initialize({google:{webClientId, iOSClientId,
-     mode:'online'}}) gated on Capacitor.isNativePlatform()
-   - Init wrapped in .catch() — non-blocking on failure
+G3  Target component exists ✓
+    frontend/src/components/NewDefectModal.js (1140 lines)
 
-3. frontend/src/pages/LoginPage.js
-   - Add SocialLogin import
-   - GIS useEffect (L247): early-return on Capacitor.isNativePlatform()
-   - handleGoogleSignIn: useCallback → ASYNC; native branch FIRST:
-       SocialLogin.login → idToken → onboardingService.socialAuth('google', idToken)
-       → handleSocialAuthResult; silent on cancel; pending_deletion routed.
-   - Web GIS flow below — UNCHANGED.
+G4  Wrapper component exists ✓
+    frontend/src/components/DocumentScannerButton.jsx (41 lines)
 
-4. frontend/src/pages/OnboardingPage.js
-   - Add SocialLogin import
-   - GIS useEffect (L127): early-return on Capacitor.isNativePlatform()
-   - handleGoogleSignIn: useCallback → ASYNC; native branch FIRST;
-     same as LoginPage BUT passes inviteToken to socialAuth() (4th arg).
+G5  H.1 baseline in place ✓
+    @capacitor/camera ^7.0.5, @capacitor/filesystem ^7,
+    @capgo/capacitor-social-login ^7.6.5, @capgo/capacitor-updater ^7.43.3
 
-5. frontend/ios/App/App/Info.plist
-   - Add CFBundleURLTypes with REVERSED_CLIENT_ID URL scheme
-     (com.googleusercontent.apps.394294810491-jdlacmban1h476g531u3s1huslmhl62h)
-   - Defensive: capgo README doesn't mandate it but Google iOS SDK
-     historically uses URL callback. AppDelegate L36 open-url handler
-     (from H.2) already routes to ApplicationDelegateProxy.shared.
+G6  Podfile diff = ONLY the expected plugin entry ✓
+    pod 'CapgoCapacitorDocumentScanner',
+        :path => '../../node_modules/@capgo/capacitor-document-scanner'
+    (no Capacitor core bumps; no other unrelated pods touched)
 
-6. frontend/ios/App/App.xcodeproj/project.pbxproj
-   - MARKETING_VERSION: 1.0.13 → 1.0.15 (both Debug+Release)
-     [HEAD was at 1.0.13 due to H.2 ship.sh Helium quirk — native build
-      bumped Xcode locally but didn't push to git. App Store live is
-      already 1.0.14, so we jump over it to 1.0.15.]
-   - CURRENT_PROJECT_VERSION: 11 → 13 (both Debug+Release)
-     [Same drift — Play/App Store live build is 12; we jump to 13.]
+G7  Android settings.gradle diff = ONLY the expected plugin entry ✓
+    include ':capgo-capacitor-document-scanner'
+    project(':capgo-capacitor-document-scanner').projectDir =
+        new File('../node_modules/@capgo/capacitor-document-scanner/android')
 
-7. frontend/android/app/build.gradle
-   - versionCode: 20 → 22 (Play Console live is 21; jump over it)
-   - versionName: "1.0.20" → "1.0.22"
-     [Play Console live is 1.0.21; jump over it. iOS and Android no
-      longer in lockstep — Helium native bumps diverged. Monotonic
-      versionCode is the only Play Store hard requirement ✓]
+G8  images[] spread pattern present in NewDefectModal ✓
+    L92  const [images, setImages] = useState([]);
+    L344 setImages(prev => [...prev, ...newImages]);
+    L1034 setImages(prev => [...prev, ...newImages]);  ← H.2a wires here
+    Existing "צלם תמונה" L1015, "בחר מגלריה" L1023 untouched.
 
-────────────────────────────────────────────────────────────────────
-NOT TOUCHED (intentional)
-────────────────────────────────────────────────────────────────────
+G9  Camera permissions intact (REUSED, NOT MODIFIED) ✓
+    iOS NSCameraUsageDescription:
+      "BrikOps משתמש במצלמה כדי לצלם ליקויים באתר הבנייה ולתעד את
+       מצב הדירה." (covers document scanning — no rewording needed)
+    Android Manifest:
+      <uses-permission android:name="android.permission.CAMERA" />
+      <uses-feature android:name="android.hardware.camera"
+                    android:required="false" />
 
-- backend/* — verify_google_token already accepts WEB audience tokens
-  (capgo native returns idToken with audience = webClientId)
-- @capacitor-community/apple-sign-in — kept; Apple flow intact
-- AppDelegate.swift — H.2 open-url handler at L36 already routes correctly
-- H.2 Universal Links — we ADDED URLTypes block, no existing block to overwrite
-- GoogleService-Info.plist — NOT created (capgo doesn't read it)
-- google-services.json — NOT created (no Firebase)
-- AndroidManifest.xml — no meta-data added (capgo handles via JS)
-- strings.xml — no server_client_id added (capgo handles via JS)
-- play-services-auth:21.3.0 — already in build.gradle (SMS Retriever),
-  harmless overlap with capgo's internal Google deps
-- onboarding_router /auth/social OTP gate
-- 4 GCP OAuth clients — all kept
+================================================================================
+API DRIFT (vs spec)
+================================================================================
 
-────────────────────────────────────────────────────────────────────
-ZAHI CREDENTIALS (web client ID is public OAuth identifier; iOS ID also
-public; both safe to commit in source)
-────────────────────────────────────────────────────────────────────
+Plugin's `definitions.d.ts` confirms:
 
-webClientId   = 394294810491-u5q1t9vabqpumvuue42241sajbghchvh.apps.googleusercontent.com
-iOSClientId   = 394294810491-jdlacmban1h476g531u3s1huslmhl62h.apps.googleusercontent.com
-REVERSED      = com.googleusercontent.apps.394294810491-jdlacmban1h476g531u3s1huslmhl62h
+  Method:   scanDocument(options?: ScanDocumentOptions)
+                — spec assumed `scan()`. ADJUSTED in wrapper L10.
 
-────────────────────────────────────────────────────────────────────
-VERSION BUMPS (Strategy C — jump over store-live drift)
-────────────────────────────────────────────────────────────────────
+  Returns:  ScanDocumentResponse {
+              scannedImages?: string[],
+              status?: ScanDocumentResponseStatus,
+            }
+                — matches spec shape.
 
-CONTEXT: HEAD was behind the live stores. H.2 ship.sh bumped Xcode +
-Android Studio numbers locally but the changes were never pushed to
-git (Helium quirk). Live state:
-  - App Store: iOS 1.0.14
-  - Play Console: versionCode 21, versionName 1.0.21
-We jump OVER the store-live numbers (don't fix drift here).
+  URI fmt:  ResponseType.ImageFilePath → returns `file://...` URIs.
+                — spec assumed file://. CORRECT.
 
-iOS MARKETING_VERSION:        1.0.13 (HEAD) → 1.0.15 (jump over 1.0.14)
-iOS CURRENT_PROJECT_VERSION:  11     (HEAD) → 13     (jump over 12)
-Android versionCode:          20     (HEAD) → 22     (jump over 21) ✓ monotonic
-Android versionName:          1.0.20 (HEAD) → 1.0.22 (jump over 1.0.21)
+  Cancel:   Resolves with status === ScanDocumentResponseStatus.Cancel.
+                — spec assumed throw OR resolve-with-null. Neither —
+                  resolves with a discriminator. ADJUSTED in wrapper L13:
+                  `if (result?.status === ScanDocumentResponseStatus.Cancel) return;`
 
-────────────────────────────────────────────────────────────────────
-VERIFY GATES — V1-V7 ALL PASS ✓
-────────────────────────────────────────────────────────────────────
+iOS WKWebView hotfix (BATCH H.2a-hotfix-1, already merged):
+  Direct `fetch('file://...')` is blocked by WKWebView security policy.
+  Wrapper L21 calls `Capacitor.convertFileSrc(uri)` first to convert the
+  file:// URI into a WebView-readable URL (capacitor://... on iOS,
+  http://localhost/... on Android), THEN fetches the blob. Without this,
+  iOS would resolve with empty Files.
 
-V1 grep @capgo/capacitor-social-login frontend/package.json
-   → "@capgo/capacitor-social-login": "^7.6.5"  ✓
+================================================================================
+WRAPPER COMPONENT — frontend/src/components/DocumentScannerButton.jsx (41 LOC)
+================================================================================
 
-V2 cd frontend && npx cap sync
-   → "[info] Sync finished in 3.278s"
-   → "🔧 Configuring dynamic provider dependencies for SocialLogin"
-   → "Google: enabled, Facebook: enabled, Apple: enabled, Twitter: enabled"
-   → 11 Capacitor plugins detected for iOS, all OK  ✓
+- Imports DocumentScanner, ResponseType, ScanDocumentResponseStatus from
+  '@capgo/capacitor-document-scanner'.
+- Imports Capacitor from '@capacitor/core' for isNativePlatform() guard
+  and convertFileSrc() URI translation.
+- ScanLine icon (lucide-react) — visually distinct from Camera /
+  ImagePlus icons used by existing buttons.
+- Hebrew label "סרוק מסמך" (default; prop-overridable).
+- Returns null on web → button completely hidden, zero web behavior change.
+- Cancel handled silently: `if (status === Cancel) return;` — no toast.
+- Empty-result handled silently: `if (uris.length === 0) return;` — no toast.
+- Error toast only on actual fetch/blob failure: "שגיאה בסריקת המסמך".
+- Files emitted as standard `File` objects (jpg, type 'image/jpeg',
+  filename `scan-<ts>-<i>.jpg`) — drop-in for existing image flow.
+- `className` prop forwarded so caller controls styling (same className
+  pattern as existing camera/gallery buttons → visual consistency).
 
-V3 grep SocialLogin frontend/src/index.js
-   → import present, .initialize() called, .catch() handler  ✓
+================================================================================
+INTEGRATION — frontend/src/components/NewDefectModal.js (8 LOC, +1 import)
+================================================================================
 
-V4 grep CFBundleURLTypes + com.googleusercontent.apps frontend/ios/App/App/Info.plist
-   → 2 matches (one block tag + one scheme value)  ✓
-   (PlistBuddy not available on Replit — grep used per spec footnote)
+L19   import DocumentScannerButton from './DocumentScannerButton';
 
-V5 grep isNativePlatform + SocialLogin.login in pages
-   → LoginPage.js: 3 matches  ✓
-   → OnboardingPage.js: 3 matches  ✓
+L1026-L1037   <DocumentScannerButton
+                onScan={(files) => {
+                  const newImages = files.map(f => ({
+                    file: f,
+                    preview: URL.createObjectURL(f),
+                    name: f.name,
+                    originalFile: f,
+                  }));
+                  setImages(prev => [...prev, ...newImages]);
+                }}
+                className="flex-1 flex flex-col items-center justify-center
+                           gap-1 py-3 rounded-lg border-2 border-dashed ..."
+              />
 
-V6 version bumps
-   → iOS: MARKETING_VERSION = 1.0.15 (×2), CURRENT_PROJECT_VERSION = 13 (×2)  ✓
-   → Android: versionCode 22, versionName "1.0.22"  ✓
-   (Initial V6 was run at 1.0.14 / build 12 / code 21 / name 1.0.14;
-    re-bumped after Zahi flagged store-live drift. yarn build NOT re-run —
-    version strings are not compiled into the JS bundle.)
+  - Rendered as a sibling of "צלם תמונה" (L1009) and "בחר מגלריה" (L1017)
+    inside the same `flex gap-2` row.
+  - Same `flex-1` width, same `py-3 rounded-lg border-2 border-dashed`
+    geometry, emerald color (vs amber/slate for the existing two) for
+    instant visual differentiation.
+  - Wires into the EXACT same `setImages(prev => [...prev, ...])` pattern
+    the existing buttons use (compare L344, L401, L410, L1034).
+  - Emits `{file, preview, name, originalFile}` — identical shape to
+    L1027-L1033 used by the gallery button → submit path, annotation
+    path, and stale-file cleanup (L621) all work unchanged.
 
-V7 cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
-   → "The build folder is ready to be deployed."
-   → "Done in 35.42s"
-   → No errors, no warnings related to SocialLogin / Capacitor  ✓
-   NOTE: REACT_APP_BACKEND_URL supplied inline because craco.config.js
-   gate requires it (pre-existing infra requirement, unrelated to batch).
+================================================================================
+VERIFY GATES
+================================================================================
 
-────────────────────────────────────────────────────────────────────
-V8 — ZAHI PHYSICAL-DEVICE TESTS (post store approval)
-────────────────────────────────────────────────────────────────────
+V1  yarn build (REACT_APP_BACKEND_URL=https://api.brikops.com) ✓
+    "The build folder is ready to be deployed."
+    "Done in 38.13s."  exit=0
 
-V8a iOS native: tap Google → native account picker → /auth/social → flow
-V8b Android native: tap Google → native account picker → /auth/social → flow
-V8c Web (app.brikops.com): GIS unchanged, button click works
-V8d Apple sign-in regression: iOS + Android still work (untouched)
+V2  npx cap sync — diffs match expectation ✓
+    Podfile = +1 pod entry (CapgoCapacitorDocumentScanner).
+    Android settings.gradle = +1 include + project path.
+    NO Capacitor core bumps. NO other unrelated pod changes.
+    (V2 already executed on 2026-05-13 during original H.2a merge;
+    Podfile + settings.gradle reflect the post-sync state on disk.)
 
-────────────────────────────────────────────────────────────────────
-RISK: MEDIUM
-────────────────────────────────────────────────────────────────────
+V3  grep DocumentScanner — 6 hits across 2 files ✓
+    NewDefectModal.js × 2 (import + JSX usage)
+    DocumentScannerButton.jsx × 4 (import + 3 type/enum refs)
+    (Spec threshold ≥ 5 hits — passes.)
 
-+ Plugin pivot to capgo (active, Cap 7 official, same vendor as 2 existing
-  plugins) reduces risk vs default codetrix (Cap 6 only, dormant).
-+ Web GIS flow untouched — no web regression risk.
-+ Backend untouched — verify_google_token accepts WEB audience already.
-+ Apple plugin untouched — Apple sign-in regression risk: low.
-- First Google native install — 7 file touchpoints
-- iOS URL scheme: README says JS init suffices, but Google iOS SDK
-  historically uses URL callback. Included defensively.
-- 24-48h × 2 store reviews per platform before V8a/b/d possible.
+V4  grep '<DocumentScannerButton' = 1 hit (NewDefectModal.js L1026) ✓
+    Single integration site only — no leakage to plan/proof/handover flows.
 
-────────────────────────────────────────────────────────────────────
+V5  Web bundle hides button on Capacitor.isNativePlatform() === false ✓
+    Component returns null early (L33) — zero web DOM impact.
+
+V6  yarn.lock contains exactly one resolved entry chain for
+    @capgo/capacitor-document-scanner (2 grep hits = name + resolved url) ✓
+
+V7  V1 (./gradlew) and V8 (xcodebuild) — env-blocked on Replit (no JDK,
+    no Xcode). Zahi runs implicitly via ./ship.sh on Mac before
+    TestFlight Internal Testing.
+
+================================================================================
+DO NOT TOUCH — VERIFIED CLEAN
+================================================================================
+
+✓ PhotoAnnotation logic — UNCHANGED (L1085-L1101 still references
+  images[annotatingIndex] with .file || .originalFile fallback)
+✓ Existing camera button (L1009-L1016) — UNCHANGED
+✓ Existing gallery button (L1017-L1024) — UNCHANGED
+✓ images[] shape `{file, preview, name, originalFile}` — UNCHANGED
+✓ NSCameraUsageDescription — UNCHANGED (existing wording covers scanning)
+✓ Android CAMERA permission — UNCHANGED
+✓ No backend / DB / env var touches
+✓ No plan upload flows (ProjectPlansPage, UnitPlansPage)
+✓ No proof / attachment flows (TaskDetailPage, StageDetailPage)
+✓ No handover flows (HandoverSectionPage, HandoverItemModal)
+✓ git status (read-only check): clean — zero pending diffs this turn
+
+================================================================================
+RISK
+================================================================================
+
+LOW.
+  • All code already merged + previously deployed to staging. This turn
+    is a re-verification only — no new edits.
+  • Vendor pivot (capgo vs capacitor-mlkit) already proven by H.1
+    social-login + updater plugins from the same vendor.
+  • iOS WKWebView fetch hotfix already in place — no known regression.
+  • Single integration site, additive only, web fully isolated by
+    isNativePlatform() guard.
+  • Cancel + empty-result paths silent (no toast spam).
+
+================================================================================
 ROLLBACK
-────────────────────────────────────────────────────────────────────
+================================================================================
 
-A) Frontend-only (Capgo OTA, no native rebuild needed):
-   git revert <sha> -- frontend/src/index.js \
-     frontend/src/pages/LoginPage.js frontend/src/pages/OnboardingPage.js
-   Native Google will fail silently; Apple sign-in OK.
+If a regression surfaces on TestFlight Internal Testing:
 
-B) Full revert:
-   git revert <sha> -- frontend/package.json frontend/yarn.lock \
-     frontend/src/index.js \
-     frontend/src/pages/LoginPage.js frontend/src/pages/OnboardingPage.js \
-     frontend/ios/App/App/Info.plist \
-     frontend/ios/App/App.xcodeproj/project.pbxproj \
-     frontend/android/app/build.gradle
-   Then ship.sh + store re-submission.
+  git revert <h2a-sha> -- \
+      frontend/package.json \
+      frontend/yarn.lock \
+      frontend/src/components/DocumentScannerButton.jsx \
+      frontend/src/components/NewDefectModal.js \
+      frontend/ios/App/Podfile \
+      frontend/android/capacitor.settings.gradle
+  cd frontend && yarn install && npx cap sync
+  git push origin staging
+  ./deploy.sh --stag
 
-────────────────────────────────────────────────────────────────────
-DEPLOY SEQUENCE (Zahi)
-────────────────────────────────────────────────────────────────────
+Web users unaffected — the button is hidden on non-native platforms by
+the isNativePlatform() guard.
 
-1. git add + commit + push (Replit terminal)
-2. git checkout staging && git merge main && ./deploy.sh --stag
-   (web Capgo OTA — harmless since web flow unchanged)
-3. V8c sanity on app.brikops.com (browser)
-4. cd ~/brikops-new && ./ship.sh
-5. Xcode Archive (iOS 1.0.15 / build 13) → App Store Connect
-6. Android Studio Signed Bundle (versionCode 22, versionName 1.0.22)
-   → Play Console
-7. Wait 24-48h × 2 for store approvals
-8. V8a / V8b / V8d on physical devices post approval
+================================================================================
+FILES IN THIS BATCH (6 — all on disk, no changes this turn)
+================================================================================
 
-────────────────────────────────────────────────────────────────────
-STANDING RULE
-────────────────────────────────────────────────────────────────────
+frontend/package.json                                (dep entry)
+frontend/yarn.lock                                   (resolved chain)
+frontend/src/components/DocumentScannerButton.jsx    (41 LOC, new)
+frontend/src/components/NewDefectModal.js            (+1 import, +12 LOC JSX)
+frontend/ios/App/Podfile                             (+1 pod entry)
+frontend/android/capacitor.settings.gradle           (+1 include + path)
 
-Agent stopped at: edit + V1-V7 + review.txt + .local/.commit_message
-+ present_asset. NO commit, NO restart, NO deploy, NO mark_task_complete.
-Zahi handles git/deploy/ship.sh.
+================================================================================
+DEPLOY (Zahi)
+================================================================================
 
-────────────────────────────────────────────────────────────────────
-ANDROID SDK + AGP BUMP (Zahi follow-up — Android build failed on ship.sh)
-────────────────────────────────────────────────────────────────────
+1. No git work needed — code already on staging.
+2. If TestFlight Internal build was already taken on 2026-05-13, this
+   review is a re-verification artifact only.
+3. If a fresh build is desired: `./ship.sh` → TestFlight Internal Testing.
+4. H.2b (Universal Links) + H.2c (Contact Picker) bundle into the same
+   App Store / Play Console review cycle after H.2a TestFlight validation.
 
-ROOT CAUSE: @capgo/capacitor-social-login@7.20.0 pulls in
-androidx.browser:browser:1.9.0 which requires compileSdk 36 +
-AGP 8.9.1+. Previous setup was compileSdk 35 / AGP 8.7.2.
+================================================================================
+STANDING RULE — STOP HERE
+================================================================================
 
-EDITS:
-  - frontend/android/variables.gradle:
-      compileSdkVersion 35 → 36
-      targetSdkVersion  35 → 36
-      (minSdkVersion 23 untouched)
-  - frontend/android/build.gradle:
-      classpath 'com.android.tools.build:gradle:8.7.2' → 8.9.1
-  - frontend/android/gradle/wrapper/gradle-wrapper.properties:
-      NO CHANGE (already at gradle-8.11.1-all.zip, ≥ 8.10.2 required)
-
-VERIFY:
-  - V1 ./gradlew tasks — env-blocked on Replit (no JDK/Android SDK).
-    Zahi runs this implicitly via ./ship.sh on Mac.
-  - V2 npx cap sync android → "Sync finished in 1.979s", 11 plugins
-    detected, "✔ Updated gradle.properties", no errors ✓
-
-compileSdk 36 = Android 16 (latest). Google enforces this within 12
-months regardless — early bump.
-
-versionCode 22 / versionName "1.0.22" NOT re-bumped (no failed
-submission to Play Console yet — only local build failed).
-
-────────────────────────────────────────────────────────────────────
-FILES IN THIS BATCH (10)
-────────────────────────────────────────────────────────────────────
-
-frontend/package.json
-frontend/yarn.lock
-frontend/src/index.js
-frontend/src/pages/LoginPage.js
-frontend/src/pages/OnboardingPage.js
-frontend/ios/App/App/Info.plist
-frontend/ios/App/App.xcodeproj/project.pbxproj
-frontend/android/app/build.gradle
-frontend/android/variables.gradle
-frontend/android/build.gradle
+Agent: pre-flight + V1 build + review.txt + commit_message + present_asset
+       → DONE. NO commit, NO restart, NO deploy, NO mark_task_complete.
+Zahi: git/deploy/ship.sh.
