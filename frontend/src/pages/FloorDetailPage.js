@@ -21,7 +21,7 @@ const STAGE_STATUS_ICONS = {
 const SummaryCard = ({ summary, floorVisual }) => {
   if (!summary) return null;
   const { total, pass, fail, pending } = summary;
-  const donePct = total > 0 ? Math.round(((pass + fail) / total) * 100) : 0;
+  const donePct = total > 0 ? Math.min(Math.round(((pass + fail) / total) * 100), 100) : 0;
 
   return (
     <div className={`bg-white rounded-xl border p-4 shadow-sm ${floorVisual.borderColor}`}>
@@ -29,8 +29,8 @@ const SummaryCard = ({ summary, floorVisual }) => {
         <h3 className="text-sm font-bold text-slate-700">סיכום קומה</h3>
         <span className={`text-lg font-bold ${floorVisual.pctColor}`}>{donePct}%</span>
       </div>
-      <div className="w-full bg-slate-100 rounded-full h-2.5 mb-3" role="progressbar" aria-valuenow={donePct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות קומה ${donePct}%`}>
-        <div className={`h-2.5 rounded-full transition-all ${floorVisual.barColor}`} style={{ width: `${donePct}%` }} />
+      <div className="w-full bg-slate-100 rounded-full h-2.5 mb-3 overflow-hidden" role="progressbar" aria-valuenow={donePct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות קומה ${donePct}%`}>
+        <div className={`h-2.5 rounded-full transition-all ${floorVisual.barColor}`} style={{ width: `${Math.min(donePct, 100)}%` }} />
       </div>
       <div className="grid grid-cols-3 gap-2 text-center">
         <div className="bg-emerald-50 rounded-lg p-2">
@@ -57,7 +57,7 @@ const SummaryCard = ({ summary, floorVisual }) => {
 };
 
 const StageCard = ({ stage, onClick, isActive }) => {
-  const pct = stage.total > 0 ? Math.round((stage.done / stage.total) * 100) : 0;
+  const pct = stage.total > 0 ? Math.min(Math.round((stage.done / stage.total) * 100), 100) : 0;
   const status = stage.computed_status || 'draft';
   const vs = getStageVisualStatusLite(stage);
   const Icon = STAGE_STATUS_ICONS[status] || null;
@@ -112,10 +112,10 @@ const StageCard = ({ stage, onClick, isActive }) => {
           </span>
         )}
       </div>
-      <div className="w-full bg-slate-100 rounded-full h-1.5" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות שלב ${pct}%`}>
+      <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות שלב ${pct}%`}>
         <div
           className={`h-1.5 rounded-full transition-all ${vs.barColor}`}
-          style={{ width: `${pct}%` }}
+          style={{ width: `${Math.min(pct, 100)}%` }}
         />
       </div>
     </button>
@@ -309,7 +309,7 @@ export default function FloorDetailPage() {
           const total = unitStage.total_units || 0;
           const approved = unitStage.approved_units || 0;
           const inProgress = unitStage.in_progress_units || 0;
-          const pct = unitStage.completion_pct || 0;
+          const pct = Math.min(unitStage.completion_pct || 0, 100);
           const stageBadgeColor =
             pct === 100 ? 'bg-emerald-400'
             : pct > 0 ? 'bg-violet-400'
@@ -347,10 +347,10 @@ export default function FloorDetailPage() {
                   </>
                 )}
               </div>
-              <div className="w-full bg-slate-100 rounded-full h-1.5" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות ${unitStage.stage_title} ${pct}%`}>
+              <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות ${unitStage.stage_title} ${pct}%`}>
                 <div
                   className={`h-1.5 rounded-full transition-all ${stageBadgeColor}`}
-                  style={{ width: `${pct}%` }}
+                  style={{ width: `${Math.min(pct, 100)}%` }}
                 />
               </div>
             </button>

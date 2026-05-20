@@ -1284,6 +1284,19 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
             fail_count = sum(1 for i in stage_items if i.get("status") == "fail")
             handled_count = pass_count + fail_count
 
+            # BATCH floor-view-items-per-unit-bug (2026-05-20) — OPTION B:
+            # Per-unit denominator = real qc_items count for this run+stage,
+            # exactly what /units/{id}/run returns as stage.total (L1136).
+            # This matches what the apartment-detail page shows. The
+            # project-template count (stage_items_count) was wrong when a
+            # custom template was edited after runs were created — runs
+            # still carry their original item set in qc_items.
+            # Fallback to project-template count only when the run has
+            # zero qc_items for this stage (defensive — should not happen
+            # post-backfill, but covers a freshly-created run that has not
+            # yet been opened in the detail page).
+            unit_total = len(stage_items) if stage_items else stage_items_count
+
             stage_statuses = run.get("stage_statuses", {})
             stored_status = stage_statuses.get(stage_id, "draft")
 
@@ -1302,7 +1315,7 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
                 "pass_count": pass_count,
                 "fail_count": fail_count,
                 "handled_count": handled_count,
-                "total": stage_items_count,
+                "total": unit_total,
             })
 
         total_units = len(units)
@@ -1311,18 +1324,29 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
         not_started_units = sum(1 for u in units_breakdown if u["status"] == "not_started")
 
         total_items_handled = sum(u["handled_count"] for u in units_breakdown)
-        total_items_possible = total_units * stage_items_count
-        pct = int((total_items_handled / total_items_possible) * 100) if total_items_possible > 0 else 0
+        # BATCH floor-view-items-per-unit-bug (2026-05-20) — sum per-unit
+        # totals instead of total_units * stage_items_count, since units
+        # may have different item counts (custom template edited after
+        # some runs created). Clamp pct to 0-100 defensively in case a
+        # numerator briefly exceeds the denominator during a race.
+        total_items_possible = sum(u["total"] for u in units_breakdown)
+        pct = min(int((total_items_handled / total_items_possible) * 100), 100) if total_items_possible > 0 else 0
+
+        # items_per_unit at the stage level is informational and ambiguous
+        # when units differ — expose the MAX across units so the frontend
+        # can still show a single number. Frontend should prefer per-unit
+        # u.total for accuracy.
+        items_per_unit_max = max((u["total"] for u in units_breakdown), default=stage_items_count)
 
         stages_out.append({
             "stage_id": stage_id,
             "stage_title": stage.get("title", ""),
             "stage_order": stage.get("order", 0),
-            "items_per_unit": stage_items_count,
+            "items_per_unit": items_per_unit_max,
             # AMENDMENT (Replit feedback 2026-05-04): is_empty flag for
             # stages with no items. Frontend shows a friendly
             # "אין פריטי בדיקה" message instead of misleading "0/X".
-            "is_empty": stage_items_count == 0,
+            "is_empty": items_per_unit_max == 0,
             "total_units": total_units,
             "approved_units": approved_units,
             "in_progress_units": in_progress_units,

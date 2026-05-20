@@ -1,269 +1,259 @@
 ================================================================================
-BATCH H.2a — iOS/Android Document Scanner — REVIEW
+BATCH floor-view-items-per-unit-bug — Fix wrong denominator in floor units-status
 ================================================================================
 Date:     2026-05-20
 Branch:   staging
-Status:   ALREADY IMPLEMENTED (verified clean on re-run)
+Severity: HIGH (data-integrity — PM saw 9/1 = 900%)
 Standing: STOP at review.txt + commit_message + present_asset. NO commit,
           NO restart, NO deploy, NO mark_task_complete. Zahi handles
-          git/deploy/ship.sh.
+          git/deploy.
 
 ================================================================================
 EXECUTIVE SUMMARY
 ================================================================================
 
-Task #518 was reset to IN_PROGRESS, but the H.2a work was already merged
-to staging on 2026-05-13 (incl. a hotfix-1 for iOS WKWebView fetch).
-Re-ran the full pre-flight and verify gates — everything passes, no code
-changes needed this turn. Submitting this review.txt as a re-verification
-artifact so Zahi can confirm the on-disk state matches the spec before
-moving on to H.2b / H.2c.
+Floor execution-control view (FloorDetailPage → "units-status" rollup)
+showed impossible apartment progress — e.g. "9/1 הושלם" (900%), stage
+badge "300% / 12/4", and progress bars overflowing their cards
+(width:900% → horizontal scroll, lost focus).
 
-KEY PIVOT (already baked into the existing code, documented here for the
-record): the spec called for `@capacitor-mlkit/document-scanner@^7`, but
-that package's v7.x peer dep is `@capacitor/core >= 8.0.0` — incompatible
-with our Cap 7.6.1 baseline, and there is no v6 fallback on npm. Same
-vendor pivot we used for H.1 social-login: switched to
-`@capgo/capacitor-document-scanner@^7.2.5` (same vendor as the social-login
-+ updater plugins already in the project). Apple VisionKit on iOS, ML Kit
-on Android — identical native backends.
+Root cause: `get_floor_units_status` computed the per-unit denominator
+from `len(stage["items"])` of the PROJECT-pinned QC template, while
+runs still carried their original (different) item count in `qc_items`.
+When a custom template was edited after runs existed, the denominator
+went stale (1) while the numerator (real handled_count from qc_items)
+stayed correct (9).
 
-================================================================================
-PRE-FLIGHT GATES (9 PASS)
-================================================================================
-
-G1  Capacitor 7.x baseline ✓
-    @capacitor/core 7.6.1, @capacitor/ios 7.6.1, @capacitor/android 7.6.1
-
-G2  Plugin INSTALLED ✓
-    @capgo/capacitor-document-scanner ^7.2.5 (resolved per yarn.lock × 2)
-
-G3  Target component exists ✓
-    frontend/src/components/NewDefectModal.js (1140 lines)
-
-G4  Wrapper component exists ✓
-    frontend/src/components/DocumentScannerButton.jsx (41 lines)
-
-G5  H.1 baseline in place ✓
-    @capacitor/camera ^7.0.5, @capacitor/filesystem ^7,
-    @capgo/capacitor-social-login ^7.6.5, @capgo/capacitor-updater ^7.43.3
-
-G6  Podfile diff = ONLY the expected plugin entry ✓
-    pod 'CapgoCapacitorDocumentScanner',
-        :path => '../../node_modules/@capgo/capacitor-document-scanner'
-    (no Capacitor core bumps; no other unrelated pods touched)
-
-G7  Android settings.gradle diff = ONLY the expected plugin entry ✓
-    include ':capgo-capacitor-document-scanner'
-    project(':capgo-capacitor-document-scanner').projectDir =
-        new File('../node_modules/@capgo/capacitor-document-scanner/android')
-
-G8  images[] spread pattern present in NewDefectModal ✓
-    L92  const [images, setImages] = useState([]);
-    L344 setImages(prev => [...prev, ...newImages]);
-    L1034 setImages(prev => [...prev, ...newImages]);  ← H.2a wires here
-    Existing "צלם תמונה" L1015, "בחר מגלריה" L1023 untouched.
-
-G9  Camera permissions intact (REUSED, NOT MODIFIED) ✓
-    iOS NSCameraUsageDescription:
-      "BrikOps משתמש במצלמה כדי לצלם ליקויים באתר הבנייה ולתעד את
-       מצב הדירה." (covers document scanning — no rewording needed)
-    Android Manifest:
-      <uses-permission android:name="android.permission.CAMERA" />
-      <uses-feature android:name="android.hardware.camera"
-                    android:required="false" />
+Fix:
+- Backend: per-unit `total` now derived from the run's actual qc_items
+  count for the stage — exactly what /units/{id}/run shows
+  (`total: len(enriched)`). Stage-level rollup sums per-unit totals.
+  Pct clamped 0-100.
+- Frontend: defensive Math.min(pct, 100) on every percentage + bar width
+  in FloorDetailPage + UnitQCSelectionPage. Track elements get
+  `overflow-hidden` so a clamped bar can never escape its container.
 
 ================================================================================
-API DRIFT (vs spec)
+STEP 0 — PRE-FLIGHT (all 4 PASS)
 ================================================================================
 
-Plugin's `definitions.d.ts` confirms:
+0.1 ✓ Endpoint + lines confirmed
+    `get_floor_units_status` @ qc_router.py:1182
+    `stage_items_count = len(stage.get("items", []))` @ L1261
+    `items_per_unit` field @ L1321
+    (line numbers from PRE-edit baseline)
 
-  Method:   scanDocument(options?: ScanDocumentOptions)
-                — spec assumed `scan()`. ADJUSTED in wrapper L10.
+0.2 ✓ Apartment-detail item source documented
+    `/units/{unit_id}/run` (L1010-1178):
+      L1077: `tpl = await _resolve_run_template_with_upgrade(...)`
+             — upgrades the run to current project template (WRITES to
+               db.qc_runs), then backfills missing qc_items L1084-1101.
+      L1116: `stage_items = items_by_stage.get(stage["id"], [])`
+             — pulled from db.qc_items records on the run.
+      L1136: `"total": len(enriched)` ← THE NUMBER 9 THAT THE
+             APARTMENT PAGE SHOWS.
 
-  Returns:  ScanDocumentResponse {
-              scannedImages?: string[],
-              status?: ScanDocumentResponseStatus,
-            }
-                — matches spec shape.
+    → Answer is (b) qc_items collection (seeded from template at
+      run creation, backfilled from upgraded template on subsequent
+      detail-page loads).
 
-  URI fmt:  ResponseType.ImageFilePath → returns `file://...` URIs.
-                — spec assumed file://. CORRECT.
+    → OPTION B selected: use `len(qc_items for run+stage)` as the
+      per-unit denominator. Matches apartment-detail exactly.
 
-  Cancel:   Resolves with status === ScanDocumentResponseStatus.Cancel.
-                — spec assumed throw OR resolve-with-null. Neither —
-                  resolves with a discriminator. ADJUSTED in wrapper L13:
-                  `if (result?.status === ScanDocumentResponseStatus.Cancel) return;`
+0.3 ✓ `_resolve_run_template_with_upgrade` writes to DB (L386-395)
+    Confirmed NOT read-only. We deliberately do NOT call it from the
+    floor view (which must remain a pure read). OPTION B avoids this
+    entirely — we count qc_items directly, no template resolution
+    needed per-run.
+    `_get_template(db=None, *, project_id=None, run=None)` @ L298 is
+    read-only — available if a future fix prefers OPTION A, but not
+    used here.
 
-iOS WKWebView hotfix (BATCH H.2a-hotfix-1, already merged):
-  Direct `fetch('file://...')` is blocked by WKWebView security policy.
-  Wrapper L21 calls `Capacitor.convertFileSrc(uri)` first to convert the
-  file:// URI into a WebView-readable URL (capacitor://... on iOS,
-  http://localhost/... on Android), THEN fetches the blob. Without this,
-  iOS would resolve with empty Files.
-
-================================================================================
-WRAPPER COMPONENT — frontend/src/components/DocumentScannerButton.jsx (41 LOC)
-================================================================================
-
-- Imports DocumentScanner, ResponseType, ScanDocumentResponseStatus from
-  '@capgo/capacitor-document-scanner'.
-- Imports Capacitor from '@capacitor/core' for isNativePlatform() guard
-  and convertFileSrc() URI translation.
-- ScanLine icon (lucide-react) — visually distinct from Camera /
-  ImagePlus icons used by existing buttons.
-- Hebrew label "סרוק מסמך" (default; prop-overridable).
-- Returns null on web → button completely hidden, zero web behavior change.
-- Cancel handled silently: `if (status === Cancel) return;` — no toast.
-- Empty-result handled silently: `if (uris.length === 0) return;` — no toast.
-- Error toast only on actual fetch/blob failure: "שגיאה בסריקת המסמך".
-- Files emitted as standard `File` objects (jpg, type 'image/jpeg',
-  filename `scan-<ts>-<i>.jpg`) — drop-in for existing image flow.
-- `className` prop forwarded so caller controls styling (same className
-  pattern as existing camera/gallery buttons → visual consistency).
+0.4 ✓ No sibling endpoint to mirror
+    `handled_count` appears only inside `get_floor_units_status` (5
+    occurrences, all within this function). No working aggregator to
+    copy from.
 
 ================================================================================
-INTEGRATION — frontend/src/components/NewDefectModal.js (8 LOC, +1 import)
+DECISION — OPTION B (qc_items count as denominator)
 ================================================================================
 
-L19   import DocumentScannerButton from './DocumentScannerButton';
+Per-unit `total`:
+  - When run exists:   `len(items_by_run_and_stage[(run_id, stage_id)])`
+  - Fallback (no run): project-template `stage_items_count` (existing
+                       behavior preserved for not-started units)
+  - Fallback within-run (zero qc_items for stage): project-template
+                       `stage_items_count` (defensive — shouldn't
+                       happen post-backfill but guards a freshly
+                       created run that hasn't been opened in the
+                       detail page yet)
 
-L1026-L1037   <DocumentScannerButton
-                onScan={(files) => {
-                  const newImages = files.map(f => ({
-                    file: f,
-                    preview: URL.createObjectURL(f),
-                    name: f.name,
-                    originalFile: f,
-                  }));
-                  setImages(prev => [...prev, ...newImages]);
-                }}
-                className="flex-1 flex flex-col items-center justify-center
-                           gap-1 py-3 rounded-lg border-2 border-dashed ..."
-              />
+Stage rollup:
+  - `total_items_possible` = sum of per-unit totals (runs may differ)
+  - `pct` clamped to 0-100 via `min(..., 100)`
+  - `items_per_unit` (informational, single number at stage level) =
+    max across units. Documented as ambiguous when units differ;
+    frontend should prefer per-unit `u.total`.
 
-  - Rendered as a sibling of "צלם תמונה" (L1009) and "בחר מגלריה" (L1017)
-    inside the same `flex gap-2` row.
-  - Same `flex-1` width, same `py-3 rounded-lg border-2 border-dashed`
-    geometry, emerald color (vs amber/slate for the existing two) for
-    instant visual differentiation.
-  - Wires into the EXACT same `setImages(prev => [...prev, ...])` pattern
-    the existing buttons use (compare L344, L401, L410, L1034).
-  - Emits `{file, preview, name, originalFile}` — identical shape to
-    L1027-L1033 used by the gallery button → submit path, annotation
-    path, and stale-file cleanup (L621) all work unchanged.
+Edge case: a run that was created BEFORE admin edited the project
+template, and that the user hasn't opened in the detail page since the
+edit. Its qc_items are still pre-edit count. The floor view will show
+the pre-edit count for that unit until someone opens the detail page
+(which triggers `_resolve_run_template_with_upgrade` + backfill). This
+matches what the apartment-detail page would also show for that run
+until opened — consistent across both views. Acceptable.
+
+================================================================================
+EDITS (5 LOCATIONS)
+================================================================================
+
+LOC 1 — backend/contractor_ops/qc_router.py @ get_floor_units_status
+
+  - Added per-unit `unit_total = len(stage_items) if stage_items else
+    stage_items_count` (qc_items count with project-tpl fallback).
+  - Changed `"total": stage_items_count` → `"total": unit_total` in
+    units_breakdown.append() for the run-exists branch (the no-run
+    branch keeps `stage_items_count` — correct fallback for not-started).
+  - Stage rollup:
+      `total_items_possible = sum(u["total"] for u in units_breakdown)`
+      `pct = min(int(...), 100) if total_items_possible > 0 else 0`
+      `items_per_unit_max = max((u["total"] for u in units_breakdown),
+                                 default=stage_items_count)`
+  - `"items_per_unit": items_per_unit_max`
+  - `"is_empty": items_per_unit_max == 0`
+  - 3 inline comments documenting the bug + Option B reasoning.
+
+LOC 2 — frontend/src/pages/FloorDetailPage.js (4 clamps + 3 overflow-hidden)
+
+  SummaryCard L27: `donePct = ... ? Math.min(Math.round(...), 100) : 0`
+  SummaryCard L35: track `+ overflow-hidden`
+  SummaryCard L36: bar width `Math.min(donePct, 100)%`
+  StageCard   L63: `pct = ... ? Math.min(Math.round(...), 100) : 0`
+  StageCard   L118: track `+ overflow-hidden`
+  StageCard   L121: bar width `Math.min(pct, 100)%`
+  Unit-stage  L315: `pct = Math.min(unitStage.completion_pct || 0, 100)`
+  Unit-stage  L353: track `+ overflow-hidden`
+  Unit-stage  L356: bar width `Math.min(pct, 100)%`
+
+LOC 3 — frontend/src/pages/UnitQCSelectionPage.js (2 clamps + 1 overflow-hidden)
+
+  L187: `overallPct = ... ? Math.min(Math.round(...), 100) : 0`
+  L230: `pct = ... ? Math.min(Math.round(...), 100) : 0`
+  L260: track `+ overflow-hidden`
+
+Text "{done}/{total}" (FloorDetailPage L83, UnitQCSelectionPage L257)
+intentionally NOT clamped — informational. After the backend fix the
+numbers are correct; clamping the percent + bar width is a layout
+safety net against any future regression.
+
+================================================================================
+DO NOT TOUCH — verified clean
+================================================================================
+
+✓ Numerator logic (handled_count = pass + fail) — unchanged
+✓ qc_items collection / creation / backfill — unchanged
+✓ /units/{id}/run + /floors/{id}/run endpoints — unchanged
+✓ `_resolve_run_template_with_upgrade` — NOT called from floor view
+✓ `_get_template` signature — unchanged
+✓ Template editor / how custom templates are built — unchanged
+✓ Stage-specific logic (stage_tiling etc.) — fix is fully generic
+✓ Text "x/y" display — not clamped (informational)
+✓ pass/fail counts shown to user — unchanged
 
 ================================================================================
 VERIFY GATES
 ================================================================================
 
-V1  yarn build (REACT_APP_BACKEND_URL=https://api.brikops.com) ✓
+V1 — Python compile ✓
+    $ cd backend && python -m py_compile contractor_ops/qc_router.py
+    exit=0, no output.
+
+V2 — Frontend build ✓
+    $ cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
     "The build folder is ready to be deployed."
-    "Done in 38.13s."  exit=0
+    "Done in ~38s."  exit=0
 
-V2  npx cap sync — diffs match expectation ✓
-    Podfile = +1 pod entry (CapgoCapacitorDocumentScanner).
-    Android settings.gradle = +1 include + project path.
-    NO Capacitor core bumps. NO other unrelated pod changes.
-    (V2 already executed on 2026-05-13 during original H.2a merge;
-    Podfile + settings.gradle reflect the post-sync state on disk.)
+V3 (Zahi browser, post-deploy) — floor-view API
+    fetch('/api/qc/floors/b659fb14-cd51-4dde-a792-1dbbf0bd8220/units-status',
+      {credentials:'include'}).then(r=>r.json()).then(d=>{
+        const s = d.stages.find(x=>x.stage_id==='stage_tiling');
+        console.log('items_per_unit', s.items_per_unit);
+        console.log('units', s.units.map(u=>u.unit_name+': '+u.handled_count+'/'+u.total));
+      });
+    Expected: items_per_unit = 9; each unit shows handled_count/9
+              (e.g. "דירה 6: 9/9", "דירה 3: 1/9"). NOT "x/1".
 
-V3  grep DocumentScanner — 6 hits across 2 files ✓
-    NewDefectModal.js × 2 (import + JSX usage)
-    DocumentScannerButton.jsx × 4 (import + 3 type/enum refs)
-    (Spec threshold ≥ 5 hits — passes.)
+V4 (Zahi visual, post-deploy) — "ריצוף דירה — קומה -1"
+    Progress bars stay inside their cards, no horizontal scroll, no
+    300%/900%. Apartment with all items done shows 100%, not 300%.
 
-V4  grep '<DocumentScannerButton' = 1 hit (NewDefectModal.js L1026) ✓
-    Single integration site only — no leakage to plan/proof/handover flows.
-
-V5  Web bundle hides button on Capacitor.isNativePlatform() === false ✓
-    Component returns null early (L33) — zero web DOM impact.
-
-V6  yarn.lock contains exactly one resolved entry chain for
-    @capgo/capacitor-document-scanner (2 grep hits = name + resolved url) ✓
-
-V7  V1 (./gradlew) and V8 (xcodebuild) — env-blocked on Replit (no JDK,
-    no Xcode). Zahi runs implicitly via ./ship.sh on Mac before
-    TestFlight Internal Testing.
-
-================================================================================
-DO NOT TOUCH — VERIFIED CLEAN
-================================================================================
-
-✓ PhotoAnnotation logic — UNCHANGED (L1085-L1101 still references
-  images[annotatingIndex] with .file || .originalFile fallback)
-✓ Existing camera button (L1009-L1016) — UNCHANGED
-✓ Existing gallery button (L1017-L1024) — UNCHANGED
-✓ images[] shape `{file, preview, name, originalFile}` — UNCHANGED
-✓ NSCameraUsageDescription — UNCHANGED (existing wording covers scanning)
-✓ Android CAMERA permission — UNCHANGED
-✓ No backend / DB / env var touches
-✓ No plan upload flows (ProjectPlansPage, UnitPlansPage)
-✓ No proof / attachment flows (TaskDetailPage, StageDetailPage)
-✓ No handover flows (HandoverSectionPage, HandoverItemModal)
-✓ git status (read-only check): clean — zero pending diffs this turn
+V5 (Zahi regression) — stages that were already correct still show
+    the same numbers (no false drift from the new denominator path).
 
 ================================================================================
 RISK
 ================================================================================
 
-LOW.
-  • All code already merged + previously deployed to staging. This turn
-    is a re-verification only — no new edits.
-  • Vendor pivot (capgo vs capacitor-mlkit) already proven by H.1
-    social-login + updater plugins from the same vendor.
-  • iOS WKWebView fetch hotfix already in place — no known regression.
-  • Single integration site, additive only, web fully isolated by
-    isNativePlatform() guard.
-  • Cancel + empty-result paths silent (no toast spam).
+MEDIUM.
+  • Backend denominator change affects ALL unit-scope stages on the
+    floor view. Stages that were already correct must stay correct
+    (V5). The fix is symmetric — when qc_items count == project-tpl
+    count (the common case), the new code produces identical output.
+  • Frontend clamps purely additive (Math.min) — zero regression risk.
+  • `overflow-hidden` on track is additive — when the bar fits inside
+    the track (normal case), it has no visible effect.
+  • No write-on-read: floor view stays a pure read endpoint.
+  • Performance: zero extra DB queries — qc_items already fetched in
+    a single batch query (L1249-1255). We now use `len()` of what's
+    already in memory.
+  • Edge case (stale run not yet opened in detail page since template
+    edit) documented above; matches apartment-detail behavior for
+    consistency.
 
 ================================================================================
 ROLLBACK
 ================================================================================
 
-If a regression surfaces on TestFlight Internal Testing:
+git revert <sha> -- backend/contractor_ops/qc_router.py \
+    frontend/src/pages/FloorDetailPage.js \
+    frontend/src/pages/UnitQCSelectionPage.js
+git push origin staging
+./deploy.sh --stag && ./deploy.sh --prod
 
-  git revert <h2a-sha> -- \
-      frontend/package.json \
-      frontend/yarn.lock \
-      frontend/src/components/DocumentScannerButton.jsx \
-      frontend/src/components/NewDefectModal.js \
-      frontend/ios/App/Podfile \
-      frontend/android/capacitor.settings.gradle
-  cd frontend && yarn install && npx cap sync
-  git push origin staging
-  ./deploy.sh --stag
-
-Web users unaffected — the button is hidden on non-native platforms by
-the isNativePlatform() guard.
+The frontend clamps + overflow-hidden alone (LOCATION 2 + 3) can ship
+independently via Capgo OTA if the backend revert needs more time —
+this stops the visual breakage immediately even while the ratio stays
+wrong.
 
 ================================================================================
-FILES IN THIS BATCH (6 — all on disk, no changes this turn)
+FILES IN THIS BATCH (3)
 ================================================================================
 
-frontend/package.json                                (dep entry)
-frontend/yarn.lock                                   (resolved chain)
-frontend/src/components/DocumentScannerButton.jsx    (41 LOC, new)
-frontend/src/components/NewDefectModal.js            (+1 import, +12 LOC JSX)
-frontend/ios/App/Podfile                             (+1 pod entry)
-frontend/android/capacitor.settings.gradle           (+1 include + path)
+backend/contractor_ops/qc_router.py        (~20 LOC, OPTION B + clamps)
+frontend/src/pages/FloorDetailPage.js      (~10 LOC, 4 clamps + 3 overflow)
+frontend/src/pages/UnitQCSelectionPage.js  (~5 LOC, 2 clamps + 1 overflow)
 
 ================================================================================
 DEPLOY (Zahi)
 ================================================================================
 
-1. No git work needed — code already on staging.
-2. If TestFlight Internal build was already taken on 2026-05-13, this
-   review is a re-verification artifact only.
-3. If a fresh build is desired: `./ship.sh` → TestFlight Internal Testing.
-4. H.2b (Universal Links) + H.2c (Contact Picker) bundle into the same
-   App Store / Play Console review cycle after H.2a TestFlight validation.
+1. git add + commit (suggested msg in .local/.commit_message)
+2. git push origin staging
+3. ./deploy.sh --stag
+4. Run V3 in browser console on FloorDetailPage → confirm items_per_unit
+   = 9 and per-unit `total` reflects each unit's real qc_items count.
+5. V4 visual on "ריצוף דירה — קומה -1" — no overflow, no 300%/900%.
+6. V5 regression spot-check on a stage that was already correct.
+7. ./deploy.sh --prod
+
+No native rebuild — pure web/backend fix. No env var changes. No DB
+migration.
 
 ================================================================================
 STANDING RULE — STOP HERE
 ================================================================================
 
-Agent: pre-flight + V1 build + review.txt + commit_message + present_asset
-       → DONE. NO commit, NO restart, NO deploy, NO mark_task_complete.
-Zahi: git/deploy/ship.sh.
+Agent: STEP 0 + edits + V1-V2 + review.txt + commit_message +
+       present_asset → DONE. NO commit, NO restart, NO deploy,
+       NO mark_task_complete.
+Zahi:  git/deploy.

@@ -181,7 +181,7 @@ export default function UnitQCSelectionPage() {
   const completedCount = units.filter(u => u.status === 'approved').length;
   const totalHandled = units.reduce((s, u) => s + u.handled_count, 0);
   const totalItems = units.reduce((s, u) => s + u.total, 0);
-  const overallPct = totalItems > 0 ? Math.round((totalHandled / totalItems) * 100) : 0;
+  const overallPct = totalItems > 0 ? Math.min(Math.round((totalHandled / totalItems) * 100), 100) : 0;
 
   return (
     <div className="min-h-screen bg-slate-50 overflow-x-hidden">
@@ -224,7 +224,7 @@ export default function UnitQCSelectionPage() {
           units.map(unit => {
             const cfg = STATUS_CONFIG[unit.status] || STATUS_CONFIG.not_started;
             const Icon = STATUS_ICONS[unit.status] || AlertCircle;
-            const pct = unit.total > 0 ? Math.round((unit.handled_count / unit.total) * 100) : 0;
+            const pct = unit.total > 0 ? Math.min(Math.round((unit.handled_count / unit.total) * 100), 100) : 0;
             const isNavigating = navigatingUnit === unit.unit_id;
             const barColor = unit.status === 'approved' ? 'bg-emerald-400' : pct > 0 ? 'bg-amber-400' : 'bg-slate-200';
 
@@ -254,7 +254,7 @@ export default function UnitQCSelectionPage() {
                     <span className="text-xs font-medium text-slate-500">{unit.handled_count}/{unit.total}</span>
                   </div>
                 </div>
-                <div className="w-full bg-slate-100 rounded-full h-1.5" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות דירה ${pct}%`}>
+                <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות דירה ${pct}%`}>
                   <div
                     className={`h-1.5 rounded-full transition-all ${barColor}`}
                     style={{ width: `${pct}%` }}
