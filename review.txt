@@ -1,259 +1,255 @@
 ================================================================================
-BATCH floor-view-items-per-unit-bug — Fix wrong denominator in floor units-status
+BATCH cleanup-orphan-qc-items — REVIEW
 ================================================================================
 Date:     2026-05-20
 Branch:   staging
-Severity: HIGH (data-integrity — PM saw 9/1 = 900%)
-Standing: STOP at review.txt + commit_message + present_asset. NO commit,
-          NO restart, NO deploy, NO mark_task_complete. Zahi handles
-          git/deploy.
+Severity: MED (data hygiene)
+Type:     ONE-OFF DATA MIGRATION SCRIPT
+Standing: STOP at script + V1 + review.txt + commit_message + present_asset.
+          NO commit, NO restart, NO deploy, NO mark_task_complete. Zahi
+          runs git + V2 (report) + reviews + V4 (delete) + V5 (verify).
 
 ================================================================================
 EXECUTIVE SUMMARY
 ================================================================================
 
-Floor execution-control view (FloorDetailPage → "units-status" rollup)
-showed impossible apartment progress — e.g. "9/1 הושלם" (900%), stage
-badge "300% / 12/4", and progress bars overflowing their cards
-(width:900% → horizontal scroll, lost focus).
+When a QC template stage's item list is edited DOWN, existing qc_runs
+keep their qc_items for the now-removed items. `_backfill_missing_items`
+ADDS missing items but never PRUNES removed ones. Consequence: floor
+view (post the earlier floor-view-items-per-unit-bug fix) now correctly
+shows each run's REAL item count — but units whose runs were created on
+the old (larger) template show a different denominator than units whose
+runs were created on the current (smaller) template.
 
-Root cause: `get_floor_units_status` computed the per-unit denominator
-from `len(stage["items"])` of the PROJECT-pinned QC template, while
-runs still carried their original (different) item count in `qc_items`.
-When a custom template was edited after runs existed, the denominator
-went stale (1) while the numerator (real handled_count from qc_items)
-stayed correct (9).
+Example from prod (project d41ca1d0, building "10", floor "קומה -1",
+stage_tiling):
+  - Apartments 4, 5, 6, 7 → 1 item (current template — correct)
+  - Apartment 3            → 9 items (8 orphans: tl_1…tl_8)
 
-Fix:
-- Backend: per-unit `total` now derived from the run's actual qc_items
-  count for the stage — exactly what /units/{id}/run shows
-  (`total: len(enriched)`). Stage-level rollup sums per-unit totals.
-  Pct clamped 0-100.
-- Frontend: defensive Math.min(pct, 100) on every percentage + bar width
-  in FloorDetailPage + UnitQCSelectionPage. Track elements get
-  `overflow-hidden` so a clamped bar can never escape its container.
+The fix shipped earlier today is correct. The DATA needs a one-off clean.
+
+This batch adds a standalone migration `scripts/cleanup_orphan_qc_items.py`
+with --report (dry-run, default) and --delete modes. No app code change.
 
 ================================================================================
-STEP 0 — PRE-FLIGHT (all 4 PASS)
+STEP 0 — PRE-FLIGHT (5/5 PASS)
 ================================================================================
 
-0.1 ✓ Endpoint + lines confirmed
-    `get_floor_units_status` @ qc_router.py:1182
-    `stage_items_count = len(stage.get("items", []))` @ L1261
-    `items_per_unit` field @ L1321
-    (line numbers from PRE-edit baseline)
+0.1 ✓ qc_items + qc_runs fields confirmed
+    qc_items: run_id, stage_id, item_id, status
+              (insert L485, L517, L906; find L488, L520, L915 in qc_router.py)
+    qc_runs:  id, project_id, building_id, floor_id, unit_id,
+              template_version_id (insert L904; find L706, L738, L865)
 
-0.2 ✓ Apartment-detail item source documented
-    `/units/{unit_id}/run` (L1010-1178):
-      L1077: `tpl = await _resolve_run_template_with_upgrade(...)`
-             — upgrades the run to current project template (WRITES to
-               db.qc_runs), then backfills missing qc_items L1084-1101.
-      L1116: `stage_items = items_by_stage.get(stage["id"], [])`
-             — pulled from db.qc_items records on the run.
-      L1136: `"total": len(enriched)` ← THE NUMBER 9 THAT THE
-             APARTMENT PAGE SHOWS.
+0.2 ✓ Template resolution chain documented
+    `_get_template` (qc_router.py:298) fallback order:
+      1. run.template_version_id → qc_templates.find_one({id: vid})
+         (skipped here — we resolve per PROJECT, not per run, because
+          orphans are determined by the CURRENT project template)
+      2. projects.qc_template_version_id → qc_templates.find_one({id: vid})
+      3. qc_templates.find_one({is_default: True, is_active: True})
+      4. FLOOR_TEMPLATE (hardcoded constant)
 
-    → Answer is (b) qc_items collection (seeded from template at
-      run creation, backfilled from upgraded template on subsequent
-      detail-page loads).
+    Script mirrors steps 2 → 3 verbatim. Skips step 4 deliberately:
+    if a project has NEITHER a pinned version NOR a default-active
+    template, the script REFUSES to declare anything an orphan for
+    that project. Safer than guessing against a hardcoded constant
+    that may differ from what the user's app actually serves.
 
-    → OPTION B selected: use `len(qc_items for run+stage)` as the
-      per-unit denominator. Matches apartment-detail exactly.
+    The mirror is documented inline at the top of `resolve_current_template`
+    with a "keep in sync MANUALLY if _get_template changes" note.
 
-0.3 ✓ `_resolve_run_template_with_upgrade` writes to DB (L386-395)
-    Confirmed NOT read-only. We deliberately do NOT call it from the
-    floor view (which must remain a pure read). OPTION B avoids this
-    entirely — we count qc_items directly, no template resolution
-    needed per-run.
-    `_get_template(db=None, *, project_id=None, run=None)` @ L298 is
-    read-only — available if a future fix prefers OPTION A, but not
-    used here.
+    DECISION RATIONALE for not importing _get_template:
+    Importing from contractor_ops.qc_router transitively pulls in
+    motor, FastAPI deps, settings, and triggers module-level side
+    effects from .router (get_db at import). A standalone migration
+    using sync pymongo is much cleaner and safer to run from a plain
+    terminal. The mirrored function is ~10 LOC — drift risk is low
+    and explicitly flagged.
 
-0.4 ✓ No sibling endpoint to mirror
-    `handled_count` appears only inside `get_floor_units_status` (5
-    occurrences, all within this function). No working aggregator to
-    copy from.
+0.3 ✓ Mongo connection helper located
+    backend/server.py:7  from motor.motor_asyncio import AsyncIOMotorClient
+    backend/server.py:45 client = AsyncIOMotorClient(MONGO_URL, ...)
+    backend/server.py:46 db = client[DB_NAME]
+    Env: MONGO_URL + DB_NAME (workflow sets MONGO_URL=mongodb://localhost:27017
+    and DB_NAME=contractor_ops).
 
-================================================================================
-DECISION — OPTION B (qc_items count as denominator)
-================================================================================
+    Script uses sync `pymongo.MongoClient(MONGO_URL)[DB_NAME]` —
+    same connection string, same DB, no event loop, no FastAPI deps.
+    Mirrors the pattern of the existing `scripts/health_check_orphans.py`
+    (line 19, 26-30).
 
-Per-unit `total`:
-  - When run exists:   `len(items_by_run_and_stage[(run_id, stage_id)])`
-  - Fallback (no run): project-template `stage_items_count` (existing
-                       behavior preserved for not-started units)
-  - Fallback within-run (zero qc_items for stage): project-template
-                       `stage_items_count` (defensive — shouldn't
-                       happen post-backfill but guards a freshly
-                       created run that hasn't been opened in the
-                       detail page yet)
+0.4 ✓ Standalone confirmed
+    `--help` smoke test runs without importing anything from the app
+    package (argparse only resolves; pymongo only connects on actual
+    scan). Will run from Replit terminal exactly like
+    `health_check_orphans.py` does.
 
-Stage rollup:
-  - `total_items_possible` = sum of per-unit totals (runs may differ)
-  - `pct` clamped to 0-100 via `min(..., 100)`
-  - `items_per_unit` (informational, single number at stage level) =
-    max across units. Documented as ambiguous when units differ;
-    frontend should prefer per-unit `u.total`.
-
-Edge case: a run that was created BEFORE admin edited the project
-template, and that the user hasn't opened in the detail page since the
-edit. Its qc_items are still pre-edit count. The floor view will show
-the pre-edit count for that unit until someone opens the detail page
-(which triggers `_resolve_run_template_with_upgrade` + backfill). This
-matches what the apartment-detail page would also show for that run
-until opened — consistent across both views. Acceptable.
+0.5 ✓ NO apartment hard-coded
+    Script iterates every qc_run in scope (--project optional;
+    default = ALL). The 2026-05-18 vs 2026-05-20 drift between
+    apartment 6 (was orphan) and apartment 3 (now orphan) is
+    irrelevant — the report is the authoritative source. Zahi runs V2
+    on the live DB and pastes the output back.
 
 ================================================================================
-EDITS (5 LOCATIONS)
+SCRIPT — scripts/cleanup_orphan_qc_items.py (~260 LOC)
 ================================================================================
 
-LOC 1 — backend/contractor_ops/qc_router.py @ get_floor_units_status
+CLI:
+  --report (default)         dry run, prints, deletes nothing
+  --delete                   destructive — removes pending orphans by default
+  --include-completed        also delete orphans with status pass/fail
+                             (DATA LOSS — DISCARDS contractor work)
+  --project <id>             scope to one project (default: ALL)
+  --help                     usage
 
-  - Added per-unit `unit_total = len(stage_items) if stage_items else
-    stage_items_count` (qc_items count with project-tpl fallback).
-  - Changed `"total": stage_items_count` → `"total": unit_total` in
-    units_breakdown.append() for the run-exists branch (the no-run
-    branch keeps `stage_items_count` — correct fallback for not-started).
-  - Stage rollup:
-      `total_items_possible = sum(u["total"] for u in units_breakdown)`
-      `pct = min(int(...), 100) if total_items_possible > 0 else 0`
-      `items_per_unit_max = max((u["total"] for u in units_breakdown),
-                                 default=stage_items_count)`
-  - `"items_per_unit": items_per_unit_max`
-  - `"is_empty": items_per_unit_max == 0`
-  - 3 inline comments documenting the bug + Option B reasoning.
-
-LOC 2 — frontend/src/pages/FloorDetailPage.js (4 clamps + 3 overflow-hidden)
-
-  SummaryCard L27: `donePct = ... ? Math.min(Math.round(...), 100) : 0`
-  SummaryCard L35: track `+ overflow-hidden`
-  SummaryCard L36: bar width `Math.min(donePct, 100)%`
-  StageCard   L63: `pct = ... ? Math.min(Math.round(...), 100) : 0`
-  StageCard   L118: track `+ overflow-hidden`
-  StageCard   L121: bar width `Math.min(pct, 100)%`
-  Unit-stage  L315: `pct = Math.min(unitStage.completion_pct || 0, 100)`
-  Unit-stage  L353: track `+ overflow-hidden`
-  Unit-stage  L356: bar width `Math.min(pct, 100)%`
-
-LOC 3 — frontend/src/pages/UnitQCSelectionPage.js (2 clamps + 1 overflow-hidden)
-
-  L187: `overallPct = ... ? Math.min(Math.round(...), 100) : 0`
-  L230: `pct = ... ? Math.min(Math.round(...), 100) : 0`
-  L260: track `+ overflow-hidden`
-
-Text "{done}/{total}" (FloorDetailPage L83, UnitQCSelectionPage L257)
-intentionally NOT clamped — informational. After the backend fix the
-numbers are correct; clamping the percent + bar width is a layout
-safety net against any future regression.
+Flow:
+  1. Parse args, validate MONGO_URL/MONGODB_URI from env, open
+     `MongoClient(...)[DB_NAME]`.
+  2. For each project in scope:
+       a. Resolve current template via `resolve_current_template`
+          (mirrors `_get_template` chain steps 2-3). Projects with no
+          resolvable template are SKIPPED with a stderr warning.
+       b. Build `valid_pairs` = set of (stage_id, item_id) tuples
+          present in the resolved template.
+       c. Fetch all qc_runs for the project, prefetch buildings,
+          floors, units (one query each) for name lookup.
+       d. Stream qc_items for those runs. Any (stage_id, item_id) NOT
+          in valid_pairs is an orphan. Classify reason as
+          `stage_removed` vs `item_removed`.
+  3. Print report grouped Project > Building > Floor > Unit > run/stage:
+       - Total / pending / completed counts
+       - ⚠️ banner when completed > 0 explaining the
+         --include-completed flag
+       - Per-orphan line: `item_id [status] [reason] → ORPHAN [(work done)]`
+  4. If --report (default): exit 0.
+  5. If --delete:
+       a. Partition orphans into to_delete (pending OR --include-completed)
+          and skipped_completed.
+       b. **Dump a JSON BACKUP** of every doc about to be removed to
+          `scripts/orphan_qc_items_backup_<UTC-ts>.json` (full doc +
+          context). Print the path.
+       c. `delete_many({"_id": {"$in": batch}})` in batches of 500.
+       d. Print final summary: `deleted=N, skipped_completed=M, backup=<path>`.
+       e. On any exception during delete, print backup path on stderr
+          and exit 1 — manual restore from backup is possible.
 
 ================================================================================
 DO NOT TOUCH — verified clean
 ================================================================================
 
-✓ Numerator logic (handled_count = pass + fail) — unchanged
-✓ qc_items collection / creation / backfill — unchanged
-✓ /units/{id}/run + /floors/{id}/run endpoints — unchanged
-✓ `_resolve_run_template_with_upgrade` — NOT called from floor view
-✓ `_get_template` signature — unchanged
-✓ Template editor / how custom templates are built — unchanged
-✓ Stage-specific logic (stage_tiling etc.) — fix is fully generic
-✓ Text "x/y" display — not clamped (informational)
-✓ pass/fail counts shown to user — unchanged
+✓ backend/contractor_ops/*.py app code — no endpoint changes
+✓ `_backfill_missing_items` — not modified (systemic prune-on-load fix
+  is OUT-OF-SCOPE per TODO at end of spec; needs separate Zahi sign-off)
+✓ qc_runs, qc_templates, qc_stages collections — script reads only
+✓ Floor-view fix shipped earlier today — unrelated, untouched
+✓ Frontend — no changes
+✓ No env var changes, no DB migration to app, no new dependencies
+  (pymongo already in backend deps; script imports stdlib + pymongo)
 
 ================================================================================
 VERIFY GATES
 ================================================================================
 
-V1 — Python compile ✓
-    $ cd backend && python -m py_compile contractor_ops/qc_router.py
-    exit=0, no output.
+V1 — Script compiles + --help ✓
+  $ python -m py_compile scripts/cleanup_orphan_qc_items.py    → exit=0
+  $ python scripts/cleanup_orphan_qc_items.py --help           → exit=0
+  Help output shows: --project, --report, --delete, --include-completed.
 
-V2 — Frontend build ✓
-    $ cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
-    "The build folder is ready to be deployed."
-    "Done in ~38s."  exit=0
+V2 (Zahi, Replit terminal) — Report for the affected project
+  $ python scripts/cleanup_orphan_qc_items.py --report --project d41ca1d0-acbe-4b73-994f-17462e6cbc36
+  Expected: lists apartment 3 (and any others) with orphan tl_1…tl_8
+  under stage "ריצוף דירה". Deletes nothing.
+  Zahi pastes output back to chat for review.
 
-V3 (Zahi browser, post-deploy) — floor-view API
-    fetch('/api/qc/floors/b659fb14-cd51-4dde-a792-1dbbf0bd8220/units-status',
-      {credentials:'include'}).then(r=>r.json()).then(d=>{
-        const s = d.stages.find(x=>x.stage_id==='stage_tiling');
-        console.log('items_per_unit', s.items_per_unit);
-        console.log('units', s.units.map(u=>u.unit_name+': '+u.handled_count+'/'+u.total));
-      });
-    Expected: items_per_unit = 9; each unit shows handled_count/9
-              (e.g. "דירה 6: 9/9", "דירה 3: 1/9"). NOT "x/1".
+V3 (Zahi, optional) — Full report all projects
+  $ python scripts/cleanup_orphan_qc_items.py --report
+  Decides whether to scope cleanup to one project or run org-wide.
 
-V4 (Zahi visual, post-deploy) — "ריצוף דירה — קומה -1"
-    Progress bars stay inside their cards, no horizontal scroll, no
-    300%/900%. Apartment with all items done shows 100%, not 300%.
+V4 (Zahi, ONLY after V2/V3 approved) — Delete
+  $ python scripts/cleanup_orphan_qc_items.py --delete --project d41ca1d0-acbe-4b73-994f-17462e6cbc36
+  Expected:
+    - "Backup written: scripts/orphan_qc_items_backup_<ts>.json"
+    - "Deleted N orphan qc_items."  (N matches V2 pending count)
+    - Optional "SKIPPED (work done) — M items" if any completed orphans exist
+  If completed orphans exist and Zahi wants them gone:
+    $ python scripts/cleanup_orphan_qc_items.py --delete --include-completed --project d41ca1d0-...
 
-V5 (Zahi regression) — stages that were already correct still show
-    the same numbers (no false drift from the new denominator path).
+V5 (Zahi, post-delete verify)
+  - Re-run V2 → 0 orphans for that project.
+  - In the app, floor "ריצוף דירה — קומה -1" → apartment 3 shows
+    "0/1" like apartments 4-7.
 
 ================================================================================
 RISK
 ================================================================================
 
-MEDIUM.
-  • Backend denominator change affects ALL unit-scope stages on the
-    floor view. Stages that were already correct must stay correct
-    (V5). The fix is symmetric — when qc_items count == project-tpl
-    count (the common case), the new code produces identical output.
-  • Frontend clamps purely additive (Math.min) — zero regression risk.
-  • `overflow-hidden` on track is additive — when the bar fits inside
-    the track (normal case), it has no visible effect.
-  • No write-on-read: floor view stays a pure read endpoint.
-  • Performance: zero extra DB queries — qc_items already fetched in
-    a single batch query (L1249-1255). We now use `len()` of what's
-    already in memory.
-  • Edge case (stale run not yet opened in detail page since template
-    edit) documented above; matches apartment-detail behavior for
-    consistency.
+LOW-MEDIUM.
+  • --report is pure read — zero risk. Zahi reviews before any delete.
+  • --delete only removes qc_items confirmed orphaned against the
+    live template, AFTER writing a JSON backup of every doc to disk.
+  • Completed-work orphans (pass/fail) are SKIPPED by default —
+    the script will not silently discard contractor work.
+  • --include-completed is an explicit, separate flag.
+  • Script is standalone — cannot affect the running app.
+  • Scoped by --project so one project's cleanup can't touch another.
+  • Drift risk: `resolve_current_template` mirrors `_get_template`
+    steps 2-3. If the app changes its fallback order, this script
+    needs a matching update (documented in script docstring).
 
 ================================================================================
 ROLLBACK
 ================================================================================
 
-git revert <sha> -- backend/contractor_ops/qc_router.py \
-    frontend/src/pages/FloorDetailPage.js \
-    frontend/src/pages/UnitQCSelectionPage.js
-git push origin staging
-./deploy.sh --stag && ./deploy.sh --prod
-
-The frontend clamps + overflow-hidden alone (LOCATION 2 + 3) can ship
-independently via Capgo OTA if the backend revert needs more time —
-this stops the visual breakage immediately even while the ratio stays
-wrong.
+A deleted qc_item cannot be un-deleted via Mongo itself, but:
+  - The script writes a full JSON backup before any delete to
+    `scripts/orphan_qc_items_backup_<UTC-ts>.json`. Each entry is
+    `{"context": {...}, "qc_item": {full original doc}}`.
+  - To restore, load the backup and insert the qc_item docs back:
+        import json
+        data = json.load(open("scripts/orphan_qc_items_backup_<ts>.json"))
+        db.qc_items.insert_many([d["qc_item"] for d in data])
+  - Atlas snapshot/backup recommended additionally if --include-completed
+    is used (real work being discarded).
 
 ================================================================================
-FILES IN THIS BATCH (3)
+FILES IN THIS BATCH (1 — new)
 ================================================================================
 
-backend/contractor_ops/qc_router.py        (~20 LOC, OPTION B + clamps)
-frontend/src/pages/FloorDetailPage.js      (~10 LOC, 4 clamps + 3 overflow)
-frontend/src/pages/UnitQCSelectionPage.js  (~5 LOC, 2 clamps + 1 overflow)
+scripts/cleanup_orphan_qc_items.py    (260 LOC, standalone migration)
+
+(No app code touched. No requirements.txt change — pymongo already in
+backend deps.)
 
 ================================================================================
 DEPLOY (Zahi)
 ================================================================================
 
-1. git add + commit (suggested msg in .local/.commit_message)
-2. git push origin staging
-3. ./deploy.sh --stag
-4. Run V3 in browser console on FloorDetailPage → confirm items_per_unit
-   = 9 and per-unit `total` reflects each unit's real qc_items count.
-5. V4 visual on "ריצוף דירה — קומה -1" — no overflow, no 300%/900%.
-6. V5 regression spot-check on a stage that was already correct.
-7. ./deploy.sh --prod
+1. git add scripts/cleanup_orphan_qc_items.py
+2. git commit -m "<see .local/.commit_message>"
+3. git push origin staging
+4. Run V2 in Replit terminal. Paste output back.
+5. After approval: V4 delete. Paste summary back.
+6. V5 visual check on floor view.
 
-No native rebuild — pure web/backend fix. No env var changes. No DB
-migration.
+No deploy needed — this is a script, not an app change. The running app
+is unaffected by the script's presence in the repo.
+
+================================================================================
+TODO (OUT OF SCOPE, per spec)
+================================================================================
+
+Systemic fix: make `_backfill_missing_items` (or the unit/floor-run
+load path) also PRUNE qc_items whose (stage_id, item_id) is no longer
+in the resolved template. Prevents recurrence. Destructive (would
+auto-delete on next load); must NOT silently discard completed work.
+Needs explicit design + Zahi sign-off → separate batch if/when Zahi
+wants it.
 
 ================================================================================
 STANDING RULE — STOP HERE
 ================================================================================
 
-Agent: STEP 0 + edits + V1-V2 + review.txt + commit_message +
-       present_asset → DONE. NO commit, NO restart, NO deploy,
-       NO mark_task_complete.
-Zahi:  git/deploy.
+Agent: script + V1 + review.txt + commit_message + present_asset → DONE.
+Zahi:  git/deploy + V2 (report) + reviews + V4 (delete) + V5 (verify).

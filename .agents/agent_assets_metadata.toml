@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH floor-view-items-per-unit-bug — review (Option B, V1+V2 PASS)"
+title = "BATCH cleanup-orphan-qc-items — review (standalone migration script, V1+--help PASS)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
