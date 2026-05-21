@@ -1,10 +1,9 @@
 ================================================================================
-BATCH doc-scanner-statusbar-restore-v2 — fix ROOT CAUSE (Capacitor StatusBar
-config) + correct the JS workaround that v1 got wrong
+BATCH doc-scanner-statusbar-restore-v2 — FULL BEFORE/AFTER
 ================================================================================
 Date:           2026-05-21
 Branch:         staging
-Task:           #521 (supersedes #520, which was cancelled — v1 was a no-op)
+Task:           #521 (supersedes #520 — v1 was a no-op)
 Rollback SHA:   b0c4a2a (HEAD before edits this turn)
 Files changed:  2
                   PART 1 (NATIVE, ship.sh):  frontend/capacitor.config.json
@@ -13,6 +12,8 @@ Files changed:  2
 PART 1 (capacitor.config.json) is NATIVE — requires npx cap sync + ./ship.sh
 + a new store build. PART 2 (.jsx) ships via ./deploy.sh --prod + Capgo OTA.
 
+VERIFY: V1 (babel parse) OK · V2 (config JSON) OK · V3 (grep) OK.
+
 ================================================================================
 WHY v1 DID NOT WORK
 ================================================================================
@@ -20,69 +21,99 @@ Reading node_modules/@capacitor/status-bar/ios/Sources/StatusBarPlugin/:
 
 1. setOverlaysWebView short-circuits when the value is unchanged:
        func setOverlaysWebView(_ overlay: Bool) {
-           if overlay == isOverlayingWebview { return }   // <-- here
+           if overlay == isOverlayingWebview { return }
            ...
            resizeWebView()
        }
    App.js sets overlay=false at startup, so the plugin's
    isOverlayingWebview is already false. v1's blind
    setOverlaysWebView({overlay:false}) hit the short-circuit and did
-   NOTHING. v1 was a no-op.
+   NOTHING.
 
-2. ROOT CAUSE — Capacitor re-breaks the layout on every native-VC
-   dismiss. capacitor.config.json had NO StatusBar block, so Capacitor
-   used the built-in default overlaysWebView=true. The plugin observes
-   .capacitorViewDidAppear; on the scanner's VisionKit fullscreen VC
-   dismiss the bridge VC re-appears, handleViewDidAppear runs and
-   re-applies the CONFIG values: setStyle(default) + setBackgroundColor
-   (default black) + setOverlaysWebView(default TRUE). resizeWebView()
-   then runs with overlay=true → WebView origin moves to y=0 → header
-   under the notch, back-arrow untappable.
+2. ROOT CAUSE — capacitor.config.json had NO StatusBar block, so
+   Capacitor used the built-in default overlaysWebView=true. The
+   plugin observes .capacitorViewDidAppear; on the scanner's
+   VisionKit fullscreen VC dismiss the bridge VC re-appears,
+   handleViewDidAppear runs and re-applies the CONFIG values:
+   setStyle(default) + setBackgroundColor(default black) +
+   setOverlaysWebView(default TRUE). resizeWebView() then runs with
+   overlay=true → WebView origin moves to y=0 → header under the
+   notch, back-arrow untappable.
 
 THE FIX (two parts):
 - PART 1 (native, root cause): add a StatusBar block to
   capacitor.config.json with overlaysWebView:false, style:"DARK",
   backgroundColor:"#0f172a" (matches App.js startup values). Then
-  handleViewDidAppear re-applies the correct values, not the defaults.
-  Deterministic, no race, no flash. Requires a new native build.
+  handleViewDidAppear re-applies the CORRECT values, not the defaults.
+  Deterministic, no race, no flash. Needs a new native build.
 - PART 2 (OTA safety net): JS helper now calls StatusBar.getInfo()
   first and only calls setOverlaysWebView when info.overlays===true
   (real state CHANGE → short-circuit bypassed → resizeWebView runs).
-  Polled 5× after the scanner closes (immediate + 700 + 1500 + 3000 +
-  5000 ms) to catch Capacitor's unobservable re-apply moment under
-  Low Power Mode / Reduce Motion. On post-config native build it is a
-  clean no-op (getInfo reports overlays:false → branch skipped).
+  Polled 5× after scanner closes (immediate + 700 + 1500 + 3000 +
+  5000 ms). On post-config native build it is a clean no-op.
 
 ================================================================================
-STEP 0 — PRE-FLIGHT (already run, captured)
+STEP 0 — PRE-FLIGHT (already captured)
 ================================================================================
-0.1 v1 fix present in DocumentScannerButton.jsx:
-    L5: import { StatusBar, Style } from '@capacitor/status-bar';
-    L14-23: async function restoreStatusBar() calling
-            setOverlaysWebView({overlay:false}) unconditionally
-    L57-59: finally calling restore 3× (immediate + 450 + 1200)
-    ✓ matches expected v1 state
-
-0.2 capacitor.config.json BEFORE this batch:
-    "plugins" contained ONLY CapacitorUpdater. No StatusBar block.
-    ✓ matches expected pre-state
-
-0.3 grep -n "@capacitor/status-bar" frontend/package.json:
-    17: "@capacitor/status-bar": "^7.0.6"
-    ✓ already installed, no new dep
-
-0.4 Current native version numbers (REPORT-ONLY — NOT edited):
-    iOS  frontend/ios/App/App.xcodeproj/project.pbxproj:
-         MARKETING_VERSION = 1.0.15   (Debug L359, Release L381)
-         CURRENT_PROJECT_VERSION = 13 (Debug L354, Release L376)
-    Android frontend/android/app/build.gradle:
-         versionCode 22        (L11)
-         versionName "1.0.22"  (L12)
-    → Zahi bumps these himself when running ./ship.sh
+0.1 v1 fix present in DocumentScannerButton.jsx (matches expected pre-state) ✓
+0.2 capacitor.config.json had NO StatusBar block (plugins=CapacitorUpdater only) ✓
+0.3 "@capacitor/status-bar": "^7.0.6" already in frontend/package.json ✓
+0.4 Native version numbers (REPORT-ONLY — NOT edited):
+    iOS  MARKETING_VERSION = 1.0.15, CURRENT_PROJECT_VERSION = 13
+    Android versionCode 22, versionName "1.0.22"
 
 ================================================================================
-DIFF — frontend/capacitor.config.json
 ================================================================================
+FILE 1 — frontend/capacitor.config.json
+================================================================================
+================================================================================
+
+----------- BEFORE (18 lines) ------------------------------------------------
+{
+  "appId": "com.brikops.app",
+  "appName": "BrikOps",
+  "webDir": "build",
+  "ios": {
+    "allowsBackForwardNavigationGestures": true,
+    "preferredContentMode": "mobile"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorUpdater": {
+      "autoUpdate": true,
+      "channel": "production"
+    }
+  }
+}
+
+----------- AFTER (23 lines) -------------------------------------------------
+{
+  "appId": "com.brikops.app",
+  "appName": "BrikOps",
+  "webDir": "build",
+  "ios": {
+    "allowsBackForwardNavigationGestures": true,
+    "preferredContentMode": "mobile"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "StatusBar": {
+      "overlaysWebView": false,
+      "style": "DARK",
+      "backgroundColor": "#0f172a"
+    },
+    "CapacitorUpdater": {
+      "autoUpdate": true,
+      "channel": "production"
+    }
+  }
+}
+
+----------- UNIFIED DIFF -----------------------------------------------------
 diff --git a/frontend/capacitor.config.json b/frontend/capacitor.config.json
 index 4aa9d08..9a819d8 100644
 --- a/frontend/capacitor.config.json
@@ -101,8 +132,167 @@ index 4aa9d08..9a819d8 100644
        "channel": "production"
 
 ================================================================================
-DIFF — frontend/src/components/DocumentScannerButton.jsx
 ================================================================================
+FILE 2 — frontend/src/components/DocumentScannerButton.jsx
+================================================================================
+================================================================================
+
+----------- BEFORE (71 lines) ------------------------------------------------
+import React, { useCallback } from 'react';
+import { ScanLine } from 'lucide-react';
+import { DocumentScanner, ResponseType, ScanDocumentResponseStatus } from '@capgo/capacitor-document-scanner';
+import { Capacitor } from '@capacitor/core';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { toast } from 'sonner';
+
+// BATCH doc-scanner-statusbar-restore (2026-05-21) — re-apply the
+// native status-bar config after the document scanner closes.
+// VisionKit's fullscreen VNDocumentCameraViewController leaves the
+// Capacitor WebView frame overlaying the iOS status bar on dismiss,
+// pushing the app header up under the notch. These three calls
+// mirror the startup config in App.js:610-612 — keep them in sync.
+async function restoreStatusBar() {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    await StatusBar.setOverlaysWebView({ overlay: false });
+    await StatusBar.setBackgroundColor({ color: '#0F172A' });
+    await StatusBar.setStyle({ style: Style.Dark });
+  } catch (e) {
+    console.warn('restoreStatusBar failed:', e);
+  }
+}
+
+export default function DocumentScannerButton({ onScan, label = 'סרוק מסמך', className = '' }) {
+  const handleClick = useCallback(async () => {
+    try {
+      const result = await DocumentScanner.scanDocument({
+        responseType: ResponseType.ImageFilePath,
+      });
+      if (result?.status === ScanDocumentResponseStatus.Cancel) return;
+      const uris = result?.scannedImages || [];
+      if (uris.length === 0) return;
+      const files = await Promise.all(uris.map(async (uri, i) => {
+        // BATCH H.2a-hotfix-1 — convert file:// URI to WebView-readable URL.
+        // iOS WKWebView blocks direct fetch on file:// per security policy.
+        // Capacitor.convertFileSrc() returns a capacitor://... URL on iOS
+        // and a localhost-based URL on Android, both fetch-safe.
+        const webViewUrl = Capacitor.convertFileSrc(uri);
+        const resp = await fetch(webViewUrl);
+        const blob = await resp.blob();
+        return new File([blob], `scan-${Date.now()}-${i}.jpg`, { type: 'image/jpeg' });
+      }));
+      if (files.length > 0) onScan(files);
+    } catch (err) {
+      console.error('DocumentScanner error:', err, 'stack:', err?.stack);
+      toast.error('שגיאה בסריקת המסמך');
+    } finally {
+      // The scanner dismissed a fullscreen native VC — the WebView
+      // frame snaps back over the status bar. Re-apply now, after
+      // the ~350ms dismiss animation, and once more at 1200ms as a
+      // slow-path backup: Low Power Mode / Reduce Motion / thermal
+      // throttling all stretch iOS animations, so a single fixed
+      // delay can land BEFORE the layout pass and be overridden.
+      // restoreStatusBar is idempotent — once the frame is correct,
+      // extra calls are harmless no-ops.
+      restoreStatusBar();
+      setTimeout(restoreStatusBar, 450);
+      setTimeout(restoreStatusBar, 1200);
+    }
+  }, [onScan]);
+
+  if (!Capacitor.isNativePlatform()) return null;
+
+  return (
+    <button type="button" onClick={handleClick} className={className}>
+      <ScanLine className="w-6 h-6 text-emerald-500" />
+      <span className="text-xs font-medium text-emerald-700">{label}</span>
+    </button>
+  );
+}
+
+----------- AFTER (80 lines) -------------------------------------------------
+import React, { useCallback } from 'react';
+import { ScanLine } from 'lucide-react';
+import { DocumentScanner, ResponseType, ScanDocumentResponseStatus } from '@capgo/capacitor-document-scanner';
+import { Capacitor } from '@capacitor/core';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { toast } from 'sonner';
+
+// BATCH doc-scanner-statusbar-restore-v2 (2026-05-21)
+// After the document scanner's fullscreen native VC closes,
+// Capacitor's bridge re-runs handleViewDidAppear, which
+// re-applies the StatusBar plugin CONFIG. The real fix is the
+// StatusBar block in capacitor.config.json (overlaysWebView
+// false). This helper is the OTA safety net for devices still
+// on the pre-config native build.
+//
+// Capacitor's setOverlaysWebView is a no-op when the value is
+// unchanged (it short-circuits before resizeWebView). So we
+// must only call it when the WebView is ACTUALLY overlaying —
+// getInfo() tells us. When it is, setOverlaysWebView(false) is
+// a real change and triggers the WebView re-layout.
+async function restoreStatusBar() {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    const info = await StatusBar.getInfo();
+    if (info?.overlays) {
+      await StatusBar.setOverlaysWebView({ overlay: false });
+    }
+    await StatusBar.setStyle({ style: Style.Dark });
+    await StatusBar.setBackgroundColor({ color: '#0F172A' });
+  } catch (e) {
+    console.warn('restoreStatusBar failed:', e);
+  }
+}
+
+export default function DocumentScannerButton({ onScan, label = 'סרוק מסמך', className = '' }) {
+  const handleClick = useCallback(async () => {
+    try {
+      const result = await DocumentScanner.scanDocument({
+        responseType: ResponseType.ImageFilePath,
+      });
+      if (result?.status === ScanDocumentResponseStatus.Cancel) return;
+      const uris = result?.scannedImages || [];
+      if (uris.length === 0) return;
+      const files = await Promise.all(uris.map(async (uri, i) => {
+        // BATCH H.2a-hotfix-1 — convert file:// URI to WebView-readable URL.
+        // iOS WKWebView blocks direct fetch on file:// per security policy.
+        // Capacitor.convertFileSrc() returns a capacitor://... URL on iOS
+        // and a localhost-based URL on Android, both fetch-safe.
+        const webViewUrl = Capacitor.convertFileSrc(uri);
+        const resp = await fetch(webViewUrl);
+        const blob = await resp.blob();
+        return new File([blob], `scan-${Date.now()}-${i}.jpg`, { type: 'image/jpeg' });
+      }));
+      if (files.length > 0) onScan(files);
+    } catch (err) {
+      console.error('DocumentScanner error:', err, 'stack:', err?.stack);
+      toast.error('שגיאה בסריקת המסמך');
+    } finally {
+      // Capacitor re-applies its StatusBar config at an
+      // unobservable moment after the native VC dismisses (~350ms+,
+      // longer under Low Power Mode / Reduce Motion). There is no
+      // JS event for it — poll a few times and correct whenever
+      // getInfo() reports the WebView is overlaying.
+      restoreStatusBar();
+      setTimeout(restoreStatusBar, 700);
+      setTimeout(restoreStatusBar, 1500);
+      setTimeout(restoreStatusBar, 3000);
+      setTimeout(restoreStatusBar, 5000);
+    }
+  }, [onScan]);
+
+  if (!Capacitor.isNativePlatform()) return null;
+
+  return (
+    <button type="button" onClick={handleClick} className={className}>
+      <ScanLine className="w-6 h-6 text-emerald-500" />
+      <span className="text-xs font-medium text-emerald-700">{label}</span>
+    </button>
+  );
+}
+
+----------- UNIFIED DIFF -----------------------------------------------------
 diff --git a/frontend/src/components/DocumentScannerButton.jsx b/frontend/src/components/DocumentScannerButton.jsx
 index e0030b2..ac2fd2a 100644
 --- a/frontend/src/components/DocumentScannerButton.jsx
@@ -170,47 +360,12 @@ index e0030b2..ac2fd2a 100644
 +      setTimeout(restoreStatusBar, 5000);
      }
    }, [onScan]);
+ 
 
 Diff stat:
  frontend/capacitor.config.json                    |  5 +++
  frontend/src/components/DocumentScannerButton.jsx | 45 ++++++++++++++---------
  2 files changed, 32 insertions(+), 18 deletions(-)
-
-================================================================================
-VERIFY OUTPUTS
-================================================================================
-V1 — Build / lint (sandbox-safe parser check; the full `npm run build`
-     times out at 120s in this sandbox — full build runs at
-     ./deploy.sh --stag):
-       cd frontend && node -e "require('@babel/parser').parse(
-         require('fs').readFileSync('src/components/DocumentScannerButton.jsx','utf8'),
-         {sourceType:'module',plugins:['jsx']});
-         console.log('V1 babel parse OK')"
-     → V1 babel parse OK   ✓
-
-V2 — capacitor.config.json valid JSON + has StatusBar block:
-       node -e "const c=require('./frontend/capacitor.config.json');
-         if(c.plugins.StatusBar.overlaysWebView!==false) throw new Error('bad');
-         console.log('StatusBar config OK', JSON.stringify(c.plugins.StatusBar));"
-     → StatusBar config OK {"overlaysWebView":false,"style":"DARK","backgroundColor":"#0f172a"}   ✓
-
-V3 — JS helper is the corrected version:
-       grep -n "getInfo\|info?.overlays\|setOverlaysWebView\|setTimeout" \
-         frontend/src/components/DocumentScannerButton.jsx
-     16:// Capacitor's setOverlaysWebView is a no-op when the value is
-     19:// getInfo() tells us. When it is, setOverlaysWebView(false) is
-     24:    const info = await StatusBar.getInfo();
-     25:    if (info?.overlays) {
-     26:      await StatusBar.setOverlaysWebView({ overlay: false });
-     27:    }
-     63:      // getInfo() reports the WebView is overlaying.
-     65:      setTimeout(restoreStatusBar, 700);
-     66:      setTimeout(restoreStatusBar, 1500);
-     67:      setTimeout(restoreStatusBar, 3000);
-     68:      setTimeout(restoreStatusBar, 5000);
-     → getInfo() present, guarded by `if (info?.overlays)`, finally polls
-       5× (immediate + 700 + 1500 + 3000 + 5000). NO unconditional
-       setOverlaysWebView remains.   ✓
 
 ================================================================================
 DELIVERY / SHIP NOTES
@@ -221,13 +376,12 @@ PART 1 (capacitor.config.json) is NATIVE — requires npx cap sync +
 
 Recommended order:
   1. git add + commit + push (staging)
-  2. ./deploy.sh --stag         (CI smoke)
-  3. ./deploy.sh --prod         (PART 2 → Capgo OTA → reaches every
-                                 current install; V4a self-test gate)
+  2. ./deploy.sh --stag        (CI smoke)
+  3. ./deploy.sh --prod        (PART 2 → Capgo OTA → V4a gate)
   4. Bump iOS MARKETING_VERSION / CURRENT_PROJECT_VERSION + Android
      versionCode / versionName
-  5. npx cap sync               (regenerates Podfile.lock etc.)
-  6. ./ship.sh                  (PART 1 → new store build)
+  5. npx cap sync              (regenerates Podfile.lock etc.)
+  6. ./ship.sh                 (PART 1 → new store build)
   7. V4b / V4c / V4d device tests once store build is installed
 
 ================================================================================
