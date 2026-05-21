@@ -1,334 +1,229 @@
 ================================================================================
-BATCH doc-scanner-DIAGNOSTIC — measure real WebView state after scanner closes
+BATCH doc-scanner-safe-area-fix — REAL fix at the CSS layout layer
 ================================================================================
 Date:           2026-05-21
 Branch:         staging
-Task:           #521 (DIAGNOSTIC — supersedes v3, replaces restore logic with
-                on-screen measurement panel)
-Rollback SHA:   31759d2 (HEAD before edits this turn)
+Task:           #521 (REAL fix — layout layer, grounded in on-device diag)
+Rollback SHA:   d27a4af (HEAD before edits this turn)
 Files changed:  1
-                  PART 1 (OTA, deploy.sh): frontend/src/components/DocumentScannerButton.jsx
+                  PART 1 (OTA, deploy.sh): frontend/src/index.css
 
-TEMPORARY DIAGNOSTIC — frontend only, Capgo OTA, to be reverted.
+FRONTEND-ONLY — Capgo OTA, no ./ship.sh.
 
-NOT a fix. v1/v2/v3 (all StatusBar-plugin approaches) shipped and were
-confirmed broken on device. Rotating the device reliably fixes the
-header — v3 toggle (which calls the same resizeWebView) does not. So
-the real cause is NOT what we have been targeting. This batch
-REPLACES the v3 restore logic with a green-on-black on-screen panel
-that measures the live WebView / viewport / safe-area / StatusBar
-state after the scanner closes. Zahi screenshots BROKEN state, rotates
-device (fixes header), taps "מדוד שוב", screenshots FIXED state. The
-delta identifies the true cause. Real fix = separate batch after.
+VERIFY: V1 (postcss parse) OK · V2 (grep safe-area-inset-top) OK = 2 hits.
 
-VERIFY: V1 (babel parse) OK · V2 (grep markers) OK.
+================================================================================
+DIAGNOSIS — from the two on-device screenshots
+================================================================================
+BROKEN (right after scanner closes):
+  innerHeight = 932          (= full screen height)
+  safe-area-inset-top = 59px
+  StatusBar.getInfo: overlays=false  height=54
+
+FIXED (after device rotation):
+  innerHeight = 878          (= 932 - 54)
+  safe-area-inset-top = 5px
+  StatusBar.getInfo: overlays=false  height=54
+
+→ After the scanner closes, the Capacitor WebView frame becomes
+  FULL-SCREEN (932) instead of inset below the status bar (878). The
+  whole web layout shifts up 54px (the status-bar height) and the
+  page header ends up under the status bar / notch.
+
+→ CRITICAL: StatusBar.getInfo() reports overlays=false in BOTH states.
+  Capacitor's StatusBar plugin believes the WebView is correctly
+  inset even when it is not. That is why v1/v2/v3 (all of which asked
+  the StatusBar plugin to fix it) did nothing — the plugin sees no
+  problem.
+
+THE FIX — do NOT fight the WebView frame or the StatusBar plugin.
+Instead make the WEB LAYOUT robust: respect env(safe-area-inset-top).
+That CSS value is proven (by the diag) to report the truth — 59px
+when the WebView is full-screen, 5px when it is normally inset. The
+app today uses env(safe-area-inset-bottom) in many places but
+safe-area-inset-top NOWHERE; it relied entirely on Capacitor
+pre-insetting the WebView.
+
+Known cosmetic trade-off (acceptable, per spec): in the normal
+non-bug state safe-area-inset-top is ~5px on this device, so the app
+shifts down ~5px and a thin ~5px strip of page background shows
+between the native status bar and the header. Fixing a P1 (untappable
+back arrow) takes priority; pixel-level polish is a later follow-up.
 
 ================================================================================
 STEP 0 — PRE-FLIGHT (captured this turn)
 ================================================================================
-0.1 v3 helper present in DocumentScannerButton.jsx:
-       grep -n "restoreStatusBar\|runRestore\|setOverlaysWebView\|Style" \
-         frontend/src/components/DocumentScannerButton.jsx
-     5:import { StatusBar, Style } from '@capacitor/status-bar';
-     16:// resizeWebView() only runs when setOverlaysWebView gets a
-     28:async function restoreStatusBar() {
-     34:    await StatusBar.setOverlaysWebView({ overlay: true });
-     35:    await StatusBar.setOverlaysWebView({ overlay: false });
-     36:    await StatusBar.setStyle({ style: Style.Dark });
-     40:    console.warn('restoreStatusBar failed:', e);
-     69:    // Poll until the status bar is back (restoreStatusBar returns
-     74:    const runRestore = async () => {
-     75:      const done = await restoreStatusBar();
-     76:      if (!done && ++attempts < 15) setTimeout(runRestore, 350);
-     78:    runRestore();
-     → confirmed v3 pre-state.   ✓
+0.1 body rule + no safe-area in index.css:
+       grep -n "^body\|padding-top\|safe-area" frontend/src/index.css
+     11:body {
+     → only `body {` at L11, NO padding-top, NO safe-area-inset-top.   ✓
+     Full body block confirmed:
+       body {
+         margin: 0;
+         font-family: 'Heebo', sans-serif;
+         -webkit-font-smoothing: antialiased;
+         -moz-osx-font-smoothing: grayscale;
+         background-color: #F8FAFC;
+       }
 
-0.2 Scanner invoked only in DocumentScannerButton.jsx:
-       grep -rn "scanDocument" frontend/src/ | grep -v node_modules
-     frontend/src/components/DocumentScannerButton.jsx:48: const result = await DocumentScanner.scanDocument({
-     → one site.   ✓
+0.2 Page headers use `sticky top-0`:
+       grep -rn "sticky top-0" frontend/src/pages | grep -v node_modules | head
+     JoinRequestsPage.js:136, ProjectPlansArchivePage.js:143,
+     ProjectPlanHistoryPage.js:81, AdminUsersPage.js:297/454,
+     AdminHandoverTemplateEditor.js:376, AdminQCTemplatesPage.js:539/766,
+     AdminActivityPage.js:254, AdminDashboardPage.js:170, ... (many more)
+     → many hits, rule 2 targets the right elements.   ✓
 
 ================================================================================
-FILE — frontend/src/components/DocumentScannerButton.jsx (DIAGNOSTIC, 144 lines)
+FILE — frontend/src/index.css (+15 lines, 0 removed)
 ================================================================================
 
------------ CHANGE 1.1 — IMPORT LINE -----------------------------------------
-- import { StatusBar, Style } from '@capacitor/status-bar';
-+ import { StatusBar } from '@capacitor/status-bar';
+----------- LOCATION 1.1 — body rule (BEFORE) --------------------------------
+body {
+  margin: 0;
+  font-family: 'Heebo', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #F8FAFC;
+}
 
-(`Style` is no longer used — restore helper removed. Avoid unused-import
-warning at build.)
+----------- LOCATION 1.1 — body rule (AFTER) ---------------------------------
+body {
+  margin: 0;
+  /* BATCH doc-scanner-safe-area-fix (2026-05-21) — respect the iOS
+     top safe-area. After the document scanner closes the Capacitor
+     WebView frame becomes full-screen (confirmed on device); this
+     keeps all content, incl. page headers, below the status bar
+     regardless of the WebView frame. */
+  padding-top: env(safe-area-inset-top, 0px);
+  font-family: 'Heebo', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #F8FAFC;
+}
 
------------ CHANGE 1.2 — REPLACE v3 restoreStatusBar HELPER ------------------
-Removed: the entire v3 `restoreStatusBar` async function (28 lines body
-+ v3 comment block of ~21 lines above it).
+----------- LOCATION 1.2 — NEW rule added directly after body ----------------
+/* BATCH doc-scanner-safe-area-fix (2026-05-21) — every page header
+   is a `sticky top-0` element; keep it below the iOS status bar
+   when the page is scrolled (a stuck top:0 header would otherwise
+   re-stick at viewport y=0, under the status bar, whenever the
+   WebView frame is full-screen). */
+.sticky.top-0 {
+  top: env(safe-area-inset-top, 0px);
+}
 
-Added: `showScannerDiagnostics` async helper that:
-  - Returns early off-native (no panel on web).
-  - measure() reads:
-      * window.innerHeight x innerWidth
-      * window.screen.height x width
-      * window.visualViewport.height / offsetTop / pageTop / scale
-      * document.documentElement.clientHeight
-      * env(safe-area-inset-top/bottom/left/right) via a hidden probe
-        div with padding-top:env(safe-area-inset-top) etc, read via
-        getComputedStyle (the only way JS can observe these values)
-      * StatusBar.getInfo() — overlays / visible / height / style
-    Joins to a multi-line string and console.log("[BRIKOPS DIAG]\n"+text).
-  - Builds a fixed-position green-on-black panel at top:120px, z-index
-    INT_MAX (2147483647), direction:ltr, with a "מדוד שוב" button
-    (re-runs measure() into the panel) and an "✕" close button.
-  - Auto-measures 3 times after open: immediate + 1000ms + 2500ms.
+Specificity note: `.sticky.top-0` (0,2,0) > Tailwind's `.top-0`
+(0,1,0). As an unlayered rule it also out-ranks Tailwind's layered
+utilities — wins regardless of source order.
 
------------ CHANGE 1.3 — REPLACE `finally` BLOCK -----------------------------
-Removed: v3 `runRestore` poll loop (10 lines: `let attempts = 0; …
-runRestore();`).
-
-Added:
-    } finally {
-      // BATCH doc-scanner-DIAGNOSTIC — show the measurement panel
-      // instead of attempting a fix.
-      showScannerDiagnostics();
-    }
-
-Everything else unchanged: the scan logic
-(DocumentScanner.scanDocument, convertFileSrc, fetch → Blob → File,
-toast.error), the button JSX, and the native-only return null.
-
------------ UNIFIED DIFF (1 file changed, +96/-45) ---------------------------
-diff --git a/frontend/src/components/DocumentScannerButton.jsx b/frontend/src/components/DocumentScannerButton.jsx
-index ce6877e..e76b08d 100644
---- a/frontend/src/components/DocumentScannerButton.jsx
-+++ b/frontend/src/components/DocumentScannerButton.jsx
-@@ -2,44 +2,102 @@ import React, { useCallback } from 'react';
- import { ScanLine } from 'lucide-react';
- import { DocumentScanner, ResponseType, ScanDocumentResponseStatus } from '@capgo/capacitor-document-scanner';
- import { Capacitor } from '@capacitor/core';
--import { StatusBar, Style } from '@capacitor/status-bar';
-+import { StatusBar } from '@capacitor/status-bar';
- import { toast } from 'sonner';
+----------- UNIFIED DIFF -----------------------------------------------------
+diff --git a/frontend/src/index.css b/frontend/src/index.css
+index 476c099..eb7fa74 100644
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -10,12 +10,27 @@
  
--// BATCH doc-scanner-statusbar-restore-v3 (2026-05-21)
--// CONFIRMED ON DEVICE: after the document scanner closes the iOS
--// header overlaps the status bar, and ROTATING the device fixes
--// it. Rotation makes Capacitor run resizeWebView() (via
--// viewWillTransition), which re-positions the WebView below the
--// status bar. The scanner's fullscreen VC dismissal leaves the
--// WebView frame stale and nothing runs resizeWebView().
--//
--// resizeWebView() only runs when setOverlaysWebView gets a
--// CHANGED value (it short-circuits otherwise — why v1/v2, which
--// only ever set `false`, did nothing). So TOGGLE true→false to
--// force it — the programmatic equivalent of a rotation.
--//
--// Timing: resizeWebView() reads the live status-bar height. Just
--// after the scanner dismisses the status bar can still be hidden
--// (height 0) — toggling then resizes to y=0 (still broken). So
--// wait until getInfo() reports height > 0. And because the
--// toggle runs WHILE the header is still broken (WebView already
--// at y=0), the `true` step is a visual no-op — only the `false`
--// step shows (the header snapping into place). No flicker.
--async function restoreStatusBar() {
--  if (!Capacitor.isNativePlatform()) return true;
--  try {
--    const info = await StatusBar.getInfo();
--    // Status bar not fully restored yet — let the caller retry.
--    if (!info || !info.height || info.height <= 0) return false;
--    await StatusBar.setOverlaysWebView({ overlay: true });
--    await StatusBar.setOverlaysWebView({ overlay: false });
--    await StatusBar.setStyle({ style: Style.Dark });
--    await StatusBar.setBackgroundColor({ color: '#0F172A' });
--    return true;
--  } catch (e) {
--    console.warn('restoreStatusBar failed:', e);
--    return true;
-+// BATCH doc-scanner-DIAGNOSTIC (2026-05-21) — TEMPORARY, NOT a fix.
-+// v1/v2/v3 all failed. This measures the real WebView state after
-+// the scanner closes and shows it in an on-screen panel, so we can
-+// see what is actually wrong (and what a device rotation changes).
-+// Reverted once the real cause is identified.
-+async function showScannerDiagnostics() {
-+  if (!Capacitor.isNativePlatform()) return;
-+  const ID = 'brikops-scanner-diag';
-+
-+  const readSafeAreaInsets = () => {
-+    const probe = document.createElement('div');
-+    probe.style.cssText =
-+      'position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;' +
-+      'padding-top:env(safe-area-inset-top);' +
-+      'padding-bottom:env(safe-area-inset-bottom);' +
-+      'padding-left:env(safe-area-inset-left);' +
-+      'padding-right:env(safe-area-inset-right);';
-+    document.body.appendChild(probe);
-+    const cs = getComputedStyle(probe);
-+    const v = {
-+      top: cs.paddingTop, bottom: cs.paddingBottom,
-+      left: cs.paddingLeft, right: cs.paddingRight,
-+    };
-+    probe.remove();
-+    return v;
-+  };
-+
-+  const measure = async () => {
-+    let info = {};
-+    try { info = await StatusBar.getInfo(); }
-+    catch (e) { info = { error: String(e) }; }
-+    const sa = readSafeAreaInsets();
-+    const vv = window.visualViewport || {};
-+    const text = [
-+      '=== SCANNER DIAG @ ' + new Date().toLocaleTimeString() + ' ===',
-+      'innerHeight x innerWidth: ' + window.innerHeight + ' x ' + window.innerWidth,
-+      'screen.height x width: ' + window.screen.height + ' x ' + window.screen.width,
-+      'visualViewport h/offsetTop/pageTop/scale: ' +
-+        vv.height + ' / ' + vv.offsetTop + ' / ' + vv.pageTop + ' / ' + vv.scale,
-+      'documentElement.clientHeight: ' + document.documentElement.clientHeight,
-+      'safe-area-inset top/bottom: ' + sa.top + ' / ' + sa.bottom,
-+      'safe-area-inset left/right: ' + sa.left + ' / ' + sa.right,
-+      'StatusBar.getInfo: overlays=' + info.overlays +
-+        ' visible=' + info.visible + ' height=' + info.height +
-+        ' style=' + info.style + (info.error ? ' ERR=' + info.error : ''),
-+    ].join('\n');
-+    console.log('[BRIKOPS DIAG]\n' + text);
-+    return text;
-+  };
-+
-+  let panel = document.getElementById(ID);
-+  if (!panel) {
-+    panel = document.createElement('div');
-+    panel.id = ID;
-+    panel.style.cssText =
-+      'position:fixed;top:120px;left:8px;right:8px;z-index:2147483647;' +
-+      'background:rgba(0,0,0,0.92);color:#00ff66;' +
-+      'font:12px/1.45 ui-monospace,Menlo,monospace;padding:10px;' +
-+      'border:2px solid #00ff66;border-radius:8px;white-space:pre-wrap;' +
-+      'direction:ltr;text-align:left;';
-+    const textEl = document.createElement('div');
-+    textEl.id = ID + '-text';
-+    panel.appendChild(textEl);
-+    const btnRow = document.createElement('div');
-+    btnRow.style.cssText = 'margin-top:8px;display:flex;gap:8px;';
-+    const btnMeasure = document.createElement('button');
-+    btnMeasure.textContent = 'מדוד שוב';
-+    btnMeasure.style.cssText =
-+      'flex:1;padding:8px;background:#00ff66;color:#000;border:0;' +
-+      'border-radius:6px;font-size:14px;font-weight:bold;';
-+    btnMeasure.onclick = async () => {
-+      const el = document.getElementById(ID + '-text');
-+      if (el) el.textContent = await measure();
-+    };
-+    const btnClose = document.createElement('button');
-+    btnClose.textContent = '✕';
-+    btnClose.style.cssText =
-+      'width:44px;padding:8px;background:#333;color:#fff;border:0;' +
-+      'border-radius:6px;font-size:14px;';
-+    btnClose.onclick = () => panel.remove();
-+    btnRow.appendChild(btnMeasure);
-+    btnRow.appendChild(btnClose);
-+    panel.appendChild(btnRow);
-+    document.body.appendChild(panel);
-   }
-+
-+  const render = async () => {
-+    const el = document.getElementById(ID + '-text');
-+    if (el) el.textContent = await measure();
-+  };
-+  render();
-+  setTimeout(render, 1000);
-+  setTimeout(render, 2500);
+ body {
+   margin: 0;
++  /* BATCH doc-scanner-safe-area-fix (2026-05-21) — respect the iOS
++     top safe-area. After the document scanner closes the Capacitor
++     WebView frame becomes full-screen (confirmed on device); this
++     keeps all content, incl. page headers, below the status bar
++     regardless of the WebView frame. */
++  padding-top: env(safe-area-inset-top, 0px);
+   font-family: 'Heebo', sans-serif;
+   -webkit-font-smoothing: antialiased;
+   -moz-osx-font-smoothing: grayscale;
+   background-color: #F8FAFC;
  }
  
- export default function DocumentScannerButton({ onScan, label = 'סרוק מסמך', className = '' }) {
-@@ -66,16 +124,9 @@ export default function DocumentScannerButton({ onScan, label = 'סרוק מסמ
-       console.error('DocumentScanner error:', err, 'stack:', err?.stack);
-       toast.error('שגיאה בסריקת המסמך');
-     } finally {
--      // Poll until the status bar is back (restoreStatusBar returns
--      // false while it is not), then force ONE WebView re-layout and
--      // stop. ~15 tries x 350ms covers a slow dismiss (Low Power
--      // Mode / Reduce Motion stretch the animation).
--      let attempts = 0;
--      const runRestore = async () => {
--        const done = await restoreStatusBar();
--        if (!done && ++attempts < 15) setTimeout(runRestore, 350);
--      };
--      runRestore();
-+      // BATCH doc-scanner-DIAGNOSTIC — show the measurement panel
-+      // instead of attempting a fix.
-+      showScannerDiagnostics();
-     }
-   }, [onScan]);
++/* BATCH doc-scanner-safe-area-fix (2026-05-21) — every page header
++   is a `sticky top-0` element; keep it below the iOS status bar
++   when the page is scrolled (a stuck top:0 header would otherwise
++   re-stick at viewport y=0, under the status bar, whenever the
++   WebView frame is full-screen). */
++.sticky.top-0 {
++  top: env(safe-area-inset-top, 0px);
++}
++
+ iframe[src*="emergent"],
+ div[class*="emergent"],
+ a[href*="emergent"],
 
-Diff stat: 1 file changed, 96 insertions(+), 45 deletions(-)
+Diff stat: 1 file changed, 15 insertions(+), 0 deletions(-)
 
 ================================================================================
 VERIFY OUTPUTS
 ================================================================================
-V1 — Build / parser (sandbox-safe; full `npm run build` times out at
-     120s in this sandbox — runs in CI via ./deploy.sh):
-       cd frontend && node -e "require('@babel/parser').parse(
-         require('fs').readFileSync('src/components/DocumentScannerButton.jsx','utf8'),
-         {sourceType:'module',plugins:['jsx']});
-         console.log('V1 babel parse OK')"
-     → V1 babel parse OK   ✓
-     (NO `Style` import remaining → no unused-import warning at build.)
+V1 — Build / parser (sandbox-safe; `npm run build` times out at 120s
+     in this sandbox — full build runs in CI via ./deploy.sh):
+       cd frontend && node -e "const p=require('postcss');
+         p.parse(require('fs').readFileSync('src/index.css','utf8'));
+         console.log('V1 postcss parse OK')"
+     → V1 postcss parse OK   ✓
 
-V2 — Static markers:
-       grep -n "showScannerDiagnostics\|restoreStatusBar\|Style" \
-         frontend/src/components/DocumentScannerButton.jsx
-     13:async function showScannerDiagnostics() {
-     26:    const cs = getComputedStyle(probe);
-     129:      showScannerDiagnostics();
-     → `showScannerDiagnostics` defined once (L13), called once in
-       finally (L129). NO `restoreStatusBar` remaining. NO `Style`
-       remaining (L26 hit is `getComputedStyle` — different identifier,
-       grep substring match, not the removed `Style` import).   ✓
+V2 — Static markers (exactly 2 hits expected):
+       grep -n "safe-area-inset-top" frontend/src/index.css
+     18:  padding-top: env(safe-area-inset-top, 0px);
+     31:  top: env(safe-area-inset-top, 0px);
+     → exactly 2 hits — body padding-top + .sticky.top-0 rule.   ✓
 
 ================================================================================
 DELIVERY / SHIP NOTES
 ================================================================================
-TEMPORARY DIAGNOSTIC — frontend only, Capgo OTA, to be reverted.
+FRONTEND-ONLY → Capgo OTA, no ./ship.sh.
 
 Order:
   1. git add + commit + push (staging)
   2. ./deploy.sh --stag    (CI smoke)
   3. ./deploy.sh --prod    (Capgo OTA)
-  4. V3 device check (Zahi, iPhone, COLD-RESTART the app TWICE so the
-     OTA bundle applies):
+  4. V3 device test (Zahi, iPhone, COLD-RESTART app TWICE so OTA
+     bundle applies):
        a) Open defect → "סרוק מסמך" → scan or cancel → return.
-       b) Green-on-black panel appears, auto-measures 3× (immediate +
-          1s + 2.5s). Wait ~3s. SCREENSHOT it — this is the BROKEN
-          state.
-       c) Rotate device to landscape and back to portrait (this fixes
-          the header).
-       d) Tap "מדוד שוב" in the panel. SCREENSHOT it — this is the
-          FIXED state.
-       e) Send both screenshots to chat. The delta identifies the
-          true cause.
+          EXPECT: page header sits BELOW the status bar; back arrow
+          fully tappable. (Green diag panel will still appear — fine,
+          from previous batch, harmless.)
+       b) The diag panel will still show innerHeight=932 — EXPECTED.
+          This fix does NOT change the WebView frame; it makes the
+          HEADER correct despite the frame. Verify by LOOKING at the
+          header, not by panel numbers.
+       c) Scroll up/down → sticky header stays below the status bar.
+       d) Repeat scan 2-3× → consistent.
+       e) Sanity: open app normally (no scanner) → header looks normal
+          (~5px gap above is expected and acceptable).
 
 DO NOT TOUCH (per spec):
-- frontend/capacitor.config.json — unchanged (StatusBar block stays).
-- frontend/src/App.js — unchanged.
-- frontend/src/components/NewDefectModal.js — unchanged.
-- Scan logic and button JSX — unchanged.
-- No native files. No new deps. FRONTEND-ONLY → Capgo OTA.
+- frontend/src/components/DocumentScannerButton.jsx — diagnostic panel
+  STAYS in place for cross-check. Separate cleanup batch later.
+- frontend/capacitor.config.json — unchanged.
+- frontend/src/App.js, App.css — unchanged.
+- existing env(safe-area-inset-bottom) usages — untouched.
+- No native files. No new deps.
 
 ================================================================================
 ROLLBACK
 ================================================================================
-git revert <commit-sha> -- frontend/src/components/DocumentScannerButton.jsx
-./deploy.sh --prod   (Capgo OTA). This diagnostic is meant to be
-reverted once the real cause is identified.
+git revert <commit-sha> -- frontend/src/index.css
+./deploy.sh --prod   (Capgo OTA).
 
 ================================================================================
 COMMIT MESSAGE (saved at .local/.commit_message)
 ================================================================================
-chore(scanner): temporary on-screen diagnostic panel (not a fix)
+fix(scanner): respect iOS top safe-area so the header survives the
+WebView frame going full-screen
 
-v1/v2/v3 all failed to fix the iOS status-bar overflow after the
-document scanner closes. This replaces the v3 restore logic with a
-diagnostic panel that measures the real WebView / viewport /
-safe-area / StatusBar state after the scanner closes, to identify
-the true cause. Temporary — to be reverted once the cause is known.
+On-device diagnostics showed that after the document scanner closes
+the Capacitor WebView frame becomes full-screen (innerHeight 932 vs
+the correct 878) — the whole web layout shifts up 54px and the page
+header lands under the status bar. StatusBar.getInfo() reports
+overlays=false throughout, so the StatusBar plugin sees no problem,
+which is why three plugin-based fixes did nothing.
+
+Fix at the layout layer instead: add `padding-top:
+env(safe-area-inset-top)` on body and `top: env(safe-area-inset-top)`
+on the `sticky top-0` page headers. env() reports the true inset
+(59px when the WebView is full-screen, ~5px when inset), so the
+header stays below the status bar regardless of the WebView frame.
 Frontend-only; ships via Capgo OTA.
 
 ================================================================================
