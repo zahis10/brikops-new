@@ -2,44 +2,102 @@ import React, { useCallback } from 'react';
 import { ScanLine } from 'lucide-react';
 import { DocumentScanner, ResponseType, ScanDocumentResponseStatus } from '@capgo/capacitor-document-scanner';
 import { Capacitor } from '@capacitor/core';
-import { StatusBar, Style } from '@capacitor/status-bar';
+import { StatusBar } from '@capacitor/status-bar';
 import { toast } from 'sonner';
 
-// BATCH doc-scanner-statusbar-restore-v3 (2026-05-21)
-// CONFIRMED ON DEVICE: after the document scanner closes the iOS
-// header overlaps the status bar, and ROTATING the device fixes
-// it. Rotation makes Capacitor run resizeWebView() (via
-// viewWillTransition), which re-positions the WebView below the
-// status bar. The scanner's fullscreen VC dismissal leaves the
-// WebView frame stale and nothing runs resizeWebView().
-//
-// resizeWebView() only runs when setOverlaysWebView gets a
-// CHANGED value (it short-circuits otherwise — why v1/v2, which
-// only ever set `false`, did nothing). So TOGGLE true→false to
-// force it — the programmatic equivalent of a rotation.
-//
-// Timing: resizeWebView() reads the live status-bar height. Just
-// after the scanner dismisses the status bar can still be hidden
-// (height 0) — toggling then resizes to y=0 (still broken). So
-// wait until getInfo() reports height > 0. And because the
-// toggle runs WHILE the header is still broken (WebView already
-// at y=0), the `true` step is a visual no-op — only the `false`
-// step shows (the header snapping into place). No flicker.
-async function restoreStatusBar() {
-  if (!Capacitor.isNativePlatform()) return true;
-  try {
-    const info = await StatusBar.getInfo();
-    // Status bar not fully restored yet — let the caller retry.
-    if (!info || !info.height || info.height <= 0) return false;
-    await StatusBar.setOverlaysWebView({ overlay: true });
-    await StatusBar.setOverlaysWebView({ overlay: false });
-    await StatusBar.setStyle({ style: Style.Dark });
-    await StatusBar.setBackgroundColor({ color: '#0F172A' });
-    return true;
-  } catch (e) {
-    console.warn('restoreStatusBar failed:', e);
-    return true;
+// BATCH doc-scanner-DIAGNOSTIC (2026-05-21) — TEMPORARY, NOT a fix.
+// v1/v2/v3 all failed. This measures the real WebView state after
+// the scanner closes and shows it in an on-screen panel, so we can
+// see what is actually wrong (and what a device rotation changes).
+// Reverted once the real cause is identified.
+async function showScannerDiagnostics() {
+  if (!Capacitor.isNativePlatform()) return;
+  const ID = 'brikops-scanner-diag';
+
+  const readSafeAreaInsets = () => {
+    const probe = document.createElement('div');
+    probe.style.cssText =
+      'position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;' +
+      'padding-top:env(safe-area-inset-top);' +
+      'padding-bottom:env(safe-area-inset-bottom);' +
+      'padding-left:env(safe-area-inset-left);' +
+      'padding-right:env(safe-area-inset-right);';
+    document.body.appendChild(probe);
+    const cs = getComputedStyle(probe);
+    const v = {
+      top: cs.paddingTop, bottom: cs.paddingBottom,
+      left: cs.paddingLeft, right: cs.paddingRight,
+    };
+    probe.remove();
+    return v;
+  };
+
+  const measure = async () => {
+    let info = {};
+    try { info = await StatusBar.getInfo(); }
+    catch (e) { info = { error: String(e) }; }
+    const sa = readSafeAreaInsets();
+    const vv = window.visualViewport || {};
+    const text = [
+      '=== SCANNER DIAG @ ' + new Date().toLocaleTimeString() + ' ===',
+      'innerHeight x innerWidth: ' + window.innerHeight + ' x ' + window.innerWidth,
+      'screen.height x width: ' + window.screen.height + ' x ' + window.screen.width,
+      'visualViewport h/offsetTop/pageTop/scale: ' +
+        vv.height + ' / ' + vv.offsetTop + ' / ' + vv.pageTop + ' / ' + vv.scale,
+      'documentElement.clientHeight: ' + document.documentElement.clientHeight,
+      'safe-area-inset top/bottom: ' + sa.top + ' / ' + sa.bottom,
+      'safe-area-inset left/right: ' + sa.left + ' / ' + sa.right,
+      'StatusBar.getInfo: overlays=' + info.overlays +
+        ' visible=' + info.visible + ' height=' + info.height +
+        ' style=' + info.style + (info.error ? ' ERR=' + info.error : ''),
+    ].join('\n');
+    console.log('[BRIKOPS DIAG]\n' + text);
+    return text;
+  };
+
+  let panel = document.getElementById(ID);
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = ID;
+    panel.style.cssText =
+      'position:fixed;top:120px;left:8px;right:8px;z-index:2147483647;' +
+      'background:rgba(0,0,0,0.92);color:#00ff66;' +
+      'font:12px/1.45 ui-monospace,Menlo,monospace;padding:10px;' +
+      'border:2px solid #00ff66;border-radius:8px;white-space:pre-wrap;' +
+      'direction:ltr;text-align:left;';
+    const textEl = document.createElement('div');
+    textEl.id = ID + '-text';
+    panel.appendChild(textEl);
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'margin-top:8px;display:flex;gap:8px;';
+    const btnMeasure = document.createElement('button');
+    btnMeasure.textContent = 'מדוד שוב';
+    btnMeasure.style.cssText =
+      'flex:1;padding:8px;background:#00ff66;color:#000;border:0;' +
+      'border-radius:6px;font-size:14px;font-weight:bold;';
+    btnMeasure.onclick = async () => {
+      const el = document.getElementById(ID + '-text');
+      if (el) el.textContent = await measure();
+    };
+    const btnClose = document.createElement('button');
+    btnClose.textContent = '✕';
+    btnClose.style.cssText =
+      'width:44px;padding:8px;background:#333;color:#fff;border:0;' +
+      'border-radius:6px;font-size:14px;';
+    btnClose.onclick = () => panel.remove();
+    btnRow.appendChild(btnMeasure);
+    btnRow.appendChild(btnClose);
+    panel.appendChild(btnRow);
+    document.body.appendChild(panel);
   }
+
+  const render = async () => {
+    const el = document.getElementById(ID + '-text');
+    if (el) el.textContent = await measure();
+  };
+  render();
+  setTimeout(render, 1000);
+  setTimeout(render, 2500);
 }
 
 export default function DocumentScannerButton({ onScan, label = 'סרוק מסמך', className = '' }) {
@@ -66,16 +124,9 @@ export default function DocumentScannerButton({ onScan, label = 'סרוק מסמ
       console.error('DocumentScanner error:', err, 'stack:', err?.stack);
       toast.error('שגיאה בסריקת המסמך');
     } finally {
-      // Poll until the status bar is back (restoreStatusBar returns
-      // false while it is not), then force ONE WebView re-layout and
-      // stop. ~15 tries x 350ms covers a slow dismiss (Low Power
-      // Mode / Reduce Motion stretch the animation).
-      let attempts = 0;
-      const runRestore = async () => {
-        const done = await restoreStatusBar();
-        if (!done && ++attempts < 15) setTimeout(runRestore, 350);
-      };
-      runRestore();
+      // BATCH doc-scanner-DIAGNOSTIC — show the measurement panel
+      // instead of attempting a fix.
+      showScannerDiagnostics();
     }
   }, [onScan]);
 

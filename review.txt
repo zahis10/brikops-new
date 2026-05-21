@@ -1,437 +1,335 @@
 ================================================================================
-BATCH doc-scanner-statusbar-restore-v3 — FULL BEFORE/AFTER
+BATCH doc-scanner-DIAGNOSTIC — measure real WebView state after scanner closes
 ================================================================================
 Date:           2026-05-21
 Branch:         staging
-Task:           #521 (v3 supersedes v1/v2 — both no-ops, confirmed on device)
-Rollback SHA:   28b3b36 (HEAD before edits this turn)
+Task:           #521 (DIAGNOSTIC — supersedes v3, replaces restore logic with
+                on-screen measurement panel)
+Rollback SHA:   31759d2 (HEAD before edits this turn)
 Files changed:  1
-                  PART 1 (OTA, deploy.sh):   frontend/src/components/DocumentScannerButton.jsx
+                  PART 1 (OTA, deploy.sh): frontend/src/components/DocumentScannerButton.jsx
 
-FRONTEND-ONLY → ships via ./deploy.sh --prod + Capgo OTA.
-NO native rebuild, NO ./ship.sh, NO capacitor.config change.
-The v2 capacitor.config.json StatusBar block stays as-is (keeps
-handleViewDidAppear from undoing the toggle).
+TEMPORARY DIAGNOSTIC — frontend only, Capgo OTA, to be reverted.
 
-VERIFY: V1 (babel parse) OK · V2 (grep v3 markers) OK · V3 (scanDocument scope) OK.
+NOT a fix. v1/v2/v3 (all StatusBar-plugin approaches) shipped and were
+confirmed broken on device. Rotating the device reliably fixes the
+header — v3 toggle (which calls the same resizeWebView) does not. So
+the real cause is NOT what we have been targeting. This batch
+REPLACES the v3 restore logic with a green-on-black on-screen panel
+that measures the live WebView / viewport / safe-area / StatusBar
+state after the scanner closes. Zahi screenshots BROKEN state, rotates
+device (fixes header), taps "מדוד שוב", screenshots FIXED state. The
+delta identifies the true cause. Real fix = separate batch after.
 
-================================================================================
-WHY v1 AND v2 BOTH FAILED — AND THE DECISIVE DIAGNOSTIC
-================================================================================
-Both v1 (#520) and v2 (#521) shipped and were tested on device — v2
-verified on a TestFlight native build that DOES contain the
-capacitor.config.json StatusBar block. Bug UNCHANGED: after the
-scanner closes, the iOS header overlaps the status bar; back arrow
-untappable.
-
-Decisive on-device test (Zahi, 2026-05-21): when the bug is showing,
-ROTATING the device to landscape and back to portrait FIXES it.
-
-Why rotation fixes it (from node_modules/@capacitor/status-bar/ios/):
-  - Rotation triggers iOS viewWillTransition, which Capacitor's
-    StatusBar plugin observes (handleViewWillTransition) and responds
-    to by calling resizeWebView() DIRECTLY.
-  - resizeWebView() recomputes the WebView frame: with overlay off it
-    sets webViewFrame.origin.y = statusBarHeight — i.e. positions the
-    WebView BELOW the status bar.
-  - So the bug is: the scanner's fullscreen VC dismissal leaves the
-    Capacitor WebView frame stale (y=0, under the status bar), and
-    nothing calls resizeWebView() to fix it.
-
-Why v1/v2 did nothing:
-       func setOverlaysWebView(_ overlay: Bool) {
-           if overlay == isOverlayingWebview { return }    // <-- bails
-           ...
-           resizeWebView()
-       }
-  v1/v2 only ever called setOverlaysWebView(false). The plugin's
-  internal isOverlayingWebview was already false → every call hit the
-  short-circuit and resizeWebView() never ran. v2's getInfo() guard
-  made it WORSE targeted: getInfo().overlays returns that same STATE
-  flag, which stays false even while the actual frame is visually
-  broken. Desynced.
-
-THE FIX (v3): TOGGLE
-  - setOverlaysWebView(true)  → value changes false→true → resizeWebView runs
-  - setOverlaysWebView(false) → value changes true→false → resizeWebView
-                                runs again, this time with overlay off →
-                                WebView frame set BELOW the status bar →
-                                header fixed.
-
-Two refinements:
-  1. TIMING — guard on getInfo().height > 0. resizeWebView() reads the
-     LIVE status-bar height; immediately after dismiss it can still be
-     0 (mid-transition), and toggling then resizes to y=0 (still
-     broken). Wait until the status bar is back.
-  2. NO FLICKER — toggle runs ONLY WHILE THE BUG IS ACTIVE (WebView
-     already at y=0). So setOverlaysWebView(true) is a visual no-op
-     (resizes to where it already is); only setOverlaysWebView(false)
-     is visible — the header snapping down into place. One clean
-     transition. Poll stops after first success → never toggles an
-     already-correct header.
+VERIFY: V1 (babel parse) OK · V2 (grep markers) OK.
 
 ================================================================================
 STEP 0 — PRE-FLIGHT (captured this turn)
 ================================================================================
-0.1 v2 helper present in DocumentScannerButton.jsx (lines 16/19/21/24/26/31
-    show getInfo + `if (info?.overlays)` + setOverlaysWebView(false),
-    finally has restoreStatusBar at 64 + 4 setTimeouts at 65-68 with
-    700/1500/3000/5000). ✓ matches expected v2 state
-0.2 import { StatusBar, Style } from '@capacitor/status-bar';  (L5) ✓
-0.3 scanDocument used ONLY in frontend/src/components/DocumentScannerButton.jsx ✓
+0.1 v3 helper present in DocumentScannerButton.jsx:
+       grep -n "restoreStatusBar\|runRestore\|setOverlaysWebView\|Style" \
+         frontend/src/components/DocumentScannerButton.jsx
+     5:import { StatusBar, Style } from '@capacitor/status-bar';
+     16:// resizeWebView() only runs when setOverlaysWebView gets a
+     28:async function restoreStatusBar() {
+     34:    await StatusBar.setOverlaysWebView({ overlay: true });
+     35:    await StatusBar.setOverlaysWebView({ overlay: false });
+     36:    await StatusBar.setStyle({ style: Style.Dark });
+     40:    console.warn('restoreStatusBar failed:', e);
+     69:    // Poll until the status bar is back (restoreStatusBar returns
+     74:    const runRestore = async () => {
+     75:      const done = await restoreStatusBar();
+     76:      if (!done && ++attempts < 15) setTimeout(runRestore, 350);
+     78:    runRestore();
+     → confirmed v3 pre-state.   ✓
+
+0.2 Scanner invoked only in DocumentScannerButton.jsx:
+       grep -rn "scanDocument" frontend/src/ | grep -v node_modules
+     frontend/src/components/DocumentScannerButton.jsx:48: const result = await DocumentScanner.scanDocument({
+     → one site.   ✓
 
 ================================================================================
-================================================================================
-FILE — frontend/src/components/DocumentScannerButton.jsx
-================================================================================
+FILE — frontend/src/components/DocumentScannerButton.jsx (DIAGNOSTIC, 144 lines)
 ================================================================================
 
------------ BEFORE (80 lines, v2) --------------------------------------------
-import React, { useCallback } from 'react';
-import { ScanLine } from 'lucide-react';
-import { DocumentScanner, ResponseType, ScanDocumentResponseStatus } from '@capgo/capacitor-document-scanner';
-import { Capacitor } from '@capacitor/core';
-import { StatusBar, Style } from '@capacitor/status-bar';
-import { toast } from 'sonner';
+----------- CHANGE 1.1 — IMPORT LINE -----------------------------------------
+- import { StatusBar, Style } from '@capacitor/status-bar';
++ import { StatusBar } from '@capacitor/status-bar';
 
-// BATCH doc-scanner-statusbar-restore-v2 (2026-05-21)
-// After the document scanner's fullscreen native VC closes,
-// Capacitor's bridge re-runs handleViewDidAppear, which
-// re-applies the StatusBar plugin CONFIG. The real fix is the
-// StatusBar block in capacitor.config.json (overlaysWebView
-// false). This helper is the OTA safety net for devices still
-// on the pre-config native build.
-//
-// Capacitor's setOverlaysWebView is a no-op when the value is
-// unchanged (it short-circuits before resizeWebView). So we
-// must only call it when the WebView is ACTUALLY overlaying —
-// getInfo() tells us. When it is, setOverlaysWebView(false) is
-// a real change and triggers the WebView re-layout.
-async function restoreStatusBar() {
-  if (!Capacitor.isNativePlatform()) return;
-  try {
-    const info = await StatusBar.getInfo();
-    if (info?.overlays) {
-      await StatusBar.setOverlaysWebView({ overlay: false });
-    }
-    await StatusBar.setStyle({ style: Style.Dark });
-    await StatusBar.setBackgroundColor({ color: '#0F172A' });
-  } catch (e) {
-    console.warn('restoreStatusBar failed:', e);
-  }
-}
+(`Style` is no longer used — restore helper removed. Avoid unused-import
+warning at build.)
 
-export default function DocumentScannerButton({ onScan, label = 'סרוק מסמך', className = '' }) {
-  const handleClick = useCallback(async () => {
-    try {
-      const result = await DocumentScanner.scanDocument({
-        responseType: ResponseType.ImageFilePath,
-      });
-      if (result?.status === ScanDocumentResponseStatus.Cancel) return;
-      const uris = result?.scannedImages || [];
-      if (uris.length === 0) return;
-      const files = await Promise.all(uris.map(async (uri, i) => {
-        // BATCH H.2a-hotfix-1 — convert file:// URI to WebView-readable URL.
-        // iOS WKWebView blocks direct fetch on file:// per security policy.
-        // Capacitor.convertFileSrc() returns a capacitor://... URL on iOS
-        // and a localhost-based URL on Android, both fetch-safe.
-        const webViewUrl = Capacitor.convertFileSrc(uri);
-        const resp = await fetch(webViewUrl);
-        const blob = await resp.blob();
-        return new File([blob], `scan-${Date.now()}-${i}.jpg`, { type: 'image/jpeg' });
-      }));
-      if (files.length > 0) onScan(files);
-    } catch (err) {
-      console.error('DocumentScanner error:', err, 'stack:', err?.stack);
-      toast.error('שגיאה בסריקת המסמך');
+----------- CHANGE 1.2 — REPLACE v3 restoreStatusBar HELPER ------------------
+Removed: the entire v3 `restoreStatusBar` async function (28 lines body
++ v3 comment block of ~21 lines above it).
+
+Added: `showScannerDiagnostics` async helper that:
+  - Returns early off-native (no panel on web).
+  - measure() reads:
+      * window.innerHeight x innerWidth
+      * window.screen.height x width
+      * window.visualViewport.height / offsetTop / pageTop / scale
+      * document.documentElement.clientHeight
+      * env(safe-area-inset-top/bottom/left/right) via a hidden probe
+        div with padding-top:env(safe-area-inset-top) etc, read via
+        getComputedStyle (the only way JS can observe these values)
+      * StatusBar.getInfo() — overlays / visible / height / style
+    Joins to a multi-line string and console.log("[BRIKOPS DIAG]\n"+text).
+  - Builds a fixed-position green-on-black panel at top:120px, z-index
+    INT_MAX (2147483647), direction:ltr, with a "מדוד שוב" button
+    (re-runs measure() into the panel) and an "✕" close button.
+  - Auto-measures 3 times after open: immediate + 1000ms + 2500ms.
+
+----------- CHANGE 1.3 — REPLACE `finally` BLOCK -----------------------------
+Removed: v3 `runRestore` poll loop (10 lines: `let attempts = 0; …
+runRestore();`).
+
+Added:
     } finally {
-      // Capacitor re-applies its StatusBar config at an
-      // unobservable moment after the native VC dismisses (~350ms+,
-      // longer under Low Power Mode / Reduce Motion). There is no
-      // JS event for it — poll a few times and correct whenever
-      // getInfo() reports the WebView is overlaying.
-      restoreStatusBar();
-      setTimeout(restoreStatusBar, 700);
-      setTimeout(restoreStatusBar, 1500);
-      setTimeout(restoreStatusBar, 3000);
-      setTimeout(restoreStatusBar, 5000);
+      // BATCH doc-scanner-DIAGNOSTIC — show the measurement panel
+      // instead of attempting a fix.
+      showScannerDiagnostics();
     }
-  }, [onScan]);
 
-  if (!Capacitor.isNativePlatform()) return null;
+Everything else unchanged: the scan logic
+(DocumentScanner.scanDocument, convertFileSrc, fetch → Blob → File,
+toast.error), the button JSX, and the native-only return null.
 
-  return (
-    <button type="button" onClick={handleClick} className={className}>
-      <ScanLine className="w-6 h-6 text-emerald-500" />
-      <span className="text-xs font-medium text-emerald-700">{label}</span>
-    </button>
-  );
-}
-
------------ AFTER (90 lines, v3) ---------------------------------------------
-import React, { useCallback } from 'react';
-import { ScanLine } from 'lucide-react';
-import { DocumentScanner, ResponseType, ScanDocumentResponseStatus } from '@capgo/capacitor-document-scanner';
-import { Capacitor } from '@capacitor/core';
-import { StatusBar, Style } from '@capacitor/status-bar';
-import { toast } from 'sonner';
-
-// BATCH doc-scanner-statusbar-restore-v3 (2026-05-21)
-// CONFIRMED ON DEVICE: after the document scanner closes the iOS
-// header overlaps the status bar, and ROTATING the device fixes
-// it. Rotation makes Capacitor run resizeWebView() (via
-// viewWillTransition), which re-positions the WebView below the
-// status bar. The scanner's fullscreen VC dismissal leaves the
-// WebView frame stale and nothing runs resizeWebView().
-//
-// resizeWebView() only runs when setOverlaysWebView gets a
-// CHANGED value (it short-circuits otherwise — why v1/v2, which
-// only ever set `false`, did nothing). So TOGGLE true→false to
-// force it — the programmatic equivalent of a rotation.
-//
-// Timing: resizeWebView() reads the live status-bar height. Just
-// after the scanner dismisses the status bar can still be hidden
-// (height 0) — toggling then resizes to y=0 (still broken). So
-// wait until getInfo() reports height > 0. And because the
-// toggle runs WHILE the header is still broken (WebView already
-// at y=0), the `true` step is a visual no-op — only the `false`
-// step shows (the header snapping into place). No flicker.
-async function restoreStatusBar() {
-  if (!Capacitor.isNativePlatform()) return true;
-  try {
-    const info = await StatusBar.getInfo();
-    // Status bar not fully restored yet — let the caller retry.
-    if (!info || !info.height || info.height <= 0) return false;
-    await StatusBar.setOverlaysWebView({ overlay: true });
-    await StatusBar.setOverlaysWebView({ overlay: false });
-    await StatusBar.setStyle({ style: Style.Dark });
-    await StatusBar.setBackgroundColor({ color: '#0F172A' });
-    return true;
-  } catch (e) {
-    console.warn('restoreStatusBar failed:', e);
-    return true;
-  }
-}
-
-export default function DocumentScannerButton({ onScan, label = 'סרוק מסמך', className = '' }) {
-  const handleClick = useCallback(async () => {
-    try {
-      const result = await DocumentScanner.scanDocument({
-        responseType: ResponseType.ImageFilePath,
-      });
-      if (result?.status === ScanDocumentResponseStatus.Cancel) return;
-      const uris = result?.scannedImages || [];
-      if (uris.length === 0) return;
-      const files = await Promise.all(uris.map(async (uri, i) => {
-        // BATCH H.2a-hotfix-1 — convert file:// URI to WebView-readable URL.
-        // iOS WKWebView blocks direct fetch on file:// per security policy.
-        // Capacitor.convertFileSrc() returns a capacitor://... URL on iOS
-        // and a localhost-based URL on Android, both fetch-safe.
-        const webViewUrl = Capacitor.convertFileSrc(uri);
-        const resp = await fetch(webViewUrl);
-        const blob = await resp.blob();
-        return new File([blob], `scan-${Date.now()}-${i}.jpg`, { type: 'image/jpeg' });
-      }));
-      if (files.length > 0) onScan(files);
-    } catch (err) {
-      console.error('DocumentScanner error:', err, 'stack:', err?.stack);
-      toast.error('שגיאה בסריקת המסמך');
-    } finally {
-      // Poll until the status bar is back (restoreStatusBar returns
-      // false while it is not), then force ONE WebView re-layout and
-      // stop. ~15 tries x 350ms covers a slow dismiss (Low Power
-      // Mode / Reduce Motion stretch the animation).
-      let attempts = 0;
-      const runRestore = async () => {
-        const done = await restoreStatusBar();
-        if (!done && ++attempts < 15) setTimeout(runRestore, 350);
-      };
-      runRestore();
-    }
-  }, [onScan]);
-
-  if (!Capacitor.isNativePlatform()) return null;
-
-  return (
-    <button type="button" onClick={handleClick} className={className}>
-      <ScanLine className="w-6 h-6 text-emerald-500" />
-      <span className="text-xs font-medium text-emerald-700">{label}</span>
-    </button>
-  );
-}
-
------------ UNIFIED DIFF -----------------------------------------------------
+----------- UNIFIED DIFF (1 file changed, +96/-45) ---------------------------
 diff --git a/frontend/src/components/DocumentScannerButton.jsx b/frontend/src/components/DocumentScannerButton.jsx
-index ac2fd2a..ce6877e 100644
+index ce6877e..e76b08d 100644
 --- a/frontend/src/components/DocumentScannerButton.jsx
 +++ b/frontend/src/components/DocumentScannerButton.jsx
-@@ -5,30 +5,40 @@ import { Capacitor } from '@capacitor/core';
- import { StatusBar, Style } from '@capacitor/status-bar';
+@@ -2,44 +2,102 @@ import React, { useCallback } from 'react';
+ import { ScanLine } from 'lucide-react';
+ import { DocumentScanner, ResponseType, ScanDocumentResponseStatus } from '@capgo/capacitor-document-scanner';
+ import { Capacitor } from '@capacitor/core';
+-import { StatusBar, Style } from '@capacitor/status-bar';
++import { StatusBar } from '@capacitor/status-bar';
  import { toast } from 'sonner';
  
--// BATCH doc-scanner-statusbar-restore-v2 (2026-05-21)
--// After the document scanner's fullscreen native VC closes,
--// Capacitor's bridge re-runs handleViewDidAppear, which
--// re-applies the StatusBar plugin CONFIG. The real fix is the
--// StatusBar block in capacitor.config.json (overlaysWebView
--// false). This helper is the OTA safety net for devices still
--// on the pre-config native build.
-+// BATCH doc-scanner-statusbar-restore-v3 (2026-05-21)
-+// CONFIRMED ON DEVICE: after the document scanner closes the iOS
-+// header overlaps the status bar, and ROTATING the device fixes
-+// it. Rotation makes Capacitor run resizeWebView() (via
-+// viewWillTransition), which re-positions the WebView below the
-+// status bar. The scanner's fullscreen VC dismissal leaves the
-+// WebView frame stale and nothing runs resizeWebView().
- //
--// Capacitor's setOverlaysWebView is a no-op when the value is
--// unchanged (it short-circuits before resizeWebView). So we
--// must only call it when the WebView is ACTUALLY overlaying —
--// getInfo() tells us. When it is, setOverlaysWebView(false) is
--// a real change and triggers the WebView re-layout.
-+// resizeWebView() only runs when setOverlaysWebView gets a
-+// CHANGED value (it short-circuits otherwise — why v1/v2, which
-+// only ever set `false`, did nothing). So TOGGLE true→false to
-+// force it — the programmatic equivalent of a rotation.
-+//
-+// Timing: resizeWebView() reads the live status-bar height. Just
-+// after the scanner dismisses the status bar can still be hidden
-+// (height 0) — toggling then resizes to y=0 (still broken). So
-+// wait until getInfo() reports height > 0. And because the
-+// toggle runs WHILE the header is still broken (WebView already
-+// at y=0), the `true` step is a visual no-op — only the `false`
-+// step shows (the header snapping into place). No flicker.
- async function restoreStatusBar() {
--  if (!Capacitor.isNativePlatform()) return;
-+  if (!Capacitor.isNativePlatform()) return true;
-   try {
-     const info = await StatusBar.getInfo();
--    if (info?.overlays) {
--      await StatusBar.setOverlaysWebView({ overlay: false });
--    }
-+    // Status bar not fully restored yet — let the caller retry.
-+    if (!info || !info.height || info.height <= 0) return false;
-+    await StatusBar.setOverlaysWebView({ overlay: true });
-+    await StatusBar.setOverlaysWebView({ overlay: false });
-     await StatusBar.setStyle({ style: Style.Dark });
-     await StatusBar.setBackgroundColor({ color: '#0F172A' });
-+    return true;
-   } catch (e) {
-     console.warn('restoreStatusBar failed:', e);
-+    return true;
+-// BATCH doc-scanner-statusbar-restore-v3 (2026-05-21)
+-// CONFIRMED ON DEVICE: after the document scanner closes the iOS
+-// header overlaps the status bar, and ROTATING the device fixes
+-// it. Rotation makes Capacitor run resizeWebView() (via
+-// viewWillTransition), which re-positions the WebView below the
+-// status bar. The scanner's fullscreen VC dismissal leaves the
+-// WebView frame stale and nothing runs resizeWebView().
+-//
+-// resizeWebView() only runs when setOverlaysWebView gets a
+-// CHANGED value (it short-circuits otherwise — why v1/v2, which
+-// only ever set `false`, did nothing). So TOGGLE true→false to
+-// force it — the programmatic equivalent of a rotation.
+-//
+-// Timing: resizeWebView() reads the live status-bar height. Just
+-// after the scanner dismisses the status bar can still be hidden
+-// (height 0) — toggling then resizes to y=0 (still broken). So
+-// wait until getInfo() reports height > 0. And because the
+-// toggle runs WHILE the header is still broken (WebView already
+-// at y=0), the `true` step is a visual no-op — only the `false`
+-// step shows (the header snapping into place). No flicker.
+-async function restoreStatusBar() {
+-  if (!Capacitor.isNativePlatform()) return true;
+-  try {
+-    const info = await StatusBar.getInfo();
+-    // Status bar not fully restored yet — let the caller retry.
+-    if (!info || !info.height || info.height <= 0) return false;
+-    await StatusBar.setOverlaysWebView({ overlay: true });
+-    await StatusBar.setOverlaysWebView({ overlay: false });
+-    await StatusBar.setStyle({ style: Style.Dark });
+-    await StatusBar.setBackgroundColor({ color: '#0F172A' });
+-    return true;
+-  } catch (e) {
+-    console.warn('restoreStatusBar failed:', e);
+-    return true;
++// BATCH doc-scanner-DIAGNOSTIC (2026-05-21) — TEMPORARY, NOT a fix.
++// v1/v2/v3 all failed. This measures the real WebView state after
++// the scanner closes and shows it in an on-screen panel, so we can
++// see what is actually wrong (and what a device rotation changes).
++// Reverted once the real cause is identified.
++async function showScannerDiagnostics() {
++  if (!Capacitor.isNativePlatform()) return;
++  const ID = 'brikops-scanner-diag';
++
++  const readSafeAreaInsets = () => {
++    const probe = document.createElement('div');
++    probe.style.cssText =
++      'position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;' +
++      'padding-top:env(safe-area-inset-top);' +
++      'padding-bottom:env(safe-area-inset-bottom);' +
++      'padding-left:env(safe-area-inset-left);' +
++      'padding-right:env(safe-area-inset-right);';
++    document.body.appendChild(probe);
++    const cs = getComputedStyle(probe);
++    const v = {
++      top: cs.paddingTop, bottom: cs.paddingBottom,
++      left: cs.paddingLeft, right: cs.paddingRight,
++    };
++    probe.remove();
++    return v;
++  };
++
++  const measure = async () => {
++    let info = {};
++    try { info = await StatusBar.getInfo(); }
++    catch (e) { info = { error: String(e) }; }
++    const sa = readSafeAreaInsets();
++    const vv = window.visualViewport || {};
++    const text = [
++      '=== SCANNER DIAG @ ' + new Date().toLocaleTimeString() + ' ===',
++      'innerHeight x innerWidth: ' + window.innerHeight + ' x ' + window.innerWidth,
++      'screen.height x width: ' + window.screen.height + ' x ' + window.screen.width,
++      'visualViewport h/offsetTop/pageTop/scale: ' +
++        vv.height + ' / ' + vv.offsetTop + ' / ' + vv.pageTop + ' / ' + vv.scale,
++      'documentElement.clientHeight: ' + document.documentElement.clientHeight,
++      'safe-area-inset top/bottom: ' + sa.top + ' / ' + sa.bottom,
++      'safe-area-inset left/right: ' + sa.left + ' / ' + sa.right,
++      'StatusBar.getInfo: overlays=' + info.overlays +
++        ' visible=' + info.visible + ' height=' + info.height +
++        ' style=' + info.style + (info.error ? ' ERR=' + info.error : ''),
++    ].join('\n');
++    console.log('[BRIKOPS DIAG]\n' + text);
++    return text;
++  };
++
++  let panel = document.getElementById(ID);
++  if (!panel) {
++    panel = document.createElement('div');
++    panel.id = ID;
++    panel.style.cssText =
++      'position:fixed;top:120px;left:8px;right:8px;z-index:2147483647;' +
++      'background:rgba(0,0,0,0.92);color:#00ff66;' +
++      'font:12px/1.45 ui-monospace,Menlo,monospace;padding:10px;' +
++      'border:2px solid #00ff66;border-radius:8px;white-space:pre-wrap;' +
++      'direction:ltr;text-align:left;';
++    const textEl = document.createElement('div');
++    textEl.id = ID + '-text';
++    panel.appendChild(textEl);
++    const btnRow = document.createElement('div');
++    btnRow.style.cssText = 'margin-top:8px;display:flex;gap:8px;';
++    const btnMeasure = document.createElement('button');
++    btnMeasure.textContent = 'מדוד שוב';
++    btnMeasure.style.cssText =
++      'flex:1;padding:8px;background:#00ff66;color:#000;border:0;' +
++      'border-radius:6px;font-size:14px;font-weight:bold;';
++    btnMeasure.onclick = async () => {
++      const el = document.getElementById(ID + '-text');
++      if (el) el.textContent = await measure();
++    };
++    const btnClose = document.createElement('button');
++    btnClose.textContent = '✕';
++    btnClose.style.cssText =
++      'width:44px;padding:8px;background:#333;color:#fff;border:0;' +
++      'border-radius:6px;font-size:14px;';
++    btnClose.onclick = () => panel.remove();
++    btnRow.appendChild(btnMeasure);
++    btnRow.appendChild(btnClose);
++    panel.appendChild(btnRow);
++    document.body.appendChild(panel);
    }
++
++  const render = async () => {
++    const el = document.getElementById(ID + '-text');
++    if (el) el.textContent = await measure();
++  };
++  render();
++  setTimeout(render, 1000);
++  setTimeout(render, 2500);
  }
  
-@@ -56,16 +66,16 @@ export default function DocumentScannerButton({ onScan, label = 'סרוק מסמ
+ export default function DocumentScannerButton({ onScan, label = 'סרוק מסמך', className = '' }) {
+@@ -66,16 +124,9 @@ export default function DocumentScannerButton({ onScan, label = 'סרוק מסמ
        console.error('DocumentScanner error:', err, 'stack:', err?.stack);
        toast.error('שגיאה בסריקת המסמך');
      } finally {
--      // Capacitor re-applies its StatusBar config at an
--      // unobservable moment after the native VC dismisses (~350ms+,
--      // longer under Low Power Mode / Reduce Motion). There is no
--      // JS event for it — poll a few times and correct whenever
--      // getInfo() reports the WebView is overlaying.
--      restoreStatusBar();
--      setTimeout(restoreStatusBar, 700);
--      setTimeout(restoreStatusBar, 1500);
--      setTimeout(restoreStatusBar, 3000);
--      setTimeout(restoreStatusBar, 5000);
-+      // Poll until the status bar is back (restoreStatusBar returns
-+      // false while it is not), then force ONE WebView re-layout and
-+      // stop. ~15 tries x 350ms covers a slow dismiss (Low Power
-+      // Mode / Reduce Motion stretch the animation).
-+      let attempts = 0;
-+      const runRestore = async () => {
-+        const done = await restoreStatusBar();
-+        if (!done && ++attempts < 15) setTimeout(runRestore, 350);
-+      };
-+      runRestore();
+-      // Poll until the status bar is back (restoreStatusBar returns
+-      // false while it is not), then force ONE WebView re-layout and
+-      // stop. ~15 tries x 350ms covers a slow dismiss (Low Power
+-      // Mode / Reduce Motion stretch the animation).
+-      let attempts = 0;
+-      const runRestore = async () => {
+-        const done = await restoreStatusBar();
+-        if (!done && ++attempts < 15) setTimeout(runRestore, 350);
+-      };
+-      runRestore();
++      // BATCH doc-scanner-DIAGNOSTIC — show the measurement panel
++      // instead of attempting a fix.
++      showScannerDiagnostics();
      }
    }, [onScan]);
 
-Diff stat: 1 file changed, 23 insertions(+), 13 deletions(-)
+Diff stat: 1 file changed, 96 insertions(+), 45 deletions(-)
 
 ================================================================================
 VERIFY OUTPUTS
 ================================================================================
-V1 — Build / lint (sandbox-safe parser check; full `npm run build`
-     times out at 120s in the sandbox — runs at ./deploy.sh --stag):
+V1 — Build / parser (sandbox-safe; full `npm run build` times out at
+     120s in this sandbox — runs in CI via ./deploy.sh):
        cd frontend && node -e "require('@babel/parser').parse(
          require('fs').readFileSync('src/components/DocumentScannerButton.jsx','utf8'),
          {sourceType:'module',plugins:['jsx']});
          console.log('V1 babel parse OK')"
      → V1 babel parse OK   ✓
+     (NO `Style` import remaining → no unused-import warning at build.)
 
-V2 — Helper is the v3 toggle version:
-       grep -n "getInfo\|info.height\|setOverlaysWebView\|runRestore\|attempts" \
+V2 — Static markers:
+       grep -n "showScannerDiagnostics\|restoreStatusBar\|Style" \
          frontend/src/components/DocumentScannerButton.jsx
-     16:// resizeWebView() only runs when setOverlaysWebView gets a
-     24:// wait until getInfo() reports height > 0. And because the
-     31:    const info = await StatusBar.getInfo();
-     33:    if (!info || !info.height || info.height <= 0) return false;
-     34:    await StatusBar.setOverlaysWebView({ overlay: true });
-     35:    await StatusBar.setOverlaysWebView({ overlay: false });
-     73:      let attempts = 0;
-     74:      const runRestore = async () => {
-     76:        if (!done && ++attempts < 15) setTimeout(runRestore, 350);
-     78:      runRestore();
-     → getInfo + `info.height` guard + setOverlaysWebView(true) +
-       setOverlaysWebView(false) + runRestore poll (max 15 × 350ms).
-       NO `if (info?.overlays)` guard. NO 700/1500/3000/5000 setTimeouts.   ✓
-
-V3 — Scanner still invoked only in DocumentScannerButton.jsx:
-       grep -rn "scanDocument" frontend/src/ | grep -v node_modules
-     frontend/src/components/DocumentScannerButton.jsx:48:      const result = await DocumentScanner.scanDocument({
-     → only one site.   ✓
+     13:async function showScannerDiagnostics() {
+     26:    const cs = getComputedStyle(probe);
+     129:      showScannerDiagnostics();
+     → `showScannerDiagnostics` defined once (L13), called once in
+       finally (L129). NO `restoreStatusBar` remaining. NO `Style`
+       remaining (L26 hit is `getComputedStyle` — different identifier,
+       grep substring match, not the removed `Style` import).   ✓
 
 ================================================================================
 DELIVERY / SHIP NOTES
 ================================================================================
-FRONTEND-ONLY → Capgo OTA. No native rebuild needed.
+TEMPORARY DIAGNOSTIC — frontend only, Capgo OTA, to be reverted.
 
 Order:
   1. git add + commit + push (staging)
-  2. ./deploy.sh --stag       (CI smoke)
-  3. ./deploy.sh --prod       (PART 1 → Capgo OTA)
-  4. V4 device tests on iPhone after cold-restarting the app twice so
-     the OTA bundle applies:
-       a) Open defect → "סרוק מסמך" → scan → return → header drops to
-          correct position within ~1-2s (one clean snap, no flicker)
-       b) Same flow, but CANCEL the scanner → same.
-       c) Repeat 3× → consistent, no drift, no flicker on already-correct
-          header.
-       d) Low Power Mode ON → repeat (a) → still fixes.
-       e) Sanity: regular camera + gallery picker unchanged.
+  2. ./deploy.sh --stag    (CI smoke)
+  3. ./deploy.sh --prod    (Capgo OTA)
+  4. V3 device check (Zahi, iPhone, COLD-RESTART the app TWICE so the
+     OTA bundle applies):
+       a) Open defect → "סרוק מסמך" → scan or cancel → return.
+       b) Green-on-black panel appears, auto-measures 3× (immediate +
+          1s + 2.5s). Wait ~3s. SCREENSHOT it — this is the BROKEN
+          state.
+       c) Rotate device to landscape and back to portrait (this fixes
+          the header).
+       d) Tap "מדוד שוב" in the panel. SCREENSHOT it — this is the
+          FIXED state.
+       e) Send both screenshots to chat. The delta identifies the
+          true cause.
 
-The v2 capacitor.config.json StatusBar block stays as-is — do NOT
-remove it. It keeps Capacitor's handleViewDidAppear from re-applying a
-bad default, which is what prevents this toggle from being undone.
+DO NOT TOUCH (per spec):
+- frontend/capacitor.config.json — unchanged (StatusBar block stays).
+- frontend/src/App.js — unchanged.
+- frontend/src/components/NewDefectModal.js — unchanged.
+- Scan logic and button JSX — unchanged.
+- No native files. No new deps. FRONTEND-ONLY → Capgo OTA.
 
 ================================================================================
 ROLLBACK
 ================================================================================
-git revert <sha of .jsx> → ./deploy.sh --prod → Capgo OTA.
+git revert <commit-sha> -- frontend/src/components/DocumentScannerButton.jsx
+./deploy.sh --prod   (Capgo OTA). This diagnostic is meant to be
+reverted once the real cause is identified.
 
 ================================================================================
 COMMIT MESSAGE (saved at .local/.commit_message)
 ================================================================================
-fix(scanner): force WebView re-layout via overlay toggle after scan
+chore(scanner): temporary on-screen diagnostic panel (not a fix)
 
-v1/v2 set overlaysWebView(false) but Capacitor short-circuits when the
-value is unchanged, so resizeWebView never ran. Rotating the device on
-a stuck install fixes it — proving resizeWebView is what we need.
-
-v3 forces resizeWebView the same way: toggle setOverlaysWebView true→
-false in the scanner's finally. The true step is a visual no-op
-(WebView already at y=0); the false step is what snaps the header
-into place. Guarded by StatusBar.getInfo().height > 0 so the toggle
-only fires once the status bar is back, and polled (15 × 350ms) with
-the loop stopping after the first success — no flicker, no repeat
-toggles on an already-correct header.
-
-Frontend-only — ships via ./deploy.sh --prod + Capgo OTA. No native
-rebuild. capacitor.config.json StatusBar block from v2 stays as-is
-(it keeps handleViewDidAppear from undoing the toggle).
+v1/v2/v3 all failed to fix the iOS status-bar overflow after the
+document scanner closes. This replaces the v3 restore logic with a
+diagnostic panel that measures the real WebView / viewport /
+safe-area / StatusBar state after the scanner closes, to identify
+the true cause. Temporary — to be reverted once the cause is known.
+Frontend-only; ships via Capgo OTA.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
