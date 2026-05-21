@@ -1557,6 +1557,21 @@ async def assign_project_qc_template(project_id: str, request: Request, user: di
     )
     logger.info(f"[QC-TPL] Assigned template={template_version_id} family={family_id} to project={project_id} by user={user['id']}")
 
+    # Auto-prune pending orphan qc_items left if the project just switched
+    # to a template with fewer/different items. Completed work (pass/fail)
+    # is kept as history. Best-effort — a prune failure must never break
+    # the assignment. Systemic fix 2026-05-21.
+    pruned_count = 0
+    try:
+        from contractor_ops.qc_router import _prune_orphan_qc_items
+        pruned_count = await _prune_orphan_qc_items(db, project_id, actor=user)
+        if pruned_count:
+            logger.info(f"[QC-TPL] Auto-pruned {pruned_count} pending orphan qc_items "
+                        f"for project={project_id} after template assignment")
+    except Exception as e:
+        logger.warning(f"[QC-TPL] orphan prune failed for project={project_id} "
+                       f"after template assignment: {e}")
+
     return {
         "success": True,
         "project_id": project_id,
@@ -1565,6 +1580,7 @@ async def assign_project_qc_template(project_id: str, request: Request, user: di
         "template_name": tpl["name"],
         "template_version": tpl["version"],
         "warning": warning,
+        "orphans_pruned": pruned_count,
     }
 
 

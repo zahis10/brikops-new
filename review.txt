@@ -1,288 +1,295 @@
 ================================================================================
-BATCH cleanup-orphan-qc-items — REVIEW (+ --show-template addendum)
+BATCH auto-prune-orphan-qc-items — REVIEW (Task #519)
 ================================================================================
-Date:     2026-05-20  (addendum: --show-template flag added same day)
+Date:     2026-05-21
 Branch:   staging
-Severity: MED (data hygiene)
-Type:     ONE-OFF DATA MIGRATION SCRIPT
-Standing: STOP at script + V1 + review.txt + commit_message + present_asset.
+Severity: MED (data hygiene — prevents recurrence of the 850-orphan mess)
+Type:     Backend logic change (no frontend, no native)
+Standing: STOP at edits + V1 + V2 + review.txt + commit_message + present_asset.
           NO commit, NO restart, NO deploy, NO mark_task_complete. Zahi
-          runs git + V2 (report) + V2b (show-template) + reviews +
-          V4 (delete) + V5 (verify).
-
-ADDENDUM — --show-template flag
-  New read-only mode prints the CURRENT resolved template (same logic
-  `--delete` uses to identify orphans) so Zahi can see exactly which
-  items will survive cleanup BEFORE running --delete. Output format:
-
-    === CURRENT TEMPLATE — project <id> (<name>) ===
-    Template id: <tid>  source: project_pinned|default_active  family: <fid>  version: <v>
-    Stage <stage_id> (<stage_title>):
-      - <item_id> "<item title>"
-      - <item_id> "<item title>"
-    Stage <stage_id> (<stage_title>):
-      ...
-
-  Mutually exclusive with --report / --delete. No qc_items scan, no
-  delete, exit 0. Honors --project filter.
-
-  Why this matters: --delete decides orphan-status by comparing each
-  qc_item against the SAME `resolve_current_template` output. If Zahi
-  can see that output ahead of time, the diff between "what stays"
-  and "what goes" is explicit — no surprises during V4.
+          handles git + deploy + V3-V5.
 
 ================================================================================
 EXECUTIVE SUMMARY
 ================================================================================
 
-When a QC template stage's item list is edited DOWN, existing qc_runs
-keep their qc_items for the now-removed items. `_backfill_missing_items`
-ADDS missing items but never PRUNES removed ones. Consequence: floor
-view (post the earlier floor-view-items-per-unit-bug fix) now correctly
-shows each run's REAL item count — but units whose runs were created on
-the old (larger) template show a different denominator than units whose
-runs were created on the current (smaller) template.
+When a QC template is edited DOWN (items removed from a stage), existing
+runs kept qc_items for the removed items forever — `_backfill_missing_items`
+ADDS template items to runs but nothing REMOVED ones the template no
+longer has. This caused 850 orphan qc_items in project מגרש 810 (cleaned
+2026-05-21 via `scripts/cleanup_orphan_qc_items.py`).
 
-Example from prod (project d41ca1d0, building "10", floor "קומה -1",
-stage_tiling):
-  - Apartments 4, 5, 6, 7 → 1 item (current template — correct)
-  - Apartment 3            → 9 items (8 orphans: tl_1…tl_8)
-
-The fix shipped earlier today is correct. The DATA needs a one-off clean.
-
-This batch adds a standalone migration `scripts/cleanup_orphan_qc_items.py`
-with --report (dry-run, default) and --delete modes. No app code change.
+This batch is the SYSTEMIC fix: when a template change is persisted, the
+backend automatically prunes the now-orphaned PENDING qc_items from every
+affected project's runs. Items with recorded work (status pass/fail/etc.)
+are KEPT as history. The system never silently discards contractor work.
 
 ================================================================================
-STEP 0 — PRE-FLIGHT (5/5 PASS)
+STEP 0 — PRE-FLIGHT (6/6 PASS)
 ================================================================================
 
-0.1 ✓ qc_items + qc_runs fields confirmed
-    qc_items: run_id, stage_id, item_id, status
-              (insert L485, L517, L906; find L488, L520, L915 in qc_router.py)
-    qc_runs:  id, project_id, building_id, floor_id, unit_id,
-              template_version_id (insert L904; find L706, L738, L865)
+0.1 ✓ ALL template-mutation endpoints enumerated + classified
+    Found via `rg 'qc_templates\.(insert|update|replace|find_one_and)'`
+    + `rg 'qc_template_version_id'` + `rg '@router\.(post|put|patch).*template'`:
 
-0.2 ✓ Template resolution chain documented
-    `_get_template` (qc_router.py:298) fallback order:
-      1. run.template_version_id → qc_templates.find_one({id: vid})
-         (skipped here — we resolve per PROJECT, not per run, because
-          orphans are determined by the CURRENT project template)
-      2. projects.qc_template_version_id → qc_templates.find_one({id: vid})
-      3. qc_templates.find_one({is_default: True, is_active: True})
-      4. FLOOR_TEMPLATE (hardcoded constant)
+    a) admin_router.py:1055 PUT /admin/qc/templates/{family_id}/archive
+       → archive flag only, no item removal; refuses archive when active
+         projects reference it. NO PRUNE NEEDED.
 
-    Script mirrors steps 2 → 3 verbatim. Skips step 4 deliberately:
-    if a project has NEITHER a pinned version NOR a default-active
-    template, the script REFUSES to declare anything an orphan for
-    that project. Safer than guessing against a hardcoded constant
-    that may differ from what the user's app actually serves.
+    b) admin_router.py:1096 POST /admin/qc/templates
+       → CREATE new family; brand-new family_id, no project pinned yet.
+         NO PRUNE NEEDED.
 
-    The mirror is documented inline at the top of `resolve_current_template`
-    with a "keep in sync MANUALLY if _get_template changes" note.
+    c) admin_router.py:1151 PUT /admin/qc/templates/{template_id}
+       → CRITICAL. Creates new version (L1287), deactivates old versions
+         (L1289-92), auto-repoints ALL projects with this family_id to
+         the new version (L1302-05). This is the 850-orphan culprit.
+         **PRUNE WIRED** (LOC 2 below) — QC branch only; handover branch
+         skipped (handover items live in a separate collection).
 
-    DECISION RATIONALE for not importing _get_template:
-    Importing from contractor_ops.qc_router transitively pulls in
-    motor, FastAPI deps, settings, and triggers module-level side
-    effects from .router (get_db at import). A standalone migration
-    using sync pymongo is much cleaner and safer to run from a plain
-    terminal. The mirrored function is ~10 LOC — drift risk is low
-    and explicitly flagged.
+    d) admin_router.py:1314 POST /admin/qc/templates/{template_id}/clone
+       → Creates NEW family_id; doesn't repoint any project. NO PRUNE.
 
-0.3 ✓ Mongo connection helper located
-    backend/server.py:7  from motor.motor_asyncio import AsyncIOMotorClient
-    backend/server.py:45 client = AsyncIOMotorClient(MONGO_URL, ...)
-    backend/server.py:46 db = client[DB_NAME]
-    Env: MONGO_URL + DB_NAME (workflow sets MONGO_URL=mongodb://localhost:27017
-    and DB_NAME=contractor_ops).
+    e) projects_router.py:1528 PUT /projects/{project_id}/qc-template
+       → Repoints one project to an existing template version. If the
+         new template has fewer items, orphans appear in this one
+         project's runs. **PRUNE WIRED** (LOC 3 below).
 
-    Script uses sync `pymongo.MongoClient(MONGO_URL)[DB_NAME]` —
-    same connection string, same DB, no event loop, no FastAPI deps.
-    Mirrors the pattern of the existing `scripts/health_check_orphans.py`
-    (line 19, 26-30).
+    f) projects_router.py:236 POST /projects (create)
+       → Sets initial template on a fresh project with no qc_runs yet.
+         NO PRUNE NEEDED.
 
-0.4 ✓ Standalone confirmed
-    `--help` smoke test runs without importing anything from the app
-    package (argparse only resolves; pymongo only connects on actual
-    scan). Will run from Replit terminal exactly like
-    `health_check_orphans.py` does.
+    All endpoints documented. No silent path remains.
 
-0.5 ✓ NO apartment hard-coded
-    Script iterates every qc_run in scope (--project optional;
-    default = ALL). The 2026-05-18 vs 2026-05-20 drift between
-    apartment 6 (was orphan) and apartment 3 (now orphan) is
-    irrelevant — the report is the authoritative source. Zahi runs V2
-    on the live DB and pastes the output back.
+0.2 ✓ Status vocab + prune rule
+    `rg '"status"\s*:\s*"' qc_router.py`: observed item-level values =
+    `pending`, `pass`, `fail`. Stage-level uses `pending_review`. Some
+    legacy items may have `not_started` or be missing the field.
+
+    Conservative rule (matches the 2026-05-21 cleanup):
+      `_PRUNE_OK_STATUSES = {"pending", "", None}` — prune ONLY these.
+    Anything else (pass, fail, not_started, pending_review, …) is KEPT.
+    Defined as module-level constant in qc_router.py.
+
+0.3 ✓ Field names confirmed
+    qc_items unique key: `id` (UUID str, L94/472/504/881/1045/1089).
+    Delete query uses `{"id": {"$in": batch}}` — NOT `_id`.
+    qc_runs: `id`, `project_id` (L706/738/865/904).
+
+0.4 ✓ Audit helper
+    `_audit(entity_type, entity_id, action, actor_id, payload)` is
+    defined in router.py:471 and imported into qc_router.py:10.
+    Helper calls it as:
+      `await _audit("qc_template", project_id, "orphan_items_pruned",
+                    actor_id, {project_id, deleted_count,
+                    kept_completed_count, affected_pairs})`
+    Wrapped in try/except — audit failure does NOT block the prune.
+
+0.5 ✓ Resolver reuse
+    Helper calls `await _get_template(db, project_id=project_id)` —
+    same function `qc_router.py:298` the live floor/unit endpoints
+    use. Cannot drift from app behavior.
+
+0.6 ✓ Performance measured on live DB
+    Top 3 projects by qc_runs:
+      project                              runs   qc_items
+      c3e18b07-a7d8-411e-80f9-95028b15788a  18    824
+      c2c4d89d-2e78-4e6d-89dc-35113a6aad08   3    165
+      401e1382-6878-4581-abca-279d18074aac   3    165
+    Max = 824 qc_items per project — WELL under the 10k synchronous-OK
+    threshold. Synchronous prune is fine; no FastAPI BackgroundTask
+    needed. The PUT /admin/qc/templates/{id} call iterates all projects
+    in the family (typically 1-3), each does one find + batched
+    delete_many on ≤824 items. Response latency impact: negligible.
 
 ================================================================================
-SCRIPT — scripts/cleanup_orphan_qc_items.py (~260 LOC)
+EDITS (3 LOCATIONS)
 ================================================================================
 
-CLI:
-  --report (default)         dry run, prints, deletes nothing
-  --delete                   destructive — removes pending orphans by default
-  --show-template            read-only — prints resolved template per project
-                             (no scan, no delete) — mutually exclusive with
-                             --report / --delete
-  --include-completed        also delete orphans with status pass/fail
-                             (DATA LOSS — DISCARDS contractor work)
-  --project <id>             scope to one project (default: ALL)
-  --help                     usage
+LOCATION 1 — backend/contractor_ops/qc_router.py @ ~L529-617 (new)
+  Added next to `_backfill_missing_items` (L494) as its conceptual
+  sibling (backfill ADDS, prune REMOVES).
 
-Flow:
-  1. Parse args, validate MONGO_URL/MONGODB_URI from env, open
-     `MongoClient(...)[DB_NAME]`.
-  2. For each project in scope:
-       a. Resolve current template via `resolve_current_template`
-          (mirrors `_get_template` chain steps 2-3). Projects with no
-          resolvable template are SKIPPED with a stderr warning.
-       b. Build `valid_pairs` = set of (stage_id, item_id) tuples
-          present in the resolved template.
-       c. Fetch all qc_runs for the project, prefetch buildings,
-          floors, units (one query each) for name lookup.
-       d. Stream qc_items for those runs. Any (stage_id, item_id) NOT
-          in valid_pairs is an orphan. Classify reason as
-          `stage_removed` vs `item_removed`.
-  3. Print report grouped Project > Building > Floor > Unit > run/stage:
-       - Total / pending / completed counts
-       - ⚠️ banner when completed > 0 explaining the
-         --include-completed flag
-       - Per-orphan line: `item_id [status] [reason] → ORPHAN [(work done)]`
-  4. If --report (default): exit 0.
-  5. If --delete:
-       a. Partition orphans into to_delete (pending OR --include-completed)
-          and skipped_completed.
-       b. **Dump a JSON BACKUP** of every doc about to be removed to
-          `scripts/orphan_qc_items_backup_<UTC-ts>.json` (full doc +
-          context). Print the path.
-       c. `delete_many({"_id": {"$in": batch}})` in batches of 500.
-       d. Print final summary: `deleted=N, skipped_completed=M, backup=<path>`.
-       e. On any exception during delete, print backup path on stderr
-          and exit 1 — manual restore from backup is possible.
+  - `_PRUNE_OK_STATUSES = {"pending", "", None}` module constant.
+  - `async def _prune_orphan_qc_items(db, project_id, actor=None) -> int`:
+      1. Resolves current template via `_get_template`.
+      2. Builds `valid_pairs = {(stage_id, item_id), ...}`.
+      3. Walks all qc_items for the project's runs (single find,
+         projected to id/stage_id/item_id/status).
+      4. Collects orphan_ids when pair ∉ valid AND status ∈ PRUNE_OK.
+      5. Counts skipped_completed (orphans with work — kept as history).
+      6. delete_many in batches of 500 by `id`.
+      7. await _audit("qc_template", project_id, "orphan_items_pruned",
+                       actor_id, {...}) — wrapped in try/except.
+      8. INFO log of pruned/kept counts.
+      9. Returns deleted count. Idempotent (re-run returns 0).
+
+LOCATION 2 — backend/contractor_ops/admin_router.py @ ~L1304-1333
+  PUT /admin/qc/templates/{template_id} — QC branch (else clause).
+  AFTER the new version is inserted (L1287), old versions deactivated
+  (L1289), and projects auto-propagated (L1302-05):
+
+  - Captures `repinned_project_ids` BEFORE update_many (lists projects
+    whose qc_template_family_id == family_id — i.e. all that WILL be
+    repointed; update_many would still return modified_count but not
+    the ids, so we collect first).
+  - Local import `from contractor_ops.qc_router import _prune_orphan_qc_items`
+    (avoids a top-level circular-import risk between admin_router and
+    qc_router which both import from contractor_ops.router).
+  - For each project: try/except wrap, call helper, accumulate count.
+  - Log total if any pruned.
+  - Handover branch (L1294) DELIBERATELY skipped — handover items live
+    in a separate collection (out of scope per spec).
+
+LOCATION 3 — backend/contractor_ops/projects_router.py @ ~L1563-1576
+  PUT /projects/{project_id}/qc-template.
+  AFTER `qc_template_version_id` is set on the project (L1554):
+
+  - Local import (same circular-safety reason).
+  - One call: `pruned_count = await _prune_orphan_qc_items(db,
+              project_id, actor=user)`.
+  - Try/except wrap.
+  - Returns extra field `orphans_pruned` in the response body so the
+    admin UI / API consumer can show "Pruned N stale slots." (no
+    frontend change required to keep working — this is additive).
 
 ================================================================================
 DO NOT TOUCH — verified clean
 ================================================================================
 
-✓ backend/contractor_ops/*.py app code — no endpoint changes
-✓ `_backfill_missing_items` — not modified (systemic prune-on-load fix
-  is OUT-OF-SCOPE per TODO at end of spec; needs separate Zahi sign-off)
-✓ qc_runs, qc_templates, qc_stages collections — script reads only
-✓ Floor-view fix shipped earlier today — unrelated, untouched
-✓ Frontend — no changes
-✓ No env var changes, no DB migration to app, no new dependencies
-  (pymongo already in backend deps; script imports stdlib + pymongo)
+✓ `_backfill_missing_items` — unchanged (keeps ADDING missing items).
+✓ `_get_template` — unchanged, only called by the new helper.
+✓ `_resolve_run_template_with_upgrade` — unchanged.
+✓ Completed qc_items (status pass/fail/not_started/pending_review/…)
+  — structurally protected: the helper only puts an id in the delete
+  list when status ∈ {"pending", "", None}.
+✓ qc_runs, qc_templates collections — not modified by the new code.
+✓ scripts/cleanup_orphan_qc_items.py — kept as-is for future manual use.
+✓ Frontend — no changes.
+✓ Floor-view fix (2026-05-20) — unrelated, untouched.
+✓ Handover template branch (admin_router L1294) — skipped (separate
+  collection, out of scope).
+✓ POST /admin/qc/templates (create) — no prune call (no runs yet).
+✓ POST /admin/qc/templates/{id}/clone — no prune call (new family, no
+  project repoint).
+✓ PUT /admin/qc/templates/{family_id}/archive — no prune call (flag
+  flip only, no item drift; archive even blocks if active projects).
 
 ================================================================================
 VERIFY GATES
 ================================================================================
 
-V1 — Script compiles + --help ✓
-  $ python -m py_compile scripts/cleanup_orphan_qc_items.py    → exit=0
-  $ python scripts/cleanup_orphan_qc_items.py --help           → exit=0
-  Help output shows: --project, --report, --delete, --show-template,
-  --include-completed. ✓ Confirmed in latest V1b run.
+V1 — Python compiles ✓
+  $ cd backend && python -m py_compile contractor_ops/qc_router.py \
+        contractor_ops/admin_router.py contractor_ops/projects_router.py
+  exit=0, no output.
 
-V2 (Zahi, Replit terminal) — Report for the affected project
-  $ python scripts/cleanup_orphan_qc_items.py --report --project d41ca1d0-acbe-4b73-994f-17462e6cbc36
-  Expected: lists apartment 3 (and any others) with orphan tl_1…tl_8
-  under stage "ריצוף דירה". Deletes nothing.
-  Zahi pastes output back to chat for review.
+V2 — Helper present + wired ✓
+  $ grep -n "_prune_orphan_qc_items" backend/contractor_ops/qc_router.py \
+        backend/contractor_ops/admin_router.py \
+        backend/contractor_ops/projects_router.py
+  Result:
+    qc_router.py:537   async def _prune_orphan_qc_items(...)
+    admin_router.py:1323   from contractor_ops.qc_router import _prune_orphan_qc_items
+    admin_router.py:1327   total_pruned += await _prune_orphan_qc_items(...)
+    projects_router.py:1569   from contractor_ops.qc_router import _prune_orphan_qc_items
+    projects_router.py:1570   pruned_count = await _prune_orphan_qc_items(...)
+  ≥2 matches ✓ (1 def + 4 call/import references).
 
-V2b (Zahi, optional but RECOMMENDED before V4) — Show current template
-  $ python scripts/cleanup_orphan_qc_items.py --show-template --project d41ca1d0-acbe-4b73-994f-17462e6cbc36
-  Expected: prints every stage + every item_id/title the CURRENT
-  resolved template defines for that project. For floor "קומה -1" /
-  stage_tiling, the surviving item should be tl_9 ("סיום דירה — ריצוף").
-  Anything NOT in this list AND in qc_items is what --delete will remove.
+V3 (Zahi, post-deploy) — Staging functional test
+  a. Pick a project with QC runs that have multi-item stages.
+  b. Edit its template (admin → templates) — remove some items
+     from a stage. Save.
+  c. Open that stage on a unit / the floor view.
+  Expected: removed items' PENDING slots are gone; any item that had
+  pass/fail is still shown; floor view denominator now matches the
+  current template item count.
+  Audit log (db.audit_events) has an `orphan_items_pruned` entry with
+  `payload.deleted_count > 0`.
 
-V3 (Zahi, optional) — Full report all projects
-  $ python scripts/cleanup_orphan_qc_items.py --report
-  Decides whether to scope cleanup to one project or run org-wide.
+V4 (Zahi) — Completed work preserved
+  In V3, if any removed item had pass/fail — confirm it is STILL
+  present after the save (NOT deleted). Audit payload should also
+  show `kept_completed_count > 0`.
 
-V4 (Zahi, ONLY after V2/V3 approved) — Delete
-  $ python scripts/cleanup_orphan_qc_items.py --delete --project d41ca1d0-acbe-4b73-994f-17462e6cbc36
-  Expected:
-    - "Backup written: scripts/orphan_qc_items_backup_<ts>.json"
-    - "Deleted N orphan qc_items."  (N matches V2 pending count)
-    - Optional "SKIPPED (work done) — M items" if any completed orphans exist
-  If completed orphans exist and Zahi wants them gone:
-    $ python scripts/cleanup_orphan_qc_items.py --delete --include-completed --project d41ca1d0-...
-
-V5 (Zahi, post-delete verify)
-  - Re-run V2 → 0 orphans for that project.
-  - In the app, floor "ריצוף דירה — קומה -1" → apartment 3 shows
-    "0/1" like apartments 4-7.
+V5 (Zahi) — No-op safety
+  Save a template edit that removes NOTHING (e.g. just renames a
+  stage). Expected: save succeeds, prune runs, deletes 0, no error.
+  No `orphan_items_pruned` audit entry written when nothing pruned.
 
 ================================================================================
 RISK
 ================================================================================
 
-LOW-MEDIUM.
-  • --report is pure read — zero risk. Zahi reviews before any delete.
-  • --delete only removes qc_items confirmed orphaned against the
-    live template, AFTER writing a JSON backup of every doc to disk.
-  • Completed-work orphans (pass/fail) are SKIPPED by default —
-    the script will not silently discard contractor work.
-  • --include-completed is an explicit, separate flag.
-  • Script is standalone — cannot affect the running app.
-  • Scoped by --project so one project's cleanup can't touch another.
-  • Drift risk: `resolve_current_template` mirrors `_get_template`
-    steps 2-3. If the app changes its fallback order, this script
-    needs a matching update (documented in script docstring).
+MEDIUM.
+  • Deletes data — but ONLY pending qc_items confirmed absent from
+    the current template. Same safety rule the 2026-05-21 cleanup
+    used (Zahi verified safe via the --show-template cross-check).
+  • Completed work (pass/fail/not_started/pending_review) is
+    structurally protected — the helper only puts an id in the
+    delete list when status ∈ PRUNE_OK_STATUSES.
+  • Every call site is wrapped in try/except — a prune error
+    CANNOT break the template save / project assignment.
+  • Synchronous prune at the save endpoint:
+      - Largest project = 824 qc_items → one find + one or two
+        delete_many batches. ~tens of ms. Negligible.
+      - PUT /admin/qc/templates/{id} can repoint multiple projects
+        (typically 1-3 in a family). Each is independent + small.
+        Worst observed: 18 runs / 824 items × ~1 project per family.
+      - If a project ever has thousands of runs and the save feels
+        slow, move to FastAPI BackgroundTasks (note for future,
+        not needed now).
+  • No backup file (unlike the one-off script). Justified: pending
+    qc_items carry NO inspection data — they are empty checklist
+    slots. The audit log records what was pruned. Completed work
+    is never touched, so nothing of value is at risk.
+  • Local imports inside the call sites — avoid a circular-import
+    risk between admin_router/projects_router and qc_router (both
+    import from contractor_ops.router). Tested compile-clean.
 
 ================================================================================
 ROLLBACK
 ================================================================================
 
-A deleted qc_item cannot be un-deleted via Mongo itself, but:
-  - The script writes a full JSON backup before any delete to
-    `scripts/orphan_qc_items_backup_<UTC-ts>.json`. Each entry is
-    `{"context": {...}, "qc_item": {full original doc}}`.
-  - To restore, load the backup and insert the qc_item docs back:
-        import json
-        data = json.load(open("scripts/orphan_qc_items_backup_<ts>.json"))
-        db.qc_items.insert_many([d["qc_item"] for d in data])
-  - Atlas snapshot/backup recommended additionally if --include-completed
-    is used (real work being discarded).
+git revert <sha> -- backend/contractor_ops/qc_router.py \
+                    backend/contractor_ops/admin_router.py \
+                    backend/contractor_ops/projects_router.py
+git push origin staging
+./deploy.sh --stag && ./deploy.sh --prod
+
+Reverting restores the old add-only behavior. Any orphans that
+accumulated in the meantime can be cleaned with the existing
+`scripts/cleanup_orphan_qc_items.py --delete`.
 
 ================================================================================
-FILES IN THIS BATCH (1 — new)
+FILES IN THIS BATCH (3 — backend only)
 ================================================================================
 
-scripts/cleanup_orphan_qc_items.py    (260 LOC, standalone migration)
+backend/contractor_ops/qc_router.py        (+~90 LOC: helper + constant)
+backend/contractor_ops/admin_router.py     (+~20 LOC: prune wiring in QC branch)
+backend/contractor_ops/projects_router.py  (+~15 LOC: prune wiring in assign)
 
-(No app code touched. No requirements.txt change — pymongo already in
-backend deps.)
+No env vars. No DB migration. No native rebuild. No frontend change.
+No new dependencies.
 
 ================================================================================
 DEPLOY (Zahi)
 ================================================================================
 
-1. git add scripts/cleanup_orphan_qc_items.py
-2. git commit -m "<see .local/.commit_message>"
-3. git push origin staging
-4. Run V2 in Replit terminal. Paste output back.
-5. After approval: V4 delete. Paste summary back.
-6. V5 visual check on floor view.
-
-No deploy needed — this is a script, not an app change. The running app
-is unaffected by the script's presence in the repo.
-
-================================================================================
-TODO (OUT OF SCOPE, per spec)
-================================================================================
-
-Systemic fix: make `_backfill_missing_items` (or the unit/floor-run
-load path) also PRUNE qc_items whose (stage_id, item_id) is no longer
-in the resolved template. Prevents recurrence. Destructive (would
-auto-delete on next load); must NOT silently discard completed work.
-Needs explicit design + Zahi sign-off → separate batch if/when Zahi
-wants it.
+1. git add + commit (msg in .local/.commit_message)
+2. git push origin staging
+3. ./deploy.sh --stag
+4. V3: edit a template on staging → remove items → confirm pending
+   slots disappear, pass/fail kept, audit entry written.
+5. V4: confirm completed orphans kept.
+6. V5: no-op save → 0 pruned, no error.
+7. ./deploy.sh --prod
 
 ================================================================================
 STANDING RULE — STOP HERE
 ================================================================================
 
-Agent: script + V1 + review.txt + commit_message + present_asset → DONE.
-Zahi:  git/deploy + V2 (report) + reviews + V4 (delete) + V5 (verify).
+Agent: STEP 0 + edits LOC 1-3 + V1-V2 + review.txt + commit_message
+       + present_asset → DONE. NO commit, NO restart, NO deploy,
+       NO mark_task_complete.
+Zahi:  git/deploy + V3-V5.

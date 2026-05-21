@@ -1299,12 +1299,35 @@ async def admin_update_qc_template(template_id: str, request: Request, user: dic
         if repin.modified_count > 0:
             logger.info(f"[QC-TPL] Auto-propagated {repin.modified_count} projects handover template family={family_id} -> {new_id}")
     else:
+        repinned_project_ids = [
+            p["id"] async for p in db.projects.find(
+                {"qc_template_family_id": family_id},
+                {"_id": 0, "id": 1},
+            )
+        ]
         repin = await db.projects.update_many(
             {"qc_template_family_id": family_id},
             {"$set": {"qc_template_version_id": new_id}}
         )
         if repin.modified_count > 0:
             logger.info(f"[QC-TPL] Auto-propagated {repin.modified_count} projects QC template family={family_id} -> {new_id}")
+
+        # Auto-prune pending orphan qc_items left by this template change
+        # (items removed from stages). Completed work (pass/fail) is kept
+        # as history. Best-effort — a prune failure must never break the
+        # template save. Systemic fix 2026-05-21 — prevents the 850-orphan
+        # drift from recurring.
+        from contractor_ops.qc_router import _prune_orphan_qc_items
+        total_pruned = 0
+        for pid in repinned_project_ids:
+            try:
+                total_pruned += await _prune_orphan_qc_items(db, pid, actor=user)
+            except Exception as e:
+                logger.warning(f"[QC-TPL] orphan prune failed for project={pid} "
+                               f"after template edit family={family_id}: {e}")
+        if total_pruned:
+            logger.info(f"[QC-TPL] Auto-pruned {total_pruned} pending orphan qc_items "
+                        f"across {len(repinned_project_ids)} projects (family={family_id})")
 
     new_doc.pop("_id", None)
     logger.info(f"[QC-TPL] Updated template family={family_id} v{old['version']}->v{new_version} new_id={new_id} by user={user['id']}")

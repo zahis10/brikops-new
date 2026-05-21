@@ -523,6 +523,91 @@ async def _backfill_missing_items(run_id, run_items, db, tpl, run_scope="floor")
     return run_items
 
 
+# Statuses that mean "no completed work" — safe to auto-prune when the
+# template no longer carries the corresponding (stage_id, item_id).
+# Anything else (pass, fail, not_started, pending_review, etc.) is kept
+# as history. Matches the rule the 2026-05-21 one-off cleanup script
+# used (Zahi verified safe).
+_PRUNE_OK_STATUSES = {"pending", "", None}
+
+
+async def _prune_orphan_qc_items(db, project_id: str, actor: dict | None = None) -> int:
+    """Counterpart to `_backfill_missing_items`: backfill ADDS template
+    items missing from a run; this REMOVES run items absent from the
+    project's CURRENT template — but ONLY items with no recorded work.
+
+    After a template change, delete PENDING qc_items whose
+    (stage_id, item_id) is no longer in the project's current template.
+    Completed items (pass/fail/etc.) are KEPT as history.
+
+    Returns the number of qc_items deleted (0 if nothing to prune).
+    Idempotent: a second call returns 0.
+    """
+    tpl = await _get_template(db, project_id=project_id)
+    if not tpl:
+        return 0
+
+    valid_pairs = set()
+    for stage in tpl.get("stages", []) or []:
+        sid = stage.get("id")
+        if not sid:
+            continue
+        for item in stage.get("items", []) or []:
+            iid = item.get("id")
+            if iid:
+                valid_pairs.add((sid, iid))
+
+    run_ids = []
+    async for r in db.qc_runs.find({"project_id": project_id}, {"_id": 0, "id": 1}):
+        run_ids.append(r["id"])
+    if not run_ids:
+        return 0
+
+    orphan_ids = []
+    affected = {}
+    skipped_completed = 0
+    async for it in db.qc_items.find(
+        {"run_id": {"$in": run_ids}},
+        {"_id": 0, "id": 1, "stage_id": 1, "item_id": 1, "status": 1},
+    ):
+        pair = (it.get("stage_id"), it.get("item_id"))
+        if pair in valid_pairs:
+            continue
+        if it.get("status") in _PRUNE_OK_STATUSES:
+            orphan_ids.append(it["id"])
+            affected[pair] = affected.get(pair, 0) + 1
+        else:
+            skipped_completed += 1
+
+    if not orphan_ids:
+        if skipped_completed:
+            logger.info(f"[QC:PRUNE] project={project_id} no pending orphans; "
+                        f"kept {skipped_completed} completed orphans as history")
+        return 0
+
+    for i in range(0, len(orphan_ids), 500):
+        await db.qc_items.delete_many({"id": {"$in": orphan_ids[i:i + 500]}})
+
+    try:
+        await _audit("qc_template", project_id, "orphan_items_pruned",
+                     (actor or {}).get("id"), {
+            "project_id": project_id,
+            "deleted_count": len(orphan_ids),
+            "kept_completed_count": skipped_completed,
+            "affected_pairs": [
+                {"stage_id": s, "item_id": i, "count": c}
+                for (s, i), c in affected.items()
+            ],
+        })
+    except Exception as e:
+        logger.warning(f"[QC:PRUNE] audit log failed for project={project_id}: {e}")
+
+    logger.info(f"[QC:PRUNE] project={project_id} pruned {len(orphan_ids)} pending "
+                f"orphan qc_items across {len(affected)} removed item slots "
+                f"(kept {skipped_completed} completed)")
+    return len(orphan_ids)
+
+
 VALID_STAGE_STATUSES = {"draft", "ready", "pending_review", "approved", "rejected", "reopened"}
 
 
