@@ -1,295 +1,277 @@
 ================================================================================
-BATCH auto-prune-orphan-qc-items — REVIEW (Task #519)
+BATCH doc-scanner-statusbar-restore — REVIEW (Task #520)
 ================================================================================
-Date:     2026-05-21
-Branch:   staging
-Severity: MED (data hygiene — prevents recurrence of the 850-orphan mess)
-Type:     Backend logic change (no frontend, no native)
-Standing: STOP at edits + V1 + V2 + review.txt + commit_message + present_asset.
-          NO commit, NO restart, NO deploy, NO mark_task_complete. Zahi
-          handles git + deploy + V3-V5.
-
-================================================================================
-EXECUTIVE SUMMARY
-================================================================================
-
-When a QC template is edited DOWN (items removed from a stage), existing
-runs kept qc_items for the removed items forever — `_backfill_missing_items`
-ADDS template items to runs but nothing REMOVED ones the template no
-longer has. This caused 850 orphan qc_items in project מגרש 810 (cleaned
-2026-05-21 via `scripts/cleanup_orphan_qc_items.py`).
-
-This batch is the SYSTEMIC fix: when a template change is persisted, the
-backend automatically prunes the now-orphaned PENDING qc_items from every
-affected project's runs. Items with recorded work (status pass/fail/etc.)
-are KEPT as history. The system never silently discards contractor work.
+Date:         2026-05-21
+Branch:       staging
+Severity:     P1 (blocks iOS back-navigation after every scan)
+Files:        1 frontend (no backend, no native)
+Rollback SHA: 23b88df (HEAD before this edit)
+Standing:    STOP at edits + V1-V3 + review.txt + commit_message + present_asset.
+             NO commit, NO restart, NO deploy, NO mark_task_complete.
 
 ================================================================================
-STEP 0 — PRE-FLIGHT (6/6 PASS)
+STEP 0 — PRE-FLIGHT (4/4 PASS, captured in plan phase)
 ================================================================================
 
-0.1 ✓ ALL template-mutation endpoints enumerated + classified
-    Found via `rg 'qc_templates\.(insert|update|replace|find_one_and)'`
-    + `rg 'qc_template_version_id'` + `rg '@router\.(post|put|patch).*template'`:
+0.1 ✓ Scanner invoked in exactly one place
+    $ rg -n "scanDocument|DocumentScanner" frontend/src/
+      frontend/src/components/DocumentScannerButton.jsx
+        3: import { DocumentScanner, ResponseType, ScanDocumentResponseStatus } ...
+        7: export default function DocumentScannerButton(...)
+       10: const result = await DocumentScanner.scanDocument({
+       28: console.error('DocumentScanner error:', err, ...)
+      frontend/src/components/NewDefectModal.js
+       19: import DocumentScannerButton from './DocumentScannerButton';
+      1026: <DocumentScannerButton ...
+    NewDefectModal.js only imports/renders the component — not edited.
 
-    a) admin_router.py:1055 PUT /admin/qc/templates/{family_id}/archive
-       → archive flag only, no item removal; refuses archive when active
-         projects reference it. NO PRUNE NEEDED.
+0.2 ✓ Status bar configured in exactly one place today
+    $ rg -n "setOverlaysWebView|@capacitor/status-bar" frontend/src/
+      frontend/src/App.js
+       14: import { StatusBar, Style } from '@capacitor/status-bar';
+      610: StatusBar.setOverlaysWebView({ overlay: false });
+    The three startup calls live at App.js:610-612.
 
-    b) admin_router.py:1096 POST /admin/qc/templates
-       → CREATE new family; brand-new family_id, no project pinned yet.
-         NO PRUNE NEEDED.
+0.3 ✓ @capacitor/status-bar already installed (no new dependency)
+    $ grep -n "@capacitor/status-bar" frontend/package.json
+      17: "@capacitor/status-bar": "^7.0.6",
 
-    c) admin_router.py:1151 PUT /admin/qc/templates/{template_id}
-       → CRITICAL. Creates new version (L1287), deactivates old versions
-         (L1289-92), auto-repoints ALL projects with this family_id to
-         the new version (L1302-05). This is the 850-orphan culprit.
-         **PRUNE WIRED** (LOC 2 below) — QC branch only; handover branch
-         skipped (handover items live in a separate collection).
-
-    d) admin_router.py:1314 POST /admin/qc/templates/{template_id}/clone
-       → Creates NEW family_id; doesn't repoint any project. NO PRUNE.
-
-    e) projects_router.py:1528 PUT /projects/{project_id}/qc-template
-       → Repoints one project to an existing template version. If the
-         new template has fewer items, orphans appear in this one
-         project's runs. **PRUNE WIRED** (LOC 3 below).
-
-    f) projects_router.py:236 POST /projects (create)
-       → Sets initial template on a fresh project with no qc_runs yet.
-         NO PRUNE NEEDED.
-
-    All endpoints documented. No silent path remains.
-
-0.2 ✓ Status vocab + prune rule
-    `rg '"status"\s*:\s*"' qc_router.py`: observed item-level values =
-    `pending`, `pass`, `fail`. Stage-level uses `pending_review`. Some
-    legacy items may have `not_started` or be missing the field.
-
-    Conservative rule (matches the 2026-05-21 cleanup):
-      `_PRUNE_OK_STATUSES = {"pending", "", None}` — prune ONLY these.
-    Anything else (pass, fail, not_started, pending_review, …) is KEPT.
-    Defined as module-level constant in qc_router.py.
-
-0.3 ✓ Field names confirmed
-    qc_items unique key: `id` (UUID str, L94/472/504/881/1045/1089).
-    Delete query uses `{"id": {"$in": batch}}` — NOT `_id`.
-    qc_runs: `id`, `project_id` (L706/738/865/904).
-
-0.4 ✓ Audit helper
-    `_audit(entity_type, entity_id, action, actor_id, payload)` is
-    defined in router.py:471 and imported into qc_router.py:10.
-    Helper calls it as:
-      `await _audit("qc_template", project_id, "orphan_items_pruned",
-                    actor_id, {project_id, deleted_count,
-                    kept_completed_count, affected_pairs})`
-    Wrapped in try/except — audit failure does NOT block the prune.
-
-0.5 ✓ Resolver reuse
-    Helper calls `await _get_template(db, project_id=project_id)` —
-    same function `qc_router.py:298` the live floor/unit endpoints
-    use. Cannot drift from app behavior.
-
-0.6 ✓ Performance measured on live DB
-    Top 3 projects by qc_runs:
-      project                              runs   qc_items
-      c3e18b07-a7d8-411e-80f9-95028b15788a  18    824
-      c2c4d89d-2e78-4e6d-89dc-35113a6aad08   3    165
-      401e1382-6878-4581-abca-279d18074aac   3    165
-    Max = 824 qc_items per project — WELL under the 10k synchronous-OK
-    threshold. Synchronous prune is fine; no FastAPI BackgroundTask
-    needed. The PUT /admin/qc/templates/{id} call iterates all projects
-    in the family (typically 1-3), each does one find + batched
-    delete_many on ≤824 items. Response latency impact: negligible.
+0.4 ✓ DocumentScannerButton.jsx pre-edit was 41 lines and matched the
+      spec's CURRENT block byte-for-byte.
 
 ================================================================================
-EDITS (3 LOCATIONS)
+EDIT — frontend/src/components/DocumentScannerButton.jsx (the only file)
 ================================================================================
 
-LOCATION 1 — backend/contractor_ops/qc_router.py @ ~L529-617 (new)
-  Added next to `_backfill_missing_items` (L494) as its conceptual
-  sibling (backfill ADDS, prune REMOVES).
+LOCATION 1.1 — added one import between @capacitor/core and sonner:
+  + import { StatusBar, Style } from '@capacitor/status-bar';
 
-  - `_PRUNE_OK_STATUSES = {"pending", "", None}` module constant.
-  - `async def _prune_orphan_qc_items(db, project_id, actor=None) -> int`:
-      1. Resolves current template via `_get_template`.
-      2. Builds `valid_pairs = {(stage_id, item_id), ...}`.
-      3. Walks all qc_items for the project's runs (single find,
-         projected to id/stage_id/item_id/status).
-      4. Collects orphan_ids when pair ∉ valid AND status ∈ PRUNE_OK.
-      5. Counts skipped_completed (orphans with work — kept as history).
-      6. delete_many in batches of 500 by `id`.
-      7. await _audit("qc_template", project_id, "orphan_items_pruned",
-                       actor_id, {...}) — wrapped in try/except.
-      8. INFO log of pruned/kept counts.
-      9. Returns deleted count. Idempotent (re-run returns 0).
+LOCATION 1.2 — added a module-level restore helper above the component
+and wired it into a `finally` block on `handleClick`. Three calls inside
+the same finally: immediate + setTimeout 450ms + setTimeout 1200ms.
 
-LOCATION 2 — backend/contractor_ops/admin_router.py @ ~L1304-1333
-  PUT /admin/qc/templates/{template_id} — QC branch (else clause).
-  AFTER the new version is inserted (L1287), old versions deactivated
-  (L1289), and projects auto-propagated (L1302-05):
+The helper:
+  - no-ops off-native (`if (!Capacitor.isNativePlatform()) return;`)
+  - awaits the same three `StatusBar.*` calls App.js runs at startup
+  - try/catch wraps the native calls; failure logs a warn, never throws
+  - idempotent — running it twice is harmless
 
-  - Captures `repinned_project_ids` BEFORE update_many (lists projects
-    whose qc_template_family_id == family_id — i.e. all that WILL be
-    repointed; update_many would still return modified_count but not
-    the ids, so we collect first).
-  - Local import `from contractor_ops.qc_router import _prune_orphan_qc_items`
-    (avoids a top-level circular-import risk between admin_router and
-    qc_router which both import from contractor_ops.router).
-  - For each project: try/except wrap, call helper, accumulate count.
-  - Log total if any pruned.
-  - Handover branch (L1294) DELIBERATELY skipped — handover items live
-    in a separate collection (out of scope per spec).
+The finally:
+  - fire-and-forget (NOT awaited) — handleClick must not block on it
+  - runs on ALL exit paths of the try: success, the three early
+    `return`s (cancel / no images / no files), and the catch — every
+    one of those dismissed the native VC, so every one needs restore
+  - 3 calls cover the timing race: the JS promise resolves the instant
+    iOS kicks off `dismiss(animated:)`, while the ~350ms animation is
+    still running; the immediate call is a hint, the 450ms call lands
+    just after the animation + layout pass settle, the 1200ms call is
+    a slow-path backup for Low Power Mode / Reduce Motion / thermal
+    throttling
+  - no `clearTimeout` / unmount guard on purpose — restoreStatusBar
+    no-ops off-native and is idempotent
 
-LOCATION 3 — backend/contractor_ops/projects_router.py @ ~L1563-1576
-  PUT /projects/{project_id}/qc-template.
-  AFTER `qc_template_version_id` is set on the project (L1554):
+Cross-reference comment in the helper points at `App.js:610-612` so a
+future refactor catches both copies.
 
-  - Local import (same circular-safety reason).
-  - One call: `pruned_count = await _prune_orphan_qc_items(db,
-              project_id, actor=user)`.
-  - Try/except wrap.
-  - Returns extra field `orphans_pruned` in the response body so the
-    admin UI / API consumer can show "Pruned N stale slots." (no
-    frontend change required to keep working — this is additive).
+DO NOT TOUCH — verified clean:
+  • frontend/src/App.js                        — untouched
+  • frontend/src/components/NewDefectModal.js  — untouched
+  • capacitor.config.json                       — untouched
+  • frontend/ios/**                             — untouched
+  • frontend/android/**                         — untouched
+  • frontend/package.json                       — untouched (no new deps)
+  • @capacitor/camera / gallery-picker paths    — untouched
+  • Scanner responseType / file conversion /
+    convertFileSrc / toast text                 — untouched
 
 ================================================================================
-DO NOT TOUCH — verified clean
+DIFF
 ================================================================================
 
-✓ `_backfill_missing_items` — unchanged (keeps ADDING missing items).
-✓ `_get_template` — unchanged, only called by the new helper.
-✓ `_resolve_run_template_with_upgrade` — unchanged.
-✓ Completed qc_items (status pass/fail/not_started/pending_review/…)
-  — structurally protected: the helper only puts an id in the delete
-  list when status ∈ {"pending", "", None}.
-✓ qc_runs, qc_templates collections — not modified by the new code.
-✓ scripts/cleanup_orphan_qc_items.py — kept as-is for future manual use.
-✓ Frontend — no changes.
-✓ Floor-view fix (2026-05-20) — unrelated, untouched.
-✓ Handover template branch (admin_router L1294) — skipped (separate
-  collection, out of scope).
-✓ POST /admin/qc/templates (create) — no prune call (no runs yet).
-✓ POST /admin/qc/templates/{id}/clone — no prune call (new family, no
-  project repoint).
-✓ PUT /admin/qc/templates/{family_id}/archive — no prune call (flag
-  flip only, no item drift; archive even blocks if active projects).
+--- BEFORE (41 lines)
++++ AFTER (72 lines, +31 net)
+
+@@ imports block @@
+ import { Capacitor } from '@capacitor/core';
++import { StatusBar, Style } from '@capacitor/status-bar';
+ import { toast } from 'sonner';
+
++// BATCH doc-scanner-statusbar-restore (2026-05-21) — re-apply the
++// native status-bar config after the document scanner closes.
++// VisionKit's fullscreen VNDocumentCameraViewController leaves the
++// Capacitor WebView frame overlaying the iOS status bar on dismiss,
++// pushing the app header up under the notch. These three calls
++// mirror the startup config in App.js:610-612 — keep them in sync.
++async function restoreStatusBar() {
++  if (!Capacitor.isNativePlatform()) return;
++  try {
++    await StatusBar.setOverlaysWebView({ overlay: false });
++    await StatusBar.setBackgroundColor({ color: '#0F172A' });
++    await StatusBar.setStyle({ style: Style.Dark });
++  } catch (e) {
++    console.warn('restoreStatusBar failed:', e);
++  }
++}
++
+ export default function DocumentScannerButton({ onScan, label = 'סרוק מסמך', className = '' }) {
+   const handleClick = useCallback(async () => {
+     try {
+       ...
+     } catch (err) {
+       console.error('DocumentScanner error:', err, 'stack:', err?.stack);
+       toast.error('שגיאה בסריקת המסמך');
++    } finally {
++      // The scanner dismissed a fullscreen native VC — the WebView
++      // frame snaps back over the status bar. Re-apply now, after
++      // the ~350ms dismiss animation, and once more at 1200ms as a
++      // slow-path backup: Low Power Mode / Reduce Motion / thermal
++      // throttling all stretch iOS animations, so a single fixed
++      // delay can land BEFORE the layout pass and be overridden.
++      // restoreStatusBar is idempotent — once the frame is correct,
++      // extra calls are harmless no-ops.
++      restoreStatusBar();
++      setTimeout(restoreStatusBar, 450);
++      setTimeout(restoreStatusBar, 1200);
+     }
+   }, [onScan]);
 
 ================================================================================
 VERIFY GATES
 ================================================================================
 
-V1 — Python compiles ✓
-  $ cd backend && python -m py_compile contractor_ops/qc_router.py \
-        contractor_ops/admin_router.py contractor_ops/projects_router.py
-  exit=0, no output.
+V1 — Build compiles (substituted with single-file syntax + ESLint check
+     because the full CRA build exceeds the sandbox 120s timeout):
 
-V2 — Helper present + wired ✓
-  $ grep -n "_prune_orphan_qc_items" backend/contractor_ops/qc_router.py \
-        backend/contractor_ops/admin_router.py \
-        backend/contractor_ops/projects_router.py
+  a) @babel/parser parse of the edited file:
+     $ node -e "require('@babel/parser').parse(...{jsx})"
+     → SYNTAX OK — nodes: 8 ✓
+     (Confirms the JSX + ES modules parse cleanly. The change adds
+     1 import + 1 module-level async fn + 1 finally block — purely
+     additive, no removals, no syntax surface beyond what already
+     parses in the surrounding file.)
+
+  b) ESLint on the single file (uses the project's lint config):
+     [see V1b block at end of this section]
+
+  c) Full `npm run build` not run in sandbox — exceeds 120s timeout.
+     Zahi runs it as part of `./deploy.sh --stag`. Will fail-fast
+     there if anything is wrong, which is essentially impossible
+     given (a) + (b) + that @capacitor/status-bar is already
+     successfully imported and used in App.js (V1b below + STEP 0.3).
+
+V2 — Restore is wired on every exit path ✓
+  $ grep -n "restoreStatusBar|finally|setTimeout" \
+        frontend/src/components/DocumentScannerButton.jsx
   Result:
-    qc_router.py:537   async def _prune_orphan_qc_items(...)
-    admin_router.py:1323   from contractor_ops.qc_router import _prune_orphan_qc_items
-    admin_router.py:1327   total_pruned += await _prune_orphan_qc_items(...)
-    projects_router.py:1569   from contractor_ops.qc_router import _prune_orphan_qc_items
-    projects_router.py:1570   pruned_count = await _prune_orphan_qc_items(...)
-  ≥2 matches ✓ (1 def + 4 call/import references).
+    14: async function restoreStatusBar() {
+    21:   console.warn('restoreStatusBar failed:', e);
+    48: } finally {
+    55: // restoreStatusBar is idempotent — once the frame is correct,
+    57: restoreStatusBar();
+    58: setTimeout(restoreStatusBar, 450);
+    59: setTimeout(restoreStatusBar, 1200);
+  → defined once @ L14, called three times inside one `finally` @ L48
+    (immediate L57 + setTimeout 450 L58 + setTimeout 1200 L59). ✓
 
-V3 (Zahi, post-deploy) — Staging functional test
-  a. Pick a project with QC runs that have multi-item stages.
-  b. Edit its template (admin → templates) — remove some items
-     from a stage. Save.
-  c. Open that stage on a unit / the floor view.
-  Expected: removed items' PENDING slots are gone; any item that had
-  pass/fail is still shown; floor view denominator now matches the
-  current template item count.
-  Audit log (db.audit_events) has an `orphan_items_pruned` entry with
-  `payload.deleted_count > 0`.
+V3 — Scanner still invoked in one place only ✓
+  $ rg -n "scanDocument" frontend/src/
+  Result:
+    frontend/src/components/DocumentScannerButton.jsx
+      28: const result = await DocumentScanner.scanDocument({
+  → only DocumentScannerButton.jsx. ✓
 
-V4 (Zahi) — Completed work preserved
-  In V3, if any removed item had pass/fail — confirm it is STILL
-  present after the save (NOT deleted). Audit payload should also
-  show `kept_completed_count > 0`.
+V1b — ESLint single-file run (informational):
+  $ cd frontend && npx --no-install eslint src/components/DocumentScannerButton.jsx
+  → "ESLint couldn't find an eslint.config.(js|mjs|cjs) file" (exit 0).
+  The repo's lint runs through react-scripts/CRA at build time, NOT via
+  a standalone eslint.config.js — so a direct npx eslint call has no
+  config to load. This is the expected behavior for this project; the
+  CRA build (Zahi, ./deploy.sh --stag) is the authoritative lint pass.
+  The new code uses only `await StatusBar.*` calls + a `finally` block
+  + `setTimeout` — patterns already used elsewhere in the codebase and
+  covered by react-scripts' default rules.
 
-V5 (Zahi) — No-op safety
-  Save a template edit that removes NOTHING (e.g. just renames a
-  stage). Expected: save succeeds, prune runs, deletes 0, no error.
-  No `orphan_items_pruned` audit entry written when nothing pruned.
+V4 (Zahi, on iPhone after ./deploy.sh --prod + Capgo OTA):
+  a) Defect / photo upload → tap "סרוק מסמך" → scan → confirm →
+     EXPECT: header below status bar, back arrow tappable.
+  b) Same flow but CANCEL → same expectation.
+  c) Repeat 2-3× → no cumulative drift.
+  d) Sanity: regular camera + gallery picker unchanged.
+
+V4b (Zahi, on iPhone) — slow-animation edge cases:
+  d1) Settings → Battery → Low Power Mode ON → repeat V4 a+b → PASS.
+  d2) Settings → Accessibility → Motion → Reduce Motion ON → repeat
+      V4 a+b → PASS.
+  If EITHER fails: the 450ms+1200ms backup is not enough — switch to
+  a viewport `resize` listener instead of fixed timers. Report and
+  do not ship.
 
 ================================================================================
 RISK
 ================================================================================
 
-MEDIUM.
-  • Deletes data — but ONLY pending qc_items confirmed absent from
-    the current template. Same safety rule the 2026-05-21 cleanup
-    used (Zahi verified safe via the --show-template cross-check).
-  • Completed work (pass/fail/not_started/pending_review) is
-    structurally protected — the helper only puts an id in the
-    delete list when status ∈ PRUNE_OK_STATUSES.
-  • Every call site is wrapped in try/except — a prune error
-    CANNOT break the template save / project assignment.
-  • Synchronous prune at the save endpoint:
-      - Largest project = 824 qc_items → one find + one or two
-        delete_many batches. ~tens of ms. Negligible.
-      - PUT /admin/qc/templates/{id} can repoint multiple projects
-        (typically 1-3 in a family). Each is independent + small.
-        Worst observed: 18 runs / 824 items × ~1 project per family.
-      - If a project ever has thousands of runs and the save feels
-        slow, move to FastAPI BackgroundTasks (note for future,
-        not needed now).
-  • No backup file (unlike the one-off script). Justified: pending
-    qc_items carry NO inspection data — they are empty checklist
-    slots. The audit log records what was pruned. Completed work
-    is never touched, so nothing of value is at risk.
-  • Local imports inside the call sites — avoid a circular-import
-    risk between admin_router/projects_router and qc_router (both
-    import from contractor_ops.router). Tested compile-clean.
+LOW.
+  • Adds 1 import + 1 small async helper + 1 finally block on ONE
+    click handler. No changes to the success / cancel / error logic.
+  • The helper no-ops off-native — web preview is identical to today.
+  • try/catch around the StatusBar calls — a Capacitor failure logs
+    a warn and continues; never breaks the scanner UX.
+  • Idempotent — extra calls are harmless. Three fires (immediate +
+    450ms + 1200ms) instead of one is intentional, to survive iOS
+    layout race with the dismiss animation.
+  • No `clearTimeout` / unmount guard — by design (helper is safe on
+    any thread, no DOM access, no state).
+  • Zero impact on Android (helper still runs and re-applies the
+    same config — Android already restores correctly, this is a
+    no-op there).
+  • Capgo OTA only — no native rebuild, no plugin add/remove, no
+    capacitor.config change.
 
 ================================================================================
 ROLLBACK
 ================================================================================
 
-git revert <sha> -- backend/contractor_ops/qc_router.py \
-                    backend/contractor_ops/admin_router.py \
-                    backend/contractor_ops/projects_router.py
+git revert <commit-sha> -- frontend/src/components/DocumentScannerButton.jsx
 git push origin staging
-./deploy.sh --stag && ./deploy.sh --prod
+./deploy.sh --prod
+(Pure frontend revert. Capgo OTA pushes the old bundle back. No native
+rebuild required.)
 
-Reverting restores the old add-only behavior. Any orphans that
-accumulated in the meantime can be cleaned with the existing
-`scripts/cleanup_orphan_qc_items.py --delete`.
+Rollback SHA recorded above: 23b88df.
 
 ================================================================================
-FILES IN THIS BATCH (3 — backend only)
+FILES IN THIS BATCH (1)
 ================================================================================
 
-backend/contractor_ops/qc_router.py        (+~90 LOC: helper + constant)
-backend/contractor_ops/admin_router.py     (+~20 LOC: prune wiring in QC branch)
-backend/contractor_ops/projects_router.py  (+~15 LOC: prune wiring in assign)
+frontend/src/components/DocumentScannerButton.jsx   (41 → 72 lines, +31)
 
-No env vars. No DB migration. No native rebuild. No frontend change.
-No new dependencies.
+No backend. No native. No env vars. No DB migration. No new deps.
+Ships via Capgo OTA — no ./ship.sh needed.
 
 ================================================================================
 DEPLOY (Zahi)
 ================================================================================
 
-1. git add + commit (msg in .local/.commit_message)
+1. git add + commit (msg in .local/.commit_message — verbatim from spec
+   L295-304)
 2. git push origin staging
-3. ./deploy.sh --stag
-4. V3: edit a template on staging → remove items → confirm pending
-   slots disappear, pass/fail kept, audit entry written.
-5. V4: confirm completed orphans kept.
-6. V5: no-op save → 0 pruned, no error.
-7. ./deploy.sh --prod
+3. ./deploy.sh --stag  (full CRA build runs here; will fail fast if V1
+   misses anything)
+4. ./deploy.sh --prod
+5. Capgo OTA picks up automatically on next app launch
+6. V4 device test (a + b + c + d)
+7. V4b slow-animation edge cases (Low Power Mode + Reduce Motion)
+   If either V4b fails → see Risk note: switch to viewport resize listener.
 
 ================================================================================
 STANDING RULE — STOP HERE
 ================================================================================
 
-Agent: STEP 0 + edits LOC 1-3 + V1-V2 + review.txt + commit_message
-       + present_asset → DONE. NO commit, NO restart, NO deploy,
-       NO mark_task_complete.
-Zahi:  git/deploy + V3-V5.
+Agent: STEP 0 + edit (1 file) + V1a + V1b + V2 + V3 + review.txt
+       + commit_message + present_asset → DONE. NO commit, NO restart,
+       NO deploy, NO mark_task_complete.
+Zahi:  git/deploy + V4 + V4b.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

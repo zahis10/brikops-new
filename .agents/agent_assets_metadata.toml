@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH auto-prune-orphan-qc-items — review (Task #519, V1+V2 PASS)"
+title = "BATCH doc-scanner-statusbar-restore — review (Task #520, V1a+V2+V3 PASS)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
