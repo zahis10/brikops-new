@@ -14,6 +14,7 @@ terminal — MONGO_URL + DB_NAME from env.
 USAGE:
     python scripts/cleanup_orphan_qc_items.py                              # --report (default, dry run)
     python scripts/cleanup_orphan_qc_items.py --project <id>               # scope to one project
+    python scripts/cleanup_orphan_qc_items.py --show-template              # print current resolved template per project
     python scripts/cleanup_orphan_qc_items.py --delete                     # destructive
     python scripts/cleanup_orphan_qc_items.py --delete --include-completed # also remove pass/fail orphans
 
@@ -233,11 +234,18 @@ def main():
     grp = parser.add_mutually_exclusive_group()
     grp.add_argument("--report", action="store_true", help="Dry run (default)")
     grp.add_argument("--delete", action="store_true", help="Actually delete orphans")
+    grp.add_argument("--show-template", action="store_true",
+                     help="Print the current resolved template per project (read-only, no scan)")
     parser.add_argument("--include-completed", action="store_true",
                         help="Also delete orphans with status pass/fail (DATA LOSS)")
     args = parser.parse_args()
 
-    mode = "delete" if args.delete else "report"
+    if args.delete:
+        mode = "delete"
+    elif args.show_template:
+        mode = "show_template"
+    else:
+        mode = "report"
 
     mongo_url = os.environ.get("MONGO_URL") or os.environ.get("MONGODB_URI")
     if not mongo_url:
@@ -251,6 +259,39 @@ def main():
     scope_label = args.project if args.project else "ALL projects"
     print(f"Database: {db_name}", file=sys.stderr)
     print(f"Scope: {scope_label}", file=sys.stderr)
+
+    if mode == "show_template":
+        project_query = {"id": args.project} if args.project else {}
+        projects = list(db.projects.find(project_query, {"_id": 0, "id": 1, "name": 1}))
+        print()
+        for proj in projects:
+            pid = proj["id"]
+            tpl, pname, source = resolve_current_template(db, pid)
+            print("=" * 68)
+            print(f"=== CURRENT TEMPLATE — project {pid} ({pname}) ===")
+            if not tpl:
+                print(f"  ⚠️  no resolvable template (source={source}) — SKIPPED by --delete")
+                print()
+                continue
+            print(f"Template id: {tpl.get('id', '')}  source: {source}  "
+                  f"family: {tpl.get('family_id', '')}  version: {tpl.get('version', '')}")
+            stages = tpl.get("stages", []) or []
+            if not stages:
+                print("  (no stages in template)")
+            for stage in stages:
+                sid = stage.get("id", "")
+                stitle = stage.get("title", "")
+                items = stage.get("items", []) or []
+                print(f'Stage {sid} ({stitle}):')
+                if not items:
+                    print("  (no items)")
+                for item in items:
+                    iid = item.get("id", "")
+                    ititle = item.get("title", "")
+                    print(f'  - {iid} "{ititle}"')
+            print()
+        print("READ-ONLY — no scan, no changes.")
+        sys.exit(0)
 
     orphans_with_ctx = list(scan_orphans(db, project_filter=args.project))
     print_report(orphans_with_ctx, scope_label, mode)

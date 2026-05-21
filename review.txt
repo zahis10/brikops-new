@@ -1,13 +1,35 @@
 ================================================================================
-BATCH cleanup-orphan-qc-items — REVIEW
+BATCH cleanup-orphan-qc-items — REVIEW (+ --show-template addendum)
 ================================================================================
-Date:     2026-05-20
+Date:     2026-05-20  (addendum: --show-template flag added same day)
 Branch:   staging
 Severity: MED (data hygiene)
 Type:     ONE-OFF DATA MIGRATION SCRIPT
 Standing: STOP at script + V1 + review.txt + commit_message + present_asset.
           NO commit, NO restart, NO deploy, NO mark_task_complete. Zahi
-          runs git + V2 (report) + reviews + V4 (delete) + V5 (verify).
+          runs git + V2 (report) + V2b (show-template) + reviews +
+          V4 (delete) + V5 (verify).
+
+ADDENDUM — --show-template flag
+  New read-only mode prints the CURRENT resolved template (same logic
+  `--delete` uses to identify orphans) so Zahi can see exactly which
+  items will survive cleanup BEFORE running --delete. Output format:
+
+    === CURRENT TEMPLATE — project <id> (<name>) ===
+    Template id: <tid>  source: project_pinned|default_active  family: <fid>  version: <v>
+    Stage <stage_id> (<stage_title>):
+      - <item_id> "<item title>"
+      - <item_id> "<item title>"
+    Stage <stage_id> (<stage_title>):
+      ...
+
+  Mutually exclusive with --report / --delete. No qc_items scan, no
+  delete, exit 0. Honors --project filter.
+
+  Why this matters: --delete decides orphan-status by comparing each
+  qc_item against the SAME `resolve_current_template` output. If Zahi
+  can see that output ahead of time, the diff between "what stays"
+  and "what goes" is explicit — no surprises during V4.
 
 ================================================================================
 EXECUTIVE SUMMARY
@@ -99,6 +121,9 @@ SCRIPT — scripts/cleanup_orphan_qc_items.py (~260 LOC)
 CLI:
   --report (default)         dry run, prints, deletes nothing
   --delete                   destructive — removes pending orphans by default
+  --show-template            read-only — prints resolved template per project
+                             (no scan, no delete) — mutually exclusive with
+                             --report / --delete
   --include-completed        also delete orphans with status pass/fail
                              (DATA LOSS — DISCARDS contractor work)
   --project <id>             scope to one project (default: ALL)
@@ -155,13 +180,21 @@ VERIFY GATES
 V1 — Script compiles + --help ✓
   $ python -m py_compile scripts/cleanup_orphan_qc_items.py    → exit=0
   $ python scripts/cleanup_orphan_qc_items.py --help           → exit=0
-  Help output shows: --project, --report, --delete, --include-completed.
+  Help output shows: --project, --report, --delete, --show-template,
+  --include-completed. ✓ Confirmed in latest V1b run.
 
 V2 (Zahi, Replit terminal) — Report for the affected project
   $ python scripts/cleanup_orphan_qc_items.py --report --project d41ca1d0-acbe-4b73-994f-17462e6cbc36
   Expected: lists apartment 3 (and any others) with orphan tl_1…tl_8
   under stage "ריצוף דירה". Deletes nothing.
   Zahi pastes output back to chat for review.
+
+V2b (Zahi, optional but RECOMMENDED before V4) — Show current template
+  $ python scripts/cleanup_orphan_qc_items.py --show-template --project d41ca1d0-acbe-4b73-994f-17462e6cbc36
+  Expected: prints every stage + every item_id/title the CURRENT
+  resolved template defines for that project. For floor "קומה -1" /
+  stage_tiling, the surviving item should be tl_9 ("סיום דירה — ריצוף").
+  Anything NOT in this list AND in qc_items is what --delete will remove.
 
 V3 (Zahi, optional) — Full report all projects
   $ python scripts/cleanup_orphan_qc_items.py --report
