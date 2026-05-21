@@ -5,99 +5,51 @@ import { Capacitor } from '@capacitor/core';
 import { StatusBar } from '@capacitor/status-bar';
 import { toast } from 'sonner';
 
-// BATCH doc-scanner-DIAGNOSTIC (2026-05-21) — TEMPORARY, NOT a fix.
-// v1/v2/v3 all failed. This measures the real WebView state after
-// the scanner closes and shows it in an on-screen panel, so we can
-// see what is actually wrong (and what a device rotation changes).
-// Reverted once the real cause is identified.
-async function showScannerDiagnostics() {
+// BATCH doc-scanner-webview-reinset (2026-05-21)
+// Verified on-device with Safari Web Inspector: after the document
+// scanner's fullscreen VC closes, the Capacitor WebView frame is
+// sometimes left full-screen (window.innerHeight === screen.height)
+// instead of inset below the status bar. The web layout shifts up
+// by the status-bar height and the page header lands under the
+// status bar.
+//
+// StatusBar.getInfo() reports overlays=false even when broken, so
+// the plugin sees no problem (why v1/v2/v3 failed). A device
+// rotation fixes it because rotation triggers Capacitor's internal
+// resizeWebView(). setOverlaysWebView only runs resizeWebView()
+// when the value CHANGES, so toggling true->false forces it —
+// confirmed on-device to re-inset the WebView.
+//
+// The bug is intermittent and can appear shortly after the
+// dismiss, so poll for ~8s: whenever the WebView is full-screen,
+// toggle to re-inset it; when already inset, do nothing. No
+// flicker — the toggle only runs on an already-broken frame, so
+// the overlay:true step is an invisible no-op and only
+// overlay:false is seen (the layout snapping back).
+// Module-level handle: if the user scans again within the 8s
+// window (scanning several documents in a row is a normal field
+// flow), cancel the previous poll instead of stacking a second
+// one. Parallel polls would be harmless (idempotent) but messy.
+let webViewReinsetTimer = null;
+function fixWebViewAfterScanner() {
   if (!Capacitor.isNativePlatform()) return;
-  const ID = 'brikops-scanner-diag';
-
-  const readSafeAreaInsets = () => {
-    const probe = document.createElement('div');
-    probe.style.cssText =
-      'position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;' +
-      'padding-top:env(safe-area-inset-top);' +
-      'padding-bottom:env(safe-area-inset-bottom);' +
-      'padding-left:env(safe-area-inset-left);' +
-      'padding-right:env(safe-area-inset-right);';
-    document.body.appendChild(probe);
-    const cs = getComputedStyle(probe);
-    const v = {
-      top: cs.paddingTop, bottom: cs.paddingBottom,
-      left: cs.paddingLeft, right: cs.paddingRight,
-    };
-    probe.remove();
-    return v;
-  };
-
-  const measure = async () => {
-    let info = {};
-    try { info = await StatusBar.getInfo(); }
-    catch (e) { info = { error: String(e) }; }
-    const sa = readSafeAreaInsets();
-    const vv = window.visualViewport || {};
-    const text = [
-      '=== SCANNER DIAG @ ' + new Date().toLocaleTimeString() + ' ===',
-      'innerHeight x innerWidth: ' + window.innerHeight + ' x ' + window.innerWidth,
-      'screen.height x width: ' + window.screen.height + ' x ' + window.screen.width,
-      'visualViewport h/offsetTop/pageTop/scale: ' +
-        vv.height + ' / ' + vv.offsetTop + ' / ' + vv.pageTop + ' / ' + vv.scale,
-      'documentElement.clientHeight: ' + document.documentElement.clientHeight,
-      'safe-area-inset top/bottom: ' + sa.top + ' / ' + sa.bottom,
-      'safe-area-inset left/right: ' + sa.left + ' / ' + sa.right,
-      'StatusBar.getInfo: overlays=' + info.overlays +
-        ' visible=' + info.visible + ' height=' + info.height +
-        ' style=' + info.style + (info.error ? ' ERR=' + info.error : ''),
-    ].join('\n');
-    console.log('[BRIKOPS DIAG]\n' + text);
-    return text;
-  };
-
-  let panel = document.getElementById(ID);
-  if (!panel) {
-    panel = document.createElement('div');
-    panel.id = ID;
-    panel.style.cssText =
-      'position:fixed;top:120px;left:8px;right:8px;z-index:2147483647;' +
-      'background:rgba(0,0,0,0.92);color:#00ff66;' +
-      'font:12px/1.45 ui-monospace,Menlo,monospace;padding:10px;' +
-      'border:2px solid #00ff66;border-radius:8px;white-space:pre-wrap;' +
-      'direction:ltr;text-align:left;';
-    const textEl = document.createElement('div');
-    textEl.id = ID + '-text';
-    panel.appendChild(textEl);
-    const btnRow = document.createElement('div');
-    btnRow.style.cssText = 'margin-top:8px;display:flex;gap:8px;';
-    const btnMeasure = document.createElement('button');
-    btnMeasure.textContent = 'מדוד שוב';
-    btnMeasure.style.cssText =
-      'flex:1;padding:8px;background:#00ff66;color:#000;border:0;' +
-      'border-radius:6px;font-size:14px;font-weight:bold;';
-    btnMeasure.onclick = async () => {
-      const el = document.getElementById(ID + '-text');
-      if (el) el.textContent = await measure();
-    };
-    const btnClose = document.createElement('button');
-    btnClose.textContent = '✕';
-    btnClose.style.cssText =
-      'width:44px;padding:8px;background:#333;color:#fff;border:0;' +
-      'border-radius:6px;font-size:14px;';
-    btnClose.onclick = () => panel.remove();
-    btnRow.appendChild(btnMeasure);
-    btnRow.appendChild(btnClose);
-    panel.appendChild(btnRow);
-    document.body.appendChild(panel);
-  }
-
-  const render = async () => {
-    const el = document.getElementById(ID + '-text');
-    if (el) el.textContent = await measure();
-  };
-  render();
-  setTimeout(render, 1000);
-  setTimeout(render, 2500);
+  if (webViewReinsetTimer) clearInterval(webViewReinsetTimer);
+  let ticks = 0;
+  webViewReinsetTimer = setInterval(async () => {
+    ticks += 1;
+    try {
+      if (window.innerHeight >= window.screen.height) {
+        await StatusBar.setOverlaysWebView({ overlay: true });
+        await StatusBar.setOverlaysWebView({ overlay: false });
+      }
+    } catch (e) {
+      console.warn('fixWebViewAfterScanner failed:', e);
+    }
+    if (ticks >= 40) {
+      clearInterval(webViewReinsetTimer);
+      webViewReinsetTimer = null;
+    }
+  }, 200);
 }
 
 export default function DocumentScannerButton({ onScan, label = 'סרוק מסמך', className = '' }) {
@@ -124,9 +76,7 @@ export default function DocumentScannerButton({ onScan, label = 'סרוק מסמ
       console.error('DocumentScanner error:', err, 'stack:', err?.stack);
       toast.error('שגיאה בסריקת המסמך');
     } finally {
-      // BATCH doc-scanner-DIAGNOSTIC — show the measurement panel
-      // instead of attempting a fix.
-      showScannerDiagnostics();
+      fixWebViewAfterScanner();
     }
   }, [onScan]);
 

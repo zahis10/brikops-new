@@ -10,25 +10,10 @@
 
 body {
   margin: 0;
-  /* BATCH doc-scanner-safe-area-fix (2026-05-21) — respect the iOS
-     top safe-area. After the document scanner closes the Capacitor
-     WebView frame becomes full-screen (confirmed on device); this
-     keeps all content, incl. page headers, below the status bar
-     regardless of the WebView frame. */
-  padding-top: env(safe-area-inset-top, 0px);
   font-family: 'Heebo', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: #F8FAFC;
-}
-
-/* BATCH doc-scanner-safe-area-fix (2026-05-21) — every page header
-   is a `sticky top-0` element; keep it below the iOS status bar
-   when the page is scrolled (a stuck top:0 header would otherwise
-   re-stick at viewport y=0, under the status bar, whenever the
-   WebView frame is full-screen). */
-.sticky.top-0 {
-  top: env(safe-area-inset-top, 0px);
 }
 
 iframe[src*="emergent"],
