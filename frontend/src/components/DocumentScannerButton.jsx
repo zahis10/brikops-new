@@ -5,30 +5,40 @@ import { Capacitor } from '@capacitor/core';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { toast } from 'sonner';
 
-// BATCH doc-scanner-statusbar-restore-v2 (2026-05-21)
-// After the document scanner's fullscreen native VC closes,
-// Capacitor's bridge re-runs handleViewDidAppear, which
-// re-applies the StatusBar plugin CONFIG. The real fix is the
-// StatusBar block in capacitor.config.json (overlaysWebView
-// false). This helper is the OTA safety net for devices still
-// on the pre-config native build.
+// BATCH doc-scanner-statusbar-restore-v3 (2026-05-21)
+// CONFIRMED ON DEVICE: after the document scanner closes the iOS
+// header overlaps the status bar, and ROTATING the device fixes
+// it. Rotation makes Capacitor run resizeWebView() (via
+// viewWillTransition), which re-positions the WebView below the
+// status bar. The scanner's fullscreen VC dismissal leaves the
+// WebView frame stale and nothing runs resizeWebView().
 //
-// Capacitor's setOverlaysWebView is a no-op when the value is
-// unchanged (it short-circuits before resizeWebView). So we
-// must only call it when the WebView is ACTUALLY overlaying —
-// getInfo() tells us. When it is, setOverlaysWebView(false) is
-// a real change and triggers the WebView re-layout.
+// resizeWebView() only runs when setOverlaysWebView gets a
+// CHANGED value (it short-circuits otherwise — why v1/v2, which
+// only ever set `false`, did nothing). So TOGGLE true→false to
+// force it — the programmatic equivalent of a rotation.
+//
+// Timing: resizeWebView() reads the live status-bar height. Just
+// after the scanner dismisses the status bar can still be hidden
+// (height 0) — toggling then resizes to y=0 (still broken). So
+// wait until getInfo() reports height > 0. And because the
+// toggle runs WHILE the header is still broken (WebView already
+// at y=0), the `true` step is a visual no-op — only the `false`
+// step shows (the header snapping into place). No flicker.
 async function restoreStatusBar() {
-  if (!Capacitor.isNativePlatform()) return;
+  if (!Capacitor.isNativePlatform()) return true;
   try {
     const info = await StatusBar.getInfo();
-    if (info?.overlays) {
-      await StatusBar.setOverlaysWebView({ overlay: false });
-    }
+    // Status bar not fully restored yet — let the caller retry.
+    if (!info || !info.height || info.height <= 0) return false;
+    await StatusBar.setOverlaysWebView({ overlay: true });
+    await StatusBar.setOverlaysWebView({ overlay: false });
     await StatusBar.setStyle({ style: Style.Dark });
     await StatusBar.setBackgroundColor({ color: '#0F172A' });
+    return true;
   } catch (e) {
     console.warn('restoreStatusBar failed:', e);
+    return true;
   }
 }
 
@@ -56,16 +66,16 @@ export default function DocumentScannerButton({ onScan, label = 'סרוק מסמ
       console.error('DocumentScanner error:', err, 'stack:', err?.stack);
       toast.error('שגיאה בסריקת המסמך');
     } finally {
-      // Capacitor re-applies its StatusBar config at an
-      // unobservable moment after the native VC dismisses (~350ms+,
-      // longer under Low Power Mode / Reduce Motion). There is no
-      // JS event for it — poll a few times and correct whenever
-      // getInfo() reports the WebView is overlaying.
-      restoreStatusBar();
-      setTimeout(restoreStatusBar, 700);
-      setTimeout(restoreStatusBar, 1500);
-      setTimeout(restoreStatusBar, 3000);
-      setTimeout(restoreStatusBar, 5000);
+      // Poll until the status bar is back (restoreStatusBar returns
+      // false while it is not), then force ONE WebView re-layout and
+      // stop. ~15 tries x 350ms covers a slow dismiss (Low Power
+      // Mode / Reduce Motion stretch the animation).
+      let attempts = 0;
+      const runRestore = async () => {
+        const done = await restoreStatusBar();
+        if (!done && ++attempts < 15) setTimeout(runRestore, 350);
+      };
+      runRestore();
     }
   }, [onScan]);
 
