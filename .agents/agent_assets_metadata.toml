@@ -378,3 +378,9 @@ id = "aghsxkp-sFPM6J0UZ_4ir"
 uri = "file://.local/plans/idor-notify-sso-email-verified-2026-05-17-plan.md"
 type = "text"
 title = "plan file"
+
+[[outputs]]
+id = "-6RTVtuVSSoOjZoD7Gg7G"
+uri = "file://.local/tasks/doc-scanner-in-plans-tabs.md"
+type = "text"
+title = "Plan — doc-scanner-in-plans-tabs"
