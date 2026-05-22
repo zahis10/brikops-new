@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import PlanViewer from '../components/PlanViewer';
 import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
+import DocumentScannerButton from '../components/DocumentScannerButton';
+import { scannedImagesToPdf } from '../utils/scannedImagesToPdf';
 
 const DEFAULT_DISCIPLINES = [
   'electrical', 'plumbing', 'architecture', 'construction', 'hvac', 'fire_protection'
@@ -174,6 +176,23 @@ const UnitPlansPage = () => {
     if (!uploadName) {
       const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
       setUploadName(nameWithoutExt);
+    }
+  };
+
+  // BATCH doc-scanner-in-plans-tabs (2026-05-22) — scanned pages
+  // are combined into ONE multi-page PDF (delivery certificates etc.
+  // are multi-page). That PDF becomes the single plan file.
+  const handleScannedPlan = async (files) => {
+    if (!files || files.length === 0) return;
+    const tid = toast.loading('מעבד את הסריקה...');
+    try {
+      const pdf = await scannedImagesToPdf(files);
+      setUploadFile(pdf);
+      if (!uploadName) setUploadName('מסמך סרוק');
+      toast.dismiss(tid);
+    } catch (err) {
+      console.error('scannedImagesToPdf failed:', err);
+      toast.error('שגיאה ביצירת PDF מהסריקה', { id: tid });
     }
   };
 
@@ -534,10 +553,17 @@ const UnitPlansPage = () => {
                     </button>
                   </div>
                 ) : (
-                  <label htmlFor="unit-plan-file-pick" className="flex items-center justify-center gap-2 w-full py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
-                    <Upload className="w-5 h-5" />
-                    בחר קובץ (PDF, JPG, PNG, DWG, DXF)
-                  </label>
+                  <div className="flex gap-2">
+                    <label htmlFor="unit-plan-file-pick" className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
+                      <Upload className="w-5 h-5" />
+                      בחר קובץ
+                    </label>
+                    {/* BATCH doc-scanner-in-plans-tabs — native only; renders null on web */}
+                    <DocumentScannerButton
+                      onScan={handleScannedPlan}
+                      className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-emerald-300 rounded-xl cursor-pointer hover:bg-emerald-50 transition-colors"
+                    />
+                  </div>
                 )}
               </div>
 

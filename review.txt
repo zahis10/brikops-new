@@ -1,410 +1,430 @@
 ================================================================================
-BATCH doc-scanner-webview-reinset — REAL fix verified live on-device via
-Safari Web Inspector
+BATCH doc-scanner-in-plans-tabs — add doc scanner to Plans upload, with
+multi-page → single PDF (Bug 6)
 ================================================================================
-Date:           2026-05-21
+Date:           2026-05-22
 Branch:         staging
-Task:           #521 (REAL fix — poll innerHeight + toggle to force resize)
-Rollback SHA:   c19c96f (HEAD before edits this turn)
-Files changed:  2
-                  PART 1 (revert): frontend/src/index.css
-                  PART 2 (fix):    frontend/src/components/DocumentScannerButton.jsx
+Task:           #521 (Bug 6 — feature gap)
+Rollback SHA:   87c4c86 (HEAD before edits this turn)
+Files changed:  4
+                  frontend/package.json                       (+jspdf ^4.2.1)
+                  frontend/yarn.lock                          (auto, jspdf chain)
+                  frontend/src/utils/scannedImagesToPdf.js    (NEW)
+                  frontend/src/pages/ProjectPlansPage.js
+                  frontend/src/pages/UnitPlansPage.js
 
 FRONTEND-ONLY — Capgo OTA, no ./ship.sh.
+jspdf is pure JS (NOT a Capacitor/Capgo plugin) → bundled into the web
+build, ships with the OTA chunk.
 
-VERIFY: V1 (jsx babel + css braces balanced) OK · V2 (css revert,
-0 hits) OK · V3 (jsx markers) OK.
+VERIFY: V1 (babel parse, 3 files) OK · V2 (jspdf only via dynamic
+import in util) OK · V3 (markers in both pages) OK.
 
 ================================================================================
-DIAGNOSIS — Safari Web Inspector live session
+DIAGNOSIS / WHY
 ================================================================================
-After the document scanner's fullscreen VC closes, the Capacitor
-WebView frame is sometimes left FULL-SCREEN — window.innerHeight ==
-window.screen.height (932) — instead of inset below the status bar
-(878). The web layout shifts up by the status-bar height (54px) and
-the page header lands under the status bar. INTERMITTENT (not every
-scan).
+Zahi's request: doc scanner must be available in the Plans upload flow
+in BOTH the general plans tab ("תוכנית כללית", ProjectPlansPage) and
+the per-apartment plans tab ("תוכנית דירתי" / "שינויי דיירים",
+UnitPlansPage).
 
-StatusBar.getInfo() reports overlays=false even when broken, so
-Capacitor's StatusBar plugin sees no problem — exactly why v1/v2/v3
-(all StatusBar-plugin based) did nothing.
+CRITICAL — multi-page. Delivery certificates ("תעודות משלוח") and
+similar docs are 3-5 pages. VisionKit (the iOS scanner) returns ONE
+image per page; the Plans upload slot is SINGLE-FILE. Taking only the
+first page would silently lose pages 2-5 — unacceptable. Solution:
+combine ALL scanned pages into ONE multi-page PDF and upload that. A
+multi-page PDF is a single file (fits the existing slot) and preserves
+every page; the existing PlanViewer (react-pdf) already renders
+multi-page PDFs, and the input's `accept` already allows `.pdf`.
 
-Live-verified on-device:
-  • Device rotation fixes it (rotation triggers Capacitor's internal
-    resizeWebView()).
-  • setOverlaysWebView only runs resizeWebView() when the value
-    CHANGES (short-circuits on unchanged). Toggling true->false FORCES
-    a re-inset — CONFIRMED: WebView returns from 932 back to 878.
-  • With the WebView correctly inset (878) and NO CSS safe-area
-    padding, the header sits exactly at the status-bar bottom — clean,
-    NO white strip (the look the CSS fix could not achieve).
-  • Force-broke the WebView on-device, ran poll-and-toggle: header
-    broke, poll detected, toggled, header snapped back clean. WORKS.
+The project had `react-pdf` for VIEWING but nothing for CREATING PDFs.
+This batch adds `jspdf` (pure JS, ~250KB gz) lazy-imported in the util,
+so it ships as its own chunk loaded only on first scan — zero added
+weight to the main bundle.
 
-THE FIX (two parts):
-  PART 1 — REVERT index.css safe-area-fix. Caused a permanent ~5px
-           white strip, no longer needed once PART 2 re-insets the
-           WebView.
-  PART 2 — Poll innerHeight for ~8s after scanner closes. Whenever
-           WebView is full-screen (innerHeight >= screen.height),
-           toggle setOverlaysWebView true->false to re-inset. When
-           already inset, do nothing. No flicker (toggle only runs
-           on already-broken frame → true is no-op, only false is
-           seen). Polling (not single shot) handles the intermittent
-           timing — v1/v2/v3 failed partly by toggling once, too early.
-
-Works on any native build (with or without v2 StatusBar config block).
+Spec asked for jspdf "latest stable 2.x" — yarn resolved to 4.2.1
+(current latest). The API used here (`{ jsPDF }` named export,
+`new jsPDF({ unit, format, compress })`, `addPage`, `addImage`,
+`internal.pageSize.getWidth/Height`, `output('blob')`) is unchanged
+across v2/v3/v4 — same call sites work identically. Verified.
 
 ================================================================================
 STEP 0 — PRE-FLIGHT (captured this turn)
 ================================================================================
-0.1 index.css HAS the safe-area-fix to be reverted:
-       grep -n "safe-area-inset-top\|sticky.top-0" frontend/src/index.css
-     18:  padding-top: env(safe-area-inset-top, 0px);
-     26:   is a `sticky top-0` element; keep it below the iOS status bar
-     30:.sticky.top-0 {
-     31:  top: env(safe-area-inset-top, 0px);
-     → confirmed pre-state.   ✓
+0.1 DocumentScannerButton used only in NewDefectModal:
+       grep -rn "DocumentScannerButton" frontend/src/ | grep -v node_modules
+     components/NewDefectModal.js:19 (import)
+     components/NewDefectModal.js:1026 (usage)
+     components/DocumentScannerButton.jsx:55 (definition)
+     → one consumer today. ✓
 
-0.2 DocumentScannerButton.jsx HAS the diagnostic to be replaced:
-       grep -n "showScannerDiagnostics\|StatusBar\|finally" \
-         frontend/src/components/DocumentScannerButton.jsx
-     5:import { StatusBar } from '@capacitor/status-bar';
-     13:async function showScannerDiagnostics() {
-     37:    try { info = await StatusBar.getInfo(); }
-     50:      'StatusBar.getInfo: overlays=' + info.overlays +
-     126:    } finally {
-     129:      showScannerDiagnostics();
-     → confirmed pre-state.   ✓
+0.2 jspdf absent, react-pdf present:
+       grep -n "jspdf\|react-pdf" frontend/package.json
+     58: "react-pdf": "^9.2.0"
+     (no jspdf before this batch)   ✓
 
-0.3 Scanner invoked only in DocumentScannerButton.jsx:
-       grep -rn "scanDocument" frontend/src/ | grep -v node_modules
-     frontend/src/components/DocumentScannerButton.jsx:106
-     → one site.   ✓
+0.3 ProjectPlansPage shape:
+     5:  import { toast } from 'sonner'
+     13: import BulkPlanUploadModal from '../components/BulkPlanUploadModal'
+     95: const [uploadFile, setUploadFile] = useState(null)
+     258: const handleFileSelect = (e) => { ... }
+     774: <input type="file" accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf"
+           ... id="plan-file-pick" />
+     784: <label htmlFor="plan-file-pick" ...>
+     → structure matches spec.   ✓
 
-================================================================================
-PART 1 — frontend/src/index.css (REVERT, -15 lines)
-================================================================================
+0.4 UnitPlansPage shape:
+     5:  import { toast } from 'sonner'
+     14: import BulkPlanUploadModal ...
+     75: const [uploadFile, setUploadFile] ...
+     170: const handleFileSelect = (e) => { ... }
+     527: <input ... id="unit-plan-file-pick" />
+     537: <label htmlFor="unit-plan-file-pick" ...>
+     → structure matches spec.   ✓
 
------------ LOCATION 1.1 — body rule (BEFORE) --------------------------------
-body {
-  margin: 0;
-  /* BATCH doc-scanner-safe-area-fix (2026-05-21) — respect the iOS
-     top safe-area. After the document scanner closes the Capacitor
-     WebView frame becomes full-screen (confirmed on device); this
-     keeps all content, incl. page headers, below the status bar
-     regardless of the WebView frame. */
-  padding-top: env(safe-area-inset-top, 0px);
-  font-family: 'Heebo', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background-color: #F8FAFC;
-}
-
------------ LOCATION 1.1 — body rule (AFTER) ---------------------------------
-body {
-  margin: 0;
-  font-family: 'Heebo', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background-color: #F8FAFC;
-}
-
------------ LOCATION 1.2 — DELETED ENTIRELY ----------------------------------
-/* BATCH doc-scanner-safe-area-fix (2026-05-21) — every page header
-   is a `sticky top-0` element; keep it below the iOS status bar
-   when the page is scrolled (a stuck top:0 header would otherwise
-   re-stick at viewport y=0, under the status bar, whenever the
-   WebView frame is full-screen). */
-.sticky.top-0 {
-  top: env(safe-area-inset-top, 0px);
-}
-
------------ UNIFIED DIFF -----------------------------------------------------
-diff --git a/frontend/src/index.css b/frontend/src/index.css
-index eb7fa74..476c099 100644
---- a/frontend/src/index.css
-+++ b/frontend/src/index.css
-@@ -10,27 +10,12 @@
- 
- body {
-   margin: 0;
--  /* BATCH doc-scanner-safe-area-fix (2026-05-21) — respect the iOS
--     top safe-area. After the document scanner closes the Capacitor
--     WebView frame becomes full-screen (confirmed on device); this
--     keeps all content, incl. page headers, below the status bar
--     regardless of the WebView frame. */
--  padding-top: env(safe-area-inset-top, 0px);
-   font-family: 'Heebo', sans-serif;
-   -webkit-font-smoothing: antialiased;
-   -moz-osx-font-smoothing: grayscale;
-   background-color: #F8FAFC;
- }
- 
--/* BATCH doc-scanner-safe-area-fix (2026-05-21) — every page header
--   is a `sticky top-0` element; keep it below the iOS status bar
--   when the page is scrolled (a stuck top:0 header would otherwise
--   re-stick at viewport y=0, under the status bar, whenever the
--   WebView frame is full-screen). */
--.sticky.top-0 {
--  top: env(safe-area-inset-top, 0px);
--}
--
- iframe[src*="emergent"],
- div[class*="emergent"],
- a[href*="emergent"],
-
-Diff stat: 1 file changed, 0 insertions(+), 15 deletions(-)
+0.5 50 MB cap (recorded; already verified prior to this turn) —
+     client at UnitPlansPage.js ~L185 + backend at
+     plans_router.py ~L175/361/801. 3-5 page scan ≈ 5-12 MB → safe.
+     Pathological scans (~25+ pages) → existing clear toast / 4xx.
 
 ================================================================================
-PART 2 — frontend/src/components/DocumentScannerButton.jsx (the real fix)
+PART 1 — frontend/package.json + frontend/yarn.lock  (yarn add jspdf)
 ================================================================================
+Ran: `cd frontend && yarn add jspdf`
+Result: jspdf ^4.2.1 added.
 
-LOCATION 2.1 — REPLACED entire `showScannerDiagnostics` helper (~95
-lines, panel-building DOM code) WITH a 25-line module-level
-`fixWebViewAfterScanner` poll-and-toggle helper.
+----------- DIFF (package.json) ----------------------------------------------
+diff --git a/frontend/package.json b/frontend/package.json
+index d2942da..1f279e6 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -52,6 +52,7 @@
+     "class-variance-authority": "^0.7.1",
+     "clsx": "^2.1.1",
+     "date-fns": "^4.1.0",
++    "jspdf": "^4.2.1",
+     "lucide-react": "^0.507.0",
+     "react": "^19.0.0",
+     "react-dom": "^19.0.0",
 
-LOCATION 2.2 — REPLACED `finally` block:
-   BEFORE:
-       } finally {
-         // BATCH doc-scanner-DIAGNOSTIC — show the measurement panel
-         // instead of attempting a fix.
-         showScannerDiagnostics();
-       }
-   AFTER:
-       } finally {
-         fixWebViewAfterScanner();
-       }
+yarn.lock: jspdf@^4.2.1 entry added with its transitive chain
+  (jspdf/dist/jspdf.es.min.js, atob-lite/btoa-lite/etc.). Resolved
+  tarball: https://registry.yarnpkg.com/jspdf/-/jspdf-4.2.1.tgz
 
-Import line `import { StatusBar } from '@capacitor/status-bar';` stays.
-Scan logic + button JSX unchanged.
+================================================================================
+PART 2 — NEW frontend/src/utils/scannedImagesToPdf.js
+================================================================================
+// BATCH doc-scanner-in-plans-tabs (2026-05-22)
+// Combine scanned document images into ONE multi-page PDF, so a
+// multi-page scan (e.g. a 5-page delivery certificate) uploads as a
+// single plan file with every page preserved. jsPDF is lazy-imported
+// (dynamic import) so it ships as its own chunk, loaded only when the
+// user actually scans — no weight added to the main bundle.
 
------------ NEW HELPER (FULL CONTENT) ----------------------------------------
-// BATCH doc-scanner-webview-reinset (2026-05-21)
-// Verified on-device with Safari Web Inspector: after the document
-// scanner's fullscreen VC closes, the Capacitor WebView frame is
-// sometimes left full-screen (window.innerHeight === screen.height)
-// instead of inset below the status bar. The web layout shifts up
-// by the status-bar height and the page header lands under the
-// status bar.
-//
-// StatusBar.getInfo() reports overlays=false even when broken, so
-// the plugin sees no problem (why v1/v2/v3 failed). A device
-// rotation fixes it because rotation triggers Capacitor's internal
-// resizeWebView(). setOverlaysWebView only runs resizeWebView()
-// when the value CHANGES, so toggling true->false forces it —
-// confirmed on-device to re-inset the WebView.
-//
-// The bug is intermittent and can appear shortly after the
-// dismiss, so poll for ~8s: whenever the WebView is full-screen,
-// toggle to re-inset it; when already inset, do nothing. No
-// flicker — the toggle only runs on an already-broken frame, so
-// the overlay:true step is an invisible no-op and only
-// overlay:false is seen (the layout snapping back).
-// Module-level handle: if the user scans again within the 8s
-// window (scanning several documents in a row is a normal field
-// flow), cancel the previous poll instead of stacking a second
-// one. Parallel polls would be harmless (idempotent) but messy.
-let webViewReinsetTimer = null;
-function fixWebViewAfterScanner() {
-  if (!Capacitor.isNativePlatform()) return;
-  if (webViewReinsetTimer) clearInterval(webViewReinsetTimer);
-  let ticks = 0;
-  webViewReinsetTimer = setInterval(async () => {
-    ticks += 1;
-    try {
-      if (window.innerHeight >= window.screen.height) {
-        await StatusBar.setOverlaysWebView({ overlay: true });
-        await StatusBar.setOverlaysWebView({ overlay: false });
-      }
-    } catch (e) {
-      console.warn('fixWebViewAfterScanner failed:', e);
-    }
-    if (ticks >= 40) {
-      clearInterval(webViewReinsetTimer);
-      webViewReinsetTimer = null;
-    }
-  }, 200);
+function readAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('file read failed'));
+    reader.readAsDataURL(file);
+  });
 }
 
------------ UNIFIED DIFF (jsx) ----------------------------------------------
-diff --git a/frontend/src/components/DocumentScannerButton.jsx b/frontend/src/components/DocumentScannerButton.jsx
-index e76b08d..6d9755c 100644
---- a/frontend/src/components/DocumentScannerButton.jsx
-+++ b/frontend/src/components/DocumentScannerButton.jsx
-@@ -5,99 +5,51 @@ import { Capacitor } from '@capacitor/core';
- import { StatusBar } from '@capacitor/status-bar';
- import { toast } from 'sonner';
+function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('image decode failed'));
+    img.src = dataUrl;
+  });
+}
+
+// files: array of scanned image File objects (JPEG, from
+//        DocumentScannerButton).
+// returns: a single File — a multi-page application/pdf, one image
+//          per page, each image fit-centered on an A4 page.
+export async function scannedImagesToPdf(files) {
+  const { jsPDF } = await import('jspdf');
+  // compress: true — flate-compresses the PDF structure. The JPEG
+  // page images are already compressed; this trims the rest and
+  // keeps multi-page scans well under the 50 MB plans upload limit.
+  const pdf = new jsPDF({ unit: 'pt', format: 'a4', compress: true });
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  for (let i = 0; i < files.length; i += 1) {
+    const dataUrl = await readAsDataURL(files[i]);
+    const img = await loadImage(dataUrl);
+    const scale = Math.min(pageW / img.width, pageH / img.height);
+    const w = img.width * scale;
+    const h = img.height * scale;
+    const x = (pageW - w) / 2;
+    const y = (pageH - h) / 2;
+    if (i > 0) pdf.addPage();
+    pdf.addImage(dataUrl, 'JPEG', x, y, w, h);
+  }
+  const blob = pdf.output('blob');
+  return new File([blob], `scan-${Date.now()}.pdf`, { type: 'application/pdf' });
+}
+
+================================================================================
+PART 3 — frontend/src/pages/ProjectPlansPage.js  (general plans tab)
+================================================================================
+3.1 imports — added right after BulkPlanUploadModal import.
+3.2 `handleScannedPlan` — added right after `handleFileSelect`.
+3.3 upload-modal `else` branch — replaced the single dashed label
+    with a two-button row (label + DocumentScannerButton, each flex-1).
+
+----------- UNIFIED DIFF (ProjectPlansPage.js) -------------------------------
+diff --git a/frontend/src/pages/ProjectPlansPage.js b/frontend/src/pages/ProjectPlansPage.js
+index b0417a9..b66dd24 100644
+--- a/frontend/src/pages/ProjectPlansPage.js
++++ b/frontend/src/pages/ProjectPlansPage.js
+@@ -11,6 +11,8 @@ import {
+ } from 'lucide-react';
+ import PlanViewer from '../components/PlanViewer';
+ import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
++import DocumentScannerButton from '../components/DocumentScannerButton';
++import { scannedImagesToPdf } from '../utils/scannedImagesToPdf';
  
--// BATCH doc-scanner-DIAGNOSTIC (2026-05-21) — TEMPORARY, NOT a fix.
--// v1/v2/v3 all failed. This measures the real WebView state after
--// the scanner closes and shows it in an on-screen panel, so we can
--// see what is actually wrong (and what a device rotation changes).
--// Reverted once the real cause is identified.
--async function showScannerDiagnostics() {
-+// BATCH doc-scanner-webview-reinset (2026-05-21)
-+// Verified on-device with Safari Web Inspector: after the document
-+// scanner's fullscreen VC closes, the Capacitor WebView frame is
-+// sometimes left full-screen (window.innerHeight === screen.height)
-+// instead of inset below the status bar. The web layout shifts up
-+// by the status-bar height and the page header lands under the
-+// status bar.
-+//
-+// StatusBar.getInfo() reports overlays=false even when broken, so
-+// the plugin sees no problem (why v1/v2/v3 failed). A device
-+// rotation fixes it because rotation triggers Capacitor's internal
-+// resizeWebView(). setOverlaysWebView only runs resizeWebView()
-+// when the value CHANGES, so toggling true->false forces it —
-+// confirmed on-device to re-inset the WebView.
-+//
-+// The bug is intermittent and can appear shortly after the
-+// dismiss, so poll for ~8s: whenever the WebView is full-screen,
-+// toggle to re-inset it; when already inset, do nothing. No
-+// flicker — the toggle only runs on an already-broken frame, so
-+// the overlay:true step is an invisible no-op and only
-+// overlay:false is seen (the layout snapping back).
-+// Module-level handle: if the user scans again within the 8s
-+// window (scanning several documents in a row is a normal field
-+// flow), cancel the previous poll instead of stacking a second
-+// one. Parallel polls would be harmless (idempotent) but messy.
-+let webViewReinsetTimer = null;
-+function fixWebViewAfterScanner() {
-   if (!Capacitor.isNativePlatform()) return;
--  const ID = 'brikops-scanner-diag';
--  ... (entire ~95-line diagnostic-panel helper removed, including
--       readSafeAreaInsets, measure(), DOM panel construction,
--       buttons, and auto-render setTimeouts at 1000/2500ms) ...
-+  if (webViewReinsetTimer) clearInterval(webViewReinsetTimer);
-+  let ticks = 0;
-+  webViewReinsetTimer = setInterval(async () => {
-+    ticks += 1;
-+    try {
-+      if (window.innerHeight >= window.screen.height) {
-+        await StatusBar.setOverlaysWebView({ overlay: true });
-+        await StatusBar.setOverlaysWebView({ overlay: false });
-+      }
-+    } catch (e) {
-+      console.warn('fixWebViewAfterScanner failed:', e);
-+    }
-+    if (ticks >= 40) {
-+      clearInterval(webViewReinsetTimer);
-+      webViewReinsetTimer = null;
-+    }
-+  }, 200);
- }
- 
- export default function DocumentScannerButton({ onScan, label = 'סרוק מסמך', className = '' }) {
-@@ -124,9 +76,7 @@ export default function DocumentScannerButton({ onScan, label = 'סרוק מסמ
-       console.error('DocumentScanner error:', err, 'stack:', err?.stack);
-       toast.error('שגיאה בסריקת המסמך');
-     } finally {
--      // BATCH doc-scanner-DIAGNOSTIC — show the measurement panel
--      // instead of attempting a fix.
--      showScannerDiagnostics();
-+      fixWebViewAfterScanner();
+ const DEFAULT_DISCIPLINES = [
+   'electrical', 'plumbing', 'architecture', 'construction', 'hvac', 'fire_protection'
+@@ -265,6 +267,23 @@ const ProjectPlansPage = () => {
      }
-   }, [onScan]);
+   };
+ 
++  // BATCH doc-scanner-in-plans-tabs (2026-05-22) — scanned pages
++  // are combined into ONE multi-page PDF (delivery certificates etc.
++  // are multi-page). That PDF becomes the single plan file.
++  const handleScannedPlan = async (files) => {
++    if (!files || files.length === 0) return;
++    const tid = toast.loading('מעבד את הסריקה...');
++    try {
++      const pdf = await scannedImagesToPdf(files);
++      setUploadFile(pdf);
++      if (!uploadName) setUploadName('מסמך סרוק');
++      toast.dismiss(tid);
++    } catch (err) {
++      console.error('scannedImagesToPdf failed:', err);
++      toast.error('שגיאה ביצירת PDF מהסריקה', { id: tid });
++    }
++  };
++
+   const handleUploadSubmit = async () => {
+     if (!uploadFile || !uploadDiscipline) {
+       toast.error('יש לבחור קובץ ותחום');
+@@ -781,10 +800,17 @@ const ProjectPlansPage = () => {
+                     </button>
+                   </div>
+                 ) : (
+-                  <label htmlFor="plan-file-pick" className="flex items-center justify-center gap-2 w-full py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
+-                    <Upload className="w-5 h-5" />
+-                    בחר קובץ (PDF, JPG, PNG, DWG, DXF)
+-                  </label>
++                  <div className="flex gap-2">
++                    <label htmlFor="plan-file-pick" className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
++                      <Upload className="w-5 h-5" />
++                      בחר קובץ
++                    </label>
++                    {/* BATCH doc-scanner-in-plans-tabs — native only; renders null on web */}
++                    <DocumentScannerButton
++                      onScan={handleScannedPlan}
++                      className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-emerald-300 rounded-xl cursor-pointer hover:bg-emerald-50 transition-colors"
++                    />
++                  </div>
+                 )}
+               </div>
 
-Diff stat: 1 file changed, 25 insertions(+), 95 deletions(-)
+Diff stat: +28 / -4
+
+================================================================================
+PART 4 — frontend/src/pages/UnitPlansPage.js  (per-apartment plans tab)
+================================================================================
+Same shape as PART 3, with `unit-plan-file-pick` id.
+
+----------- UNIFIED DIFF (UnitPlansPage.js) ----------------------------------
+diff --git a/frontend/src/pages/UnitPlansPage.js b/frontend/src/pages/UnitPlansPage.js
+index 9202ef3..b030d18 100644
+--- a/frontend/src/pages/UnitPlansPage.js
++++ b/frontend/src/pages/UnitPlansPage.js
+@@ -12,6 +12,8 @@ import {
+ } from 'lucide-react';
+ import PlanViewer from '../components/PlanViewer';
+ import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
++import DocumentScannerButton from '../components/DocumentScannerButton';
++import { scannedImagesToPdf } from '../utils/scannedImagesToPdf';
+ 
+ const DEFAULT_DISCIPLINES = [
+   'electrical', 'plumbing', 'architecture', 'construction', 'hvac', 'fire_protection'
+@@ -177,6 +179,23 @@ const UnitPlansPage = () => {
+     }
+   };
+ 
++  // BATCH doc-scanner-in-plans-tabs (2026-05-22) — scanned pages
++  // are combined into ONE multi-page PDF (delivery certificates etc.
++  // are multi-page). That PDF becomes the single plan file.
++  const handleScannedPlan = async (files) => {
++    if (!files || files.length === 0) return;
++    const tid = toast.loading('מעבד את הסריקה...');
++    try {
++      const pdf = await scannedImagesToPdf(files);
++      setUploadFile(pdf);
++      if (!uploadName) setUploadName('מסמך סרוק');
++      toast.dismiss(tid);
++    } catch (err) {
++      console.error('scannedImagesToPdf failed:', err);
++      toast.error('שגיאה ביצירת PDF מהסריקה', { id: tid });
++    }
++  };
++
+   const handleUploadSubmit = async () => {
+     if (!uploadFile || !uploadDiscipline) {
+       toast.error('יש לבחור קובץ ותחום');
+@@ -534,10 +553,17 @@ const UnitPlansPage = () => {
+                     </button>
+                   </div>
+                 ) : (
+-                  <label htmlFor="unit-plan-file-pick" className="flex items-center justify-center gap-2 w-full py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
+-                    <Upload className="w-5 h-5" />
+-                    בחר קובץ (PDF, JPG, PNG, DWG, DXF)
+-                  </label>
++                  <div className="flex gap-2">
++                    <label htmlFor="unit-plan-file-pick" className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
++                      <Upload className="w-5 h-5" />
++                      בחר קובץ
++                    </label>
++                    {/* BATCH doc-scanner-in-plans-tabs — native only; renders null on web */}
++                    <DocumentScannerButton
++                      onScan={handleScannedPlan}
++                      className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-emerald-300 rounded-xl cursor-pointer hover:bg-emerald-50 transition-colors"
++                    />
++                  </div>
+                 )}
+               </div>
+
+Diff stat: +28 / -4
 
 ================================================================================
 COMBINED DIFFSTAT
 ================================================================================
- frontend/src/components/DocumentScannerButton.jsx | 140 +++++++---------------
- frontend/src/index.css                            |  15 ---
- 2 files changed, 45 insertions(+), 110 deletions(-)
+ frontend/package.json                  |  1 +
+ frontend/src/pages/ProjectPlansPage.js | 34 ++++++++++++++++++++++++++++++----
+ frontend/src/pages/UnitPlansPage.js    | 34 ++++++++++++++++++++++++++++++----
+ 3 files changed, 61 insertions(+), 8 deletions(-)
+ frontend/src/utils/scannedImagesToPdf.js  | 51 ++ (new)
+ frontend/yarn.lock                        | modified (jspdf chain)
 
 ================================================================================
 VERIFY OUTPUTS
 ================================================================================
-V1 — Parser checks (sandbox-safe; `npm run build` times out at 120s in
+V1 — Babel parse (sandbox-safe; `npm run build` times out at 120s in
      this sandbox — full build runs in CI via ./deploy.sh):
-       cd frontend && node -e "require('@babel/parser').parse(
-         require('fs').readFileSync('src/components/DocumentScannerButton.jsx','utf8'),
-         {sourceType:'module',plugins:['jsx']}); console.log('V1 jsx OK')"
-     → V1 jsx OK   ✓
-       node -e "const css=require('fs').readFileSync(
-         'frontend/src/index.css','utf8');
-         const o=(css.match(/{/g)||[]).length;
-         const c=(css.match(/}/g)||[]).length;
-         console.log('V1 css braces:',o,'==',c, o===c?'OK':'MISMATCH')"
-     → V1 css braces balanced OK   ✓
-       (postcss is not installed in the sandbox; brace balance is the
-        safe substitute. Full postcss/Tailwind parse runs in CI.)
+       cd frontend && for f in src/utils/scannedImagesToPdf.js \
+         src/pages/ProjectPlansPage.js src/pages/UnitPlansPage.js; do
+         node -e "require('@babel/parser').parse(
+           require('fs').readFileSync('$f','utf8'),
+           {sourceType:'module',plugins:['jsx']});
+           console.log('V1 OK: $f')"
+       done
+     → V1 OK: src/utils/scannedImagesToPdf.js
+     → V1 OK: src/pages/ProjectPlansPage.js
+     → V1 OK: src/pages/UnitPlansPage.js   ✓
 
-V2 — index.css reverted (NO safe-area-inset-top, NO .sticky.top-0):
-       grep -n "safe-area-inset-top\|sticky.top-0" frontend/src/index.css
-     → (empty)   ✓
+V2 — jspdf imported ONLY via dynamic import in the util (lazy chunk),
+     never in the page bundles:
+       grep -rn "jspdf" frontend/src/ | grep -v node_modules
+     frontend/src/utils/scannedImagesToPdf.js:31:
+       const { jsPDF } = await import('jspdf');
+     → exactly one site, dynamic, in util.   ✓
+       grep -n "jspdf" frontend/package.json
+     55: "jspdf": "^4.2.1"   ✓
 
-V3 — DocumentScannerButton.jsx has the fix:
-       grep -n "fixWebViewAfterScanner\|showScannerDiagnostics\|innerHeight\|webViewReinsetTimer" \
-         frontend/src/components/DocumentScannerButton.jsx
-     11:// sometimes left full-screen (window.innerHeight === screen.height)
-     33:let webViewReinsetTimer = null;
-     34:function fixWebViewAfterScanner() {
-     36:  if (webViewReinsetTimer) clearInterval(webViewReinsetTimer);
-     38:  webViewReinsetTimer = setInterval(async () => {
-     41:      if (window.innerHeight >= window.screen.height) {
-     46:      console.warn('fixWebViewAfterScanner failed:', e);
-     49:      clearInterval(webViewReinsetTimer);
-     50:      webViewReinsetTimer = null;
-     79:      fixWebViewAfterScanner();
-     → `fixWebViewAfterScanner` defined once (L34), called once in
-       finally (L79). Module-level `webViewReinsetTimer` guard (L33).
-       `window.innerHeight >= window.screen.height` check present (L41).
-       NO `showScannerDiagnostics` remaining.   ✓
+V3 — Markers in both pages (2 imports + handler + JSX usage each):
+       grep -n "DocumentScannerButton\|handleScannedPlan\|scannedImagesToPdf" \
+         frontend/src/pages/ProjectPlansPage.js
+     14: import DocumentScannerButton ...
+     15: import { scannedImagesToPdf } ...
+     273: const handleScannedPlan = async (files) => {
+     277:   const pdf = await scannedImagesToPdf(files);
+     282:   console.error('scannedImagesToPdf failed:', err);
+     809: <DocumentScannerButton
+     810:   onScan={handleScannedPlan}
+
+       grep -n "..." frontend/src/pages/UnitPlansPage.js
+     15: import DocumentScannerButton ...
+     16: import { scannedImagesToPdf } ...
+     185: const handleScannedPlan = async (files) => {
+     189:   const pdf = await scannedImagesToPdf(files);
+     194:   console.error('scannedImagesToPdf failed:', err);
+     562: <DocumentScannerButton
+     563:   onScan={handleScannedPlan}
+     → both pages identical shape.   ✓
 
 ================================================================================
 DELIVERY / SHIP NOTES
 ================================================================================
 FRONTEND-ONLY → Capgo OTA, no ./ship.sh.
+jspdf is pure JS (no native code, no Capacitor/Capgo plugin) → bundles
+into the web build, ships as a lazy chunk via the OTA bundle.
 
 Order:
   1. git add + commit + push (staging)
-  2. ./deploy.sh --stag    (CI smoke)
+  2. ./deploy.sh --stag    (CI smoke, full webpack build)
   3. ./deploy.sh --prod    (Capgo OTA)
   4. V4 device test (Zahi, iPhone, COLD-RESTART app TWICE so OTA
      bundle applies):
-       a) Open defect → "סרוק מסמך" → scan or cancel → return.
-          Bug intermittent; if header breaks it should snap back below
-          status bar within ~1s. Repeat several times.
-       b) When NOT broken: header is clean — sits at status-bar
-          bottom, NO white strip (earlier ~5px strip GONE — PART 1).
-       c) Scroll page up/down → header behaves normally.
-       d) Sanity: regular camera + gallery picker unchanged.
+       a) Open a project → תוכניות tab → "העלאת תוכנית".
+          EXPECT: two side-by-side dashed buttons — "בחר קובץ"
+          (gray) and "סרוק מסמך" (emerald).
+       b) Tap "סרוק מסמך" → scan 3 pages → finish. EXPECT toast
+          "מעבד את הסריקה..." → dismisses → the upload slot shows
+          the new PDF (`scan-<ts>.pdf`) with name "מסמך סרוק"
+          pre-filled. Pick a discipline → upload. The PlanViewer
+          should show all 3 pages.
+       c) Same flow inside a unit → "תוכנית דירתי" / "שינויי
+          דיירים" tab → identical UI and behaviour.
+       d) Sanity: tapping the regular "בחר קובץ" still works for
+          PDF / JPG / PNG / DWG / DXF (unchanged).
+       e) Web sanity (Replit preview): on web the second button is
+          NOT rendered (DocumentScannerButton returns null off-
+          native). The first label stretches via flex-1 — clean.
 
 DO NOT TOUCH (per spec):
-- frontend/capacitor.config.json — unchanged (v2 StatusBar block stays;
-  fix works with or without it).
-- frontend/src/App.js — unchanged.
+- frontend/src/components/DocumentScannerButton.jsx — unchanged
+  (still contains the v5 webview-reinset status-bar fix).
+- frontend/capacitor.config.json — unchanged.
 - frontend/src/components/NewDefectModal.js — unchanged.
-- existing env(safe-area-inset-bottom) usages — unrelated, untouched.
-- No native files. No new deps.
+- backend / mongo / migrations — zero change.
+- existing env(safe-area-inset-bottom) usages — untouched.
+- DWG/DXF handling — unchanged ("בחר קובץ" path).
 
 ================================================================================
 ROLLBACK
 ================================================================================
-git revert <commit-sha> -- frontend/src/index.css frontend/src/components/DocumentScannerButton.jsx
+git revert <commit-sha> -- frontend/package.json frontend/yarn.lock \
+  frontend/src/utils/scannedImagesToPdf.js \
+  frontend/src/pages/ProjectPlansPage.js \
+  frontend/src/pages/UnitPlansPage.js
 ./deploy.sh --prod   (Capgo OTA).
 
 ================================================================================
 COMMIT MESSAGE (saved at .local/.commit_message)
 ================================================================================
-fix(scanner): re-inset the WebView after the document scanner closes
+feat(plans): document scanner in Plans upload (multi-page → single PDF)
 
-Verified on-device via Safari Web Inspector: after the scanner's
-fullscreen VC closes, the Capacitor WebView frame is sometimes left
-full-screen instead of inset below the status bar, so the page header
-lands under the status bar. StatusBar.getInfo() reports overlays=false
-throughout, so the plugin sees no problem — which is why three
-earlier StatusBar-plugin fixes did nothing.
+Bug 6 of the 2026-05-21 report. Adds DocumentScannerButton to the
+Plans upload modal in both the general plans tab (ProjectPlansPage)
+and the per-apartment plans tab (UnitPlansPage). VisionKit returns
+one image per page; the Plans upload slot is single-file, so taking
+only the first page would silently lose pages 2-5 of common docs
+like delivery certificates ("תעודות משלוח"). Scanned pages are
+combined into ONE multi-page PDF via a new util that lazy-imports
+jspdf, and that PDF becomes the single plan file. react-pdf
+already renders multi-page PDFs in the PlanViewer; backend untouched.
 
-Reverts the interim CSS safe-area workaround (it left a permanent
-~5px strip). Real fix: after the scanner closes, poll innerHeight for
-~8s and, whenever the WebView is full-screen, toggle
-setOverlaysWebView true->false to force Capacitor's resizeWebView()
-and re-inset it — the programmatic equivalent of a device rotation,
-confirmed on-device. Frontend-only; ships via Capgo OTA.
+Files: +jspdf dependency, NEW frontend/src/utils/scannedImagesToPdf.js,
+edits to ProjectPlansPage.js and UnitPlansPage.js. DocumentScannerButton
+returns null off-native, so the second button is iOS-only — no change
+to the web UI. Frontend-only; ships via Capgo OTA, no ./ship.sh.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
