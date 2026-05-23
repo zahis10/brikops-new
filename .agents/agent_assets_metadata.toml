@@ -390,3 +390,9 @@ id = "lMxEJ7MRp-MrdDfbm0bfD"
 uri = "file://.local/tasks/upload-abuse-hardening-phase1.md"
 type = "text"
 title = "Plan — upload-abuse-hardening PHASE 1"
+
+[[outputs]]
+id = "Dhtr3VoH4w3d2M7eH8RuO"
+uri = "file://review_v2_diff.txt"
+type = "text"
+title = "review_v2_diff.txt — FULL diff v1+v2 (3 files, +33/-1)"
