@@ -1,203 +1,325 @@
 ================================================================================
-BATCH upload-abuse-hardening — PHASE 1
-*** STOP — SPEC DIVERGENCE FOUND IN STEP 0. NO EDITS MADE. ***
+BATCH upload-abuse-hardening — PHASE 1 (byte-based rate limit +
+Content-Length pre-check) on all 6 upload endpoints
 ================================================================================
 Date:           2026-05-22
 Branch:         staging
-Rollback SHA:   e9c8048  (HEAD this turn — unchanged, no edits)
-Files changed:  0  (STOP report only — awaiting Zahi decision)
+Severity:       P2 security (authenticated cost-amplification / DoS —
+                Shannon-grade MEDIUM)
+Rollback SHA:   e9c8048   (HEAD before edit this turn)
+Files changed:  3
+                  backend/contractor_ops/upload_rate_limit.py   (+61 / -0)
+                  backend/contractor_ops/plans_router.py        (+34 / -1)
+                  backend/contractor_ops/tasks_router.py        (+23 / -1)
 
-Per spec STEP 0:
-  "If anything diverges from this spec → STOP, paste the actual code,
-   report. Do NOT guess."
-
-This is that report.
+BACKEND-ONLY — EB deploy via ./deploy.sh --stag then --prod.
+NO Capgo, NO ./ship.sh, NO new dependency, NO data migration.
+PHASE 2 (per-org storage quota) is a separate batch, NOT in this one.
 
 ================================================================================
-STEP 0 — OBSERVED vs EXPECTED
+CONTEXT — the threat
+================================================================================
+6 upload endpoints, each calling check_upload_rate_limit(user_id) —
+in-memory limiter capped at 30 uploads/min/user. Combined with the
+50MB app cap = 30 x 50MB = 1.5 GB/min/account ~= 2 TB/day of
+authenticated S3 cost amplification. An invited contractor / a
+compromised account could drive unbounded storage cost without ever
+tripping the count limiter (30 tiny files == 30 x 50MB files to it).
+
+Raising nginx 20M->55M (just shipped) did NOT touch this surface —
+that aligned the per-request wall with the app's 50MB. This batch
+adds the missing RATE bound (bytes/min). PHASE 2 will add the missing
+TOTAL bound (per-org storage quota).
+
+================================================================================
+STEP 0 — PRE-FLIGHT (captured this turn)
 ================================================================================
 
 0.1  Six call sites — CONFIRMED ✓
-       grep -n "check_upload_rate_limit" \
-         backend/contractor_ops/plans_router.py \
-         backend/contractor_ops/tasks_router.py
-     backend/contractor_ops/plans_router.py:14:from contractor_ops.upload_rate_limit import check_upload_rate_limit
-     backend/contractor_ops/plans_router.py:146:    check_upload_rate_limit(user['id'])
-     backend/contractor_ops/plans_router.py:336:    check_upload_rate_limit(user['id'])
-     backend/contractor_ops/plans_router.py:512:    check_upload_rate_limit(user['id'])
-     backend/contractor_ops/plans_router.py:772:    check_upload_rate_limit(user['id'])
-     backend/contractor_ops/tasks_router.py:31:from contractor_ops.upload_rate_limit import check_upload_rate_limit
-     backend/contractor_ops/tasks_router.py:919:    check_upload_rate_limit(user['id'])
-     backend/contractor_ops/tasks_router.py:1298:    check_upload_rate_limit(user['id'])
-     → exactly 6 enforcement points, matches spec.
+       grep -n "check_upload_rate_limit" plans_router.py tasks_router.py
+     plans_router.py:14: import
+     plans_router.py:146, 336, 512, 772 — 4 endpoints
+     tasks_router.py:31: import
+     tasks_router.py:919, 1298 — 2 endpoints
+     → matches spec exactly.
 
-0.2  upload_rate_limit.py — pristine, no byte tracking yet ✓
-       cat backend/contractor_ops/upload_rate_limit.py
-     - `_upload_counts: dict[str, list[float]]` (L8)
-     - `_lock = threading.Lock()` (L9)
-     - `MAX_UPLOADS_PER_MINUTE = 30` (L12)
-     - `WINDOW_SECONDS = 60` (L13)
-     - `CLEANUP_EVERY_N = 100` (L14)
-     - `check_upload_rate_limit(user_id)` (L24)
-     → matches expected shape, no pre-existing byte logic. Safe to extend.
+0.2  upload_rate_limit.py — pristine, no byte tracking ✓
+     L8 _upload_counts, L9 _lock, L12 MAX_UPLOADS_PER_MINUTE=30,
+     L13 WINDOW_SECONDS=60, L14 CLEANUP_EVERY_N=100,
+     L24 check_upload_rate_limit(user_id).
 
-0.3  Size checks in the four plans endpoints —
-     ⚠️ ONLY 3 OF 4 PRESENT.  ⚠️
-       grep -n "await file.read()\|file_size = len\|file_size_check = len\|50 \* 1024 \* 1024\|len(raw)" \
-         backend/contractor_ops/plans_router.py
-     173:    file_bytes = await file.read()
-     174:    file_size = len(file_bytes)
-     175:    if file_size > 50 * 1024 * 1024:
-     359:    file_bytes = await file.read()
-     360:    file_size_check = len(file_bytes)
-     361:    if file_size_check > 50 * 1024 * 1024:
-     799:    file_bytes = await file.read()
-     800:    file_size = len(file_bytes)
-     801:    if file_size > 50 * 1024 * 1024:
+0.3  Plans size checks — 3 of 4 endpoints have pre-upload size enforce,
+     L504 replace_project_plan does NOT ⚠️ (OPTION A patches this).
+       grep -n "await file.read()\|file_size = len\|file_size_check = len\|50 \* 1024 \* 1024" \
+         plans_router.py
+     173: file_bytes = await file.read()
+     174: file_size = len(file_bytes)
+     175: if file_size > 50 * 1024 * 1024:        # upload_project_plan
+     359: file_bytes = await file.read()
+     360: file_size_check = len(file_bytes)
+     361: if file_size_check > 50 * 1024 * 1024:  # upload_plan_version
+     799: file_bytes = await file.read()
+     800: file_size = len(file_bytes)
+     801: if file_size > 50 * 1024 * 1024:        # upload_unit_plan
+     → L504 replace_project_plan: no file.read, no len, no 50MB cap
+       in the original code — addressed below via OPTION A.
 
-     The check_upload_rate_limit sites are at 146, 336, 512, 772.
-     Size checks exist at 173 (matches L146 endpoint), 359 (matches L336),
-     799 (matches L772). THE L512 ENDPOINT HAS NONE.
-
-     This is a real spec divergence — the spec said "EXPECT: a
-     `await file.read()` + a `len(...)` size var + a `> 50 * 1024 * 1024`
-     422 check inside each of the 4 endpoints."
-
-0.5  Tasks endpoints — confirmed ✓
-     L913-975  contractor_proof  — request: Request present (L916),
-                                   multi-file via `request.form()`.
-     L1296-1359 upload_task_attachment — request: Request present,
-                                          single file, `raw = await file.read()`
-                                          + `len(raw)` already available (L1323-1324).
-
-0.6  contractor_ops/billing.py uses bare `IL_TZ`-style relative imports
-     (no `get_db` import from there) — only relevant to PHASE 2.
+0.5  Tasks endpoints —
+     L913-975  contractor_proof  — `request: Request` present (L916),
+       multi-file via `request.form()` (L956). Loop at L959-967 builds
+       `all_files = []` by walking form fields. Storage loop at L972
+       calls upload_file_with_details per file. THIS IS THE V5 SITE.
+     L1296-1359 upload_task_attachment — `request: Request` present,
+       single file, `raw = await file.read()` at L1323, `len(raw)`
+       available at L1324, `await file.seek(0)` at L1337.
 
 ================================================================================
-THE DIVERGENT ENDPOINT — plans_router.py L504-578 `replace_project_plan`
+PART 1.1 — upload_rate_limit.py  (+61 / -0)
 ================================================================================
 
-The full body — pasted verbatim so Zahi can see exactly what is and is
-NOT there:
+LOCATION 1.1.a — added `import os` + byte-limit constants + per-user
+byte ledger after the existing constants:
 
-  504  @router.post("/projects/{project_id}/plans/{plan_id}/replace")
-  505  async def replace_project_plan(
-  506      project_id: str,
-  507      plan_id: str,
-  508      file: UploadFile = File(...),
-  509      note: Optional[str] = Form(None),
-  510      user: dict = Depends(get_current_user),
-  511  ):
-  512      check_upload_rate_limit(user['id'])
-  513      if user['role'] == 'viewer':
-  514          raise HTTPException(status_code=403, detail='Viewers have read-only access')
-  515      db = get_db()
-  516      await _check_project_read_access(user, project_id)
-  517      requester_membership = await _get_project_membership(user, project_id)
-  518      requester_role = requester_membership.get('role', 'none')
-  519      if requester_role not in PLAN_UPLOAD_ROLES:
-  520          raise HTTPException(status_code=403, detail='אין לך הרשאה להחליף תוכניות')
-  521
-  522      old_plan = await db.project_plans.find_one({
-  523          'id': plan_id,
-  524          'project_id': project_id,
-  525          'deletedAt': {'$exists': False},
-  526          'status': {'$ne': 'archived'},
-  527      })
-  528      if not old_plan:
-  529          raise HTTPException(status_code=404, detail='תוכנית פעילה לא נמצאה')
-  530
-  531      discipline = old_plan['discipline']
-  532
-  533      validate_upload(file, ALLOWED_PLAN_EXTENSIONS, ALLOWED_PLAN_TYPES)
-  534      from services.storage_service import StorageService
-  535      storage = StorageService()
-  536      result = await storage.upload_file_with_details(file, f"project_plan_{project_id}_{discipline}")
-  537
-  538      new_plan_id = str(uuid.uuid4())
-  539      ts = _now()
-  540      new_plan_doc = {
-  541          'id': new_plan_id,
-  542          ...
-  543          'file_size': result.file_size,
-  544          ...
-  545      }
-  546      ...
+  MAX_UPLOAD_MB_PER_MINUTE = int(os.environ.get('MAX_UPLOAD_MB_PER_MINUTE', '500'))
+  MAX_UPLOAD_BYTES_PER_MINUTE = MAX_UPLOAD_MB_PER_MINUTE * 1024 * 1024
+  _upload_bytes: dict[str, list[tuple[float, int]]] = {}
 
-→ NO `file.read()`. NO `len(...)` size variable. NO `> 50 * 1024 * 1024`
-   422 check. NO `request: Request` parameter. The file is handed
-   directly to `storage.upload_file_with_details(file, ...)` and the
-   size is only known AFTER the upload succeeds (via `result.file_size`).
+LOCATION 1.1.b — extended _cleanup_expired() to also prune
+_upload_bytes (same WINDOW_SECONDS * 2 cutoff, reads v[-1][0]).
 
-This endpoint also has a second, separate gap that is NOT what this
-batch is about, but worth noting in the same report: there is **no
-per-file 50MB cap on this endpoint at all**, while the other three
-plans endpoints all enforce 50MB. A 200MB file uploaded here today
-would succeed.
+LOCATION 1.1.c — added two new functions at end of file:
+  - check_upload_bytes(user_id, incoming_bytes)
+    Rolling-60s ledger under _lock. Sums (timestamp, bytes) entries
+    that fall inside the window, raises HTTPException(429, Hebrew msg)
+    if window_total + incoming_bytes > MAX_UPLOAD_BYTES_PER_MINUTE.
+    On admit, appends (now, incoming_bytes).
+  - check_content_length(header, max_bytes)
+    Fast-path 413 when the request advertises a body larger than
+    max_bytes. Header is advisory/spoofable, so this is an
+    optimisation; real enforcement stays the post-read size check.
 
 ================================================================================
-WHY THIS BLOCKS PHASE 1
+PART 1.2 — plans_router.py wiring (+34 / -1)
 ================================================================================
 
-Hook B per spec is:
-    check_upload_bytes(user['id'], <size_var>)
-"where <size_var> is that endpoint's existing size variable" — there
-is no such variable in `replace_project_plan`. The size is not known
-until AFTER the storage upload, which is too late: by the time we
-could call check_upload_bytes, the bytes are already in S3 — exactly
-the abuse window this batch is supposed to close.
+- L10: added `Request` to `from fastapi import ...`.
+- L17-19: import updated to also pull `check_upload_bytes` and
+  `check_content_length`.
+- All 4 plans endpoints (`upload_project_plan`, `upload_plan_version`,
+  `replace_project_plan`, `upload_unit_plan`):
+  - Added `request: Request` to signature immediately after the
+    path parameters (and before any param with a default, so Python
+    arg-order is satisfied).
+  - HOOK A: `check_content_length(request.headers.get('content-length'),
+    50 * 1024 * 1024)` immediately after the existing
+    `check_upload_rate_limit(user['id'])` call.
+  - HOOK B: `check_upload_bytes(user['id'], <size_var>)` immediately
+    after the existing 50MB 422 check, BEFORE `await file.seek(0)`
+    and BEFORE storage. Size vars used (unchanged names):
+      L186 upload_project_plan:   check_upload_bytes(user['id'], file_size)
+      L377 upload_plan_version:   check_upload_bytes(user['id'], file_size_check)
+      L560 replace_project_plan:  check_upload_bytes(user['id'], file_size)
+      L836 upload_unit_plan:      check_upload_bytes(user['id'], file_size)
 
-Per spec STEP 0, the instruction is explicit: STOP and report,
-DO NOT guess.
-
-================================================================================
-DECISION REQUEST — pick one, then I proceed
-================================================================================
-
-OPTION A — Mirror the other plans endpoints in this batch
-  Add the same pre-upload pattern to replace_project_plan:
-      file_bytes = await file.read()
-      file_size = len(file_bytes)
-      if file_size > 50 * 1024 * 1024:
-          raise HTTPException(status_code=422,
-                              detail="קובץ גדול מדי (מקסימום 50MB)")
-      check_upload_bytes(user['id'], file_size)
-      await file.seek(0)
-  Then continue with Hook A (Content-Length pre-check) at the top.
-  Pros: closes both gaps (50MB cap + byte rate-limit) on this endpoint
-        in one go; no future spec needed.
-  Cons: adds a behaviour change (a new 422 path) inside a "rate-limit"
-        batch — slight scope creep vs the literal spec.
-  Cost in this batch: +5 lines on top of the 2 hooks. No new risk.
-
-OPTION B — Skip L504 in PHASE 1, wire only the other 5 endpoints
-  Wire Hook A + Hook B in plans 146 / 336 / 772 and tasks 919 / 1298.
-  Leaves replace_project_plan covered ONLY by the existing 30/min count
-  limit + the nginx 55M outer wall.
-  Pros: zero scope creep — matches the literal spec where size var
-        exists in only 5 of 6 sites.
-  Cons: replace_project_plan stays a byte-amplification hole — a
-        compromised account can call it up to 30×~55MB ≈ 1.65 GB/min,
-        which is exactly what this batch is supposed to close.
-
-OPTION C — Defer the whole batch, fix L504's missing 50MB cap as a
-            separate prerequisite batch first, then run THIS batch
-            against a uniform 6-endpoint surface.
-  Pros: cleanest spec discipline.
-  Cons: two deploys instead of one for the same end state.
-
-My recommendation: OPTION A — it's the minimum scope expansion that
-keeps Hook B's invariant (byte-checked BEFORE storage) intact on every
-endpoint. But the call is Zahi's.
+- replace_project_plan — OPTION A (Zahi-approved 2026-05-22 — see STOP
+  REPORT from previous turn): immediately after the existing
+  `validate_upload(...)` and BEFORE `storage.upload_file_with_details(...)`,
+  added the same pre-upload pattern as the other three plans
+  endpoints:
+       file_bytes = await file.read()
+       file_size = len(file_bytes)
+       if file_size > 50 * 1024 * 1024:
+           raise HTTPException(status_code=422, detail='קובץ גדול מדי (מקסימום 50MB)')
+       check_upload_bytes(user['id'], file_size)
+       await file.seek(0)
+  This closes both gaps on this endpoint: enforces the 50MB app cap
+  (was missing — a 200MB file could land here before this batch) and
+  feeds the byte rate-limit BEFORE any data reaches S3.
 
 ================================================================================
-WHAT I DID NOT DO
+PART 1.3 — tasks_router.py wiring (+23 / -1)
 ================================================================================
-- No edits to any file. HEAD still e9c8048.
-- No new dependency.
-- No commit, no push, no deploy.
-- No `mark_task_complete`.
+
+- L34-36: import updated to also pull `check_upload_bytes` and
+  `check_content_length` (`Request` already imported at L1).
+- contractor_proof (L919, multi-file):
+  - HOOK A after `check_upload_rate_limit`.
+  - HOOK B: see V5 below — single call with SUM.
+- upload_task_attachment (L1318, single file):
+  - HOOK A after `check_upload_rate_limit`.
+  - HOOK B: `check_upload_bytes(user['id'], len(raw))` placed AFTER
+    the existing Pillow `.verify()` block and BEFORE the existing
+    `await file.seek(0)` + `[ATTACH:VALIDATED]` log. `len(raw)` is
+    already in scope (the file is read into `raw` earlier in the
+    endpoint).
 
 ================================================================================
-AWAITING ZAHI DECISION — DO NOT DEPLOY (NOTHING TO DEPLOY YET)
+V5 ⭐ CRITICAL — contractor_proof multi-file
+================================================================================
+
+The exact lines in tasks_router.py that collect the multi-file list
+(STEP 0.5 output, unchanged in this batch):
+
+  956      form = await request.form()
+  957      all_files = []
+  958      note = None
+  959      for key in form:
+  960          val = form.getlist(key)
+  961          for v in val:
+  962              if hasattr(v, 'filename') and v.filename:
+  963                  all_files.append(v)
+  964              elif key == 'note' and isinstance(v, str):
+  965                  note = v
+  966      if not all_files:
+  967          raise HTTPException(status_code=400,
+                                  detail='At least one proof file is required')
+
+The NEW block inserted between the `if not all_files: raise ...` line
+and the `from services.storage_service import StorageService` line
+(verbatim from the edit applied this turn):
+
+  976      # BATCH upload-abuse-hardening (2026-05-22) — multi-file: measure
+  977      # the TOTAL bytes of this proof request and check the byte rate
+  978      # limit ONCE on the SUM, BEFORE any file lands in S3. A partial
+  979      # mid-batch failure would leak orphaned bytes that we cannot
+  980      # rollback, so the check must precede the storage loop. Each
+  981      # file is read once for sizing and then seek(0) restores the
+  982      # cursor so the storage loop reads it normally.
+  983      proof_total_bytes = 0
+  984      for upload_file in all_files:
+  985          data = await upload_file.read()
+  986          proof_total_bytes += len(data)
+  987          await upload_file.seek(0)
+  988      check_upload_bytes(user['id'], proof_total_bytes)
+  989
+  990      from services.storage_service import StorageService
+  991      storage = StorageService()
+  992      proof_urls = []
+  993      for i, upload_file in enumerate(all_files):
+  994          validate_upload(upload_file, ALLOWED_PROOF_EXTENSIONS, ALLOWED_PROOF_TYPES)
+  995          result = await storage.upload_file_with_details(upload_file,
+                                                              f"proof_{task_id}_{i}")
+  996          proof_urls.append(result.file_url)
+
+>>> EXPLICIT DECLARATION:
+>>> In contractor_proof, check_upload_bytes is called EXACTLY ONCE,
+>>> with the SUM of every byte in the request (`proof_total_bytes`),
+>>> BEFORE any storage call. It is NOT called per-file. It is NOT
+>>> called only on the first file. It is NOT called after storage.
+>>> A partial mid-batch failure cannot leak orphaned bytes because
+>>> the byte ledger is committed before any object reaches S3.
+
+================================================================================
+VERIFY OUTPUTS
+================================================================================
+
+V1 — upload_rate_limit imports clean:
+       cd backend && python -c "import contractor_ops.upload_rate_limit; \
+         print(contractor_ops.upload_rate_limit.MAX_UPLOAD_MB_PER_MINUTE)"
+     OK
+     MAX_UPLOAD_MB_PER_MINUTE= 500            ✓
+
+V2 — both routers import clean (catches missing Request import):
+       cd backend && python -c "import contractor_ops.plans_router, \
+         contractor_ops.tasks_router; print('OK')"
+     OK            ✓
+
+V3 — hook counts:
+       grep -n "check_upload_bytes\|check_content_length" \
+         plans_router.py tasks_router.py
+
+     plans_router.py:15  import
+     plans_router.py:151 check_content_length   (upload_project_plan)
+     plans_router.py:183 check_upload_bytes
+     plans_router.py:346 check_content_length   (upload_plan_version)
+     plans_router.py:374 check_upload_bytes
+     plans_router.py:527 check_content_length   (replace_project_plan)
+     plans_router.py:557 check_upload_bytes
+     plans_router.py:801 check_content_length   (upload_unit_plan)
+     plans_router.py:833 check_upload_bytes
+     tasks_router.py:32  import
+     tasks_router.py:923 check_content_length   (contractor_proof)
+     tasks_router.py:985 check_upload_bytes     (the SUM call from V5)
+     tasks_router.py:1318 check_content_length  (upload_task_attachment)
+     tasks_router.py:1358 check_upload_bytes
+     → check_content_length: 6 enforcement sites (1 per endpoint). ✓
+     → check_upload_bytes:   6 enforcement sites (1 per endpoint;
+                              contractor_proof's is the SUM call). ✓
+
+V4 — manual sanity (Zahi, after deploy): upload a normal plan ->
+     succeeds. The byte/Content-Length limits only bite well above
+     normal use (a single 10MB plan is 10MB vs the 500MB/min ceiling,
+     0.02% of budget).
+
+V5 — see the dedicated section above (paste of multi-file collection
+     code + new SUM-check block + explicit declaration). ✓
+
+================================================================================
+DIFF STAT
+================================================================================
+ backend/contractor_ops/plans_router.py      | 35 ++++++++++++++++-
+ backend/contractor_ops/tasks_router.py      | 24 +++++++++++-
+ backend/contractor_ops/upload_rate_limit.py | 61 +++++++++++++++++++++++++++++
+ 3 files changed, 117 insertions(+), 3 deletions(-)
+
+================================================================================
+DELIVERY / SHIP NOTES
+================================================================================
+BACKEND-ONLY → ./deploy.sh --stag, then ./deploy.sh --prod (EB deploy).
+NOT Capgo. NOT ./ship.sh. NO new dependency. NO migration.
+
+Order:
+  1. git add + commit + push (staging)
+  2. ./deploy.sh --stag
+  3. Smoke on staging:
+       a) Plans → upload a small PDF → succeeds.
+       b) Plans → "סרוק מסמך" → 3-page scan → succeeds.
+       c) Per-unit plans → upload → succeeds.
+       d) Task → contractor proof with 1-3 photos → succeeds.
+       e) (Optional curl) faked Content-Length > 50MB → 413 with
+          "קובץ גדול מדי (מקסימום 50MB)" without buffering the body.
+  4. ./deploy.sh --prod
+  5. Same smoke on prod.
+
+ENV OVERRIDE: `MAX_UPLOAD_MB_PER_MINUTE` (default 500) — tune via EB
+env var without a deploy if needed.
+
+DO NOT TOUCH (per spec, confirmed unchanged):
+- check_upload_rate_limit (30/min count) — still the first guard.
+- The 50MB per-file cap on the 3 plans endpoints that already had it.
+- validate_upload / role / permission checks.
+- frontend, nginx, native, capacitor.config.
+- No new module created in PHASE 1 (PHASE 2 will add upload_quota.py).
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha> -- \
+  backend/contractor_ops/upload_rate_limit.py \
+  backend/contractor_ops/plans_router.py \
+  backend/contractor_ops/tasks_router.py
+./deploy.sh --prod
+
+================================================================================
+COMMIT MESSAGE (saved at .local/.commit_message)
+================================================================================
+fix(security): byte-based upload rate limit + Content-Length pre-check
+on all 6 upload endpoints — closes authenticated cost-amplification
+
+(full body in .local/.commit_message)
+
+================================================================================
+NEXT (separate batch — NOT this one)
+================================================================================
+PHASE 2 — per-org storage quota via ledger counter
+   - new module backend/contractor_ops/upload_quota.py
+   - increment hook after every successful upload (size known from
+     UploadResult.file_size)
+   - resolve org via project.org_id (None-tolerant for legacy projects)
+   - the remaining ~285 lines of the spec attached_assets/
+     Pasted--BATCH-upload-abuse--1779567083724_1779567083726.txt
+     cover PHASE 2 in detail.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================

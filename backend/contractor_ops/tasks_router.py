@@ -28,7 +28,9 @@ from contractor_ops.schemas import (
 )
 from contractor_ops.bucket_utils import compute_task_bucket, BUCKET_LABELS, CATEGORY_TO_BUCKET, TRADE_MAP
 from contractor_ops.task_image_guard import require_task_image, NO_IMAGE_ERROR_CODE, NO_IMAGE_MESSAGE
-from contractor_ops.upload_rate_limit import check_upload_rate_limit
+from contractor_ops.upload_rate_limit import (
+    check_upload_rate_limit, check_upload_bytes, check_content_length,
+)
 from contractor_ops.upload_safety import (
     validate_upload,
     ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES,
@@ -917,6 +919,8 @@ async def contractor_proof(
     user: dict = Depends(get_current_user),
 ):
     check_upload_rate_limit(user['id'])
+    # BATCH upload-abuse-hardening (2026-05-22) — Content-Length fast-path
+    check_content_length(request.headers.get('content-length'), 50 * 1024 * 1024)
     db = get_db()
     task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
     if not task:
@@ -965,6 +969,20 @@ async def contractor_proof(
                 note = v
     if not all_files:
         raise HTTPException(status_code=400, detail='At least one proof file is required')
+
+    # BATCH upload-abuse-hardening (2026-05-22) — multi-file: measure
+    # the TOTAL bytes of this proof request and check the byte rate
+    # limit ONCE on the SUM, BEFORE any file lands in S3. A partial
+    # mid-batch failure would leak orphaned bytes that we cannot
+    # rollback, so the check must precede the storage loop. Each
+    # file is read once for sizing and then seek(0) restores the
+    # cursor so the storage loop reads it normally.
+    proof_total_bytes = 0
+    for upload_file in all_files:
+        data = await upload_file.read()
+        proof_total_bytes += len(data)
+        await upload_file.seek(0)
+    check_upload_bytes(user['id'], proof_total_bytes)
 
     from services.storage_service import StorageService
     storage = StorageService()
@@ -1296,6 +1314,8 @@ async def list_task_updates(task_id: str, user: dict = Depends(get_current_user)
 @router.post("/tasks/{task_id}/attachments")
 async def upload_task_attachment(task_id: str, request: Request, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     check_upload_rate_limit(user['id'])
+    # BATCH upload-abuse-hardening (2026-05-22) — Content-Length fast-path
+    check_content_length(request.headers.get('content-length'), 50 * 1024 * 1024)
     import time as _time
     t_start = _time.time()
     ct = request.headers.get('content-type', '')
@@ -1334,6 +1354,8 @@ async def upload_task_attachment(task_id: str, request: Request, file: UploadFil
         logger.warning(f"[ATTACH:REJECTED] task={task_id} filename={file.filename} reason=pillow_decode_failed error={pil_err}")
         raise HTTPException(status_code=400, detail={'error_code': 'INVALID_TASK_IMAGE', 'message': 'ניתן לצרף תמונות בלבד'})
 
+    # BATCH upload-abuse-hardening (2026-05-22) — byte rate-limit on real size
+    check_upload_bytes(user['id'], len(raw))
     await file.seek(0)
     logger.info(f"[ATTACH:VALIDATED] task={task_id} filename={file.filename} size={len(raw)} content_type={file_ct}")
 

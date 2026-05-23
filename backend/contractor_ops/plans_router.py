@@ -4,14 +4,16 @@ import logging
 from typing import Optional
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File, Form, Body
+from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File, Form, Body, Request
 from contractor_ops.router import (
     get_db, get_current_user, _check_project_read_access,
     _get_project_membership, _audit, _now,
     PLAN_DISCIPLINES, PLAN_UPLOAD_ROLES,
 )
 
-from contractor_ops.upload_rate_limit import check_upload_rate_limit
+from contractor_ops.upload_rate_limit import (
+    check_upload_rate_limit, check_upload_bytes, check_content_length,
+)
 from contractor_ops.upload_safety import validate_upload, ALLOWED_PLAN_EXTENSIONS, ALLOWED_PLAN_TYPES
 
 router = APIRouter(prefix="/api")
@@ -134,6 +136,7 @@ async def list_project_plans_archive(
 @router.post("/projects/{project_id}/plans")
 async def upload_project_plan(
     project_id: str,
+    request: Request,
     file: UploadFile = File(...),
     discipline: str = Form(...),
     note: Optional[str] = Form(None),
@@ -144,6 +147,8 @@ async def upload_project_plan(
     user: dict = Depends(get_current_user),
 ):
     check_upload_rate_limit(user['id'])
+    # BATCH upload-abuse-hardening (2026-05-22) — Content-Length fast-path
+    check_content_length(request.headers.get('content-length'), 50 * 1024 * 1024)
     if user['role'] == 'viewer':
         raise HTTPException(status_code=403, detail='Viewers have read-only access')
     db = get_db()
@@ -174,6 +179,8 @@ async def upload_project_plan(
     file_size = len(file_bytes)
     if file_size > 50 * 1024 * 1024:
         raise HTTPException(status_code=422, detail='קובץ גדול מדי (מקסימום 50MB)')
+    # BATCH upload-abuse-hardening (2026-05-22) — byte rate-limit on real size
+    check_upload_bytes(user['id'], file_size)
     await file.seek(0)
 
     from services.storage_service import StorageService
@@ -329,11 +336,14 @@ async def get_plan_seen_status(
 async def upload_plan_version(
     project_id: str,
     plan_id: str,
+    request: Request,
     file: UploadFile = File(...),
     note: Optional[str] = Form(None),
     user: dict = Depends(get_current_user),
 ):
     check_upload_rate_limit(user['id'])
+    # BATCH upload-abuse-hardening (2026-05-22) — Content-Length fast-path
+    check_content_length(request.headers.get('content-length'), 50 * 1024 * 1024)
     if user['role'] == 'viewer':
         raise HTTPException(status_code=403, detail='Viewers have read-only access')
     db = get_db()
@@ -360,6 +370,8 @@ async def upload_plan_version(
     file_size_check = len(file_bytes)
     if file_size_check > 50 * 1024 * 1024:
         raise HTTPException(status_code=422, detail='קובץ גדול מדי (מקסימום 50MB)')
+    # BATCH upload-abuse-hardening (2026-05-22) — byte rate-limit on real size
+    check_upload_bytes(user['id'], file_size_check)
     await file.seek(0)
 
     from services.storage_service import StorageService
@@ -505,11 +517,14 @@ async def get_project_plan_history(
 async def replace_project_plan(
     project_id: str,
     plan_id: str,
+    request: Request,
     file: UploadFile = File(...),
     note: Optional[str] = Form(None),
     user: dict = Depends(get_current_user),
 ):
     check_upload_rate_limit(user['id'])
+    # BATCH upload-abuse-hardening (2026-05-22) — Content-Length fast-path
+    check_content_length(request.headers.get('content-length'), 50 * 1024 * 1024)
     if user['role'] == 'viewer':
         raise HTTPException(status_code=403, detail='Viewers have read-only access')
     db = get_db()
@@ -531,6 +546,17 @@ async def replace_project_plan(
     discipline = old_plan['discipline']
 
     validate_upload(file, ALLOWED_PLAN_EXTENSIONS, ALLOWED_PLAN_TYPES)
+    # BATCH upload-abuse-hardening (2026-05-22) — OPTION A: mirror the
+    # pre-upload size pattern from the other three plans endpoints so
+    # this endpoint also enforces the 50MB app cap and feeds the byte
+    # rate-limit BEFORE any data lands in S3.
+    file_bytes = await file.read()
+    file_size = len(file_bytes)
+    if file_size > 50 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail='קובץ גדול מדי (מקסימום 50MB)')
+    check_upload_bytes(user['id'], file_size)
+    await file.seek(0)
+
     from services.storage_service import StorageService
     storage = StorageService()
     result = await storage.upload_file_with_details(file, f"project_plan_{project_id}_{discipline}")
@@ -762,6 +788,7 @@ async def list_unit_plans(
 async def upload_unit_plan(
     project_id: str,
     unit_id: str,
+    request: Request,
     file: UploadFile = File(...),
     discipline: str = Form(...),
     note: Optional[str] = Form(None),
@@ -770,6 +797,8 @@ async def upload_unit_plan(
     user: dict = Depends(get_current_user),
 ):
     check_upload_rate_limit(user['id'])
+    # BATCH upload-abuse-hardening (2026-05-22) — Content-Length fast-path
+    check_content_length(request.headers.get('content-length'), 50 * 1024 * 1024)
     if user['role'] == 'viewer':
         raise HTTPException(status_code=403, detail='Viewers have read-only access')
     db = get_db()
@@ -800,6 +829,8 @@ async def upload_unit_plan(
     file_size = len(file_bytes)
     if file_size > 50 * 1024 * 1024:
         raise HTTPException(status_code=422, detail='קובץ גדול מדי (מקסימום 50MB)')
+    # BATCH upload-abuse-hardening (2026-05-22) — byte rate-limit on real size
+    check_upload_bytes(user['id'], file_size)
     await file.seek(0)
 
     from services.storage_service import StorageService
