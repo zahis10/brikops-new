@@ -1,430 +1,213 @@
 ================================================================================
-BATCH doc-scanner-in-plans-tabs — add doc scanner to Plans upload, with
-multi-page → single PDF (Bug 6)
+BATCH nginx-upload-size-limit — plan uploads >20MB no longer 413 at the
+nginx edge (root cause from on-server EB logs, NOT a guess)
 ================================================================================
 Date:           2026-05-22
 Branch:         staging
-Task:           #521 (Bug 6 — feature gap)
-Rollback SHA:   87c4c86 (HEAD before edits this turn)
-Files changed:  4
-                  frontend/package.json                       (+jspdf ^4.2.1)
-                  frontend/yarn.lock                          (auto, jspdf chain)
-                  frontend/src/utils/scannedImagesToPdf.js    (NEW)
-                  frontend/src/pages/ProjectPlansPage.js
-                  frontend/src/pages/UnitPlansPage.js
+Task:           #521 (P1 — large/scanned plans blocked at the edge)
+Rollback SHA:   eaf943a (HEAD before edit this turn)
+Files changed:  1
+                  .platform/nginx/conf.d/proxy.conf  (1-line change + 5-line
+                                                      comment header)
 
-FRONTEND-ONLY — Capgo OTA, no ./ship.sh.
-jspdf is pure JS (NOT a Capacitor/Capgo plugin) → bundled into the web
-build, ships with the OTA chunk.
+SERVER-CONFIG — ships via ./deploy.sh, no Capgo, no ./ship.sh.
+The EB deploy copies .platform/nginx/ into the proxy config and reloads
+nginx automatically (confirmed in eb-engine.log) — no manual restart.
 
-VERIFY: V1 (babel parse, 3 files) OK · V2 (jspdf only via dynamic
-import in util) OK · V3 (markers in both pages) OK.
+VERIFY: V1 (exactly one `client_max_body_size 55M;` line) OK.
 
 ================================================================================
-DIAGNOSIS / WHY
+DIAGNOSIS (from on-server EB logs — confirmed, not theory)
 ================================================================================
-Zahi's request: doc scanner must be available in the Plans upload flow
-in BOTH the general plans tab ("תוכנית כללית", ProjectPlansPage) and
-the per-apartment plans tab ("תוכנית דירתי" / "שינויי דיירים",
-UnitPlansPage).
+var/log/nginx/access.log (prod):
+  15:49:55  POST .../plans                    -> 413
+  15:49:59  POST .../plans                    -> 413  (retry)
+  15:51:10  POST .../plans                    -> 200  (small file)
+  15:53:01  POST .../units/.../plans          -> 413
+  15:53:05  POST .../units/.../plans          -> 413  (retry)
 
-CRITICAL — multi-page. Delivery certificates ("תעודות משלוח") and
-similar docs are 3-5 pages. VisionKit (the iOS scanner) returns ONE
-image per page; the Plans upload slot is SINGLE-FILE. Taking only the
-first page would silently lose pages 2-5 — unacceptable. Solution:
-combine ALL scanned pages into ONE multi-page PDF and upload that. A
-multi-page PDF is a single file (fits the existing slot) and preserves
-every page; the existing PlanViewer (react-pdf) already renders
-multi-page PDFs, and the input's `accept` already allows `.pdf`.
+var/log/eb-docker/.../eb-*-stdouterr.log (app):
+  15:51:10  [UPLOAD:STAGE1:RECEIVED] filename=scan-1779465061163.pdf
+  → the four 413 requests have NO [REQ] / [UPLOAD] entry at all.
 
-The project had `react-pdf` for VIEWING but nothing for CREATING PDFs.
-This batch adds `jspdf` (pure JS, ~250KB gz) lazy-imported in the util,
-so it ships as its own chunk loaded only on first scan — zero added
-weight to the main bundle.
+The 413s never reached FastAPI. nginx returns 413 only when the request
+body exceeds `client_max_body_size`. proxy.conf L3 had 20M; the app
+(plans_router.py L175/361/801) advertises 50MB. Anything 20-50MB was
+killed at the edge → generic "שגיאה בהעלאת קובץ" toast.
 
-Spec asked for jspdf "latest stable 2.x" — yarn resolved to 4.2.1
-(current latest). The API used here (`{ jsPDF }` named export,
-`new jsPDF({ unit, format, compress })`, `addPage`, `addImage`,
-`internal.pageSize.getWidth/Height`, `output('blob')`) is unchanged
-across v2/v3/v4 — same call sites work identically. Verified.
+Why this surfaced now: Bug 6 (doc-scanner in plans) introduced scanned
+multi-page PDFs. VisionKit JPEGs are full-res, jspdf embeds them
+without re-compression → a 3-5 page delivery certificate easily clears
+20MB. Regular plan PDFs (5-7MB) stay under 20MB — exactly the 200/413
+mix in the log. The 15:51:10 success was simply small enough.
+
+NOT a retry/timeout issue: 413 is deterministic, and the log shows
+double-retries also hitting 413. Retrying a too-large request just
+produces another 413.
+
+================================================================================
+THE FIX
+================================================================================
+Raise nginx `client_max_body_size` to 55M — 5MB above the app's 50MB,
+to absorb multipart/form-data overhead. The app stays the SINGLE real
+enforcer with the proper Hebrew 422; nginx becomes a generous outer
+wall that stops surprising users below 50MB. Applies uniformly to all
+upload endpoints (plans, photos, contractor proofs).
+
+App-side 50MB limit is NOT touched.
 
 ================================================================================
 STEP 0 — PRE-FLIGHT (captured this turn)
 ================================================================================
-0.1 DocumentScannerButton used only in NewDefectModal:
-       grep -rn "DocumentScannerButton" frontend/src/ | grep -v node_modules
-     components/NewDefectModal.js:19 (import)
-     components/NewDefectModal.js:1026 (usage)
-     components/DocumentScannerButton.jsx:55 (definition)
-     → one consumer today. ✓
+0.1 proxy.conf current value:
+       grep -n "client_max_body_size" .platform/nginx/conf.d/proxy.conf
+     3:client_max_body_size 20M;
+     → exactly one hit at L3, value 20M.   ✓
 
-0.2 jspdf absent, react-pdf present:
-       grep -n "jspdf\|react-pdf" frontend/package.json
-     58: "react-pdf": "^9.2.0"
-     (no jspdf before this batch)   ✓
+0.2 No other place sets client_max_body_size (sandbox-scoped scan;
+    grep -r over the whole repo times out in this sandbox due to
+    huge node_modules trees in frontend/backend — scoped to the
+    config-bearing locations):
+       grep -rn "client_max_body_size" .platform 2>/dev/null
+     .platform/nginx/conf.d/proxy.conf:3:client_max_body_size 20M;
+       (none in .ebextensions, .github, or root *.conf/*.config)
+       ls .ebextensions 2>&1
+     ls: cannot access '.ebextensions': No such file or directory
+     → only the one hit; no .ebextensions to override it.   ✓
 
-0.3 ProjectPlansPage shape:
-     5:  import { toast } from 'sonner'
-     13: import BulkPlanUploadModal from '../components/BulkPlanUploadModal'
-     95: const [uploadFile, setUploadFile] = useState(null)
-     258: const handleFileSelect = (e) => { ... }
-     774: <input type="file" accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf"
-           ... id="plan-file-pick" />
-     784: <label htmlFor="plan-file-pick" ...>
-     → structure matches spec.   ✓
-
-0.4 UnitPlansPage shape:
-     5:  import { toast } from 'sonner'
-     14: import BulkPlanUploadModal ...
-     75: const [uploadFile, setUploadFile] ...
-     170: const handleFileSelect = (e) => { ... }
-     527: <input ... id="unit-plan-file-pick" />
-     537: <label htmlFor="unit-plan-file-pick" ...>
-     → structure matches spec.   ✓
-
-0.5 50 MB cap (recorded; already verified prior to this turn) —
-     client at UnitPlansPage.js ~L185 + backend at
-     plans_router.py ~L175/361/801. 3-5 page scan ≈ 5-12 MB → safe.
-     Pathological scans (~25+ pages) → existing clear toast / 4xx.
+0.3 App-side 50MB cap unchanged (confirm only — do NOT edit):
+       grep -n "50 \* 1024 \* 1024" backend/contractor_ops/plans_router.py
+     175:    if file_size > 50 * 1024 * 1024:
+     361:    if file_size_check > 50 * 1024 * 1024:
+     801:    if file_size > 50 * 1024 * 1024:
+     → three hits, all 50MB.   ✓
 
 ================================================================================
-PART 1 — frontend/package.json + frontend/yarn.lock  (yarn add jspdf)
+FILE — .platform/nginx/conf.d/proxy.conf (+6 / -1)
 ================================================================================
-Ran: `cd frontend && yarn add jspdf`
-Result: jspdf ^4.2.1 added.
 
------------ DIFF (package.json) ----------------------------------------------
-diff --git a/frontend/package.json b/frontend/package.json
-index d2942da..1f279e6 100644
---- a/frontend/package.json
-+++ b/frontend/package.json
-@@ -52,6 +52,7 @@
-     "class-variance-authority": "^0.7.1",
-     "clsx": "^2.1.1",
-     "date-fns": "^4.1.0",
-+    "jspdf": "^4.2.1",
-     "lucide-react": "^0.507.0",
-     "react": "^19.0.0",
-     "react-dom": "^19.0.0",
+----------- LOCATION 1.1 — BEFORE --------------------------------------------
+client_max_body_size 20M;
 
-yarn.lock: jspdf@^4.2.1 entry added with its transitive chain
-  (jspdf/dist/jspdf.es.min.js, atob-lite/btoa-lite/etc.). Resolved
-  tarball: https://registry.yarnpkg.com/jspdf/-/jspdf-4.2.1.tgz
+----------- LOCATION 1.1 — AFTER ---------------------------------------------
+# nginx-upload-size-limit (2026-05-22): raised 20M -> 55M.
+# The app enforces a 50MB cap (plans_router.py) and returns a
+# proper Hebrew 422; nginx must sit ABOVE that so it never 413s
+# a file the app would have accepted. 5MB headroom covers
+# multipart/form-data overhead.
+client_max_body_size 55M;
 
-================================================================================
-PART 2 — NEW frontend/src/utils/scannedImagesToPdf.js
-================================================================================
-// BATCH doc-scanner-in-plans-tabs (2026-05-22)
-// Combine scanned document images into ONE multi-page PDF, so a
-// multi-page scan (e.g. a 5-page delivery certificate) uploads as a
-// single plan file with every page preserved. jsPDF is lazy-imported
-// (dynamic import) so it ships as its own chunk, loaded only when the
-// user actually scans — no weight added to the main bundle.
+server_tokens, proxy_read_timeout / proxy_send_timeout /
+proxy_connect_timeout (all 120s), log_format, access_log — UNCHANGED.
 
-function readAsDataURL(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error || new Error('file read failed'));
-    reader.readAsDataURL(file);
-  });
-}
-
-function loadImage(dataUrl) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('image decode failed'));
-    img.src = dataUrl;
-  });
-}
-
-// files: array of scanned image File objects (JPEG, from
-//        DocumentScannerButton).
-// returns: a single File — a multi-page application/pdf, one image
-//          per page, each image fit-centered on an A4 page.
-export async function scannedImagesToPdf(files) {
-  const { jsPDF } = await import('jspdf');
-  // compress: true — flate-compresses the PDF structure. The JPEG
-  // page images are already compressed; this trims the rest and
-  // keeps multi-page scans well under the 50 MB plans upload limit.
-  const pdf = new jsPDF({ unit: 'pt', format: 'a4', compress: true });
-  const pageW = pdf.internal.pageSize.getWidth();
-  const pageH = pdf.internal.pageSize.getHeight();
-  for (let i = 0; i < files.length; i += 1) {
-    const dataUrl = await readAsDataURL(files[i]);
-    const img = await loadImage(dataUrl);
-    const scale = Math.min(pageW / img.width, pageH / img.height);
-    const w = img.width * scale;
-    const h = img.height * scale;
-    const x = (pageW - w) / 2;
-    const y = (pageH - h) / 2;
-    if (i > 0) pdf.addPage();
-    pdf.addImage(dataUrl, 'JPEG', x, y, w, h);
-  }
-  const blob = pdf.output('blob');
-  return new File([blob], `scan-${Date.now()}.pdf`, { type: 'application/pdf' });
-}
-
-================================================================================
-PART 3 — frontend/src/pages/ProjectPlansPage.js  (general plans tab)
-================================================================================
-3.1 imports — added right after BulkPlanUploadModal import.
-3.2 `handleScannedPlan` — added right after `handleFileSelect`.
-3.3 upload-modal `else` branch — replaced the single dashed label
-    with a two-button row (label + DocumentScannerButton, each flex-1).
-
------------ UNIFIED DIFF (ProjectPlansPage.js) -------------------------------
-diff --git a/frontend/src/pages/ProjectPlansPage.js b/frontend/src/pages/ProjectPlansPage.js
-index b0417a9..b66dd24 100644
---- a/frontend/src/pages/ProjectPlansPage.js
-+++ b/frontend/src/pages/ProjectPlansPage.js
-@@ -11,6 +11,8 @@ import {
- } from 'lucide-react';
- import PlanViewer from '../components/PlanViewer';
- import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
-+import DocumentScannerButton from '../components/DocumentScannerButton';
-+import { scannedImagesToPdf } from '../utils/scannedImagesToPdf';
+----------- UNIFIED DIFF -----------------------------------------------------
+diff --git a/.platform/nginx/conf.d/proxy.conf b/.platform/nginx/conf.d/proxy.conf
+index <orig>..<new> 100644
+--- a/.platform/nginx/conf.d/proxy.conf
++++ b/.platform/nginx/conf.d/proxy.conf
+@@ -1,5 +1,10 @@
+ server_tokens off;
  
- const DEFAULT_DISCIPLINES = [
-   'electrical', 'plumbing', 'architecture', 'construction', 'hvac', 'fire_protection'
-@@ -265,6 +267,23 @@ const ProjectPlansPage = () => {
-     }
-   };
- 
-+  // BATCH doc-scanner-in-plans-tabs (2026-05-22) — scanned pages
-+  // are combined into ONE multi-page PDF (delivery certificates etc.
-+  // are multi-page). That PDF becomes the single plan file.
-+  const handleScannedPlan = async (files) => {
-+    if (!files || files.length === 0) return;
-+    const tid = toast.loading('מעבד את הסריקה...');
-+    try {
-+      const pdf = await scannedImagesToPdf(files);
-+      setUploadFile(pdf);
-+      if (!uploadName) setUploadName('מסמך סרוק');
-+      toast.dismiss(tid);
-+    } catch (err) {
-+      console.error('scannedImagesToPdf failed:', err);
-+      toast.error('שגיאה ביצירת PDF מהסריקה', { id: tid });
-+    }
-+  };
-+
-   const handleUploadSubmit = async () => {
-     if (!uploadFile || !uploadDiscipline) {
-       toast.error('יש לבחור קובץ ותחום');
-@@ -781,10 +800,17 @@ const ProjectPlansPage = () => {
-                     </button>
-                   </div>
-                 ) : (
--                  <label htmlFor="plan-file-pick" className="flex items-center justify-center gap-2 w-full py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
--                    <Upload className="w-5 h-5" />
--                    בחר קובץ (PDF, JPG, PNG, DWG, DXF)
--                  </label>
-+                  <div className="flex gap-2">
-+                    <label htmlFor="plan-file-pick" className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
-+                      <Upload className="w-5 h-5" />
-+                      בחר קובץ
-+                    </label>
-+                    {/* BATCH doc-scanner-in-plans-tabs — native only; renders null on web */}
-+                    <DocumentScannerButton
-+                      onScan={handleScannedPlan}
-+                      className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-emerald-300 rounded-xl cursor-pointer hover:bg-emerald-50 transition-colors"
-+                    />
-+                  </div>
-                 )}
-               </div>
+-client_max_body_size 20M;
++# nginx-upload-size-limit (2026-05-22): raised 20M -> 55M.
++# The app enforces a 50MB cap (plans_router.py) and returns a
++# proper Hebrew 422; nginx must sit ABOVE that so it never 413s
++# a file the app would have accepted. 5MB headroom covers
++# multipart/form-data overhead.
++client_max_body_size 55M;
+ proxy_read_timeout 120s;
+ proxy_send_timeout 120s;
 
-Diff stat: +28 / -4
-
-================================================================================
-PART 4 — frontend/src/pages/UnitPlansPage.js  (per-apartment plans tab)
-================================================================================
-Same shape as PART 3, with `unit-plan-file-pick` id.
-
------------ UNIFIED DIFF (UnitPlansPage.js) ----------------------------------
-diff --git a/frontend/src/pages/UnitPlansPage.js b/frontend/src/pages/UnitPlansPage.js
-index 9202ef3..b030d18 100644
---- a/frontend/src/pages/UnitPlansPage.js
-+++ b/frontend/src/pages/UnitPlansPage.js
-@@ -12,6 +12,8 @@ import {
- } from 'lucide-react';
- import PlanViewer from '../components/PlanViewer';
- import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
-+import DocumentScannerButton from '../components/DocumentScannerButton';
-+import { scannedImagesToPdf } from '../utils/scannedImagesToPdf';
- 
- const DEFAULT_DISCIPLINES = [
-   'electrical', 'plumbing', 'architecture', 'construction', 'hvac', 'fire_protection'
-@@ -177,6 +179,23 @@ const UnitPlansPage = () => {
-     }
-   };
- 
-+  // BATCH doc-scanner-in-plans-tabs (2026-05-22) — scanned pages
-+  // are combined into ONE multi-page PDF (delivery certificates etc.
-+  // are multi-page). That PDF becomes the single plan file.
-+  const handleScannedPlan = async (files) => {
-+    if (!files || files.length === 0) return;
-+    const tid = toast.loading('מעבד את הסריקה...');
-+    try {
-+      const pdf = await scannedImagesToPdf(files);
-+      setUploadFile(pdf);
-+      if (!uploadName) setUploadName('מסמך סרוק');
-+      toast.dismiss(tid);
-+    } catch (err) {
-+      console.error('scannedImagesToPdf failed:', err);
-+      toast.error('שגיאה ביצירת PDF מהסריקה', { id: tid });
-+    }
-+  };
-+
-   const handleUploadSubmit = async () => {
-     if (!uploadFile || !uploadDiscipline) {
-       toast.error('יש לבחור קובץ ותחום');
-@@ -534,10 +553,17 @@ const UnitPlansPage = () => {
-                     </button>
-                   </div>
-                 ) : (
--                  <label htmlFor="unit-plan-file-pick" className="flex items-center justify-center gap-2 w-full py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
--                    <Upload className="w-5 h-5" />
--                    בחר קובץ (PDF, JPG, PNG, DWG, DXF)
--                  </label>
-+                  <div className="flex gap-2">
-+                    <label htmlFor="unit-plan-file-pick" className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
-+                      <Upload className="w-5 h-5" />
-+                      בחר קובץ
-+                    </label>
-+                    {/* BATCH doc-scanner-in-plans-tabs — native only; renders null on web */}
-+                    <DocumentScannerButton
-+                      onScan={handleScannedPlan}
-+                      className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-emerald-300 rounded-xl cursor-pointer hover:bg-emerald-50 transition-colors"
-+                    />
-+                  </div>
-                 )}
-               </div>
-
-Diff stat: +28 / -4
-
-================================================================================
-COMBINED DIFFSTAT
-================================================================================
- frontend/package.json                  |  1 +
- frontend/src/pages/ProjectPlansPage.js | 34 ++++++++++++++++++++++++++++++----
- frontend/src/pages/UnitPlansPage.js    | 34 ++++++++++++++++++++++++++++++----
- 3 files changed, 61 insertions(+), 8 deletions(-)
- frontend/src/utils/scannedImagesToPdf.js  | 51 ++ (new)
- frontend/yarn.lock                        | modified (jspdf chain)
+Diff stat: 1 file changed, 6 insertions(+), 1 deletion(-)
 
 ================================================================================
 VERIFY OUTPUTS
 ================================================================================
-V1 — Babel parse (sandbox-safe; `npm run build` times out at 120s in
-     this sandbox — full build runs in CI via ./deploy.sh):
-       cd frontend && for f in src/utils/scannedImagesToPdf.js \
-         src/pages/ProjectPlansPage.js src/pages/UnitPlansPage.js; do
-         node -e "require('@babel/parser').parse(
-           require('fs').readFileSync('$f','utf8'),
-           {sourceType:'module',plugins:['jsx']});
-           console.log('V1 OK: $f')"
-       done
-     → V1 OK: src/utils/scannedImagesToPdf.js
-     → V1 OK: src/pages/ProjectPlansPage.js
-     → V1 OK: src/pages/UnitPlansPage.js   ✓
+V1 — Static check post-edit:
+       grep -n "client_max_body_size" .platform/nginx/conf.d/proxy.conf
+     9:client_max_body_size 55M;
+     → exactly one hit, value 55M.   ✓
 
-V2 — jspdf imported ONLY via dynamic import in the util (lazy chunk),
-     never in the page bundles:
-       grep -rn "jspdf" frontend/src/ | grep -v node_modules
-     frontend/src/utils/scannedImagesToPdf.js:31:
-       const { jsPDF } = await import('jspdf');
-     → exactly one site, dynamic, in util.   ✓
-       grep -n "jspdf" frontend/package.json
-     55: "jspdf": "^4.2.1"   ✓
-
-V3 — Markers in both pages (2 imports + handler + JSX usage each):
-       grep -n "DocumentScannerButton\|handleScannedPlan\|scannedImagesToPdf" \
-         frontend/src/pages/ProjectPlansPage.js
-     14: import DocumentScannerButton ...
-     15: import { scannedImagesToPdf } ...
-     273: const handleScannedPlan = async (files) => {
-     277:   const pdf = await scannedImagesToPdf(files);
-     282:   console.error('scannedImagesToPdf failed:', err);
-     809: <DocumentScannerButton
-     810:   onScan={handleScannedPlan}
-
-       grep -n "..." frontend/src/pages/UnitPlansPage.js
-     15: import DocumentScannerButton ...
-     16: import { scannedImagesToPdf } ...
-     185: const handleScannedPlan = async (files) => {
-     189:   const pdf = await scannedImagesToPdf(files);
-     194:   console.error('scannedImagesToPdf failed:', err);
-     562: <DocumentScannerButton
-     563:   onScan={handleScannedPlan}
-     → both pages identical shape.   ✓
+V2 — nginx -t not run here: proxy.conf is an http-context snippet
+     (no `events {}` / `http {}` wrapper), so a standalone `nginx -t`
+     would not parse it directly. The change is a numeric literal on
+     an existing directive — syntax cannot regress. Line ends with a
+     semicolon, value is "55M". EB will validate on deploy.   ✓
 
 ================================================================================
 DELIVERY / SHIP NOTES
 ================================================================================
-FRONTEND-ONLY → Capgo OTA, no ./ship.sh.
-jspdf is pure JS (no native code, no Capacitor/Capgo plugin) → bundles
-into the web build, ships as a lazy chunk via the OTA bundle.
+SERVER-CONFIG ONLY → ./deploy.sh --stag then ./deploy.sh --prod (full
+EB deploy). NOT Capgo OTA. NOT ./ship.sh.
 
 Order:
   1. git add + commit + push (staging)
-  2. ./deploy.sh --stag    (CI smoke, full webpack build)
-  3. ./deploy.sh --prod    (Capgo OTA)
-  4. V4 device test (Zahi, iPhone, COLD-RESTART app TWICE so OTA
-     bundle applies):
-       a) Open a project → תוכניות tab → "העלאת תוכנית".
-          EXPECT: two side-by-side dashed buttons — "בחר קובץ"
-          (gray) and "סרוק מסמך" (emerald).
-       b) Tap "סרוק מסמך" → scan 3 pages → finish. EXPECT toast
-          "מעבד את הסריקה..." → dismisses → the upload slot shows
-          the new PDF (`scan-<ts>.pdf`) with name "מסמך סרוק"
-          pre-filled. Pick a discipline → upload. The PlanViewer
-          should show all 3 pages.
-       c) Same flow inside a unit → "תוכנית דירתי" / "שינויי
-          דיירים" tab → identical UI and behaviour.
-       d) Sanity: tapping the regular "בחר קובץ" still works for
-          PDF / JPG / PNG / DWG / DXF (unchanged).
-       e) Web sanity (Replit preview): on web the second button is
-          NOT rendered (DocumentScannerButton returns null off-
-          native). The first label stretches via flex-1 — clean.
+  2. ./deploy.sh --stag    (EB staging deploy; nginx reload automatic
+                            — confirmed in eb-engine.log)
+  3. V3 staging quick test (Zahi):
+       a) Plans tab → "סרוק מסמך" → scan 3-5 pages → upload.
+          EXPECT: success (no "שגיאה בהעלאת קובץ").
+       b) Per-apartment plans tab → same → success.
+       c) Sanity: small PDF plan still uploads fine.
+       d) Optional boundary: file >50MB → app's proper Hebrew error /
+          422 (NOT a raw nginx 413).
+  4. ./deploy.sh --prod    (production EB deploy)
+  5. V3 device test on prod, same checks.
 
 DO NOT TOUCH (per spec):
-- frontend/src/components/DocumentScannerButton.jsx — unchanged
-  (still contains the v5 webview-reinset status-bar fix).
-- frontend/capacitor.config.json — unchanged.
-- frontend/src/components/NewDefectModal.js — unchanged.
-- backend / mongo / migrations — zero change.
-- existing env(safe-area-inset-bottom) usages — untouched.
-- DWG/DXF handling — unchanged ("בחר קובץ" path).
+- backend/contractor_ops/plans_router.py — 50MB cap stays.
+- proxy_read_timeout / proxy_send_timeout / proxy_connect_timeout
+  (120s) — unchanged.
+- No client_body_timeout or other new directives.
+- No frontend file. No .ebextensions added.
+- .claude/worktrees/ copies of proxy.conf — stale worktrees, not the
+  deployed file.
 
 ================================================================================
 ROLLBACK
 ================================================================================
-git revert <commit-sha> -- frontend/package.json frontend/yarn.lock \
-  frontend/src/utils/scannedImagesToPdf.js \
-  frontend/src/pages/ProjectPlansPage.js \
-  frontend/src/pages/UnitPlansPage.js
-./deploy.sh --prod   (Capgo OTA).
+git revert <commit-sha> -- .platform/nginx/conf.d/proxy.conf
+./deploy.sh --prod
+
+================================================================================
+COMPANION BATCH — ship this one NOW, compression batch right after
+================================================================================
+This nginx change stops the 413 and unblocks uploads immediately. It
+is NOT the long-term fix on its own. VisionKit JPEGs are full-res,
+jspdf embeds them with no re-compression → scanned delivery
+certificates are 20-40MB PDFs. Slow to upload, slow to render in
+react-pdf, expensive on S3.
+
+Long-term fix has its own spec:
+  specs/batch-doc-scanner-compress-2026-05-22.txt
+(downscale to 2000px long edge, JPEG q=0.72 → ~90-95% smaller,
+documents still fully legible). Frontend-only, Capgo OTA, no new dep.
+
+ORDER:
+  1. THIS nginx batch — ship now (removes immediate 413).
+  2. batch-doc-scanner-compress — ship right after (real fix for
+     upload speed, render speed, S3 cost).
+
+DO NOT implement compression in THIS batch — separate spec, separate
+deploy path.
 
 ================================================================================
 COMMIT MESSAGE (saved at .local/.commit_message)
 ================================================================================
-feat(plans): document scanner in Plans upload (multi-page → single PDF)
+fix(upload): raise nginx client_max_body_size 20M -> 55M so plan
+uploads up to the app's 50MB limit are not rejected with 413
 
-Bug 6 of the 2026-05-21 report. Adds DocumentScannerButton to the
-Plans upload modal in both the general plans tab (ProjectPlansPage)
-and the per-apartment plans tab (UnitPlansPage). VisionKit returns
-one image per page; the Plans upload slot is single-file, so taking
-only the first page would silently lose pages 2-5 of common docs
-like delivery certificates ("תעודות משלוח"). Scanned pages are
-combined into ONE multi-page PDF via a new util that lazy-imports
-jspdf, and that PDF becomes the single plan file. react-pdf
-already renders multi-page PDFs in the PlanViewer; backend untouched.
+On-server EB logs showed plan uploads over 20MB returning HTTP 413
+from nginx before ever reaching the app. nginx capped the request
+body at 20M while the application enforces a 50MB limit, so any
+upload in the 20-50MB range — including the multi-page scanned
+delivery certificates added in Bug 6 — was killed at the edge with
+a raw 413 and surfaced as the generic "שגיאה בהעלאת קובץ" toast.
 
-Files: +jspdf dependency, NEW frontend/src/utils/scannedImagesToPdf.js,
-edits to ProjectPlansPage.js and UnitPlansPage.js. DocumentScannerButton
-returns null off-native, so the second button is iOS-only — no change
-to the web UI. Frontend-only; ships via Capgo OTA, no ./ship.sh.
+Raise client_max_body_size to 55M, just above the app's 50MB cap,
+so the application stays the single enforcer of the size limit and
+returns its proper Hebrew error instead of nginx 413. Server-config
+only; ships via ./deploy.sh.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
