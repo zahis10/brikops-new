@@ -1,349 +1,203 @@
 ================================================================================
-BATCH doc-scanner-compress — downscale + re-encode scanned pages before
-building the PDF so scanned plan uploads stop bloating S3
+BATCH upload-abuse-hardening — PHASE 1
+*** STOP — SPEC DIVERGENCE FOUND IN STEP 0. NO EDITS MADE. ***
 ================================================================================
 Date:           2026-05-22
 Branch:         staging
-Severity:       P2 (S3 storage cost — scanned PDFs ~10-15x larger than needed)
-Rollback SHA:   5c2969d  (HEAD before edit this turn)
-Files changed:  1
-                  frontend/src/utils/scannedImagesToPdf.js  (+42 / -6)
+Rollback SHA:   e9c8048  (HEAD this turn — unchanged, no edits)
+Files changed:  0  (STOP report only — awaiting Zahi decision)
 
-FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no new dependency
-(uses the built-in browser <canvas> API).
+Per spec STEP 0:
+  "If anything diverges from this spec → STOP, paste the actual code,
+   report. Do NOT guess."
 
-================================================================================
-CONTEXT
-================================================================================
-Bug 6 (doc-scanner-in-plans-tabs) introduced multi-page scanned PDFs in
-the plans upload flow via scannedImagesToPdf.js. That util combined the
-scanned pages into one PDF but embedded each page's JPEG at full
-VisionKit resolution with NO re-compression:
-
-  - VisionKit returns full-resolution JPEGs (multi-megapixel).
-  - jsPDF `addImage(dataUrl, 'JPEG', ...)` embeds the JPEG bytes
-    verbatim — it does NOT re-encode them.
-  - `compress: true` on the jsPDF doc only flate-compresses the PDF
-    *structure*; the JPEG bytes are already compressed, so it does
-    ~nothing to the page images themselves.
-
-Net result: each scanned page lands at ~5-8MB → a 3-5 page delivery
-certificate ≈ a ~20-40MB PDF. On-server EB logs (2026-05-22) showed
-these uploads hitting the 20MB nginx body cap and failing with 413.
-The nginx batch (just shipped, 20M -> 55M) stops the 413, but a
-scanned page only needs ~300-500KB — the 10-15x bloat is pure waste
-that accumulates on S3 across every project.
-
-THE FIX (Zahi-approved approach + parameters)
----------------------------------------------
-Before each page is embedded, draw it onto an off-screen <canvas>,
-downscale so the longer edge is at most 2000px, and re-encode as JPEG
-at quality 0.72. Pass that compressed image to jsPDF instead of the
-raw scan.
-
-Parameters (Zahi chose the "balanced" tier — DO NOT CHANGE):
-  - Max long edge: 2000px  → ~170 DPI on A4: text stays crisp,
-    fine enough for typical plans too.
-  - JPEG quality:  0.72    → documents (high-contrast text/line art)
-    compress very well at this quality with no visible degradation.
-
-Expected outcome: ~300-500KB per page → a 5-page scan ≈ ~2MB instead
-of ~25-40MB (~90-95% reduction). Pages are NOT lost — still one
-multi-page PDF, one image per page. Aspect ratio is preserved, so the
-existing A4 fit-centering math is unaffected.
-
-Pure browser-API change (HTMLCanvasElement). No new package, no native
-code. Scanned files are local File objects read via FileReader → data
-URI → Image → canvas, so the canvas is NOT cross-origin-tainted and
-`canvas.toDataURL` works normally (incl. iOS WKWebView).
+This is that report.
 
 ================================================================================
-STEP 0 — PRE-FLIGHT (captured this turn)
+STEP 0 — OBSERVED vs EXPECTED
 ================================================================================
 
-0.1  Current file content (Bug 6 version) — confirmed:
-       cat frontend/src/utils/scannedImagesToPdf.js
+0.1  Six call sites — CONFIRMED ✓
+       grep -n "check_upload_rate_limit" \
+         backend/contractor_ops/plans_router.py \
+         backend/contractor_ops/tasks_router.py
+     backend/contractor_ops/plans_router.py:14:from contractor_ops.upload_rate_limit import check_upload_rate_limit
+     backend/contractor_ops/plans_router.py:146:    check_upload_rate_limit(user['id'])
+     backend/contractor_ops/plans_router.py:336:    check_upload_rate_limit(user['id'])
+     backend/contractor_ops/plans_router.py:512:    check_upload_rate_limit(user['id'])
+     backend/contractor_ops/plans_router.py:772:    check_upload_rate_limit(user['id'])
+     backend/contractor_ops/tasks_router.py:31:from contractor_ops.upload_rate_limit import check_upload_rate_limit
+     backend/contractor_ops/tasks_router.py:919:    check_upload_rate_limit(user['id'])
+     backend/contractor_ops/tasks_router.py:1298:    check_upload_rate_limit(user['id'])
+     → exactly 6 enforcement points, matches spec.
 
-     // BATCH doc-scanner-in-plans-tabs (2026-05-22)
-     // Combine scanned document images into ONE multi-page PDF, so a
-     // multi-page scan (e.g. a 5-page delivery certificate) uploads as a
-     // single plan file with every page preserved. jsPDF is lazy-imported
-     // (dynamic import) so it ships as its own chunk, loaded only when the
-     // user actually scans — no weight added to the main bundle.
+0.2  upload_rate_limit.py — pristine, no byte tracking yet ✓
+       cat backend/contractor_ops/upload_rate_limit.py
+     - `_upload_counts: dict[str, list[float]]` (L8)
+     - `_lock = threading.Lock()` (L9)
+     - `MAX_UPLOADS_PER_MINUTE = 30` (L12)
+     - `WINDOW_SECONDS = 60` (L13)
+     - `CLEANUP_EVERY_N = 100` (L14)
+     - `check_upload_rate_limit(user_id)` (L24)
+     → matches expected shape, no pre-existing byte logic. Safe to extend.
 
-     function readAsDataURL(file) {
-       return new Promise((resolve, reject) => {
-         const reader = new FileReader();
-         reader.onload = () => resolve(reader.result);
-         reader.onerror = () => reject(reader.error || new Error('file read failed'));
-         reader.readAsDataURL(file);
-       });
-     }
+0.3  Size checks in the four plans endpoints —
+     ⚠️ ONLY 3 OF 4 PRESENT.  ⚠️
+       grep -n "await file.read()\|file_size = len\|file_size_check = len\|50 \* 1024 \* 1024\|len(raw)" \
+         backend/contractor_ops/plans_router.py
+     173:    file_bytes = await file.read()
+     174:    file_size = len(file_bytes)
+     175:    if file_size > 50 * 1024 * 1024:
+     359:    file_bytes = await file.read()
+     360:    file_size_check = len(file_bytes)
+     361:    if file_size_check > 50 * 1024 * 1024:
+     799:    file_bytes = await file.read()
+     800:    file_size = len(file_bytes)
+     801:    if file_size > 50 * 1024 * 1024:
 
-     function loadImage(dataUrl) {
-       return new Promise((resolve, reject) => {
-         const img = new Image();
-         img.onload = () => resolve(img);
-         img.onerror = () => reject(new Error('image decode failed'));
-         img.src = dataUrl;
-       });
-     }
+     The check_upload_rate_limit sites are at 146, 336, 512, 772.
+     Size checks exist at 173 (matches L146 endpoint), 359 (matches L336),
+     799 (matches L772). THE L512 ENDPOINT HAS NONE.
 
-     // files: array of scanned image File objects (JPEG, from
-     //        DocumentScannerButton).
-     // returns: a single File — a multi-page application/pdf, one image
-     //          per page, each image fit-centered on an A4 page.
-     export async function scannedImagesToPdf(files) {
-       const { jsPDF } = await import('jspdf');
-       // compress: true — flate-compresses the PDF structure. The JPEG
-       // page images are already compressed; this trims the rest and
-       // keeps multi-page scans well under the 50 MB plans upload limit.
-       const pdf = new jsPDF({ unit: 'pt', format: 'a4', compress: true });
-       const pageW = pdf.internal.pageSize.getWidth();
-       const pageH = pdf.internal.pageSize.getHeight();
-       for (let i = 0; i < files.length; i += 1) {
-         const dataUrl = await readAsDataURL(files[i]);
-         const img = await loadImage(dataUrl);
-         const scale = Math.min(pageW / img.width, pageH / img.height);
-         const w = img.width * scale;
-         const h = img.height * scale;
-         const x = (pageW - w) / 2;
-         const y = (pageH - h) / 2;
-         if (i > 0) pdf.addPage();
-         pdf.addImage(dataUrl, 'JPEG', x, y, w, h);
-       }
-       const blob = pdf.output('blob');
-       return new File([blob], `scan-${Date.now()}.pdf`, { type: 'application/pdf' });
-     }
+     This is a real spec divergence — the spec said "EXPECT: a
+     `await file.read()` + a `len(...)` size var + a `> 50 * 1024 * 1024`
+     422 check inside each of the 4 endpoints."
 
-     → Matches the spec's "CURRENT" block exactly.   ✓
+0.5  Tasks endpoints — confirmed ✓
+     L913-975  contractor_proof  — request: Request present (L916),
+                                   multi-file via `request.form()`.
+     L1296-1359 upload_task_attachment — request: Request present,
+                                          single file, `raw = await file.read()`
+                                          + `len(raw)` already available (L1323-1324).
 
-0.2  Loop body structure matches:
-       grep -n "addImage\|readAsDataURL(files\|loadImage(dataUrl)\|Math.min(pageW" \
-         frontend/src/utils/scannedImagesToPdf.js
-     17:function loadImage(dataUrl) {
-     39:    const dataUrl = await readAsDataURL(files[i]);
-     40:    const img = await loadImage(dataUrl);
-     41:    const scale = Math.min(pageW / img.width, pageH / img.height);
-     47:    pdf.addImage(dataUrl, 'JPEG', x, y, w, h);
-     → One addImage call passing `dataUrl`, fit math uses
-       `img.width`/`img.height`.   ✓
-
-0.3  Only ProjectPlansPage + UnitPlansPage call scannedImagesToPdf,
-     and `addImage` is only inside the util:
-       grep -rn "scannedImagesToPdf\|addImage" frontend/src/ | grep -v node_modules
-     frontend/src/pages/ProjectPlansPage.js:15:import { scannedImagesToPdf } from '../utils/scannedImagesToPdf';
-     frontend/src/pages/ProjectPlansPage.js:277:      const pdf = await scannedImagesToPdf(files);
-     frontend/src/pages/ProjectPlansPage.js:282:      console.error('scannedImagesToPdf failed:', err);
-     frontend/src/pages/UnitPlansPage.js:16:import { scannedImagesToPdf } from '../utils/scannedImagesToPdf';
-     frontend/src/pages/UnitPlansPage.js:189:      const pdf = await scannedImagesToPdf(files);
-     frontend/src/pages/UnitPlansPage.js:194:      console.error('scannedImagesToPdf failed:', err);
-     frontend/src/utils/scannedImagesToPdf.js:30:export async function scannedImagesToPdf(files) {
-     frontend/src/utils/scannedImagesToPdf.js:47:    pdf.addImage(dataUrl, 'JPEG', x, y, w, h);
-     → callers unchanged in this batch; addImage only in the util.   ✓
+0.6  contractor_ops/billing.py uses bare `IL_TZ`-style relative imports
+     (no `get_db` import from there) — only relevant to PHASE 2.
 
 ================================================================================
-FILE — frontend/src/utils/scannedImagesToPdf.js  (+42 / -6)
+THE DIVERGENT ENDPOINT — plans_router.py L504-578 `replace_project_plan`
 ================================================================================
 
-LOCATION 1.1 — added MAX_EDGE, JPEG_QUALITY, compressScannedImage
-helper, directly AFTER the closing `}` of `loadImage` and BEFORE
-`export async function scannedImagesToPdf`.
+The full body — pasted verbatim so Zahi can see exactly what is and is
+NOT there:
 
-LOCATION 1.2 — replaced the per-file loop body so it embeds the
-COMPRESSED page (`page.dataUrl`) instead of the raw scan.
+  504  @router.post("/projects/{project_id}/plans/{plan_id}/replace")
+  505  async def replace_project_plan(
+  506      project_id: str,
+  507      plan_id: str,
+  508      file: UploadFile = File(...),
+  509      note: Optional[str] = Form(None),
+  510      user: dict = Depends(get_current_user),
+  511  ):
+  512      check_upload_rate_limit(user['id'])
+  513      if user['role'] == 'viewer':
+  514          raise HTTPException(status_code=403, detail='Viewers have read-only access')
+  515      db = get_db()
+  516      await _check_project_read_access(user, project_id)
+  517      requester_membership = await _get_project_membership(user, project_id)
+  518      requester_role = requester_membership.get('role', 'none')
+  519      if requester_role not in PLAN_UPLOAD_ROLES:
+  520          raise HTTPException(status_code=403, detail='אין לך הרשאה להחליף תוכניות')
+  521
+  522      old_plan = await db.project_plans.find_one({
+  523          'id': plan_id,
+  524          'project_id': project_id,
+  525          'deletedAt': {'$exists': False},
+  526          'status': {'$ne': 'archived'},
+  527      })
+  528      if not old_plan:
+  529          raise HTTPException(status_code=404, detail='תוכנית פעילה לא נמצאה')
+  530
+  531      discipline = old_plan['discipline']
+  532
+  533      validate_upload(file, ALLOWED_PLAN_EXTENSIONS, ALLOWED_PLAN_TYPES)
+  534      from services.storage_service import StorageService
+  535      storage = StorageService()
+  536      result = await storage.upload_file_with_details(file, f"project_plan_{project_id}_{discipline}")
+  537
+  538      new_plan_id = str(uuid.uuid4())
+  539      ts = _now()
+  540      new_plan_doc = {
+  541          'id': new_plan_id,
+  542          ...
+  543          'file_size': result.file_size,
+  544          ...
+  545      }
+  546      ...
 
------------ UNIFIED DIFF -----------------------------------------------------
-diff --git a/frontend/src/utils/scannedImagesToPdf.js b/frontend/src/utils/scannedImagesToPdf.js
-index 581e314..278da2a 100644
---- a/frontend/src/utils/scannedImagesToPdf.js
-+++ b/frontend/src/utils/scannedImagesToPdf.js
-@@ -23,6 +23,39 @@ function loadImage(dataUrl) {
-   });
- }
- 
-+// BATCH doc-scanner-compress (2026-05-22) — VisionKit returns
-+// full-resolution JPEGs; embedding them raw produced ~20-40MB
-+// PDFs for a 3-5 page scan and bloated S3. Downscale each page
-+// so its longer edge is <= MAX_EDGE and re-encode at
-+// JPEG_QUALITY — keeps documents fully legible (~170 DPI on A4)
-+// while cutting file size ~90-95%.
-+const MAX_EDGE = 2000;
-+const JPEG_QUALITY = 0.72;
-+
-+// Downscale `img` (never upscale) so its longer edge is at most
-+// MAX_EDGE, re-encode as JPEG. Returns { dataUrl, width, height }
-+// for the compressed page. The scanned image is a local data
-+// URI, so the canvas is not cross-origin-tainted.
-+function compressScannedImage(img) {
-+  const longEdge = Math.max(img.width, img.height);
-+  const ratio = longEdge > MAX_EDGE ? MAX_EDGE / longEdge : 1;
-+  const width = Math.max(1, Math.round(img.width * ratio));
-+  const height = Math.max(1, Math.round(img.height * ratio));
-+  const canvas = document.createElement('canvas');
-+  canvas.width = width;
-+  canvas.height = height;
-+  const ctx = canvas.getContext('2d');
-+  // high-quality smoothing keeps downscaled text crisp
-+  ctx.imageSmoothingEnabled = true;
-+  ctx.imageSmoothingQuality = 'high';
-+  ctx.drawImage(img, 0, 0, width, height);
-+  return {
-+    dataUrl: canvas.toDataURL('image/jpeg', JPEG_QUALITY),
-+    width,
-+    height,
-+  };
-+}
-+
- // files: array of scanned image File objects (JPEG, from
- //        DocumentScannerButton).
- // returns: a single File — a multi-page application/pdf, one image
-@@ -36,15 +69,18 @@ export async function scannedImagesToPdf(files) {
-   const pageW = pdf.internal.pageSize.getWidth();
-   const pageH = pdf.internal.pageSize.getHeight();
-   for (let i = 0; i < files.length; i += 1) {
--    const dataUrl = await readAsDataURL(files[i]);
--    const img = await loadImage(dataUrl);
--    const scale = Math.min(pageW / img.width, pageH / img.height);
--    const w = img.width * scale;
--    const h = img.height * scale;
-+    const rawDataUrl = await readAsDataURL(files[i]);
-+    const img = await loadImage(rawDataUrl);
-+    // BATCH doc-scanner-compress (2026-05-22) — downscale +
-+    // re-encode this page before embedding it in the PDF.
-+    const page = compressScannedImage(img);
-+    const scale = Math.min(pageW / page.width, pageH / page.height);
-+    const w = page.width * scale;
-+    const h = page.height * scale;
-     const x = (pageW - w) / 2;
-     const y = (pageH - h) / 2;
-     if (i > 0) pdf.addPage();
--    pdf.addImage(dataUrl, 'JPEG', x, y, w, h);
-+    pdf.addImage(page.dataUrl, 'JPEG', x, y, w, h);
-   }
-   const blob = pdf.output('blob');
-   return new File([blob], `scan-${Date.now()}.pdf`, { type: 'application/pdf' });
+→ NO `file.read()`. NO `len(...)` size variable. NO `> 50 * 1024 * 1024`
+   422 check. NO `request: Request` parameter. The file is handed
+   directly to `storage.upload_file_with_details(file, ...)` and the
+   size is only known AFTER the upload succeeds (via `result.file_size`).
 
-Diff stat: 1 file changed, 42 insertions(+), 6 deletions(-)
-
-NOTE on math equivalence: `compressScannedImage` preserves the aspect
-ratio (single `ratio` multiplier applied to both dims, then rounded
-to ints with a min-1 floor). `page.width / page.height` therefore
-yields the same `scale`/`w`/`h`/`x`/`y` as `img.width / img.height`
-did (modulo sub-pixel rounding from `Math.round`). The only real
-change at the PDF level is that `pdf.addImage` now receives the
-compressed `page.dataUrl` instead of the full-resolution `rawDataUrl`.
+This endpoint also has a second, separate gap that is NOT what this
+batch is about, but worth noting in the same report: there is **no
+per-file 50MB cap on this endpoint at all**, while the other three
+plans endpoints all enforce 50MB. A 200MB file uploaded here today
+would succeed.
 
 ================================================================================
-VERIFY OUTPUTS
+WHY THIS BLOCKS PHASE 1
 ================================================================================
 
-V1 — Static parse (babel parser, sourceType=module):
-       node -e "...@babel/parser.parse(file)..."
-     OK
-     → Module parses cleanly; no syntax error.   ✓
+Hook B per spec is:
+    check_upload_bytes(user['id'], <size_var>)
+"where <size_var> is that endpoint's existing size variable" — there
+is no such variable in `replace_project_plan`. The size is not known
+until AFTER the storage upload, which is too late: by the time we
+could call check_upload_bytes, the bytes are already in S3 — exactly
+the abuse window this batch is supposed to close.
 
-     (Full webpack build runs in CI via ./deploy.sh --stag; the change
-      is plain ES2015 + standard <canvas> API, no new imports, no new
-      ESLint rule triggers.)
-
-V2 — Static check (helper defined once, called once, addImage receives
-     `page.dataUrl`):
-       grep -n "MAX_EDGE\|JPEG_QUALITY\|compressScannedImage\|imageSmoothingQuality" \
-         frontend/src/utils/scannedImagesToPdf.js
-     29:// so its longer edge is <= MAX_EDGE and re-encode at
-     30:// JPEG_QUALITY — keeps documents fully legible (~170 DPI on A4)
-     32:const MAX_EDGE = 2000;
-     33:const JPEG_QUALITY = 0.72;
-     36:// MAX_EDGE, re-encode as JPEG. Returns { dataUrl, width, height }
-     39:function compressScannedImage(img) {
-     41:  const ratio = longEdge > MAX_EDGE ? MAX_EDGE / longEdge : 1;
-     50:  ctx.imageSmoothingQuality = 'high';
-     53:    dataUrl: canvas.toDataURL('image/jpeg', JPEG_QUALITY),
-     76:    const page = compressScannedImage(img);
-     → MAX_EDGE = 2000 declared once (L32), JPEG_QUALITY = 0.72 declared
-       once (L33), compressScannedImage declared once (L39) and called
-       once inside the loop (L76), imageSmoothingQuality = 'high' set
-       once (L50).   ✓
-
-V3 — Loop body verification:
-       grep -n "rawDataUrl\|page\.dataUrl\|page\.width\|page\.height\|addImage" \
-         frontend/src/utils/scannedImagesToPdf.js
-     72:    const rawDataUrl = await readAsDataURL(files[i]);
-     73:    const img = await loadImage(rawDataUrl);
-     77:    const scale = Math.min(pageW / page.width, pageH / page.height);
-     78:    const w = page.width * scale;
-     79:    const h = page.height * scale;
-     83:    pdf.addImage(page.dataUrl, 'JPEG', x, y, w, h);
-     → Variable renamed (dataUrl → rawDataUrl), fit math uses
-       `page.width`/`page.height`, and `pdf.addImage` receives the
-       compressed `page.dataUrl`. No leftover `pdf.addImage(dataUrl, ...)`
-       or `pdf.addImage(rawDataUrl, ...)` anywhere.   ✓
+Per spec STEP 0, the instruction is explicit: STOP and report,
+DO NOT guess.
 
 ================================================================================
-DELIVERY / SHIP NOTES
+DECISION REQUEST — pick one, then I proceed
 ================================================================================
-FRONTEND-ONLY → ./deploy.sh --stag, then ./deploy.sh --prod (Capgo
-OTA). NOT ./ship.sh. NO new dependency. NO native rebuild.
 
-Order:
-  1. git add + commit + push (staging)
-  2. ./deploy.sh --stag       (web staging deploy)
-  3. ./deploy.sh --prod       (web prod + Capgo OTA)
-  4. iPhone: cold-restart the app TWICE so the OTA bundle applies.
-  5. V4 device test (Zahi):
-       a) Project → Plans → "סרוק מסמך" → scan 3-5 pages → upload.
-          EXPECT: upload succeeds.
-       b) Open the uploaded plan in the viewer. EVERY page present,
-          text on each page sharp and clearly readable.
-       c) Check file size (plan detail / S3): 3-5 page scan should be
-          ~1-3MB (NOT 20-40MB).
-       d) Repeat in a unit's plans tab ("תוכנית דירתית").
-       e) Single-page scan still produces a valid 1-page PDF.
+OPTION A — Mirror the other plans endpoints in this batch
+  Add the same pre-upload pattern to replace_project_plan:
+      file_bytes = await file.read()
+      file_size = len(file_bytes)
+      if file_size > 50 * 1024 * 1024:
+          raise HTTPException(status_code=422,
+                              detail="קובץ גדול מדי (מקסימום 50MB)")
+      check_upload_bytes(user['id'], file_size)
+      await file.seek(0)
+  Then continue with Hook A (Content-Length pre-check) at the top.
+  Pros: closes both gaps (50MB cap + byte rate-limit) on this endpoint
+        in one go; no future spec needed.
+  Cons: adds a behaviour change (a new 422 path) inside a "rate-limit"
+        batch — slight scope creep vs the literal spec.
+  Cost in this batch: +5 lines on top of the 2 hooks. No new risk.
 
-DO NOT TOUCH (per spec, confirmed unchanged):
-- readAsDataURL, loadImage helpers.
-- jsPDF lazy `import('jspdf')` and `new jsPDF({ unit:'pt', format:'a4',
-  compress: true })`.
-- Returned filename / MIME (`scan-<ts>.pdf`, `application/pdf`).
-- frontend/src/pages/ProjectPlansPage.js + UnitPlansPage.js (callers
-  still receive one PDF File).
-- frontend/src/components/DocumentScannerButton.jsx.
-- MAX_EDGE / JPEG_QUALITY values (2000 / 0.72 — Zahi-picked balanced
-  tier).
-- Backend, native files, capacitor.config.json.
+OPTION B — Skip L504 in PHASE 1, wire only the other 5 endpoints
+  Wire Hook A + Hook B in plans 146 / 336 / 772 and tasks 919 / 1298.
+  Leaves replace_project_plan covered ONLY by the existing 30/min count
+  limit + the nginx 55M outer wall.
+  Pros: zero scope creep — matches the literal spec where size var
+        exists in only 5 of 6 sites.
+  Cons: replace_project_plan stays a byte-amplification hole — a
+        compromised account can call it up to 30×~55MB ≈ 1.65 GB/min,
+        which is exactly what this batch is supposed to close.
 
-================================================================================
-ROLLBACK
-================================================================================
-git revert <commit-sha> -- frontend/src/utils/scannedImagesToPdf.js
-./deploy.sh --prod   (Capgo OTA).
+OPTION C — Defer the whole batch, fix L504's missing 50MB cap as a
+            separate prerequisite batch first, then run THIS batch
+            against a uniform 6-endpoint surface.
+  Pros: cleanest spec discipline.
+  Cons: two deploys instead of one for the same end state.
 
-================================================================================
-COMMIT MESSAGE (saved at .local/.commit_message)
-================================================================================
-perf(plans): downscale + re-encode scanned pages before building the
-PDF so scanned plan uploads stop bloating S3
-
-scannedImagesToPdf embedded each scanned page's JPEG at full VisionKit
-resolution — jsPDF addImage does not re-encode, and `compress: true`
-only touches the PDF structure, not the JPEG data. A 3-5 page delivery
-certificate became a ~20-40MB PDF when ~300-500KB per page is enough.
-
-Add compressScannedImage: draw each page onto a canvas capped at a
-2000px long edge (high-quality smoothing) and re-encode at JPEG
-quality 0.72, then embed that. Documents stay fully legible (~170 DPI
-on A4) while file size drops ~90-95% — a 5-page scan goes from tens of
-MB to ~2MB. Aspect ratio is preserved so the A4 fit math is unchanged.
-Pure browser <canvas> API; no new dependency. Frontend-only, OTA.
+My recommendation: OPTION A — it's the minimum scope expansion that
+keeps Hook B's invariant (byte-checked BEFORE storage) intact on every
+endpoint. But the call is Zahi's.
 
 ================================================================================
-NEXT (separate spec — NOT this batch)
+WHAT I DID NOT DO
 ================================================================================
-specs/batch-doc-scanner-compress-2026-05-22.txt has a FOLLOW-UP
-section flagged for Zahi's decision (12 lines beyond what was shown).
-Surface to Zahi after this ships.
+- No edits to any file. HEAD still e9c8048.
+- No new dependency.
+- No commit, no push, no deploy.
+- No `mark_task_complete`.
 
 ================================================================================
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+AWAITING ZAHI DECISION — DO NOT DEPLOY (NOTHING TO DEPLOY YET)
 ================================================================================
