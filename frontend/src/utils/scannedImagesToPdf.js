@@ -23,6 +23,39 @@ function loadImage(dataUrl) {
   });
 }
 
+// BATCH doc-scanner-compress (2026-05-22) — VisionKit returns
+// full-resolution JPEGs; embedding them raw produced ~20-40MB
+// PDFs for a 3-5 page scan and bloated S3. Downscale each page
+// so its longer edge is <= MAX_EDGE and re-encode at
+// JPEG_QUALITY — keeps documents fully legible (~170 DPI on A4)
+// while cutting file size ~90-95%.
+const MAX_EDGE = 2000;
+const JPEG_QUALITY = 0.72;
+
+// Downscale `img` (never upscale) so its longer edge is at most
+// MAX_EDGE, re-encode as JPEG. Returns { dataUrl, width, height }
+// for the compressed page. The scanned image is a local data
+// URI, so the canvas is not cross-origin-tainted.
+function compressScannedImage(img) {
+  const longEdge = Math.max(img.width, img.height);
+  const ratio = longEdge > MAX_EDGE ? MAX_EDGE / longEdge : 1;
+  const width = Math.max(1, Math.round(img.width * ratio));
+  const height = Math.max(1, Math.round(img.height * ratio));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  // high-quality smoothing keeps downscaled text crisp
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, width, height);
+  return {
+    dataUrl: canvas.toDataURL('image/jpeg', JPEG_QUALITY),
+    width,
+    height,
+  };
+}
+
 // files: array of scanned image File objects (JPEG, from
 //        DocumentScannerButton).
 // returns: a single File — a multi-page application/pdf, one image
@@ -36,15 +69,18 @@ export async function scannedImagesToPdf(files) {
   const pageW = pdf.internal.pageSize.getWidth();
   const pageH = pdf.internal.pageSize.getHeight();
   for (let i = 0; i < files.length; i += 1) {
-    const dataUrl = await readAsDataURL(files[i]);
-    const img = await loadImage(dataUrl);
-    const scale = Math.min(pageW / img.width, pageH / img.height);
-    const w = img.width * scale;
-    const h = img.height * scale;
+    const rawDataUrl = await readAsDataURL(files[i]);
+    const img = await loadImage(rawDataUrl);
+    // BATCH doc-scanner-compress (2026-05-22) — downscale +
+    // re-encode this page before embedding it in the PDF.
+    const page = compressScannedImage(img);
+    const scale = Math.min(pageW / page.width, pageH / page.height);
+    const w = page.width * scale;
+    const h = page.height * scale;
     const x = (pageW - w) / 2;
     const y = (pageH - h) / 2;
     if (i > 0) pdf.addPage();
-    pdf.addImage(dataUrl, 'JPEG', x, y, w, h);
+    pdf.addImage(page.dataUrl, 'JPEG', x, y, w, h);
   }
   const blob = pdf.output('blob');
   return new File([blob], `scan-${Date.now()}.pdf`, { type: 'application/pdf' });

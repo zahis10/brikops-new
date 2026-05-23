@@ -1,213 +1,348 @@
 ================================================================================
-BATCH nginx-upload-size-limit — plan uploads >20MB no longer 413 at the
-nginx edge (root cause from on-server EB logs, NOT a guess)
+BATCH doc-scanner-compress — downscale + re-encode scanned pages before
+building the PDF so scanned plan uploads stop bloating S3
 ================================================================================
 Date:           2026-05-22
 Branch:         staging
-Task:           #521 (P1 — large/scanned plans blocked at the edge)
-Rollback SHA:   eaf943a (HEAD before edit this turn)
+Severity:       P2 (S3 storage cost — scanned PDFs ~10-15x larger than needed)
+Rollback SHA:   5c2969d  (HEAD before edit this turn)
 Files changed:  1
-                  .platform/nginx/conf.d/proxy.conf  (1-line change + 5-line
-                                                      comment header)
+                  frontend/src/utils/scannedImagesToPdf.js  (+42 / -6)
 
-SERVER-CONFIG — ships via ./deploy.sh, no Capgo, no ./ship.sh.
-The EB deploy copies .platform/nginx/ into the proxy config and reloads
-nginx automatically (confirmed in eb-engine.log) — no manual restart.
-
-VERIFY: V1 (exactly one `client_max_body_size 55M;` line) OK.
+FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no new dependency
+(uses the built-in browser <canvas> API).
 
 ================================================================================
-DIAGNOSIS (from on-server EB logs — confirmed, not theory)
+CONTEXT
 ================================================================================
-var/log/nginx/access.log (prod):
-  15:49:55  POST .../plans                    -> 413
-  15:49:59  POST .../plans                    -> 413  (retry)
-  15:51:10  POST .../plans                    -> 200  (small file)
-  15:53:01  POST .../units/.../plans          -> 413
-  15:53:05  POST .../units/.../plans          -> 413  (retry)
+Bug 6 (doc-scanner-in-plans-tabs) introduced multi-page scanned PDFs in
+the plans upload flow via scannedImagesToPdf.js. That util combined the
+scanned pages into one PDF but embedded each page's JPEG at full
+VisionKit resolution with NO re-compression:
 
-var/log/eb-docker/.../eb-*-stdouterr.log (app):
-  15:51:10  [UPLOAD:STAGE1:RECEIVED] filename=scan-1779465061163.pdf
-  → the four 413 requests have NO [REQ] / [UPLOAD] entry at all.
+  - VisionKit returns full-resolution JPEGs (multi-megapixel).
+  - jsPDF `addImage(dataUrl, 'JPEG', ...)` embeds the JPEG bytes
+    verbatim — it does NOT re-encode them.
+  - `compress: true` on the jsPDF doc only flate-compresses the PDF
+    *structure*; the JPEG bytes are already compressed, so it does
+    ~nothing to the page images themselves.
 
-The 413s never reached FastAPI. nginx returns 413 only when the request
-body exceeds `client_max_body_size`. proxy.conf L3 had 20M; the app
-(plans_router.py L175/361/801) advertises 50MB. Anything 20-50MB was
-killed at the edge → generic "שגיאה בהעלאת קובץ" toast.
+Net result: each scanned page lands at ~5-8MB → a 3-5 page delivery
+certificate ≈ a ~20-40MB PDF. On-server EB logs (2026-05-22) showed
+these uploads hitting the 20MB nginx body cap and failing with 413.
+The nginx batch (just shipped, 20M -> 55M) stops the 413, but a
+scanned page only needs ~300-500KB — the 10-15x bloat is pure waste
+that accumulates on S3 across every project.
 
-Why this surfaced now: Bug 6 (doc-scanner in plans) introduced scanned
-multi-page PDFs. VisionKit JPEGs are full-res, jspdf embeds them
-without re-compression → a 3-5 page delivery certificate easily clears
-20MB. Regular plan PDFs (5-7MB) stay under 20MB — exactly the 200/413
-mix in the log. The 15:51:10 success was simply small enough.
+THE FIX (Zahi-approved approach + parameters)
+---------------------------------------------
+Before each page is embedded, draw it onto an off-screen <canvas>,
+downscale so the longer edge is at most 2000px, and re-encode as JPEG
+at quality 0.72. Pass that compressed image to jsPDF instead of the
+raw scan.
 
-NOT a retry/timeout issue: 413 is deterministic, and the log shows
-double-retries also hitting 413. Retrying a too-large request just
-produces another 413.
+Parameters (Zahi chose the "balanced" tier — DO NOT CHANGE):
+  - Max long edge: 2000px  → ~170 DPI on A4: text stays crisp,
+    fine enough for typical plans too.
+  - JPEG quality:  0.72    → documents (high-contrast text/line art)
+    compress very well at this quality with no visible degradation.
 
-================================================================================
-THE FIX
-================================================================================
-Raise nginx `client_max_body_size` to 55M — 5MB above the app's 50MB,
-to absorb multipart/form-data overhead. The app stays the SINGLE real
-enforcer with the proper Hebrew 422; nginx becomes a generous outer
-wall that stops surprising users below 50MB. Applies uniformly to all
-upload endpoints (plans, photos, contractor proofs).
+Expected outcome: ~300-500KB per page → a 5-page scan ≈ ~2MB instead
+of ~25-40MB (~90-95% reduction). Pages are NOT lost — still one
+multi-page PDF, one image per page. Aspect ratio is preserved, so the
+existing A4 fit-centering math is unaffected.
 
-App-side 50MB limit is NOT touched.
+Pure browser-API change (HTMLCanvasElement). No new package, no native
+code. Scanned files are local File objects read via FileReader → data
+URI → Image → canvas, so the canvas is NOT cross-origin-tainted and
+`canvas.toDataURL` works normally (incl. iOS WKWebView).
 
 ================================================================================
 STEP 0 — PRE-FLIGHT (captured this turn)
 ================================================================================
-0.1 proxy.conf current value:
-       grep -n "client_max_body_size" .platform/nginx/conf.d/proxy.conf
-     3:client_max_body_size 20M;
-     → exactly one hit at L3, value 20M.   ✓
 
-0.2 No other place sets client_max_body_size (sandbox-scoped scan;
-    grep -r over the whole repo times out in this sandbox due to
-    huge node_modules trees in frontend/backend — scoped to the
-    config-bearing locations):
-       grep -rn "client_max_body_size" .platform 2>/dev/null
-     .platform/nginx/conf.d/proxy.conf:3:client_max_body_size 20M;
-       (none in .ebextensions, .github, or root *.conf/*.config)
-       ls .ebextensions 2>&1
-     ls: cannot access '.ebextensions': No such file or directory
-     → only the one hit; no .ebextensions to override it.   ✓
+0.1  Current file content (Bug 6 version) — confirmed:
+       cat frontend/src/utils/scannedImagesToPdf.js
 
-0.3 App-side 50MB cap unchanged (confirm only — do NOT edit):
-       grep -n "50 \* 1024 \* 1024" backend/contractor_ops/plans_router.py
-     175:    if file_size > 50 * 1024 * 1024:
-     361:    if file_size_check > 50 * 1024 * 1024:
-     801:    if file_size > 50 * 1024 * 1024:
-     → three hits, all 50MB.   ✓
+     // BATCH doc-scanner-in-plans-tabs (2026-05-22)
+     // Combine scanned document images into ONE multi-page PDF, so a
+     // multi-page scan (e.g. a 5-page delivery certificate) uploads as a
+     // single plan file with every page preserved. jsPDF is lazy-imported
+     // (dynamic import) so it ships as its own chunk, loaded only when the
+     // user actually scans — no weight added to the main bundle.
+
+     function readAsDataURL(file) {
+       return new Promise((resolve, reject) => {
+         const reader = new FileReader();
+         reader.onload = () => resolve(reader.result);
+         reader.onerror = () => reject(reader.error || new Error('file read failed'));
+         reader.readAsDataURL(file);
+       });
+     }
+
+     function loadImage(dataUrl) {
+       return new Promise((resolve, reject) => {
+         const img = new Image();
+         img.onload = () => resolve(img);
+         img.onerror = () => reject(new Error('image decode failed'));
+         img.src = dataUrl;
+       });
+     }
+
+     // files: array of scanned image File objects (JPEG, from
+     //        DocumentScannerButton).
+     // returns: a single File — a multi-page application/pdf, one image
+     //          per page, each image fit-centered on an A4 page.
+     export async function scannedImagesToPdf(files) {
+       const { jsPDF } = await import('jspdf');
+       // compress: true — flate-compresses the PDF structure. The JPEG
+       // page images are already compressed; this trims the rest and
+       // keeps multi-page scans well under the 50 MB plans upload limit.
+       const pdf = new jsPDF({ unit: 'pt', format: 'a4', compress: true });
+       const pageW = pdf.internal.pageSize.getWidth();
+       const pageH = pdf.internal.pageSize.getHeight();
+       for (let i = 0; i < files.length; i += 1) {
+         const dataUrl = await readAsDataURL(files[i]);
+         const img = await loadImage(dataUrl);
+         const scale = Math.min(pageW / img.width, pageH / img.height);
+         const w = img.width * scale;
+         const h = img.height * scale;
+         const x = (pageW - w) / 2;
+         const y = (pageH - h) / 2;
+         if (i > 0) pdf.addPage();
+         pdf.addImage(dataUrl, 'JPEG', x, y, w, h);
+       }
+       const blob = pdf.output('blob');
+       return new File([blob], `scan-${Date.now()}.pdf`, { type: 'application/pdf' });
+     }
+
+     → Matches the spec's "CURRENT" block exactly.   ✓
+
+0.2  Loop body structure matches:
+       grep -n "addImage\|readAsDataURL(files\|loadImage(dataUrl)\|Math.min(pageW" \
+         frontend/src/utils/scannedImagesToPdf.js
+     17:function loadImage(dataUrl) {
+     39:    const dataUrl = await readAsDataURL(files[i]);
+     40:    const img = await loadImage(dataUrl);
+     41:    const scale = Math.min(pageW / img.width, pageH / img.height);
+     47:    pdf.addImage(dataUrl, 'JPEG', x, y, w, h);
+     → One addImage call passing `dataUrl`, fit math uses
+       `img.width`/`img.height`.   ✓
+
+0.3  Only ProjectPlansPage + UnitPlansPage call scannedImagesToPdf,
+     and `addImage` is only inside the util:
+       grep -rn "scannedImagesToPdf\|addImage" frontend/src/ | grep -v node_modules
+     frontend/src/pages/ProjectPlansPage.js:15:import { scannedImagesToPdf } from '../utils/scannedImagesToPdf';
+     frontend/src/pages/ProjectPlansPage.js:277:      const pdf = await scannedImagesToPdf(files);
+     frontend/src/pages/ProjectPlansPage.js:282:      console.error('scannedImagesToPdf failed:', err);
+     frontend/src/pages/UnitPlansPage.js:16:import { scannedImagesToPdf } from '../utils/scannedImagesToPdf';
+     frontend/src/pages/UnitPlansPage.js:189:      const pdf = await scannedImagesToPdf(files);
+     frontend/src/pages/UnitPlansPage.js:194:      console.error('scannedImagesToPdf failed:', err);
+     frontend/src/utils/scannedImagesToPdf.js:30:export async function scannedImagesToPdf(files) {
+     frontend/src/utils/scannedImagesToPdf.js:47:    pdf.addImage(dataUrl, 'JPEG', x, y, w, h);
+     → callers unchanged in this batch; addImage only in the util.   ✓
 
 ================================================================================
-FILE — .platform/nginx/conf.d/proxy.conf (+6 / -1)
+FILE — frontend/src/utils/scannedImagesToPdf.js  (+42 / -6)
 ================================================================================
 
------------ LOCATION 1.1 — BEFORE --------------------------------------------
-client_max_body_size 20M;
+LOCATION 1.1 — added MAX_EDGE, JPEG_QUALITY, compressScannedImage
+helper, directly AFTER the closing `}` of `loadImage` and BEFORE
+`export async function scannedImagesToPdf`.
 
------------ LOCATION 1.1 — AFTER ---------------------------------------------
-# nginx-upload-size-limit (2026-05-22): raised 20M -> 55M.
-# The app enforces a 50MB cap (plans_router.py) and returns a
-# proper Hebrew 422; nginx must sit ABOVE that so it never 413s
-# a file the app would have accepted. 5MB headroom covers
-# multipart/form-data overhead.
-client_max_body_size 55M;
-
-server_tokens, proxy_read_timeout / proxy_send_timeout /
-proxy_connect_timeout (all 120s), log_format, access_log — UNCHANGED.
+LOCATION 1.2 — replaced the per-file loop body so it embeds the
+COMPRESSED page (`page.dataUrl`) instead of the raw scan.
 
 ----------- UNIFIED DIFF -----------------------------------------------------
-diff --git a/.platform/nginx/conf.d/proxy.conf b/.platform/nginx/conf.d/proxy.conf
-index <orig>..<new> 100644
---- a/.platform/nginx/conf.d/proxy.conf
-+++ b/.platform/nginx/conf.d/proxy.conf
-@@ -1,5 +1,10 @@
- server_tokens off;
+diff --git a/frontend/src/utils/scannedImagesToPdf.js b/frontend/src/utils/scannedImagesToPdf.js
+index 581e314..278da2a 100644
+--- a/frontend/src/utils/scannedImagesToPdf.js
++++ b/frontend/src/utils/scannedImagesToPdf.js
+@@ -23,6 +23,39 @@ function loadImage(dataUrl) {
+   });
+ }
  
--client_max_body_size 20M;
-+# nginx-upload-size-limit (2026-05-22): raised 20M -> 55M.
-+# The app enforces a 50MB cap (plans_router.py) and returns a
-+# proper Hebrew 422; nginx must sit ABOVE that so it never 413s
-+# a file the app would have accepted. 5MB headroom covers
-+# multipart/form-data overhead.
-+client_max_body_size 55M;
- proxy_read_timeout 120s;
- proxy_send_timeout 120s;
++// BATCH doc-scanner-compress (2026-05-22) — VisionKit returns
++// full-resolution JPEGs; embedding them raw produced ~20-40MB
++// PDFs for a 3-5 page scan and bloated S3. Downscale each page
++// so its longer edge is <= MAX_EDGE and re-encode at
++// JPEG_QUALITY — keeps documents fully legible (~170 DPI on A4)
++// while cutting file size ~90-95%.
++const MAX_EDGE = 2000;
++const JPEG_QUALITY = 0.72;
++
++// Downscale `img` (never upscale) so its longer edge is at most
++// MAX_EDGE, re-encode as JPEG. Returns { dataUrl, width, height }
++// for the compressed page. The scanned image is a local data
++// URI, so the canvas is not cross-origin-tainted.
++function compressScannedImage(img) {
++  const longEdge = Math.max(img.width, img.height);
++  const ratio = longEdge > MAX_EDGE ? MAX_EDGE / longEdge : 1;
++  const width = Math.max(1, Math.round(img.width * ratio));
++  const height = Math.max(1, Math.round(img.height * ratio));
++  const canvas = document.createElement('canvas');
++  canvas.width = width;
++  canvas.height = height;
++  const ctx = canvas.getContext('2d');
++  // high-quality smoothing keeps downscaled text crisp
++  ctx.imageSmoothingEnabled = true;
++  ctx.imageSmoothingQuality = 'high';
++  ctx.drawImage(img, 0, 0, width, height);
++  return {
++    dataUrl: canvas.toDataURL('image/jpeg', JPEG_QUALITY),
++    width,
++    height,
++  };
++}
++
+ // files: array of scanned image File objects (JPEG, from
+ //        DocumentScannerButton).
+ // returns: a single File — a multi-page application/pdf, one image
+@@ -36,15 +69,18 @@ export async function scannedImagesToPdf(files) {
+   const pageW = pdf.internal.pageSize.getWidth();
+   const pageH = pdf.internal.pageSize.getHeight();
+   for (let i = 0; i < files.length; i += 1) {
+-    const dataUrl = await readAsDataURL(files[i]);
+-    const img = await loadImage(dataUrl);
+-    const scale = Math.min(pageW / img.width, pageH / img.height);
+-    const w = img.width * scale;
+-    const h = img.height * scale;
++    const rawDataUrl = await readAsDataURL(files[i]);
++    const img = await loadImage(rawDataUrl);
++    // BATCH doc-scanner-compress (2026-05-22) — downscale +
++    // re-encode this page before embedding it in the PDF.
++    const page = compressScannedImage(img);
++    const scale = Math.min(pageW / page.width, pageH / page.height);
++    const w = page.width * scale;
++    const h = page.height * scale;
+     const x = (pageW - w) / 2;
+     const y = (pageH - h) / 2;
+     if (i > 0) pdf.addPage();
+-    pdf.addImage(dataUrl, 'JPEG', x, y, w, h);
++    pdf.addImage(page.dataUrl, 'JPEG', x, y, w, h);
+   }
+   const blob = pdf.output('blob');
+   return new File([blob], `scan-${Date.now()}.pdf`, { type: 'application/pdf' });
 
-Diff stat: 1 file changed, 6 insertions(+), 1 deletion(-)
+Diff stat: 1 file changed, 42 insertions(+), 6 deletions(-)
+
+NOTE on math equivalence: `compressScannedImage` preserves the aspect
+ratio (single `ratio` multiplier applied to both dims, then rounded
+to ints with a min-1 floor). `page.width / page.height` therefore
+yields the same `scale`/`w`/`h`/`x`/`y` as `img.width / img.height`
+did (modulo sub-pixel rounding from `Math.round`). The only real
+change at the PDF level is that `pdf.addImage` now receives the
+compressed `page.dataUrl` instead of the full-resolution `rawDataUrl`.
 
 ================================================================================
 VERIFY OUTPUTS
 ================================================================================
-V1 — Static check post-edit:
-       grep -n "client_max_body_size" .platform/nginx/conf.d/proxy.conf
-     9:client_max_body_size 55M;
-     → exactly one hit, value 55M.   ✓
 
-V2 — nginx -t not run here: proxy.conf is an http-context snippet
-     (no `events {}` / `http {}` wrapper), so a standalone `nginx -t`
-     would not parse it directly. The change is a numeric literal on
-     an existing directive — syntax cannot regress. Line ends with a
-     semicolon, value is "55M". EB will validate on deploy.   ✓
+V1 — Static parse (babel parser, sourceType=module):
+       node -e "...@babel/parser.parse(file)..."
+     OK
+     → Module parses cleanly; no syntax error.   ✓
+
+     (Full webpack build runs in CI via ./deploy.sh --stag; the change
+      is plain ES2015 + standard <canvas> API, no new imports, no new
+      ESLint rule triggers.)
+
+V2 — Static check (helper defined once, called once, addImage receives
+     `page.dataUrl`):
+       grep -n "MAX_EDGE\|JPEG_QUALITY\|compressScannedImage\|imageSmoothingQuality" \
+         frontend/src/utils/scannedImagesToPdf.js
+     29:// so its longer edge is <= MAX_EDGE and re-encode at
+     30:// JPEG_QUALITY — keeps documents fully legible (~170 DPI on A4)
+     32:const MAX_EDGE = 2000;
+     33:const JPEG_QUALITY = 0.72;
+     36:// MAX_EDGE, re-encode as JPEG. Returns { dataUrl, width, height }
+     39:function compressScannedImage(img) {
+     41:  const ratio = longEdge > MAX_EDGE ? MAX_EDGE / longEdge : 1;
+     50:  ctx.imageSmoothingQuality = 'high';
+     53:    dataUrl: canvas.toDataURL('image/jpeg', JPEG_QUALITY),
+     76:    const page = compressScannedImage(img);
+     → MAX_EDGE = 2000 declared once (L32), JPEG_QUALITY = 0.72 declared
+       once (L33), compressScannedImage declared once (L39) and called
+       once inside the loop (L76), imageSmoothingQuality = 'high' set
+       once (L50).   ✓
+
+V3 — Loop body verification:
+       grep -n "rawDataUrl\|page\.dataUrl\|page\.width\|page\.height\|addImage" \
+         frontend/src/utils/scannedImagesToPdf.js
+     72:    const rawDataUrl = await readAsDataURL(files[i]);
+     73:    const img = await loadImage(rawDataUrl);
+     77:    const scale = Math.min(pageW / page.width, pageH / page.height);
+     78:    const w = page.width * scale;
+     79:    const h = page.height * scale;
+     83:    pdf.addImage(page.dataUrl, 'JPEG', x, y, w, h);
+     → Variable renamed (dataUrl → rawDataUrl), fit math uses
+       `page.width`/`page.height`, and `pdf.addImage` receives the
+       compressed `page.dataUrl`. No leftover `pdf.addImage(dataUrl, ...)`
+       or `pdf.addImage(rawDataUrl, ...)` anywhere.   ✓
 
 ================================================================================
 DELIVERY / SHIP NOTES
 ================================================================================
-SERVER-CONFIG ONLY → ./deploy.sh --stag then ./deploy.sh --prod (full
-EB deploy). NOT Capgo OTA. NOT ./ship.sh.
+FRONTEND-ONLY → ./deploy.sh --stag, then ./deploy.sh --prod (Capgo
+OTA). NOT ./ship.sh. NO new dependency. NO native rebuild.
 
 Order:
   1. git add + commit + push (staging)
-  2. ./deploy.sh --stag    (EB staging deploy; nginx reload automatic
-                            — confirmed in eb-engine.log)
-  3. V3 staging quick test (Zahi):
-       a) Plans tab → "סרוק מסמך" → scan 3-5 pages → upload.
-          EXPECT: success (no "שגיאה בהעלאת קובץ").
-       b) Per-apartment plans tab → same → success.
-       c) Sanity: small PDF plan still uploads fine.
-       d) Optional boundary: file >50MB → app's proper Hebrew error /
-          422 (NOT a raw nginx 413).
-  4. ./deploy.sh --prod    (production EB deploy)
-  5. V3 device test on prod, same checks.
+  2. ./deploy.sh --stag       (web staging deploy)
+  3. ./deploy.sh --prod       (web prod + Capgo OTA)
+  4. iPhone: cold-restart the app TWICE so the OTA bundle applies.
+  5. V4 device test (Zahi):
+       a) Project → Plans → "סרוק מסמך" → scan 3-5 pages → upload.
+          EXPECT: upload succeeds.
+       b) Open the uploaded plan in the viewer. EVERY page present,
+          text on each page sharp and clearly readable.
+       c) Check file size (plan detail / S3): 3-5 page scan should be
+          ~1-3MB (NOT 20-40MB).
+       d) Repeat in a unit's plans tab ("תוכנית דירתית").
+       e) Single-page scan still produces a valid 1-page PDF.
 
-DO NOT TOUCH (per spec):
-- backend/contractor_ops/plans_router.py — 50MB cap stays.
-- proxy_read_timeout / proxy_send_timeout / proxy_connect_timeout
-  (120s) — unchanged.
-- No client_body_timeout or other new directives.
-- No frontend file. No .ebextensions added.
-- .claude/worktrees/ copies of proxy.conf — stale worktrees, not the
-  deployed file.
+DO NOT TOUCH (per spec, confirmed unchanged):
+- readAsDataURL, loadImage helpers.
+- jsPDF lazy `import('jspdf')` and `new jsPDF({ unit:'pt', format:'a4',
+  compress: true })`.
+- Returned filename / MIME (`scan-<ts>.pdf`, `application/pdf`).
+- frontend/src/pages/ProjectPlansPage.js + UnitPlansPage.js (callers
+  still receive one PDF File).
+- frontend/src/components/DocumentScannerButton.jsx.
+- MAX_EDGE / JPEG_QUALITY values (2000 / 0.72 — Zahi-picked balanced
+  tier).
+- Backend, native files, capacitor.config.json.
 
 ================================================================================
 ROLLBACK
 ================================================================================
-git revert <commit-sha> -- .platform/nginx/conf.d/proxy.conf
-./deploy.sh --prod
-
-================================================================================
-COMPANION BATCH — ship this one NOW, compression batch right after
-================================================================================
-This nginx change stops the 413 and unblocks uploads immediately. It
-is NOT the long-term fix on its own. VisionKit JPEGs are full-res,
-jspdf embeds them with no re-compression → scanned delivery
-certificates are 20-40MB PDFs. Slow to upload, slow to render in
-react-pdf, expensive on S3.
-
-Long-term fix has its own spec:
-  specs/batch-doc-scanner-compress-2026-05-22.txt
-(downscale to 2000px long edge, JPEG q=0.72 → ~90-95% smaller,
-documents still fully legible). Frontend-only, Capgo OTA, no new dep.
-
-ORDER:
-  1. THIS nginx batch — ship now (removes immediate 413).
-  2. batch-doc-scanner-compress — ship right after (real fix for
-     upload speed, render speed, S3 cost).
-
-DO NOT implement compression in THIS batch — separate spec, separate
-deploy path.
+git revert <commit-sha> -- frontend/src/utils/scannedImagesToPdf.js
+./deploy.sh --prod   (Capgo OTA).
 
 ================================================================================
 COMMIT MESSAGE (saved at .local/.commit_message)
 ================================================================================
-fix(upload): raise nginx client_max_body_size 20M -> 55M so plan
-uploads up to the app's 50MB limit are not rejected with 413
+perf(plans): downscale + re-encode scanned pages before building the
+PDF so scanned plan uploads stop bloating S3
 
-On-server EB logs showed plan uploads over 20MB returning HTTP 413
-from nginx before ever reaching the app. nginx capped the request
-body at 20M while the application enforces a 50MB limit, so any
-upload in the 20-50MB range — including the multi-page scanned
-delivery certificates added in Bug 6 — was killed at the edge with
-a raw 413 and surfaced as the generic "שגיאה בהעלאת קובץ" toast.
+scannedImagesToPdf embedded each scanned page's JPEG at full VisionKit
+resolution — jsPDF addImage does not re-encode, and `compress: true`
+only touches the PDF structure, not the JPEG data. A 3-5 page delivery
+certificate became a ~20-40MB PDF when ~300-500KB per page is enough.
 
-Raise client_max_body_size to 55M, just above the app's 50MB cap,
-so the application stays the single enforcer of the size limit and
-returns its proper Hebrew error instead of nginx 413. Server-config
-only; ships via ./deploy.sh.
+Add compressScannedImage: draw each page onto a canvas capped at a
+2000px long edge (high-quality smoothing) and re-encode at JPEG
+quality 0.72, then embed that. Documents stay fully legible (~170 DPI
+on A4) while file size drops ~90-95% — a 5-page scan goes from tens of
+MB to ~2MB. Aspect ratio is preserved so the A4 fit math is unchanged.
+Pure browser <canvas> API; no new dependency. Frontend-only, OTA.
+
+================================================================================
+NEXT (separate spec — NOT this batch)
+================================================================================
+specs/batch-doc-scanner-compress-2026-05-22.txt has a FOLLOW-UP
+section flagged for Zahi's decision (12 lines beyond what was shown).
+Surface to Zahi after this ships.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
