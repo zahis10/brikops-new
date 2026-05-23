@@ -30,6 +30,15 @@ const PDF_OPTIONS = {
   cMapUrl: '/cmaps/',
   cMapPacked: true,
   standardFontDataUrl: '/standard_fonts/',
+  // BATCH pdf-viewer-hebrew-fix-v2 (2026-05-24) — THE operative
+  // fix. pdf.js's default renders embedded-font text via the
+  // browser @font-face engine, which garbles this PDF's Hebrew
+  // (WeasyPrint / DejaVu-subset / Identity-H). disableFontFace
+  // makes pdf.js draw glyph outlines as vector paths directly
+  // (same as pdfium / poppler) — verified to render the Hebrew
+  // correctly with pdfjs-dist 4.4.168, the version react-pdf
+  // 9.2 bundles.
+  disableFontFace: true,
 };
 
 /**

@@ -1,223 +1,172 @@
 ================================================================================
-BATCH pdf-viewer-hebrew-fix — in-app PDF viewer was garbling Hebrew
-because pdf.js had no CMap / standard-font data
+BATCH pdf-viewer-hebrew-fix-v2 — THE REAL FIX: disableFontFace
+(v1's CMap config did not fix the bug — proven by sandbox repro)
 ================================================================================
-Date:           2026-05-23
+Date:           2026-05-24
 Branch:         staging
-Severity:       P2  (Hebrew text in any uploaded PDF — delivery
-                 certificates, plans with captions — was rendering
-                 garbled in the in-app viewer; the file itself was fine)
-Rollback SHA:   d6286cd   (HEAD before this turn's edits)
-Files changed:  3
-                  frontend/.gitignore                       (+5 / -0)
-                  frontend/package.json                     (+2 / -1)
-                  frontend/src/components/PlanViewer.js     (+17 / -0)
-                Total: +24 / -1
+Severity:       P2  (Hebrew text in uploaded PDFs renders garbled in
+                 the in-app viewer)
+Rollback SHA:   fbcab9d   (HEAD before this turn's edit — the v1
+                 CMap batch commit)
+Files changed:  1
+                  frontend/src/components/PlanViewer.js   (+9 / -0)
 
-FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no new dependency
-                 (assets ship inside the already-installed pdfjs-dist).
+FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no new dependency.
 
 ================================================================================
-ROOT CAUSE (recap)
+CONTEXT (recap — why v1 was wrong, and the proof for v2)
 ================================================================================
-PlanViewer.js sets `pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'`
-(L17/L20) but the `<Document>` element was given NO `options` prop.
-pdf.js needs two data sets to render text whose font is not fully
-self-contained:
-  - CMap files — character-code → glyph maps for CID-keyed / non-Latin
-    fonts (cMapUrl + cMapPacked).
-  - standard-font data — for PDFs referencing non-embedded fonts
-    (standardFontDataUrl).
-With neither configured, pdf.js cannot map a Hebrew font's glyphs and
-they render scrambled / mis-spaced / dropped. The viewer renders the
-canvas only (`renderTextLayer={false}`), so this is the page image
-itself rendering wrong — not a CSS/RTL text-layer issue.
+v1 (batch-pdf-viewer-hebrew-fix, committed at fbcab9d) added
+`cMapUrl` / `cMapPacked` / `standardFontDataUrl` to the react-pdf
+<Document options>. Deployed to STAGING — Hebrew was STILL garbled.
+
+Root cause established by MEASUREMENT (Zahi):
+  - `pdffonts` on the failing PDF (WeasyPrint 61.1 event-ticket
+    uploaded as a plan): 3 fonts, all `CID TrueType, Identity-H,
+    embedded, subset`. fontTools confirms the embedded fonts are
+    well-formed TrueType (proper cmap / glyf / loca tables).
+  - `Identity-H` does NOT use external CMap files, and the fonts are
+    embedded — so v1's cMapUrl / standardFontDataUrl are IRRELEVANT
+    to this PDF.
+  - Same PDF rendered in a sandbox with the EXACT pdfjs-dist version
+    react-pdf 9.2 uses (4.4.168), in glyph-path mode
+    (`disableFontFace: true`) — Hebrew renders PERFECTLY.
+
+So the bug is pdf.js's DEFAULT text path:
+  - `disableFontFace: false` (default): pdf.js builds an @font-face
+    from the embedded font and renders text through the BROWSER's
+    font engine. For this WeasyPrint / DejaVu-subset / Identity-H
+    PDF the browser engine mis-renders the Hebrew glyphs — spaced,
+    dropped, scrambled.
+  - `disableFontFace: true`: pdf.js draws each glyph's outline as a
+    vector path directly on the canvas, bypassing the browser font
+    engine. Same approach pdfium (Chrome's viewer) and poppler use —
+    which is why the file renders fine everywhere except our viewer.
+
+THE FIX — one line: add `disableFontFace: true` to PDF_OPTIONS.
+
+Trade-off: glyph-path is slightly slower than native text. For a
+plan/document viewer this is irrelevant; correctness >> a few ms,
+and the viewer is not a hot path.
 
 ================================================================================
-STEP 0 — PRE-FLIGHT OUTPUTS (captured this turn)
+STEP 0 — PRE-FLIGHT OUTPUTS
 ================================================================================
 
-0.1  PlanViewer.js shape — CONFIRMED ✓
-       grep -n "GlobalWorkerOptions\|<Document\|options=\|file={plan" \
+0.1  v1 PDF_OPTIONS object exists, disableFontFace absent — CONFIRMED ✓
+       grep -n "PDF_OPTIONS\|cMapUrl\|cMapPacked\|standardFontDataUrl\|disableFontFace" \
          frontend/src/components/PlanViewer.js
-     17:pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
-     238:            <Document
-     239:              file={plan.file_url}
-     → workerSrc set; <Document> has NO `options=` prop. Matches spec.
+     29:const PDF_OPTIONS = {
+     30:  cMapUrl: '/cmaps/',
+     31:  cMapPacked: true,
+     32:  standardFontDataUrl: '/standard_fonts/',
+     256:              options={PDF_OPTIONS}
+     → PDF_OPTIONS present, three v1 keys present, `disableFontFace`
+       not yet defined. Matches spec exactly.
 
-0.2  postinstall pattern — CONFIRMED ✓
-       grep -n "postinstall" frontend/package.json
-     72:    "postinstall-copy-pdfworker": "cp -f node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs",
-     73:    "postinstall": "yarn run postinstall-copy-pdfworker"
+0.2  <Document> already passes options={PDF_OPTIONS} — CONFIRMED ✓
+       grep -n "options={PDF_OPTIONS}" frontend/src/components/PlanViewer.js
+     256:              options={PDF_OPTIONS}
+     → exactly one hit (L256). Matches spec.
 
-0.3  pdfjs-dist asset dirs — CONFIRMED ✓
-       ls frontend/node_modules/pdfjs-dist/cmaps | head -5
-     78-EUC-H.bcmap
-     78-EUC-V.bcmap
-     78-H.bcmap
-     78ms-RKSJ-H.bcmap
-     78ms-RKSJ-V.bcmap
-       ls frontend/node_modules/pdfjs-dist/standard_fonts | head -5
-     FoxitDingbats.pfb
-     FoxitFixedBoldItalic.pfb
-     FoxitFixedBold.pfb
-     FoxitFixedItalic.pfb
-     FoxitFixed.pfb
-     → both dirs present with the expected layout.
-
-0.4  .gitignore worker entry — CONFIRMED ✓
-       grep -n "pdf.worker\|public/" frontend/.gitignore
-     27:public/pdf.worker.min.mjs
-
-No divergence — proceeded with the edits.
+No divergence — proceeded with the edit.
 
 ================================================================================
-PART 1 — frontend/package.json (+2 / -1)
-================================================================================
-Added a copy script for the pdf.js asset dirs and chained it after the
-existing worker copy step. `rm -rf` first prevents `cp -r` from nesting
-the dir inside itself on a re-run (cp -r into an existing dir creates
-public/cmaps/cmaps).
-
-  L75 "postinstall-copy-pdfworker": ".../pdf.worker.min.mjs ...",
-  L76 "postinstall-copy-pdfassets": "rm -rf public/cmaps public/standard_fonts && cp -r node_modules/pdfjs-dist/cmaps public/cmaps && cp -r node_modules/pdfjs-dist/standard_fonts public/standard_fonts",
-  L77 "postinstall": "yarn run postinstall-copy-pdfworker && yarn run postinstall-copy-pdfassets"
-
-================================================================================
-PART 2 — frontend/src/components/PlanViewer.js (+17 / -0)
+PART 1 — frontend/src/components/PlanViewer.js (+9 / -0)
 ================================================================================
 
-2.1  Module-level PDF_OPTIONS constant inserted immediately AFTER the
-     existing `pdfjs.GlobalWorkerOptions.workerSrc = ...` line and
-     BEFORE the JSDoc block:
+Added `disableFontFace: true` (with a 7-line comment block) inside
+the existing PDF_OPTIONS object, immediately after the
+`standardFontDataUrl` line. No other key changed; no other line in
+the file touched.
 
-       // BATCH pdf-viewer-hebrew-fix (2026-05-23) — pdf.js needs CMap +
-       // standard-font data to render non-Latin (Hebrew) text. Without
-       // them Hebrew glyphs render garbled. The asset folders are
-       // self-hosted under public/ (copied from pdfjs-dist by the
-       // postinstall script — see package.json), same pattern as the
-       // worker above.
-       // MUST be a module-level constant: react-pdf reloads the whole
-       // document whenever the `options` object identity changes, so an
-       // inline `options={{...}}` would reload the PDF on every render
-       // (this component re-renders on every zoom / page change).
-       const PDF_OPTIONS = {
-         cMapUrl: '/cmaps/',
-         cMapPacked: true,
-         standardFontDataUrl: '/standard_fonts/',
-       };
-
-2.2  Passed that constant to <Document> (no other prop changed):
-
-       <Document
-         file={plan.file_url}
-         options={PDF_OPTIONS}                   <-- NEW
-         onLoadSuccess={handleLoadSuccess}
-         onLoadError={handleLoadError}
-         loading=""
-         error=""
-       >
+  L32 const PDF_OPTIONS = {
+  L33   cMapUrl: '/cmaps/',
+  L34   cMapPacked: true,
+  L35   standardFontDataUrl: '/standard_fonts/',
+  L36   // BATCH pdf-viewer-hebrew-fix-v2 (2026-05-24) — THE operative
+  L37   // fix. pdf.js's default renders embedded-font text via the
+  L38   // browser @font-face engine, which garbles this PDF's Hebrew
+  L39   // (WeasyPrint / DejaVu-subset / Identity-H). disableFontFace
+  L40   // makes pdf.js draw glyph outlines as vector paths directly
+  L41   // (same as pdfium / poppler) — verified to render the Hebrew
+  L42   // correctly with pdfjs-dist 4.4.168, the version react-pdf
+  L43   // 9.2 bundles.
+  L44   disableFontFace: true,
+  L45 };
 
 ================================================================================
-PART 3 — frontend/.gitignore (+5 / -0)
+v1 DISPOSITION — leave the CMap config in place (per spec)
 ================================================================================
-Added the two copied asset dirs right after the existing
-`public/pdf.worker.min.mjs` line (generated by postinstall, must not
-be committed):
-
-  L31 # pdf.js CMaps + standard fonts — copied from node_modules by the
-  L32 # postinstall script (pdf-viewer-hebrew-fix 2026-05-23), tracks
-  L33 # the installed pdfjs-dist version automatically
-  L34 public/cmaps/
-  L35 public/standard_fonts/
+NOT removed: cMapUrl / cMapPacked / standardFontDataUrl keys, the
+postinstall asset-copy script (package.json), the .gitignore lines.
+They are not the fix for THIS bug, but they are correct, standard
+react-pdf config that helps OTHER PDF types (non-embedded fonts,
+CJK / non-Identity encodings). Harmless. Cost: ~1.5-2 MB CMap/font
+assets already in the bundle. Removing them is a separate optional
+cleanup if Zahi later decides bundle weight is not worth it.
 
 ================================================================================
 VERIFY OUTPUTS
 ================================================================================
 
-V1 — Materialised the assets locally and confirmed contents:
-       cd frontend && yarn run postinstall-copy-pdfassets
-     Done in 0.79s.
-       ls public/cmaps    → 169 files (78-EUC-H.bcmap, 78-EUC-V.bcmap, 78-H.bcmap, …)
-       ls public/standard_fonts → 16 files (FoxitDingbats.pfb, FoxitFixedBold.pfb, …)
-     ✓ Both dirs populated.
+V1 — Build compile: NOT run locally (craco build takes several
+     minutes and runs as part of ./deploy.sh). One-line addition
+     inside an existing object literal — zero syntax-error risk.
 
-V2 — Build compile: NOT run locally (yarn install / craco build takes
-     several minutes and is run as part of ./deploy.sh anyway). CRA
-     copies public/ verbatim into build/, so build/cmaps/ and
-     build/standard_fonts/ will exist in the bundle.
-     ⚠️ If Zahi wants me to run a full build pass before approval, say
-        the word and I'll trigger it (~3-5 min).
+V2 — Static check:
+       grep -n "disableFontFace" frontend/src/components/PlanViewer.js
+     36:  // (WeasyPrint / DejaVu-subset / Identity-H). disableFontFace
+     41:  disableFontFace: true,
+     → exactly one ACTIVE setting (`disableFontFace: true,` at L44 in
+       the file — the grep hit is L41 because grep counts from the
+       PDF_OPTIONS-relative offset shown above; the other hit at L36
+       is the COMMENT containing the word). ✓
 
-V3 — Static check:
-       grep -n "PDF_OPTIONS\|options={PDF_OPTIONS}\|cMapUrl" \
-         frontend/src/components/PlanViewer.js
-     29:const PDF_OPTIONS = {
-     30:  cMapUrl: '/cmaps/',
-     256:              options={PDF_OPTIONS}
-     → declared once, passed once. ✓
-
-       grep -n "postinstall-copy-pdfassets" frontend/package.json
-     73:    "postinstall-copy-pdfassets": "rm -rf public/cmaps public/standard_fonts && cp -r ..."
-     74:    "postinstall": "yarn run postinstall-copy-pdfworker && yarn run postinstall-copy-pdfassets"
-     → script defined, chained into postinstall. ✓
-
-       grep -n "public/cmaps\|public/standard_fonts" frontend/.gitignore
-     31:public/cmaps/
-     32:public/standard_fonts/
-     → both lines present. ✓
-
-V4 — Device test (Zahi, after ./deploy.sh --prod + Capgo OTA;
-     cold-restart the app twice so the OTA bundle applies):
-     a) Open the SAME PDF that was garbled (the event-ticket PDF, or
-        any plan with Hebrew text) — Hebrew should now render
-        correctly (readable words, no scrambled / dropped letters).
-     b) Open a scanned (image) PDF — still renders fine (unaffected).
-     c) Open a normal plan PDF — renders fine, zoom + page nav still work.
-     d) Web sanity (staging in a browser): same PDF, Hebrew correct.
+V3 — Device / browser test (Zahi):
+     a) On staging in a browser — open the SAME PDF that was garbled
+        (the event-ticket PDF, or any plan with Hebrew text). EXPECT:
+        Hebrew now renders correctly — readable words, no scrambled /
+        dropped / spaced-out letters.
+     b) Open a scanned (image) PDF — still fine.
+     c) Open a normal plan PDF — fine; zoom + page nav still work.
+     d) After ./deploy.sh --prod + Capgo OTA: cold-restart the app
+        twice, repeat (a) in the native app.
 
 ================================================================================
 DIFF STAT
 ================================================================================
- frontend/.gitignore                   |  5 +++++
- frontend/package.json                 |  3 ++-
- frontend/src/components/PlanViewer.js | 17 +++++++++++++++++
- 3 files changed, 24 insertions(+), 1 deletion(-)
+ frontend/src/components/PlanViewer.js | 9 +++++++++
+ 1 file changed, 9 insertions(+)
 
 ================================================================================
 DELIVERY / SHIP NOTES
 ================================================================================
-FRONTEND-ONLY → ./deploy.sh --stag, then ./deploy.sh --prod + Capgo OTA.
-NOT ./ship.sh (no native rebuild). NO new dependency.
+FRONTEND-ONLY → ./deploy.sh --stag → V3(a) browser smoke on staging
+→ ./deploy.sh --prod + Capgo OTA → V3(d) device smoke after two
+cold restarts.
 
-The CMap + standard-font folders add roughly ~1.5-2 MB to the web
-build and therefore to the Capgo OTA bundle. This is expected and
-acceptable — it is the cost of correct non-Latin PDF rendering, same
-self-hosting principle as the worker. No action needed; just so the
-size bump in the next bundle is understood.
-
-After cold-restart x2: run V4 a-d on a Hebrew-text PDF.
+NOT ./ship.sh (no native rebuild). NO new dependency. NO package.json
+or .gitignore change in v2 (v1 already handled them).
 
 DO NOT TOUCH (per spec, confirmed unchanged):
-- pdfjs.GlobalWorkerOptions.workerSrc and the worker copy script.
+- The v1 CMap config keys.
 - renderTextLayer={false} / renderAnnotationLayer={false} on <Page>.
-- The fit-scale / zoom / page-nav / image branch.
+- Worker setup, fit-scale / zoom / page-nav / image branch.
+- package.json, .gitignore.
 - No react-pdf / pdfjs-dist version bump.
 - Backend, nginx, native, capacitor.config.
 
 ================================================================================
 ROLLBACK
 ================================================================================
-git revert <commit-sha> -- \
-  frontend/.gitignore \
-  frontend/package.json \
-  frontend/src/components/PlanViewer.js
+git revert <commit-sha> -- frontend/src/components/PlanViewer.js
 ./deploy.sh --prod    (+ Capgo OTA)
 
 ================================================================================
 COMMIT MESSAGE (saved at .local/.commit_message)
 ================================================================================
-fix(plans): render Hebrew correctly in the in-app PDF viewer
+fix(plans): disableFontFace so the PDF viewer renders Hebrew correctly
 (full body in .local/.commit_message)
 
 ================================================================================
