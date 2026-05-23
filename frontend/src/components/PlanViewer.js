@@ -16,6 +16,22 @@ import { ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Loader2, X, Download, Eye }
 // installed pdfjs-dist version automatically).
 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
+// BATCH pdf-viewer-hebrew-fix (2026-05-23) — pdf.js needs CMap +
+// standard-font data to render non-Latin (Hebrew) text. Without
+// them Hebrew glyphs render garbled. The asset folders are
+// self-hosted under public/ (copied from pdfjs-dist by the
+// postinstall script — see package.json), same pattern as the
+// worker above.
+// MUST be a module-level constant: react-pdf reloads the whole
+// document whenever the `options` object identity changes, so an
+// inline `options={{...}}` would reload the PDF on every render
+// (this component re-renders on every zoom / page change).
+const PDF_OPTIONS = {
+  cMapUrl: '/cmaps/',
+  cMapPacked: true,
+  standardFontDataUrl: '/standard_fonts/',
+};
+
 /**
  * PlanViewer — full-screen modal viewer for plan files.
  *
@@ -237,6 +253,7 @@ const PlanViewer = ({ plan, onClose }) => {
           {isPdf && !loadError && (
             <Document
               file={plan.file_url}
+              options={PDF_OPTIONS}
               onLoadSuccess={handleLoadSuccess}
               onLoadError={handleLoadError}
               loading=""

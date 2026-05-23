@@ -70,7 +70,8 @@
     "build": "craco build",
     "test": "craco test",
     "postinstall-copy-pdfworker": "cp -f node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs",
-    "postinstall": "yarn run postinstall-copy-pdfworker"
+    "postinstall-copy-pdfassets": "rm -rf public/cmaps public/standard_fonts && cp -r node_modules/pdfjs-dist/cmaps public/cmaps && cp -r node_modules/pdfjs-dist/standard_fonts public/standard_fonts",
+    "postinstall": "yarn run postinstall-copy-pdfworker && yarn run postinstall-copy-pdfassets"
   },
   "browserslist": {
     "production": [

@@ -25,6 +25,11 @@ yarn-error.log*
 # pdf.js worker — copied from node_modules by postinstall script,
 # tracks the installed pdfjs-dist version automatically
 public/pdf.worker.min.mjs
+# pdf.js CMaps + standard fonts — copied from node_modules by the
+# postinstall script (pdf-viewer-hebrew-fix 2026-05-23), tracks
+# the installed pdfjs-dist version automatically
+public/cmaps/
+public/standard_fonts/
 
 # Capacitor Android build artifacts
 android/app/build/
