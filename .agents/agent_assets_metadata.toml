@@ -384,3 +384,9 @@ id = "-6RTVtuVSSoOjZoD7Gg7G"
 uri = "file://.local/tasks/doc-scanner-in-plans-tabs.md"
 type = "text"
 title = "Plan — doc-scanner-in-plans-tabs"
+
+[[outputs]]
+id = "lMxEJ7MRp-MrdDfbm0bfD"
+uri = "file://.local/tasks/upload-abuse-hardening-phase1.md"
+type = "text"
+title = "Plan — upload-abuse-hardening PHASE 1"
