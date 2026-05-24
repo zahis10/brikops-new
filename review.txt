@@ -64,27 +64,47 @@ PART 2.2 — wiring (6 endpoints, 2 routers)
 Both routers: added
   from contractor_ops.upload_quota import check_storage_quota, record_upload
 
+Order in EVERY endpoint is: lookup → check_storage_quota → seek(0) →
+storage → record_upload. The lookup ALWAYS runs before the check
+(verified by grep — no UnboundLocalError possible).
+
 plans_router.py
-  L187  upload_project_plan     check_storage_quota(project.get('org_id'), file_size)
-  L194                          record_upload(project.get('org_id'), result.file_size)
-  L385  upload_plan_version     check_storage_quota(_org_id, file_size_check)   [+lookup L386-387]
-  L392                          record_upload(_org_id, result.file_size)
-  L575  replace_project_plan    check_storage_quota(_org_id, file_size)         [+lookup L576-577]
-  L582                          record_upload(_org_id, result.file_size)
-  L858  upload_unit_plan        check_storage_quota(_org_id, file_size)         [+lookup L859-860]
-  L865                          record_upload(_org_id, result.file_size)
+  upload_project_plan
+    L173 project = await db.projects.find_one({'id': project_id})  (pre-existing, reused)
+    L187 await check_storage_quota(project.get('org_id'), file_size)
+    L194 await record_upload(project.get('org_id'), result.file_size)
+  upload_plan_version
+    L383 _proj = await db.projects.find_one(..., {'_id': 0, 'org_id': 1})
+    L384 _org_id = (_proj or {}).get('org_id')
+    L385 await check_storage_quota(_org_id, file_size_check)
+    L392 await record_upload(_org_id, result.file_size)
+  replace_project_plan
+    L573 _proj = await db.projects.find_one(..., {'_id': 0, 'org_id': 1})
+    L574 _org_id = (_proj or {}).get('org_id')
+    L575 await check_storage_quota(_org_id, file_size)
+    L582 await record_upload(_org_id, result.file_size)
+  upload_unit_plan
+    L856 _proj = await db.projects.find_one(..., {'_id': 0, 'org_id': 1})
+    L857 _org_id = (_proj or {}).get('org_id')
+    L858 await check_storage_quota(_org_id, file_size)
+    L865 await record_upload(_org_id, result.file_size)
 
 tasks_router.py
-  L993  contractor_proof        check_storage_quota(_org_id, proof_total_bytes)  [+lookup L994-995]
-                                ⭐ SUM check ONCE before the storage loop
-                                   (same rationale as Phase 1 check_upload_bytes:
-                                    partial mid-batch storage cannot be rolled back).
-  L1005                         record_upload(_org_id, result.file_size)
-                                ⭐ PER-FILE inside the loop so the ledger
-                                   reflects exactly what made it to S3 on
-                                   partial failure.
-  L1375 upload_task_attachment  check_storage_quota(_org_id, len(raw))           [+lookup L1376-1377]
-  L1383                         record_upload(_org_id, result.file_size)
+  contractor_proof
+    L991  _proj = await db.projects.find_one({'id': task['project_id']}, {'_id': 0, 'org_id': 1})
+    L992  _org_id = (_proj or {}).get('org_id')
+    L993  await check_storage_quota(_org_id, proof_total_bytes)
+          ⭐ SUM check ONCE before the storage loop (partial mid-batch
+             storage cannot be rolled back — same rationale as Phase 1
+             check_upload_bytes).
+    L1005 await record_upload(_org_id, result.file_size)
+          ⭐ PER-FILE inside the loop so the ledger reflects exactly
+             what made it to S3 on partial failure.
+  upload_task_attachment
+    L1373 _proj = await db.projects.find_one({'id': task['project_id']}, {'_id': 0, 'org_id': 1})
+    L1374 _org_id = (_proj or {}).get('org_id')
+    L1375 await check_storage_quota(_org_id, len(raw))
+    L1383 await record_upload(_org_id, result.file_size)
 
 ================================================================================
 DESIGN tradeoff (acknowledged honestly)
