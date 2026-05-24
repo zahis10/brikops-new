@@ -215,6 +215,13 @@ const SignaturePadModal = ({
               <div className="border-2 border-slate-200 rounded-xl overflow-hidden bg-white">
                 <canvas
                   ref={canvasRef}
+                  /* BATCH signature-canvas-drag-fix (2026-05-24) — exclude the
+                     canvas from Vaul's drawer drag-to-dismiss gesture, so the
+                     sheet stays static while the user draws a signature.
+                     touchAction:'none' already stops native touch-scroll;
+                     this stops Vaul's JS drag (verified: Vaul 1.1.2 shouldDrag
+                     checks data-vaul-no-drag). */
+                  data-vaul-no-drag
                   style={{ width: '100%', height: '180px', touchAction: 'none' }}
                   className="cursor-crosshair"
                   onMouseDown={startDraw}

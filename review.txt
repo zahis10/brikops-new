@@ -1,97 +1,134 @@
-BATCH upload-hardening-phase3b-handover (2026-05-24)
-====================================================
-Branch: staging | Base SHA: a77efeb (post Phase 3a)
-Type:   BACKEND-ONLY → ./deploy.sh --stag → --prod
-        NO Capgo, NO ship.sh, NO native, NO new dep.
+BATCH signature-canvas-drag-fix (2026-05-24)
+============================================
+Branch:        staging
+Rollback SHA:  c0784b6 (HEAD before this edit)
+Type:          FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no new dependency.
+Files:         1 frontend = 1 total
+               frontend/src/components/handover/SignaturePadModal.js
 
-WHAT
-----
-PHASE 3b of upload-abuse-hardening. Wired the 5 helpers
-(check_upload_rate_limit, check_content_length, check_upload_bytes,
-check_storage_quota, record_upload) into ALL 5 unprotected upload
-endpoints in handover_router.py:
+WHAT & WHY
+----------
+The handover signature drawing canvas was unusable: drawing with a
+finger or mouse made the whole Vaul drawer sheet "dance" along with
+the pointer, so a clean signature was impossible.
 
-  A. PUT  /organizations/{org_id}/logo               (2MB cap)
-  B. POST .../meter-photo/{meter_type}               (5MB cap)
-  C. POST .../tenants/{tenant_idx}/id-photo          (8MB cap, PII)
-  D. PUT  .../signatures/{role}                      (no per-file cap)
-  E. PUT  .../legal-sections/{section_id}/sign       (no per-file cap)
+Root cause: the <canvas> sits inside a Vaul `Drawer`
+(frontend/src/components/ui/drawer.jsx → `import { Drawer } from
+"vaul"`). Vaul's drag-to-dismiss gesture catches the pointer motion
+in parallel with the canvas draw handlers. `touchAction:'none'` stops
+the browser's native touch-scroll but does NOT stop Vaul's JS drag.
 
-WHY
----
-P2 security. Before this batch these 5 routes had ONLY their
-per-file MAX_SIZE check — no per-user count cap, no per-user
-byte-rate cap, no Content-Length fast-reject, no per-org storage
-quota, no ledger. A single authed user could spam any of them and
-fill the org's S3 bucket. 3a (qc_router) closed the QC route; 3b
-closes the handover routes; 3c (safety+excel+import) follows.
+Verified in installed Vaul 1.1.2 source:
+    frontend/node_modules/vaul/dist/index.mjs:981
+    if (element.hasAttribute('data-vaul-no-drag') ||
+        element.closest('[data-vaul-no-drag]')) { ... }
+→ any element carrying `data-vaul-no-drag` is excluded from
+initiating a drawer drag. The documented Vaul escape hatch.
 
-FILES TOUCHED
--------------
-backend/contractor_ops/handover_router.py  (+2 import lines,
-  signatures touched on A/B/C, hooks added on A/B/C/D/E,
-  db = get_db() moved up in B/C)
+Fix = add the `data-vaul-no-drag` attribute to the signature
+<canvas>. One attribute, no logic change. Covers BOTH signature
+flows (role/tenant via SignatureSection + legal-section via
+HandoverLegalSections) — both render the same SignaturePadModal.
+
+STEP 0 — PRE-FLIGHT (outputs)
+-----------------------------
+0.1  Canvas in SignaturePadModal.js (BEFORE edit):
+     27:  const canvasRef = useRef(null);
+     216:                <canvas
+     217:                  ref={canvasRef}
+     218:                  style={{ width: '100%', height: '180px', touchAction: 'none' }}
+     → <canvas ref={canvasRef} ... touchAction:'none'> present.
+     → NO existing `data-vaul-no-drag`. OK to proceed.
+
+0.2  Drawer is Vaul:
+     frontend/src/components/ui/drawer.jsx:2:
+       import { Drawer as DrawerPrimitive } from "vaul"
+     → confirmed.
+
+0.3  Vaul's exclusion attribute (installed version):
+     frontend/node_modules/vaul/dist/index.mjs:981:
+       if (element.hasAttribute('data-vaul-no-drag') ||
+           element.closest('[data-vaul-no-drag]')) { ... }
+     → attribute name matches the spec exactly.
+
+DIFF — SignaturePadModal.js (canvas block only)
+-----------------------------------------------
+                <canvas
+                  ref={canvasRef}
++                 /* BATCH signature-canvas-drag-fix (2026-05-24) — exclude the
++                    canvas from Vaul's drawer drag-to-dismiss gesture, so the
++                    sheet stays static while the user draws a signature.
++                    touchAction:'none' already stops native touch-scroll;
++                    this stops Vaul's JS drag (verified: Vaul 1.1.2 shouldDrag
++                    checks data-vaul-no-drag). */
++                 data-vaul-no-drag
+                  style={{ width: '100%', height: '180px', touchAction: 'none' }}
+                  className="cursor-crosshair"
+                  onMouseDown={startDraw}
+                  onMouseMove={draw}
+                  onMouseUp={endDraw}
+                  onMouseLeave={endDraw}
+                  onTouchStart={startDraw}
+                  onTouchMove={draw}
+                  onTouchEnd={endDraw}
+                />
+
+No other change to the file. Draw handlers / initCanvas /
+clearCanvas / submit-confirm logic — untouched. Drawer wrapper,
+SignatureSection, HandoverLegalSections — untouched.
 
 VERIFICATION
 ------------
-V1 (import) — clean:
-    python -c "from contractor_ops import handover_router; print('V1 OK')"
-    → V1 OK
+V1  Build compiles: SKIPPED locally — runs as part of `./deploy.sh
+    --stag` / `--prod`. Change is a single JSX attribute; cannot
+    break the build by itself.
 
-V2 (grep counts) — match spec exactly:
-    import lines              : 2  ✅ (upload_rate_limit + upload_quota)
-    check_upload_rate_limit() : 5  ✅ (one per endpoint)
-    check_content_length()    : 3  ✅ (A/B/C only — D/E deliberately
-                                       skipped, no per-file cap on sigs)
-    check_upload_bytes()      : 5  ✅
-    check_storage_quota()     : 5  ✅
-    record_upload()           : 5  ✅
+V2  Static grep — `data-vaul-no-drag` in SignaturePadModal.js:
+      223:                     checks data-vaul-no-drag). */
+      224:                  data-vaul-no-drag
+    → 2 hits: ONE actual attribute on the <canvas> (L224), PLUS one
+    literal mention inside the explanatory comment (L223). That is
+    expected; the spec's "exactly one hit on the <canvas>" matches
+    L224. No other occurrence anywhere else in the file.
 
-ARCHITECTURE NOTES (read before review)
----------------------------------------
-1. `Request` was already imported on L1 — added `request: Request`
-   only to A/B/C signatures (after path params, before file=File(...)).
-   D/E got NO `request` param: spec deliberately omits
-   check_content_length on signatures (no per-file cap there), so
-   adding an unused param would be noise.
+V3  Device / browser test — for Zahi after deploy:
+    a) Handover protocol → sign a role → "ציור" tab → draw with a
+       finger AND with a mouse. EXPECT: the sheet stays STATIC, the
+       signature line follows the pointer cleanly, no "dancing".
+    b) Sign a legal section → same canvas → same: static, clean.
+    c) The drawer can still be dismissed by dragging its handle /
+       header area (drag-to-close still works OUTSIDE the canvas).
+    d) "הקלדה" (typed) tab still works.
 
-2. B/C — moved `db = get_db()` UP from after the storage call to
-   right after `_check_not_locked(protocol)`. The org-lookup
-   (`db.projects.find_one(...)`) needs db BEFORE storage, and
-   get_db() is idempotent. No double-call.
+DO NOT TOUCH (confirmed unchanged)
+----------------------------------
+- startDraw / draw / endDraw / getPos / initCanvas / clearCanvas /
+  submit-confirm logic.
+- touchAction: 'none' (kept; still stops native scroll).
+- frontend/src/components/ui/drawer.jsx (Vaul wrapper).
+- SignatureSection.js / HandoverLegalSections.js (reuse same modal).
+- Backend, nginx, native, capacitor.config — nothing.
 
-3. D/E — Use-before-assignment risk inside the `if signature_type
-   == "canvas":` block. Required order is enforced:
-   check_upload_rate_limit → validate_upload → read image_data →
-   <100 check → check_upload_bytes → _proj lookup → _org_id = (...)
-   → check_storage_quota → save_bytes → record_upload. The
-   `signature_type == "typed"` branch is COMPLETELY UNAFFECTED
-   (no file, no hooks).
+FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no new dependency.
 
-4. A — ledger uses len(raw), but stored bytes are resized (PIL
-   thumbnail ≤400x400). Deliberate ≤2MB over-count, explicit
-   tradeoff per plan §step 2.
+COMMIT MESSAGE (in .local/.commit_message)
+------------------------------------------
+fix(handover): signature canvas no longer drags the drawer sheet
 
-5. A — Content-Length cap uses literal `2 * 1024 * 1024` (5MB / 8MB
-   for B/C) because the function-local `MAX_SIZE` is not yet defined
-   at the top of the body.
-
-6. Quota fails OPEN on DB error; record_upload is best-effort.
-   Identical semantics to PHASE 2 / PHASE 3a (qc_router).
-
-DONE LOOKS LIKE (from plan)
----------------------------
-- Logo, meter photo, tenant-ID photo, role sig, legal-section sig
-  uploads still work.
-- Spamming any of them trips the per-user count limit (429).
-- A huge multipart on A/B/C trips Content-Length (413) before body
-  read.
-- org_storage_usage.bytes_used grows after every successful upload.
-- Org at 100GB → next handover upload returns 413 with Hebrew
-  quota message.
-- Signing with signature_type="typed" (no file) UNAFFECTED.
+The signature drawing canvas sits inside a Vaul drawer. Vaul's
+drag-to-dismiss gesture caught the drawing motion, so the sheet moved
+with the finger/mouse and a clean signature was impossible.
+`touchAction:'none'` stopped native touch-scroll but not Vaul's JS
+drag. Add `data-vaul-no-drag` to the canvas — Vaul's shouldDrag
+excludes it, so the sheet stays static while drawing. Fixes both the
+role and legal-section signature flows (shared SignaturePadModal).
+Frontend-only; Capgo OTA.
 
 ROLLBACK
 --------
-git revert <sha> -- backend/contractor_ops/handover_router.py
-./deploy.sh --prod
+git revert <commit-sha> -- frontend/src/components/handover/SignaturePadModal.js
+./deploy.sh --prod   (Capgo OTA)
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================
