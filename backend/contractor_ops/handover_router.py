@@ -8,6 +8,10 @@ from contractor_ops.router import get_db, get_current_user, require_roles, _chec
 from contractor_ops.constants import TERMINAL_TASK_STATUSES
 from services.object_storage import save_bytes, generate_url
 from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
+from contractor_ops.upload_rate_limit import (
+    check_upload_rate_limit, check_upload_bytes, check_content_length,
+)
+from contractor_ops.upload_quota import check_storage_quota, record_upload
 
 logger = logging.getLogger("contractor_ops.handover")
 
@@ -742,7 +746,11 @@ async def _check_org_logo_permission(user: dict, org: dict, org_id: str, db):
 
 
 @router.put("/organizations/{org_id}/logo")
-async def upload_org_logo(org_id: str, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+async def upload_org_logo(org_id: str, request: Request, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    # BATCH upload-hardening-phase3b-handover (2026-05-24) — per-user
+    # count limit + Content-Length pre-check (2MB cap = MAX_SIZE).
+    check_upload_rate_limit(user['id'])
+    check_content_length(request.headers.get('content-length'), 2 * 1024 * 1024)
     import io as _io
     from PIL import Image as _PILImage
     from services.object_storage import save_bytes as _save_bytes, generate_url as _gen_url, delete as _delete_stored
@@ -760,6 +768,11 @@ async def upload_org_logo(org_id: str, file: UploadFile = File(...), user: dict 
         raise HTTPException(status_code=400, detail="קובץ ריק")
     if len(raw) > MAX_SIZE:
         raise HTTPException(status_code=400, detail="גודל הקובץ חורג מ-2MB")
+
+    # BATCH upload-hardening-phase3b-handover (2026-05-24) — byte rate
+    # limit + per-org storage quota, BEFORE resize/storage.
+    check_upload_bytes(user['id'], len(raw))
+    await check_storage_quota(org_id, len(raw))
 
     ct = (file.content_type or "").lower()
     if ct not in ("image/png", "image/jpeg", "image/jpg"):
@@ -796,6 +809,9 @@ async def upload_org_logo(org_id: str, file: UploadFile = File(...), user: dict 
     import asyncio
     key = f"org_logos/{org_id}.{out_ext}"
     stored_ref = await asyncio.to_thread(_save_bytes, resized_bytes, key, out_ct)
+    # BATCH upload-hardening-phase3b-handover (2026-05-24) — ledger raw
+    # size (resized output may be smaller; ≤2MB over-count is fine).
+    await record_upload(org_id, len(raw))
 
     old_logo = org.get("logo_url")
     if old_logo and old_logo != stored_ref:
@@ -1783,12 +1799,25 @@ async def sign_role(
     if signature_type == "canvas":
         if not signature_image:
             raise HTTPException(status_code=400, detail="נדרש קובץ חתימה לסוג canvas")
+        # BATCH upload-hardening-phase3b-handover (2026-05-24) — per-user
+        # count limit (no Content-Length here: no per-file cap on sigs).
+        check_upload_rate_limit(user['id'])
         validate_upload(signature_image, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
         image_data = await signature_image.read()
         if not image_data or len(image_data) < 100:
             raise HTTPException(status_code=400, detail="קובץ חתימה ריק או לא תקין")
+        # BATCH upload-hardening-phase3b-handover (2026-05-24) — byte
+        # rate limit + per-org storage quota, BEFORE the file reaches S3.
+        # ORDER: lookup → _org_id = ... → check_storage_quota (no
+        # UnboundLocalError; verified by V3a runtime test).
+        check_upload_bytes(user['id'], len(image_data))
+        _proj = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+        _org_id = (_proj or {}).get('org_id')
+        await check_storage_quota(_org_id, len(image_data))
         s3_key = f"signatures/{protocol_id}/{role}.png"
         stored_ref = save_bytes(image_data, s3_key, "image/png")
+        # BATCH upload-hardening-phase3b-handover (2026-05-24) — ledger
+        await record_upload(_org_id, len(image_data))
         sig_data["image_key"] = stored_ref
     else:
         typed_name_val = (typed_name or "").strip()
@@ -2427,8 +2456,13 @@ async def update_legal_section_body(
 @router.post("/projects/{project_id}/handover/protocols/{protocol_id}/meter-photo/{meter_type}")
 async def upload_meter_photo(
     project_id: str, protocol_id: str, meter_type: str,
+    request: Request,
     file: UploadFile = File(...), user: dict = Depends(get_current_user),
 ):
+    # BATCH upload-hardening-phase3b-handover (2026-05-24) — per-user
+    # count limit + Content-Length pre-check (5MB cap = MAX_SIZE).
+    check_upload_rate_limit(user['id'])
+    check_content_length(request.headers.get('content-length'), 5 * 1024 * 1024)
     from services.object_storage import save_bytes as _save_bytes, generate_url as _gen_url
     import asyncio
 
@@ -2438,6 +2472,9 @@ async def upload_meter_photo(
     await _check_handover_management(user, project_id)
     protocol = await _get_protocol_or_404(protocol_id, project_id)
     _check_not_locked(protocol)
+    # BATCH upload-hardening-phase3b-handover (2026-05-24) — moved up
+    # from below storage so the org-lookup can use it.
+    db = get_db()
 
     validate_upload(file, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
     MAX_SIZE = 5 * 1024 * 1024
@@ -2447,6 +2484,13 @@ async def upload_meter_photo(
     if len(raw) > MAX_SIZE:
         raise HTTPException(status_code=400, detail="גודל הקובץ חורג מ-5MB")
 
+    # BATCH upload-hardening-phase3b-handover (2026-05-24) — byte rate
+    # limit + per-org storage quota, BEFORE the file reaches S3.
+    check_upload_bytes(user['id'], len(raw))
+    _proj = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+    _org_id = (_proj or {}).get('org_id')
+    await check_storage_quota(_org_id, len(raw))
+
     ext = (file.filename or "photo.jpg").rsplit(".", 1)[-1].lower()
     if ext not in ("jpg", "jpeg", "png", "webp"):
         ext = "jpg"
@@ -2454,8 +2498,9 @@ async def upload_meter_photo(
 
     key = f"handover/{project_id}/{protocol_id}/meter_{meter_type}.{ext}"
     stored_ref = await asyncio.to_thread(_save_bytes, raw, key, ct)
+    # BATCH upload-hardening-phase3b-handover (2026-05-24) — ledger
+    await record_upload(_org_id, len(raw))
 
-    db = get_db()
     await db.handover_protocols.update_one(
         {"id": protocol_id, "project_id": project_id},
         {"$set": {f"meters.{meter_type}.photo_url": stored_ref, "updated_at": _now()}}
@@ -2469,9 +2514,14 @@ async def upload_meter_photo(
 @router.post("/projects/{project_id}/handover/protocols/{protocol_id}/tenants/{tenant_idx}/id-photo")
 async def upload_tenant_id_photo(
     project_id: str, protocol_id: str, tenant_idx: int,
+    request: Request,
     file: UploadFile = File(...), user: dict = Depends(get_current_user),
 ):
     """העלאת תמונת ת.ז (קדמית) של דייר. PII — נדרש audit log."""
+    # BATCH upload-hardening-phase3b-handover (2026-05-24) — per-user
+    # count limit + Content-Length pre-check (8MB cap = MAX_SIZE).
+    check_upload_rate_limit(user['id'])
+    check_content_length(request.headers.get('content-length'), 8 * 1024 * 1024)
     from services.object_storage import save_bytes as _save_bytes, generate_url as _gen_url
     import asyncio
 
@@ -2481,6 +2531,9 @@ async def upload_tenant_id_photo(
     await _check_handover_management(user, project_id)
     protocol = await _get_protocol_or_404(protocol_id, project_id)
     _check_not_locked(protocol)
+    # BATCH upload-hardening-phase3b-handover (2026-05-24) — moved up
+    # from below storage so the org-lookup can use it.
+    db = get_db()
 
     tenants = protocol.get("tenants") or []
     if tenant_idx >= len(tenants):
@@ -2494,6 +2547,13 @@ async def upload_tenant_id_photo(
     if len(raw) > MAX_SIZE:
         raise HTTPException(status_code=400, detail="גודל הקובץ חורג מ-8MB")
 
+    # BATCH upload-hardening-phase3b-handover (2026-05-24) — byte rate
+    # limit + per-org storage quota, BEFORE the file reaches S3.
+    check_upload_bytes(user['id'], len(raw))
+    _proj = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+    _org_id = (_proj or {}).get('org_id')
+    await check_storage_quota(_org_id, len(raw))
+
     ext = (file.filename or "id.jpg").rsplit(".", 1)[-1].lower()
     if ext not in ("jpg", "jpeg", "png", "webp"):
         ext = "jpg"
@@ -2501,8 +2561,9 @@ async def upload_tenant_id_photo(
 
     key = f"handover/{project_id}/{protocol_id}/tenant_{tenant_idx}_id.{ext}"
     stored_ref = await asyncio.to_thread(_save_bytes, raw, key, ct)
+    # BATCH upload-hardening-phase3b-handover (2026-05-24) — ledger
+    await record_upload(_org_id, len(raw))
 
-    db = get_db()
     await db.handover_protocols.update_one(
         {"id": protocol_id, "project_id": project_id},
         {"$set": {f"tenants.{tenant_idx}.id_photo_url": stored_ref, "updated_at": _now()}}
@@ -2634,13 +2695,26 @@ async def sign_legal_section(
     if signature_type == "canvas":
         if not signature_image:
             raise HTTPException(status_code=400, detail="נדרש קובץ חתימה לסוג canvas")
+        # BATCH upload-hardening-phase3b-handover (2026-05-24) — per-user
+        # count limit (no Content-Length here: no per-file cap on sigs).
+        check_upload_rate_limit(user['id'])
         validate_upload(signature_image, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
         image_data = await signature_image.read()
         if not image_data or len(image_data) < 100:
             raise HTTPException(status_code=400, detail="קובץ חתימה ריק או לא תקין")
+        # BATCH upload-hardening-phase3b-handover (2026-05-24) — byte
+        # rate limit + per-org storage quota, BEFORE the file reaches S3.
+        # ORDER: lookup → _org_id = ... → check_storage_quota (no
+        # UnboundLocalError; verified by V3a runtime test).
+        check_upload_bytes(user['id'], len(image_data))
+        _proj = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+        _org_id = (_proj or {}).get('org_id')
+        await check_storage_quota(_org_id, len(image_data))
         suffix = f"_{signer_slot}" if signer_slot else ""
         s3_key = f"signatures/{protocol_id}/legal_{section_id}{suffix}.png"
         stored_ref = save_bytes(image_data, s3_key, "image/png")
+        # BATCH upload-hardening-phase3b-handover (2026-05-24) — ledger
+        await record_upload(_org_id, len(image_data))
         sig_data["image_key"] = stored_ref
     else:
         typed_name_val = (typed_name or "").strip()

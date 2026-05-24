@@ -1,175 +1,97 @@
-================================================================================
-BATCH upload-hardening-phase3a-qc — rate-limit + storage quota on QC photo
-================================================================================
-Date:           2026-05-24
-Branch:         staging
-Severity:       P2 security — close an unprotected upload endpoint
-Files changed:  1 (backend only)
-                  backend/contractor_ops/qc_router.py   +14 / -1
-Rollback SHA:   0bc54db   (HEAD before this edit)
+BATCH upload-hardening-phase3b-handover (2026-05-24)
+====================================================
+Branch: staging | Base SHA: a77efeb (post Phase 3a)
+Type:   BACKEND-ONLY → ./deploy.sh --stag → --prod
+        NO Capgo, NO ship.sh, NO native, NO new dep.
 
-BACKEND-ONLY — ./deploy.sh --stag then --prod (EB). NO Capgo, NO ./ship.sh,
-                NO native, NO new dependency.
+WHAT
+----
+PHASE 3b of upload-abuse-hardening. Wired the 5 helpers
+(check_upload_rate_limit, check_content_length, check_upload_bytes,
+check_storage_quota, record_upload) into ALL 5 unprotected upload
+endpoints in handover_router.py:
 
-================================================================================
-STEP 0 — pre-flight outputs
-================================================================================
+  A. PUT  /organizations/{org_id}/logo               (2MB cap)
+  B. POST .../meter-photo/{meter_type}               (5MB cap)
+  C. POST .../tenants/{tenant_idx}/id-photo          (8MB cap, PII)
+  D. PUT  .../signatures/{role}                      (no per-file cap)
+  E. PUT  .../legal-sections/{section_id}/sign       (no per-file cap)
 
-0.1 helpers present
-    upload_rate_limit.py: L40 check_upload_rate_limit, L64 check_upload_bytes,
-                         L90 check_content_length
-    upload_quota.py:      L22 check_storage_quota, L46 record_upload
-    ⇒ all 5 helpers present (PHASE 1 + 2 on this branch).
+WHY
+---
+P2 security. Before this batch these 5 routes had ONLY their
+per-file MAX_SIZE check — no per-user count cap, no per-user
+byte-rate cap, no Content-Length fast-reject, no per-org storage
+quota, no ledger. A single authed user could spam any of them and
+fill the org's S3 bucket. 3a (qc_router) closed the QC route; 3b
+closes the handover routes; 3c (safety+excel+import) follows.
 
-0.2 upload_qc_photo shape (matches spec)
-    L2029  MAX_PHOTO_SIZE = 10 * 1024 * 1024
-    L2033  async def upload_qc_photo(run_id, item_id, file, user)
-    L2045  _check_qc_access(user, run["project_id"])  ← run["project_id"] in scope
-    L2069  content = await file.read()
-    L2070  if len(content) > MAX_PHOTO_SIZE: raise 400 הקובץ גדול מדי
-    L2073-2074  obj_save_bytes(content, f"qc/{filename}", content_type)
-                ⇒ returns a ref STRING (not an UploadResult); use len(content)
-                  for the ledger.
-    No existing check_upload_rate_limit anywhere in the function. Clean.
+FILES TOUCHED
+-------------
+backend/contractor_ops/handover_router.py  (+2 import lines,
+  signatures touched on A/B/C, hooks added on A/B/C/D/E,
+  db = get_db() moved up in B/C)
 
-0.3 fastapi import
-    L1: from fastapi import APIRouter, HTTPException, Depends, UploadFile,
-                            File, Query, BackgroundTasks
-    ⇒ Request NOT imported. Added.
+VERIFICATION
+------------
+V1 (import) — clean:
+    python -c "from contractor_ops import handover_router; print('V1 OK')"
+    → V1 OK
 
-================================================================================
-DIFF — backend/contractor_ops/qc_router.py
-================================================================================
-@@ -1,4 +1,4 @@
--from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Query, BackgroundTasks
-+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Query, BackgroundTasks, Request
+V2 (grep counts) — match spec exactly:
+    import lines              : 2  ✅ (upload_rate_limit + upload_quota)
+    check_upload_rate_limit() : 5  ✅ (one per endpoint)
+    check_content_length()    : 3  ✅ (A/B/C only — D/E deliberately
+                                       skipped, no per-file cap on sigs)
+    check_upload_bytes()      : 5  ✅
+    check_storage_quota()     : 5  ✅
+    record_upload()           : 5  ✅
 
-@@ -11,6 +11,10 @@
- from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
-+from contractor_ops.upload_rate_limit import (
-+    check_upload_rate_limit, check_upload_bytes, check_content_length,
-+)
-+from contractor_ops.upload_quota import check_storage_quota, record_upload
- from contractor_ops.projects_router import _natural_sort_key
+ARCHITECTURE NOTES (read before review)
+---------------------------------------
+1. `Request` was already imported on L1 — added `request: Request`
+   only to A/B/C signatures (after path params, before file=File(...)).
+   D/E got NO `request` param: spec deliberately omits
+   check_content_length on signatures (no per-file cap there), so
+   adding an unused param would be noise.
 
-@@ -2033,9 +2037,15 @@ MAX_PHOTO_SIZE = 10 * 1024 * 1024
- async def upload_qc_photo(
-     run_id: str,
-     item_id: str,
-+    request: Request,
-     file: UploadFile = File(...),
-     user: dict = Depends(get_current_user)
- ):
-+    # BATCH upload-hardening-phase3a-qc (2026-05-24) — per-user count
-+    # limit + Content-Length pre-check (uses this endpoint's 10MB cap,
-+    # not the 50MB used by plans endpoints).
-+    check_upload_rate_limit(user['id'])
-+    check_content_length(request.headers.get('content-length'), MAX_PHOTO_SIZE)
-     db = get_db()
+2. B/C — moved `db = get_db()` UP from after the storage call to
+   right after `_check_not_locked(protocol)`. The org-lookup
+   (`db.projects.find_one(...)`) needs db BEFORE storage, and
+   get_db() is idempotent. No double-call.
 
-@@ -2070,8 +2080,17 @@ async def upload_qc_photo(
-     if len(content) > MAX_PHOTO_SIZE:
-         raise HTTPException(status_code=400, detail="הקובץ גדול מדי (מקסימום 10MB)")
+3. D/E — Use-before-assignment risk inside the `if signature_type
+   == "canvas":` block. Required order is enforced:
+   check_upload_rate_limit → validate_upload → read image_data →
+   <100 check → check_upload_bytes → _proj lookup → _org_id = (...)
+   → check_storage_quota → save_bytes → record_upload. The
+   `signature_type == "typed"` branch is COMPLETELY UNAFFECTED
+   (no file, no hooks).
 
-+    # BATCH upload-hardening-phase3a-qc (2026-05-24) — byte rate limit +
-+    # per-org storage quota, BEFORE the file reaches S3.
-+    check_upload_bytes(user['id'], len(content))
-+    _proj = await db.projects.find_one({'id': run['project_id']}, {'_id': 0, 'org_id': 1})
-+    _org_id = (_proj or {}).get('org_id')
-+    await check_storage_quota(_org_id, len(content))
-+
-     from services.object_storage import save_bytes as obj_save_bytes, generate_url as obj_generate_url
-     stored_ref = obj_save_bytes(content, f"qc/{filename}", content_type)
-+    # BATCH upload-hardening-phase3a-qc (2026-05-24) — ledger the stored bytes
-+    await record_upload(_org_id, len(content))
+4. A — ledger uses len(raw), but stored bytes are resized (PIL
+   thumbnail ≤400x400). Deliberate ≤2MB over-count, explicit
+   tradeoff per plan §step 2.
 
-================================================================================
-ORDER OF OPERATIONS (verified in current file)
-================================================================================
-Hook A (top of body, before db = get_db()):
-  L2047 check_upload_rate_limit(user['id'])
-  L2048 check_content_length(request.headers.get('content-length'), MAX_PHOTO_SIZE)
-                                                                    ^^^^^^^^^^^^^^^
-                                                                    10MB, NOT 50MB
-Body resolves run + access + item + stage lock + validate_upload + read file.
-Existing per-file 10MB cap still runs (L2083-2084) — unchanged.
-Hook B (after size cap, before storage):
-  L2085 check_upload_bytes(user['id'], len(content))
-  L2086 _proj = await db.projects.find_one({'id': run['project_id']}, ...)
-  L2087 _org_id = (_proj or {}).get('org_id')
-  L2088 await check_storage_quota(_org_id, len(content))
-Storage (unchanged):
-  L2093 stored_ref = obj_save_bytes(content, f"qc/{filename}", content_type)
-Hook C (after storage):
-  L2095 await record_upload(_org_id, len(content))
+5. A — Content-Length cap uses literal `2 * 1024 * 1024` (5MB / 8MB
+   for B/C) because the function-local `MAX_SIZE` is not yet defined
+   at the top of the body.
 
-`_org_id` is always defined before any use (no UnboundLocalError).
-Order: lookup → check_storage_quota → storage → record_upload.
+6. Quota fails OPEN on DB error; record_upload is best-effort.
+   Identical semantics to PHASE 2 / PHASE 3a (qc_router).
 
-================================================================================
-DESIGN notes (consistent with PHASE 2)
-================================================================================
-- record_upload receives len(content) because obj_save_bytes returns a
-  ref string, not an UploadResult — the exact byte count is already in
-  scope.
-- check_storage_quota fails OPEN on DB error; record_upload is
-  best-effort. Same semantics as PHASE 2.
-- Same fail-open behaviour when org_id is falsy (legacy org-less
-  projects).
-- Hook A uses MAX_PHOTO_SIZE (10MB), NOT the 50MB used in plans
-  endpoints — Content-Length pre-check matches the real per-file cap.
+DONE LOOKS LIKE (from plan)
+---------------------------
+- Logo, meter photo, tenant-ID photo, role sig, legal-section sig
+  uploads still work.
+- Spamming any of them trips the per-user count limit (429).
+- A huge multipart on A/B/C trips Content-Length (413) before body
+  read.
+- org_storage_usage.bytes_used grows after every successful upload.
+- Org at 100GB → next handover upload returns 413 with Hebrew
+  quota message.
+- Signing with signature_type="typed" (no file) UNAFFECTED.
 
-================================================================================
-DO NOT TOUCH (verified unchanged)
-================================================================================
-- MAX_PHOTO_SIZE 10MB per-file check — unchanged (additive hooks).
-- validate_upload, content-type allow-list, role/QC-access checks,
-  the stage-status lock — unchanged.
-- obj_save_bytes / object_storage — unchanged.
-- qc_items $push photos update, audit, template logic — unchanged.
-- Other qc_router endpoints — unchanged (only upload_qc_photo).
-- upload_rate_limit.py / upload_quota.py — NOT modified (import only).
-- PHASE 1 + 2 wirings on plans_router.py / tasks_router.py — untouched.
-- Frontend, nginx, native, billing — nothing.
-
-================================================================================
-VERIFY OUTPUTS
-================================================================================
-V1  cd backend && python -c "import contractor_ops.qc_router; print('V1 OK')"
-    → V1 OK   (clean import; catches missing Request import / arg-order
-                error)
-
-V2  grep -n "check_upload_rate_limit\|check_content_length\|check_upload_bytes\|check_storage_quota\|record_upload" \
-        backend/contractor_ops/qc_router.py
-    15:    check_upload_rate_limit, check_upload_bytes, check_content_length,   (import)
-    17:from contractor_ops.upload_quota import check_storage_quota, record_upload (import)
-    2047:    check_upload_rate_limit(user['id'])
-    2048:    check_content_length(request.headers.get('content-length'), MAX_PHOTO_SIZE)
-    2085:    check_upload_bytes(user['id'], len(content))
-    2088:    await check_storage_quota(_org_id, len(content))
-    2093:    await record_upload(_org_id, len(content))
-    → 5 hooks + 2 import lines, exactly one of each. ✓
-
-V3  Staging (post-deploy, Zahi):
-    a) Upload a QC photo on a run/item → succeeds.
-    b) Atlas → org_storage_usage → `bytes_used` increased by ~photo
-       size and `updated_at` changed → record_upload fired.
-    c) Quota trip: set that org's `bytes_used` to 107374182400 in
-       Atlas → upload a QC photo → EXPECT 413 with the Hebrew quota
-       message. Reset `bytes_used` afterwards.
-
-================================================================================
 ROLLBACK
-================================================================================
-git revert <commit-sha> -- backend/contractor_ops/qc_router.py
+--------
+git revert <sha> -- backend/contractor_ops/handover_router.py
 ./deploy.sh --prod
-
-================================================================================
-NEXT PHASES (separate batches — NOT this one)
-================================================================================
-- PHASE 3b: handover_router (5 endpoints)
-- PHASE 3c: safety_router + excel_router + import_router
-
-================================================================================
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================
