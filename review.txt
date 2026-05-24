@@ -1,133 +1,201 @@
-BATCH signature-canvas-drag-fix (2026-05-24)
-============================================
+BATCH upload-hardening-phase3c-safety-imports (2026-05-24)
+==========================================================
 Branch:        staging
-Rollback SHA:  c0784b6 (HEAD before this edit)
-Type:          FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no new dependency.
-Files:         1 frontend = 1 total
-               frontend/src/components/handover/SignaturePadModal.js
+Rollback SHA:  410a699 (HEAD before this edit)
+Type:          BACKEND-ONLY — ./deploy.sh, no Capgo, no ./ship.sh,
+               no native, no new dependency.
+Files (3):     backend/contractor_ops/safety_router.py
+               backend/contractor_ops/excel_router.py
+               backend/contractor_ops/import_router.py
 
 WHAT & WHY
 ----------
-The handover signature drawing canvas was unusable: drawing with a
-finger or mouse made the whole Vaul drawer sheet "dance" along with
-the pointer, so a clean signature was impossible.
+PHASE 3c (FINAL) of upload-abuse-hardening. After 3a (qc_router)
+and 3b (handover_router ×5), this batch closes the LAST 3 unwired
+upload endpoints from the original 9-endpoint grep. Every upload
+endpoint in the codebase now carries the PHASE 1+2 hardening.
 
-Root cause: the <canvas> sits inside a Vaul `Drawer`
-(frontend/src/components/ui/drawer.jsx → `import { Drawer } from
-"vaul"`). Vaul's drag-to-dismiss gesture catches the pointer motion
-in parallel with the canvas draw handlers. `touchAction:'none'` stops
-the browser's native touch-scroll but does NOT stop Vaul's JS drag.
-
-Verified in installed Vaul 1.1.2 source:
-    frontend/node_modules/vaul/dist/index.mjs:981
-    if (element.hasAttribute('data-vaul-no-drag') ||
-        element.closest('[data-vaul-no-drag]')) { ... }
-→ any element carrying `data-vaul-no-drag` is excluded from
-initiating a drawer drag. The documented Vaul escape hatch.
-
-Fix = add the `data-vaul-no-drag` attribute to the signature
-<canvas>. One attribute, no logic change. Covers BOTH signature
-flows (role/tenant via SignatureSection + legal-section via
-HandoverLegalSections) — both render the same SignaturePadModal.
+Pattern split (correct per spec §0.5 trace):
+  A. STORES to S3 — upload_safety_file (safety_router) → FULL 5
+     hooks (count + Content-Length + bytes + quota + ledger).
+  B. PARSE-AND-DISCARD — import_excel (excel_router) and
+     preview_import (import_router) → rate-limit hooks ONLY
+     (count + bytes). NO quota, NO ledger — nothing reaches S3.
 
 STEP 0 — PRE-FLIGHT (outputs)
 -----------------------------
-0.1  Canvas in SignaturePadModal.js (BEFORE edit):
-     27:  const canvasRef = useRef(null);
-     216:                <canvas
-     217:                  ref={canvasRef}
-     218:                  style={{ width: '100%', height: '180px', touchAction: 'none' }}
-     → <canvas ref={canvasRef} ... touchAction:'none'> present.
-     → NO existing `data-vaul-no-drag`. OK to proceed.
+0.1  Helpers — all 5 present:
+     upload_rate_limit.py:40,64,90 (rate_limit, bytes, content_length)
+     upload_quota.py:22,46         (storage_quota, record_upload)
 
-0.2  Drawer is Vaul:
-     frontend/src/components/ui/drawer.jsx:2:
-       import { Drawer as DrawerPrimitive } from "vaul"
-     → confirmed.
+0.2  upload_safety_file (safety_router.py L1767):
+     - L1772 `db = get_db()` already EARLY ✅
+     - L1777 `content = await file.read()`, L1778 size reject
+     - L1793 stores via `obj_save_bytes`
+     - L54 `MAX_SAFETY_UPLOAD_SIZE = 10 * 1024 * 1024` (module-level)
+       → Hook A uses the SYMBOL directly (no literal needed).
+     - L17 fastapi import had no `Request` → ADDED.
 
-0.3  Vaul's exclusion attribute (installed version):
-     frontend/node_modules/vaul/dist/index.mjs:981:
-       if (element.hasAttribute('data-vaul-no-drag') ||
-           element.closest('[data-vaul-no-drag]')) { ... }
-     → attribute name matches the spec exactly.
+0.3  import_excel (excel_router.py L32):
+     - reads `content` L37, parses CSV in memory, inserts
+       buildings/floors/units rows.
+     - NO `save_bytes` / `StorageService` / any storage helper.
+     - L3 fastapi import has no `Request` (kept that way per spec
+       — Content-Length intentionally omitted).
 
-DIFF — SignaturePadModal.js (canvas block only)
------------------------------------------------
-                <canvas
-                  ref={canvasRef}
-+                 /* BATCH signature-canvas-drag-fix (2026-05-24) — exclude the
-+                    canvas from Vaul's drawer drag-to-dismiss gesture, so the
-+                    sheet stays static while the user draws a signature.
-+                    touchAction:'none' already stops native touch-scroll;
-+                    this stops Vaul's JS drag (verified: Vaul 1.1.2 shouldDrag
-+                    checks data-vaul-no-drag). */
-+                 data-vaul-no-drag
-                  style={{ width: '100%', height: '180px', touchAction: 'none' }}
-                  className="cursor-crosshair"
-                  onMouseDown={startDraw}
-                  onMouseMove={draw}
-                  onMouseUp={endDraw}
-                  onMouseLeave={endDraw}
-                  onTouchStart={startDraw}
-                  onTouchMove={draw}
-                  onTouchEnd={endDraw}
-                />
+0.4  preview_import (import_router.py L514):
+     - `request: Request` ALREADY param (L516).
+     - `content = await file.read()` L526, `len(content) >
+       MAX_FILE_SIZE` L527, parses xlsx/csv in memory, returns
+       JSON.
+     - L10 fastapi import already has `Request` — NOT touched.
 
-No other change to the file. Draw handlers / initCanvas /
-clearCanvas / submit-confirm logic — untouched. Drawer wrapper,
-SignatureSection, HandoverLegalSections — untouched.
+0.5  ⭐ CRITICAL parse-and-discard trace (end-to-end):
+     - import_excel (L32-L117): Read → decode → csv.DictReader →
+       iterate rows → db.buildings/floors/units inserts → audit.
+       Traced end to end — the uploaded file is parsed in memory
+       and never persisted (no disk write, no S3 call, no DB blob
+       field, no background task hand-off).
+     - preview_import (L513-L618): Read → _detect_header_row_xlsx/
+       csv → _parse_xlsx_smart/_parse_csv_smart → _validate_row →
+       _cross_reference → JSON response.
+       Traced end to end — the uploaded file is parsed in memory
+       and never persisted.
+     CONCLUSION: rate-limit hooks ONLY are correct for both. A
+     `record_upload` call here would inflate the ledger for files
+     that occupy zero storage.
+
+DIFF — safety_router.py (FULL 5 hooks)
+--------------------------------------
+- L20 fastapi import: added `Request`.
+- L35-38 helper imports added:
+    from contractor_ops.upload_rate_limit import (
+        check_upload_rate_limit, check_upload_bytes, check_content_length,
+    )
+    from contractor_ops.upload_quota import check_storage_quota, record_upload
+- L1774-1779 signature: added `request: Request` after `project_id`,
+  before `file: UploadFile = File(...)` — keeps non-defaulted
+  params first.
+- L1780-1784 HOOK A (top of body):
+    check_upload_rate_limit(user['id'])
+    check_content_length(request.headers.get('content-length'),
+                         MAX_SAFETY_UPLOAD_SIZE)
+- L1794-1800 HOOK B (after len-reject, before obj_save_bytes):
+    check_upload_bytes(user['id'], len(content))
+    _proj = await db.projects.find_one(
+        {'id': project_id}, {'_id': 0, 'org_id': 1})
+    _org_id = (_proj or {}).get('org_id')
+    await check_storage_quota(_org_id, len(content))
+- L1815-1816 HOOK C (right after obj_save_bytes):
+    await record_upload(_org_id, len(content))
+
+DIFF — excel_router.py (rate-limit only)
+----------------------------------------
+- L9 added:
+    from contractor_ops.upload_rate_limit import \
+        check_upload_rate_limit, check_upload_bytes
+- L37-40 HOOK at TOP of import_excel body (before db = get_db()):
+    check_upload_rate_limit(user['id'])
+- L46-49 HOOK after `content = await file.read()`:
+    check_upload_bytes(user['id'], len(content))
+- NO Request param, NO check_content_length, NO quota, NO ledger.
+
+DIFF — import_router.py (rate-limit only)
+-----------------------------------------
+- L20 added:
+    from contractor_ops.upload_rate_limit import \
+        check_upload_rate_limit, check_upload_bytes
+- L524-527 HOOK at TOP of preview_import body (before
+  _check_import_access):
+    check_upload_rate_limit(user['id'])
+- L538-541 HOOK after the existing `len(content) > MAX_FILE_SIZE`
+  reject:
+    check_upload_bytes(user['id'], len(content))
+- NO change to fastapi import (Request already present).
+- NO check_content_length (existing file.size > MAX_FILE_SIZE
+  pre-read + len(content) > MAX_FILE_SIZE post-read covers it).
+- NO quota, NO ledger.
 
 VERIFICATION
 ------------
-V1  Build compiles: SKIPPED locally — runs as part of `./deploy.sh
-    --stag` / `--prod`. Change is a single JSX attribute; cannot
-    break the build by itself.
+V1  Import clean:
+      cd backend && python -c "import contractor_ops.safety_router, \
+          contractor_ops.excel_router, contractor_ops.import_router"
+      → V1 OK
 
-V2  Static grep — `data-vaul-no-drag` in SignaturePadModal.js:
-      223:                     checks data-vaul-no-drag). */
-      224:                  data-vaul-no-drag
-    → 2 hits: ONE actual attribute on the <canvas> (L224), PLUS one
-    literal mention inside the explanatory comment (L223). That is
-    expected; the spec's "exactly one hit on the <canvas>" matches
-    L224. No other occurrence anywhere else in the file.
+V2  Static grep counts (literal output):
 
-V3  Device / browser test — for Zahi after deploy:
-    a) Handover protocol → sign a role → "ציור" tab → draw with a
-       finger AND with a mouse. EXPECT: the sheet stays STATIC, the
-       signature line follows the pointer cleanly, no "dancing".
-    b) Sign a legal section → same canvas → same: static, clean.
-    c) The drawer can still be dismissed by dragging its handle /
-       header area (drag-to-close still works OUTSIDE the canvas).
-    d) "הקלדה" (typed) tab still works.
+    safety_router.py — 7 hits (2 import lines + 5 hooks):
+       33:    check_upload_rate_limit, check_upload_bytes, check_content_length,
+       35: from contractor_ops.upload_quota import check_storage_quota, record_upload
+       1780:    check_upload_rate_limit(user['id'])
+       1781:    check_content_length(request.headers.get('content-length'), MAX_SAFETY_UPLOAD_SIZE)
+       1794:    check_upload_bytes(user['id'], len(content))
+       1797:    await check_storage_quota(_org_id, len(content))
+       1813:    await record_upload(_org_id, len(content))
+       (Note: 2 import lines instead of the spec's "1 import line"
+       because rate_limit and quota live in two helper modules —
+       same shape used in PHASE 3a + 3b. Hook counts match spec
+       exactly: rate_limit×1, content_length×1, bytes×1, quota×1,
+       record_upload×1.)
+
+    excel_router.py — 3 hits (1 import line + 2 hooks):
+       6: from contractor_ops.upload_rate_limit import check_upload_rate_limit, check_upload_bytes
+       37:    check_upload_rate_limit(user['id'])
+       46:    check_upload_bytes(user['id'], len(content))
+       NO content_length / quota / record ✅
+
+    import_router.py — 3 hits (1 import line + 2 hooks):
+       17: from contractor_ops.upload_rate_limit import check_upload_rate_limit, check_upload_bytes
+       524:    check_upload_rate_limit(user['id'])
+       538:    check_upload_bytes(user['id'], len(content))
+       NO content_length / quota / record ✅
+
+V3  Staging (after ./deploy.sh --stag) — for Zahi:
+    a) Upload a safety file → succeeds; Atlas → org_storage_usage
+       → bytes_used grew, updated_at changed.
+    b) Excel import + g4 preview → both succeed.
+    c) (optional) Bump an org's bytes_used near 100GB → a safety
+       upload → 413 with the Hebrew quota message. Reset after.
+    d) Spam any of the 3 endpoints from the same user → 429 after
+       the per-user count cap.
 
 DO NOT TOUCH (confirmed unchanged)
 ----------------------------------
-- startDraw / draw / endDraw / getPos / initCanvas / clearCanvas /
-  submit-confirm logic.
-- touchAction: 'none' (kept; still stops native scroll).
-- frontend/src/components/ui/drawer.jsx (Vaul wrapper).
-- SignatureSection.js / HandoverLegalSections.js (reuse same modal).
-- Backend, nginx, native, capacitor.config — nothing.
+- Existing per-file checks (MAX_SAFETY_UPLOAD_SIZE, MAX_FILE_SIZE,
+  MAX_ROWS) — kept; new hooks are additive.
+- validate_upload, role/access checks, parsing/storage logic.
+- upload_rate_limit.py / upload_quota.py — import only.
+- PHASE 1 / 2 / 3a / 3b wirings on other routers.
+- Frontend, nginx, native, billing.
 
-FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no new dependency.
+FOLLOW-UP (out of scope — noted)
+--------------------------------
+- import_excel has no per-file size cap today. Adding one is a
+  separate concern; until then, nginx body cap + the new byte rate
+  limit are the bounds.
+
+BACKEND-ONLY — ./deploy.sh, no Capgo, no ./ship.sh, no new dependency.
 
 COMMIT MESSAGE (in .local/.commit_message)
 ------------------------------------------
-fix(handover): signature canvas no longer drags the drawer sheet
+feat(security): rate-limit + quota on the last 3 upload endpoints
 
-The signature drawing canvas sits inside a Vaul drawer. Vaul's
-drag-to-dismiss gesture caught the drawing motion, so the sheet moved
-with the finger/mouse and a clean signature was impossible.
-`touchAction:'none'` stopped native touch-scroll but not Vaul's JS
-drag. Add `data-vaul-no-drag` to the canvas — Vaul's shouldDrag
-excludes it, so the sheet stays static while drawing. Fixes both the
-role and legal-section signature flows (shared SignaturePadModal).
-Frontend-only; Capgo OTA.
+PHASE 3c (final) of the upload-abuse-hardening. Wires the remaining
+unprotected upload endpoints: upload_safety_file (safety_router) —
+which stores to S3 — gets the full set (count limit + Content-Length
++ byte limit + storage quota + ledger); import_excel (excel_router)
+and preview_import (import_router) — which parse-and-discard — get
+the rate-limit hooks only (count + byte limit), no quota since
+nothing is stored. All 9 upload endpoints found by the original grep
+are now covered. Backend-only.
 
 ROLLBACK
 --------
-git revert <commit-sha> -- frontend/src/components/handover/SignaturePadModal.js
-./deploy.sh --prod   (Capgo OTA)
+git revert <commit-sha> -- backend/contractor_ops/safety_router.py \
+                            backend/contractor_ops/excel_router.py \
+                            backend/contractor_ops/import_router.py
+./deploy.sh --prod
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

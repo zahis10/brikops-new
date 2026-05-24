@@ -14,7 +14,7 @@ import hashlib
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import io
@@ -29,6 +29,10 @@ from contractor_ops.schemas import (
     SafetyWorker, SafetyTraining, SafetyDocument, SafetyTask, SafetyIncident,
     SafetyCategory, SafetySeverity, SafetyDocumentStatus, SafetyTaskStatus,
 )
+from contractor_ops.upload_rate_limit import (
+    check_upload_rate_limit, check_upload_bytes, check_content_length,
+)
+from contractor_ops.upload_quota import check_storage_quota, record_upload
 from contractor_ops.upload_safety import (
     validate_upload, ALLOWED_IMAGE_EXTENSIONS,
 )
@@ -1766,9 +1770,15 @@ async def export_safety_pdf_register(
 @router.post("/{project_id}/upload")
 async def upload_safety_file(
     project_id: str,
+    request: Request,
     file: UploadFile = File(...),
     user: dict = Depends(require_roles(*SAFETY_WRITERS)),
 ):
+    # BATCH upload-hardening-phase3c-safety-imports (2026-05-24) —
+    # per-user count limit + Content-Length pre-check (10MB cap =
+    # module-level MAX_SAFETY_UPLOAD_SIZE).
+    check_upload_rate_limit(user['id'])
+    check_content_length(request.headers.get('content-length'), MAX_SAFETY_UPLOAD_SIZE)
     db = get_db()
     await _check_project_access(user, project_id)
 
@@ -1777,6 +1787,14 @@ async def upload_safety_file(
     content = await file.read()
     if len(content) > MAX_SAFETY_UPLOAD_SIZE:
         raise HTTPException(status_code=413, detail="הקובץ גדול מדי (מקסימום 10MB)")
+
+    # BATCH upload-hardening-phase3c-safety-imports (2026-05-24) —
+    # byte rate limit + per-org storage quota, BEFORE the file
+    # reaches S3.
+    check_upload_bytes(user['id'], len(content))
+    _proj = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+    _org_id = (_proj or {}).get('org_id')
+    await check_storage_quota(_org_id, len(content))
 
     content_type = file.content_type or "application/octet-stream"
     if content_type == "application/pdf":
@@ -1791,6 +1809,8 @@ async def upload_safety_file(
 
     from services.object_storage import save_bytes as obj_save_bytes, generate_url as obj_generate_url
     stored_ref = obj_save_bytes(content, key, content_type)
+    # BATCH upload-hardening-phase3c-safety-imports (2026-05-24) — ledger
+    await record_upload(_org_id, len(content))
     url = obj_generate_url(stored_ref)
 
     await _audit("safety_upload", file_id, "upload", user["id"], {

@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from contractor_ops.router import get_db, get_current_user, require_roles, _check_project_access, _check_structure_admin, _now, _audit
 from contractor_ops.upload_safety import validate_upload, ALLOWED_IMPORT_EXTENSIONS, ALLOWED_IMPORT_TYPES
+from contractor_ops.upload_rate_limit import check_upload_rate_limit, check_upload_bytes
 
 router = APIRouter(prefix="/api")
 
@@ -30,11 +31,19 @@ async def download_excel_template(project_id: str, user: dict = Depends(get_curr
 
 @router.post("/projects/{project_id}/excel-import")
 async def import_excel(project_id: str, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    # BATCH upload-hardening-phase3c-safety-imports (2026-05-24) —
+    # per-user count limit. No Content-Length: import_excel has no
+    # per-file size constant; nginx already caps the request body.
+    check_upload_rate_limit(user['id'])
     db = get_db()
     await _check_structure_admin(user, project_id)
     validate_upload(file, ALLOWED_IMPORT_EXTENSIONS, ALLOWED_IMPORT_TYPES)
     import io, csv
     content = await file.read()
+    # BATCH upload-hardening-phase3c-safety-imports (2026-05-24) —
+    # byte rate limit (real read size). NO storage quota / ledger:
+    # this endpoint parses-and-discards, nothing reaches S3.
+    check_upload_bytes(user['id'], len(content))
     try:
         text = content.decode('utf-8-sig')
     except:

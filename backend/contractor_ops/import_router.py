@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from contractor_ops.router import get_db, get_current_user, _is_super_admin, _audit, _now
 from contractor_ops.phone_utils import clean_phone_for_import, normalize_israeli_phone
 from contractor_ops.upload_safety import validate_upload, ALLOWED_IMPORT_EXTENSIONS, ALLOWED_IMPORT_TYPES
+from contractor_ops.upload_rate_limit import check_upload_rate_limit, check_upload_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -517,6 +518,10 @@ async def preview_import(
     file: UploadFile = File(...),
     user: dict = Depends(get_current_user),
 ):
+    # BATCH upload-hardening-phase3c-safety-imports (2026-05-24) —
+    # per-user count limit. No Content-Length: existing file.size +
+    # len(content) > MAX_FILE_SIZE checks already cover it.
+    check_upload_rate_limit(user['id'])
     await _check_import_access(user, project_id)
 
     validate_upload(file, ALLOWED_IMPORT_EXTENSIONS, ALLOWED_IMPORT_TYPES)
@@ -526,6 +531,11 @@ async def preview_import(
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="קובץ גדול מדי (מקסימום 5MB)")
+
+    # BATCH upload-hardening-phase3c-safety-imports (2026-05-24) —
+    # byte rate limit (real read size). NO storage quota / ledger:
+    # this endpoint parses-and-discards, nothing reaches S3.
+    check_upload_bytes(user['id'], len(content))
 
     filename = (file.filename or "").lower()
     is_xlsx = filename.endswith(".xlsx")
