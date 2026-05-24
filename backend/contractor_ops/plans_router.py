@@ -14,6 +14,7 @@ from contractor_ops.router import (
 from contractor_ops.upload_rate_limit import (
     check_upload_rate_limit, check_upload_bytes, check_content_length,
 )
+from contractor_ops.upload_quota import check_storage_quota, record_upload
 from contractor_ops.upload_safety import validate_upload, ALLOWED_PLAN_EXTENSIONS, ALLOWED_PLAN_TYPES
 
 router = APIRouter(prefix="/api")
@@ -181,11 +182,16 @@ async def upload_project_plan(
         raise HTTPException(status_code=422, detail='קובץ גדול מדי (מקסימום 50MB)')
     # BATCH upload-abuse-hardening (2026-05-22) — byte rate-limit on real size
     check_upload_bytes(user['id'], file_size)
+    # BATCH upload-abuse-hardening Phase 2 (2026-05-24) — org storage quota.
+    # Reuse the project doc already fetched above (L173) for org_id.
+    await check_storage_quota(project.get('org_id'), file_size)
     await file.seek(0)
 
     from services.storage_service import StorageService
     storage = StorageService()
     result = await storage.upload_file_with_details(file, f"project_plan_{project_id}_{discipline}")
+    # BATCH upload-abuse-hardening Phase 2 (2026-05-24) — best-effort ledger record
+    await record_upload(project.get('org_id'), result.file_size)
 
     plan_id = str(uuid.uuid4())
     ts = datetime.now(timezone.utc).isoformat()
@@ -372,11 +378,18 @@ async def upload_plan_version(
         raise HTTPException(status_code=422, detail='קובץ גדול מדי (מקסימום 50MB)')
     # BATCH upload-abuse-hardening (2026-05-22) — byte rate-limit on real size
     check_upload_bytes(user['id'], file_size_check)
+    # BATCH upload-abuse-hardening Phase 2 (2026-05-24) — org storage quota.
+    # Minimal project lookup (STEP 0.4 divergence: this endpoint had no project read).
+    _proj = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+    _org_id = (_proj or {}).get('org_id')
+    await check_storage_quota(_org_id, file_size_check)
     await file.seek(0)
 
     from services.storage_service import StorageService
     storage = StorageService()
     result = await storage.upload_file_with_details(file, f"project_plan_{project_id}_{plan.get('discipline', 'general')}")
+    # BATCH upload-abuse-hardening Phase 2 (2026-05-24) — best-effort ledger record
+    await record_upload(_org_id, result.file_size)
 
     existing_versions = plan.get('versions', [])
     if existing_versions:
@@ -555,11 +568,18 @@ async def replace_project_plan(
     if file_size > 50 * 1024 * 1024:
         raise HTTPException(status_code=422, detail='קובץ גדול מדי (מקסימום 50MB)')
     check_upload_bytes(user['id'], file_size)
+    # BATCH upload-abuse-hardening Phase 2 (2026-05-24) — org storage quota.
+    # Minimal project lookup (STEP 0.4 divergence: this endpoint had no project read).
+    _proj = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+    _org_id = (_proj or {}).get('org_id')
+    await check_storage_quota(_org_id, file_size)
     await file.seek(0)
 
     from services.storage_service import StorageService
     storage = StorageService()
     result = await storage.upload_file_with_details(file, f"project_plan_{project_id}_{discipline}")
+    # BATCH upload-abuse-hardening Phase 2 (2026-05-24) — best-effort ledger record
+    await record_upload(_org_id, result.file_size)
 
     new_plan_id = str(uuid.uuid4())
     ts = _now()
@@ -831,11 +851,18 @@ async def upload_unit_plan(
         raise HTTPException(status_code=422, detail='קובץ גדול מדי (מקסימום 50MB)')
     # BATCH upload-abuse-hardening (2026-05-22) — byte rate-limit on real size
     check_upload_bytes(user['id'], file_size)
+    # BATCH upload-abuse-hardening Phase 2 (2026-05-24) — org storage quota.
+    # Minimal project lookup (STEP 0.4 divergence: this endpoint had no project read).
+    _proj = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+    _org_id = (_proj or {}).get('org_id')
+    await check_storage_quota(_org_id, file_size)
     await file.seek(0)
 
     from services.storage_service import StorageService
     storage = StorageService()
     result = await storage.upload_file_with_details(file, f"plan_{unit_id}_{discipline}")
+    # BATCH upload-abuse-hardening Phase 2 (2026-05-24) — best-effort ledger record
+    await record_upload(_org_id, result.file_size)
 
     plan_id = str(uuid.uuid4())
     plan_doc = {

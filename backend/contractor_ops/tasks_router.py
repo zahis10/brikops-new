@@ -31,6 +31,7 @@ from contractor_ops.task_image_guard import require_task_image, NO_IMAGE_ERROR_C
 from contractor_ops.upload_rate_limit import (
     check_upload_rate_limit, check_upload_bytes, check_content_length,
 )
+from contractor_ops.upload_quota import check_storage_quota, record_upload
 from contractor_ops.upload_safety import (
     validate_upload,
     ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES,
@@ -983,6 +984,13 @@ async def contractor_proof(
         proof_total_bytes += len(data)
         await upload_file.seek(0)
     check_upload_bytes(user['id'], proof_total_bytes)
+    # BATCH upload-abuse-hardening Phase 2 (2026-05-24) — org storage quota.
+    # Resolve org via project; multi-file: check the SUM once before the
+    # storage loop (same rationale as the byte-rate check above —
+    # partial mid-batch storage cannot be rolled back).
+    _proj = await db.projects.find_one({'id': task['project_id']}, {'_id': 0, 'org_id': 1})
+    _org_id = (_proj or {}).get('org_id')
+    await check_storage_quota(_org_id, proof_total_bytes)
 
     from services.storage_service import StorageService
     storage = StorageService()
@@ -991,6 +999,10 @@ async def contractor_proof(
         validate_upload(upload_file, ALLOWED_PROOF_EXTENSIONS, ALLOWED_PROOF_TYPES)
         result = await storage.upload_file_with_details(upload_file, f"proof_{task_id}_{i}")
         proof_urls.append(result.file_url)
+        # BATCH upload-abuse-hardening Phase 2 (2026-05-24) — per-file
+        # ledger record so the counter reflects exactly what made it to S3
+        # even on partial mid-batch failure.
+        await record_upload(_org_id, result.file_size)
 
     ts = _now()
     old_status = current_status
@@ -1356,12 +1368,19 @@ async def upload_task_attachment(task_id: str, request: Request, file: UploadFil
 
     # BATCH upload-abuse-hardening (2026-05-22) — byte rate-limit on real size
     check_upload_bytes(user['id'], len(raw))
+    # BATCH upload-abuse-hardening Phase 2 (2026-05-24) — org storage quota.
+    # Minimal project lookup to resolve org_id (task has project_id only).
+    _proj = await db.projects.find_one({'id': task['project_id']}, {'_id': 0, 'org_id': 1})
+    _org_id = (_proj or {}).get('org_id')
+    await check_storage_quota(_org_id, len(raw))
     await file.seek(0)
     logger.info(f"[ATTACH:VALIDATED] task={task_id} filename={file.filename} size={len(raw)} content_type={file_ct}")
 
     from services.storage_service import StorageService
     storage = StorageService()
     result = await storage.upload_file_with_details(file, f"task_{task_id}")
+    # BATCH upload-abuse-hardening Phase 2 (2026-05-24) — best-effort ledger record
+    await record_upload(_org_id, result.file_size)
     logger.info(f"[ATTACH:STORED] task={task_id} file_url={result.file_url} elapsed={_time.time()-t_start:.2f}s")
 
     ts = _now()

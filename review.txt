@@ -1,98 +1,197 @@
 ================================================================================
-FULL DIFF — PDF viewer Hebrew fix (v1 + v2 combined, frontend only)
+BATCH upload-abuse-hardening — PHASE 2 (per-org storage quota)
 ================================================================================
-Base:   d6286cd   (HEAD before v1 — last state shipped to prod)
-Head:   cd7195f   (current — v2 disableFontFace)
-Status: NOT YET SHIPPED. Frontend only. Capgo OTA, no ./ship.sh.
+Date:         2026-05-24
+Branch:       staging
+Severity:     P2 security — bounds TOTAL S3 cost per org (Shannon-grade)
+Rollback SHA: 93171de   (HEAD before this turn's edits)
+Files:        3 (1 new + 2 wired)
+              backend/contractor_ops/upload_quota.py        NEW   +62
+              backend/contractor_ops/plans_router.py        wire  +27
+              backend/contractor_ops/tasks_router.py        wire  +19
+              Total: +108 / -0
 
-Files: 3
-  frontend/.gitignore                   |  5 +++++
-  frontend/package.json                 |  3 ++-
-  frontend/src/components/PlanViewer.js | 26 ++++++++++++++++++++++++++
-  3 files changed, 33 insertions(+), 1 deletion(-)
-
-================================================================================
-COMPLETE UNIFIED DIFF — every line changed across both batches
-================================================================================
-
-diff --git a/frontend/.gitignore b/frontend/.gitignore
-index e01c48a..37084f4 100644
---- a/frontend/.gitignore
-+++ b/frontend/.gitignore
-@@ -25,6 +25,11 @@ yarn-error.log*
- # pdf.js worker — copied from node_modules by postinstall script,
- # tracks the installed pdfjs-dist version automatically
- public/pdf.worker.min.mjs
-+# pdf.js CMaps + standard fonts — copied from node_modules by the
-+# postinstall script (pdf-viewer-hebrew-fix 2026-05-23), tracks
-+# the installed pdfjs-dist version automatically
-+public/cmaps/
-+public/standard_fonts/
- 
- # Capacitor Android build artifacts
- android/app/build/
-
-diff --git a/frontend/package.json b/frontend/package.json
-index 1f279e6..fe2a7a9 100644
---- a/frontend/package.json
-+++ b/frontend/package.json
-@@ -70,7 +70,8 @@
-     "build": "craco build",
-     "test": "craco test",
-     "postinstall-copy-pdfworker": "cp -f node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs",
--    "postinstall": "yarn run postinstall-copy-pdfworker"
-+    "postinstall-copy-pdfassets": "rm -rf public/cmaps public/standard_fonts && cp -r node_modules/pdfjs-dist/cmaps public/cmaps && cp -r node_modules/pdfjs-dist/standard_fonts public/standard_fonts",
-+    "postinstall": "yarn run postinstall-copy-pdfworker && yarn run postinstall-copy-pdfassets"
-   },
-   "browserslist": {
-     "production": [
-
-diff --git a/frontend/src/components/PlanViewer.js b/frontend/src/components/PlanViewer.js
-index 6dd3aec..0a05237 100644
---- a/frontend/src/components/PlanViewer.js
-+++ b/frontend/src/components/PlanViewer.js
-@@ -16,6 +16,31 @@ import { ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Loader2, X, Download, Eye }
- // installed pdfjs-dist version automatically).
- pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
- 
-+// BATCH pdf-viewer-hebrew-fix (2026-05-23) — pdf.js needs CMap +
-+// standard-font data to render non-Latin (Hebrew) text. Without
-+// them Hebrew glyphs render garbled. The asset folders are
-+// self-hosted under public/ (copied from pdfjs-dist by the
-+// postinstall script — see package.json), same pattern as the
-+// worker above.
-+// MUST be a module-level constant: react-pdf reloads the whole
-+// document whenever the `options` object identity changes, so an
-+// inline `options={{...}}` would reload the PDF on every render
-+// (this component re-renders on every zoom / page change).
-+const PDF_OPTIONS = {
-+  cMapUrl: '/cmaps/',
-+  cMapPacked: true,
-+  standardFontDataUrl: '/standard_fonts/',
-+  // BATCH pdf-viewer-hebrew-fix-v2 (2026-05-24) — THE operative
-+  // fix. pdf.js's default renders embedded-font text via the
-+  // browser @font-face engine, which garbles this PDF's Hebrew
-+  // (WeasyPrint / DejaVu-subset / Identity-H). disableFontFace
-+  // makes pdf.js draw glyph outlines as vector paths directly
-+  // (same as pdfium / poppler) — verified to render the Hebrew
-+  // correctly with pdfjs-dist 4.4.168, the version react-pdf
-+  // 9.2 bundles.
-+  disableFontFace: true,
-+};
-+
- /**
-  * PlanViewer — full-screen modal viewer for plan files.
-  *
-@@ -237,6 +262,7 @@ const PlanViewer = ({ plan, onClose }) => {
-           {isPdf && !loadError && (
-             <Document
-               file={plan.file_url}
-+              options={PDF_OPTIONS}
-               onLoadSuccess={handleLoadSuccess}
-               onLoadError={handleLoadError}
-               loading=""
+BACKEND-ONLY — ./deploy.sh --stag then --prod (EB). NO Capgo, NO ./ship.sh,
+                NO native, NO new dependency, NO data migration.
 
 ================================================================================
-END — that is every line of every file I changed across v1 + v2.
-No backend, no native, no nginx, no capacitor.config changes.
+STEP 0 — pre-flight outputs (this turn)
+================================================================================
+
+0.6 get_db import path
+    grep on billing.py returned nothing (it doesn't import get_db at all).
+    Wider grep on contractor_ops shows the canonical pattern:
+      plans_router.py:8  from contractor_ops.router import (
+                              get_db, get_current_user, ...
+      tasks_router.py    same pattern
+    ⇒ upload_quota.py uses  `from contractor_ops.router import get_db`
+      (NOT `.database` — that module does not exist).
+
+0.4 ⚠️ DIVERGENCE FROM SPEC — verified, paused, reported, then approved.
+    Spec assumed all 4 plans endpoints already do `db.projects.find_one`
+    for org_id. FALSE. Only `upload_project_plan` reads the project:
+      upload_project_plan      L137  ✅ project doc at L173 — reused
+      upload_plan_version      L336  ❌ no project read — lookup ADDED
+      replace_project_plan     L517  ❌ no project read — lookup ADDED
+      upload_unit_plan         L788  ❌ no project read — lookup ADDED
+      contractor_proof         L916  ❌ (expected — tasks) — lookup ADDED
+      upload_task_attachment   L1315 ❌ (expected — tasks) — lookup ADDED
+    5 of 6 endpoints required a minimal project lookup, not 2.
+    Added pattern (plans):
+      _proj = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+      _org_id = (_proj or {}).get('org_id')
+    Added pattern (tasks, via task['project_id']):
+      _proj = await db.projects.find_one({'id': task['project_id']}, {'_id': 0, 'org_id': 1})
+      _org_id = (_proj or {}).get('org_id')
+    Projection {'_id': 0, 'org_id': 1} keeps the read minimal.
+
+================================================================================
+PART 2.1 — NEW backend/contractor_ops/upload_quota.py  (+62 LOC)
+================================================================================
+- ORG_STORAGE_LIMIT_GB env (default 100) → ORG_STORAGE_LIMIT_BYTES
+- async def check_storage_quota(org_id, incoming_bytes):
+    * no-op when org_id is falsy (legacy org-less projects)
+    * fails OPEN on any DB error (warning log only — must not block legit upload)
+    * raises 413 with Hebrew msg "מכסת האחסון של הארגון מלאה..."
+- async def record_upload(org_id, file_size):
+    * upsert $inc bytes_used + $set updated_at on org_storage_usage
+    * best-effort (warning log on error — file already in S3)
+- Uses `from contractor_ops.router import get_db` (STEP 0.6).
+
+================================================================================
+PART 2.2 — wiring (6 endpoints, 2 routers)
+================================================================================
+Both routers: added
+  from contractor_ops.upload_quota import check_storage_quota, record_upload
+
+plans_router.py
+  L187  upload_project_plan     check_storage_quota(project.get('org_id'), file_size)
+  L194                          record_upload(project.get('org_id'), result.file_size)
+  L385  upload_plan_version     check_storage_quota(_org_id, file_size_check)   [+lookup L386-387]
+  L392                          record_upload(_org_id, result.file_size)
+  L575  replace_project_plan    check_storage_quota(_org_id, file_size)         [+lookup L576-577]
+  L582                          record_upload(_org_id, result.file_size)
+  L858  upload_unit_plan        check_storage_quota(_org_id, file_size)         [+lookup L859-860]
+  L865                          record_upload(_org_id, result.file_size)
+
+tasks_router.py
+  L993  contractor_proof        check_storage_quota(_org_id, proof_total_bytes)  [+lookup L994-995]
+                                ⭐ SUM check ONCE before the storage loop
+                                   (same rationale as Phase 1 check_upload_bytes:
+                                    partial mid-batch storage cannot be rolled back).
+  L1005                         record_upload(_org_id, result.file_size)
+                                ⭐ PER-FILE inside the loop so the ledger
+                                   reflects exactly what made it to S3 on
+                                   partial failure.
+  L1375 upload_task_attachment  check_storage_quota(_org_id, len(raw))           [+lookup L1376-1377]
+  L1383                         record_upload(_org_id, result.file_size)
+
+================================================================================
+DESIGN tradeoff (acknowledged honestly)
+================================================================================
+- Ledger is INCREMENT-ONLY in v1. Not decremented on delete → slight
+  overcount vs live S3. Acceptable: cumulative-uploaded-bytes IS the
+  abuse vector, and BrikOps uses soft-delete so live ≈ cumulative.
+- 100 GB default ceiling is deliberately GENEROUS so a legit org won't
+  hit it; still turns an unbounded TB/day attack into a hard 100 GB cap.
+  Env-tunable (ORG_STORAGE_LIMIT_GB) — no deploy needed to raise.
+- Quota check FAILS OPEN on DB errors (legitimate uploads must not break
+  if Mongo blips); record_upload is best-effort for the same reason.
+
+================================================================================
+RESET PROCEDURE (operator recovery — known increment-only debt)
+================================================================================
+The ledger counts cumulative uploads and is never decremented, so an org
+that uploads then soft-deletes a lot will read HIGHER than its real S3
+usage and can eventually hit the quota while genuinely under it. When
+that happens, reset the org's counter:
+  1. Atlas → database brikops_prod → collection org_storage_usage.
+  2. Find the document with that org's `org_id`.
+  3. (Optional) compute real usage — sum `file_size` across the org's
+     project_plans / unit_plans; task attachments have no size field, so
+     this is an approximation.
+  4. Set `bytes_used` to the corrected value (or 0 to fully reset).
+  5. The org can upload again immediately — no deploy needed.
+KNOWN DEBT (v2, NOT this batch): decrement the ledger on delete, OR a
+periodic reconciliation job. Track in ROADMAP.md so it is not lost.
+
+================================================================================
+VERIFY OUTPUTS
+================================================================================
+V5  cd backend && python -c "import contractor_ops.upload_quota"
+    → V5 OK  (no import error)
+
+V6  python -c "import contractor_ops.plans_router, contractor_ops.tasks_router"
+    → V6 OK  (both clean)
+
+V7  grep -n "check_storage_quota\|record_upload" \
+       backend/contractor_ops/plans_router.py \
+       backend/contractor_ops/tasks_router.py
+    plans_router.py:17   import
+    plans_router.py:187  check_storage_quota   upload_project_plan
+    plans_router.py:194  record_upload         upload_project_plan
+    plans_router.py:385  check_storage_quota   upload_plan_version
+    plans_router.py:392  record_upload         upload_plan_version
+    plans_router.py:575  check_storage_quota   replace_project_plan
+    plans_router.py:582  record_upload         replace_project_plan
+    plans_router.py:858  check_storage_quota   upload_unit_plan
+    plans_router.py:865  record_upload         upload_unit_plan
+    tasks_router.py:34   import
+    tasks_router.py:993  check_storage_quota   contractor_proof  (SUM, pre-loop)
+    tasks_router.py:1005 record_upload         contractor_proof  (PER-FILE, in loop)
+    tasks_router.py:1375 check_storage_quota   upload_task_attachment
+    tasks_router.py:1383 record_upload         upload_task_attachment
+    → 6 × check_storage_quota, 6 × record_upload (contractor_proof
+      record runs N times at runtime — inside the storage loop).
+
+V8  Manual on staging (post-deploy, Zahi):
+    a) Upload one plan → succeeds.
+    b) Atlas → org_storage_usage → confirm doc for that org with
+       bytes_used ≈ file_size.
+
+V9  Manual quota trip (optional):
+    a) Atlas → set that org's bytes_used to just under
+       (100 * 1024^3 - 1KB).
+    b) Upload one more file → EXPECT 413 with the Hebrew quota message.
+    c) Reset bytes_used afterwards (RESET PROCEDURE above).
+
+================================================================================
+DIFF STAT
+================================================================================
+ backend/contractor_ops/upload_quota.py  | 62 +++++++++++++++++++++++++ (new)
+ backend/contractor_ops/plans_router.py  | 27 +++++++++++++++++++++++++
+ backend/contractor_ops/tasks_router.py  | 19 +++++++++++++++++++
+ 3 files changed, 108 insertions(+)
+
+================================================================================
+DO NOT TOUCH (verified unchanged)
+================================================================================
+- Phase 1 limiters (check_upload_rate_limit count, check_upload_bytes,
+  check_content_length) — still called first, all 6 sites.
+- validate_upload, role/permission checks, audit logs.
+- No backfill, no migration, no delete-path decrement, no admin
+  endpoint, no frontend, no nginx, no native.
+- Billing / unit-quota code untouched.
+
+================================================================================
+ROLLBACK
+================================================================================
+git revert <phase2-sha> -- \
+  backend/contractor_ops/upload_quota.py \
+  backend/contractor_ops/plans_router.py \
+  backend/contractor_ops/tasks_router.py
+./deploy.sh --prod
+
+`org_storage_usage` collection is harmless if left in place; may drop
+in Atlas afterwards.
+
+================================================================================
+POST-SHIP CHECKLIST
+================================================================================
+Add to security/pentest-regression-checklist.md:
+  - Org storage quota: upload that would exceed ceiling → 413.
+  - Env-tunable (ORG_STORAGE_LIMIT_GB).
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================
