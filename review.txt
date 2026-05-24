@@ -1,216 +1,140 @@
 ================================================================================
-BATCH upload-abuse-hardening — PHASE 2 (per-org storage quota)
+BATCH storage-quota-int64-fix — store org_storage_usage.bytes_used as Int64
 ================================================================================
-Date:         2026-05-24
-Branch:       staging
-Severity:     P2 security — bounds TOTAL S3 cost per org (Shannon-grade)
-Rollback SHA: 93171de   (HEAD before this turn's edits)
-Files:        3 (1 new + 2 wired)
-              backend/contractor_ops/upload_quota.py        NEW   +62
-              backend/contractor_ops/plans_router.py        wire  +27
-              backend/contractor_ops/tasks_router.py        wire  +19
-              Total: +108 / -0
+Date:           2026-05-24
+Branch:         staging
+Severity:       P2 — follow-up to upload-abuse-hardening PHASE 2
+                (PHASE 2 is on staging, NOT yet on prod)
+Files changed:  1 (backend only)
+                  backend/contractor_ops/upload_quota.py   +6 / -1
+Rollback SHA:   0222659   (HEAD before this edit)
 
 BACKEND-ONLY — ./deploy.sh --stag then --prod (EB). NO Capgo, NO ./ship.sh,
-                NO native, NO new dependency, NO data migration.
+                NO native, NO new dependency (bson ships with pymongo).
 
 ================================================================================
-STEP 0 — pre-flight outputs (this turn)
+STEP 0.1 — pre-flight output
 ================================================================================
+$ grep -n "Int64\|bson\|\$inc\|bytes_used\|def record_upload\|^import\|^from" \
+        backend/contractor_ops/upload_quota.py
+  8: import os
+  9: import logging
+ 10: from datetime import datetime, timezone
+ 11: from fastapi import HTTPException
+ 13: from contractor_ops.router import get_db
+ 30:         used = (doc or {}).get('bytes_used', 0)
+ 45: async def record_upload(org_id, file_size: int):
+ 56:                 '$inc': {'bytes_used': int(file_size)},
 
-0.6 get_db import path
-    grep on billing.py returned nothing (it doesn't import get_db at all).
-    Wider grep on contractor_ops shows the canonical pattern:
-      plans_router.py:8  from contractor_ops.router import (
-                              get_db, get_current_user, ...
-      tasks_router.py    same pattern
-    ⇒ upload_quota.py uses  `from contractor_ops.router import get_db`
-      (NOT `.database` — that module does not exist).
-
-0.4 ⚠️ DIVERGENCE FROM SPEC — verified, paused, reported, then approved.
-    Spec assumed all 4 plans endpoints already do `db.projects.find_one`
-    for org_id. FALSE. Only `upload_project_plan` reads the project:
-      upload_project_plan      L137  ✅ project doc at L173 — reused
-      upload_plan_version      L336  ❌ no project read — lookup ADDED
-      replace_project_plan     L517  ❌ no project read — lookup ADDED
-      upload_unit_plan         L788  ❌ no project read — lookup ADDED
-      contractor_proof         L916  ❌ (expected — tasks) — lookup ADDED
-      upload_task_attachment   L1315 ❌ (expected — tasks) — lookup ADDED
-    5 of 6 endpoints required a minimal project lookup, not 2.
-    Added pattern (plans):
-      _proj = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
-      _org_id = (_proj or {}).get('org_id')
-    Added pattern (tasks, via task['project_id']):
-      _proj = await db.projects.find_one({'id': task['project_id']}, {'_id': 0, 'org_id': 1})
-      _org_id = (_proj or {}).get('org_id')
-    Projection {'_id': 0, 'org_id': 1} keeps the read minimal.
+⇒ No existing `bson`/`Int64` import. `record_upload` exists at L45 with
+  the plain-int `$inc` at L56. Fix is NOT already in. Safe to proceed.
 
 ================================================================================
-PART 2.1 — NEW backend/contractor_ops/upload_quota.py  (+62 LOC)
+CONTEXT (why this matters)
 ================================================================================
-- ORG_STORAGE_LIMIT_GB env (default 100) → ORG_STORAGE_LIMIT_BYTES
-- async def check_storage_quota(org_id, incoming_bytes):
-    * no-op when org_id is falsy (legacy org-less projects)
-    * fails OPEN on any DB error (warning log only — must not block legit upload)
-    * raises 413 with Hebrew msg "מכסת האחסון של הארגון מלאה..."
-- async def record_upload(org_id, file_size):
-    * upsert $inc bytes_used + $set updated_at on org_storage_usage
-    * best-effort (warning log on error — file already in S3)
-- Uses `from contractor_ops.router import get_db` (STEP 0.6).
+PHASE 2's `record_upload` did `'$inc': {'bytes_used': int(file_size)}`.
+pymongo encodes a Python int as BSON Int32 when it fits in 32 bits, so
+the first small upload created `bytes_used` as Int32. Int32 caps at
+2,147,483,647 ≈ 2.14 GB, while `ORG_STORAGE_LIMIT_BYTES` is 100 GB —
+the counter field cannot represent the limit it is checked against.
 
-================================================================================
-PART 2.2 — wiring (6 endpoints, 2 routers)
-================================================================================
-Both routers: added
-  from contractor_ops.upload_quota import check_storage_quota, record_upload
+Surfaced during PHASE 2 V9 testing: Atlas rejected setting `bytes_used`
+to 107374182400 (100 GB) with "Update not permitted while document
+contains errors" — the value overflows Int32.
 
-Order in EVERY endpoint is: lookup → check_storage_quota → seek(0) →
-storage → record_upload. The lookup ALWAYS runs before the check
-(verified by grep — no UnboundLocalError possible).
-
-plans_router.py
-  upload_project_plan
-    L173 project = await db.projects.find_one({'id': project_id})  (pre-existing, reused)
-    L187 await check_storage_quota(project.get('org_id'), file_size)
-    L194 await record_upload(project.get('org_id'), result.file_size)
-  upload_plan_version
-    L383 _proj = await db.projects.find_one(..., {'_id': 0, 'org_id': 1})
-    L384 _org_id = (_proj or {}).get('org_id')
-    L385 await check_storage_quota(_org_id, file_size_check)
-    L392 await record_upload(_org_id, result.file_size)
-  replace_project_plan
-    L573 _proj = await db.projects.find_one(..., {'_id': 0, 'org_id': 1})
-    L574 _org_id = (_proj or {}).get('org_id')
-    L575 await check_storage_quota(_org_id, file_size)
-    L582 await record_upload(_org_id, result.file_size)
-  upload_unit_plan
-    L856 _proj = await db.projects.find_one(..., {'_id': 0, 'org_id': 1})
-    L857 _org_id = (_proj or {}).get('org_id')
-    L858 await check_storage_quota(_org_id, file_size)
-    L865 await record_upload(_org_id, result.file_size)
-
-tasks_router.py
-  contractor_proof
-    L991  _proj = await db.projects.find_one({'id': task['project_id']}, {'_id': 0, 'org_id': 1})
-    L992  _org_id = (_proj or {}).get('org_id')
-    L993  await check_storage_quota(_org_id, proof_total_bytes)
-          ⭐ SUM check ONCE before the storage loop (partial mid-batch
-             storage cannot be rolled back — same rationale as Phase 1
-             check_upload_bytes).
-    L1005 await record_upload(_org_id, result.file_size)
-          ⭐ PER-FILE inside the loop so the ledger reflects exactly
-             what made it to S3 on partial failure.
-  upload_task_attachment
-    L1373 _proj = await db.projects.find_one({'id': task['project_id']}, {'_id': 0, 'org_id': 1})
-    L1374 _org_id = (_proj or {}).get('org_id')
-    L1375 await check_storage_quota(_org_id, len(raw))
-    L1383 await record_upload(_org_id, result.file_size)
+Mongo's `$inc` may auto-promote Int32→Int64 on overflow at runtime, but
+that is fragile and the field type is simply wrong. Fix: write the
+`$inc` operand as `bson.Int64`, so `bytes_used` is created/incremented
+as a 64-bit integer.
 
 ================================================================================
-DESIGN tradeoff (acknowledged honestly)
+DIFF — backend/contractor_ops/upload_quota.py
 ================================================================================
-- Ledger is INCREMENT-ONLY in v1. Not decremented on delete → slight
-  overcount vs live S3. Acceptable: cumulative-uploaded-bytes IS the
-  abuse vector, and BrikOps uses soft-delete so live ≈ cumulative.
-- 100 GB default ceiling is deliberately GENEROUS so a legit org won't
-  hit it; still turns an unbounded TB/day attack into a hard 100 GB cap.
-  Env-tunable (ORG_STORAGE_LIMIT_GB) — no deploy needed to raise.
-- Quota check FAILS OPEN on DB errors (legitimate uploads must not break
-  if Mongo blips); record_upload is best-effort for the same reason.
+@@ -10,6 +10,7 @@
+ import os
+ import logging
+ from datetime import datetime, timezone
++from bson import Int64
+ from fastapi import HTTPException
+
+ from contractor_ops.router import get_db
+@@ -53,7 +54,11 @@
+         await db.org_storage_usage.update_one(
+             {'org_id': org_id},
+             {
+-                '$inc': {'bytes_used': int(file_size)},
++                # BATCH storage-quota-int64-fix (2026-05-24) — Int64 so
++                # bytes_used can hold the 100GB ceiling. A plain Python
++                # int gets encoded as BSON Int32 (caps at ~2.14GB) when
++                # the first value is small.
++                '$inc': {'bytes_used': Int64(file_size)},
+                 '$set': {'updated_at': datetime.now(timezone.utc).isoformat()},
+             },
+             upsert=True,
+         )
+
+`check_storage_quota` is unchanged — it reads `bytes_used` into a
+Python int (arbitrary precision) and compares against
+`ORG_STORAGE_LIMIT_BYTES` (a Python int). Already correct.
 
 ================================================================================
-RESET PROCEDURE (operator recovery — known increment-only debt)
+EXISTING STAGING DOCUMENT — self-heals
 ================================================================================
-The ledger counts cumulative uploads and is never decremented, so an org
-that uploads then soft-deletes a lot will read HIGHER than its real S3
-usage and can eventually hit the quota while genuinely under it. When
-that happens, reset the org's counter:
-  1. Atlas → database brikops_prod → collection org_storage_usage.
-  2. Find the document with that org's `org_id`.
-  3. (Optional) compute real usage — sum `file_size` across the org's
-     project_plans / unit_plans; task attachments have no size field, so
-     this is an approximation.
-  4. Set `bytes_used` to the corrected value (or 0 to fully reset).
-  5. The org can upload again immediately — no deploy needed.
-KNOWN DEBT (v2, NOT this batch): decrement the ledger on delete, OR a
-periodic reconciliation job. Track in ROADMAP.md so it is not lost.
+The org_storage_usage doc currently on staging has `bytes_used` as
+Int32. After deploy, the next successful upload runs `$inc` with an
+Int64 operand → MongoDB stores the result as Int64, so the field
+self-heals on the next upload. No migration needed.
 
-================================================================================
-VERIFY OUTPUTS
-================================================================================
-V5  cd backend && python -c "import contractor_ops.upload_quota"
-    → V5 OK  (no import error)
-
-V6  python -c "import contractor_ops.plans_router, contractor_ops.tasks_router"
-    → V6 OK  (both clean)
-
-V7  grep -n "check_storage_quota\|record_upload" \
-       backend/contractor_ops/plans_router.py \
-       backend/contractor_ops/tasks_router.py
-    plans_router.py:17   import
-    plans_router.py:187  check_storage_quota   upload_project_plan
-    plans_router.py:194  record_upload         upload_project_plan
-    plans_router.py:385  check_storage_quota   upload_plan_version
-    plans_router.py:392  record_upload         upload_plan_version
-    plans_router.py:575  check_storage_quota   replace_project_plan
-    plans_router.py:582  record_upload         replace_project_plan
-    plans_router.py:858  check_storage_quota   upload_unit_plan
-    plans_router.py:865  record_upload         upload_unit_plan
-    tasks_router.py:34   import
-    tasks_router.py:993  check_storage_quota   contractor_proof  (SUM, pre-loop)
-    tasks_router.py:1005 record_upload         contractor_proof  (PER-FILE, in loop)
-    tasks_router.py:1375 check_storage_quota   upload_task_attachment
-    tasks_router.py:1383 record_upload         upload_task_attachment
-    → 6 × check_storage_quota, 6 × record_upload (contractor_proof
-      record runs N times at runtime — inside the storage loop).
-
-V8  Manual on staging (post-deploy, Zahi):
-    a) Upload one plan → succeeds.
-    b) Atlas → org_storage_usage → confirm doc for that org with
-       bytes_used ≈ file_size.
-
-V9  Manual quota trip (optional):
-    a) Atlas → set that org's bytes_used to just under
-       (100 * 1024^3 - 1KB).
-    b) Upload one more file → EXPECT 413 with the Hebrew quota message.
-    c) Reset bytes_used afterwards (RESET PROCEDURE above).
-
-================================================================================
-DIFF STAT
-================================================================================
- backend/contractor_ops/upload_quota.py  | 62 +++++++++++++++++++++++++ (new)
- backend/contractor_ops/plans_router.py  | 27 +++++++++++++++++++++++++
- backend/contractor_ops/tasks_router.py  | 19 +++++++++++++++++++
- 3 files changed, 108 insertions(+)
+For V4 below: do ONE upload first so the field becomes Int64, THEN
+set the 100GB value in Atlas.
 
 ================================================================================
 DO NOT TOUCH (verified unchanged)
 ================================================================================
-- Phase 1 limiters (check_upload_rate_limit count, check_upload_bytes,
-  check_content_length) — still called first, all 6 sites.
-- validate_upload, role/permission checks, audit logs.
-- No backfill, no migration, no delete-path decrement, no admin
-  endpoint, no frontend, no nginx, no native.
-- Billing / unit-quota code untouched.
+- check_storage_quota — already correct.
+- The 6 PHASE 2 endpoint wirings (plans_router.py x4, tasks_router.py x2).
+- ORG_STORAGE_LIMIT_GB / ORG_STORAGE_LIMIT_BYTES.
+- PHASE 1 limiters, frontend, nginx, native, billing.
+
+================================================================================
+VERIFY OUTPUTS
+================================================================================
+V1  cd backend && python -c "import contractor_ops.upload_quota; print('V1 OK')"
+    → V1 OK   (clean import, no error)
+
+V2  grep -n "Int64" backend/contractor_ops/upload_quota.py
+    11: from bson import Int64
+    57: # BATCH storage-quota-int64-fix (2026-05-24) — Int64 so
+    61: '$inc': {'bytes_used': Int64(file_size)},
+    → import present, $inc uses Int64(file_size). ✓
+
+V3  Staging (post-deploy, Zahi):
+    a) Upload one file.
+    b) Atlas → org_storage_usage → confirm `bytes_used` is now type
+       Int64 / Long (not Int32).
+
+V4  V9 quota-trip (now possible on staging):
+    a) After V3 (field is Int64), in Atlas set `bytes_used` to
+       107374182400 (100 GB) — Atlas should accept it now.
+    b) Upload a small file → EXPECT 413 with the Hebrew quota
+       message "מכסת האחסון של הארגון מלאה...".
+    c) Reset `bytes_used` to 0 afterwards (RESET PROCEDURE in
+       PHASE 2 review).
 
 ================================================================================
 ROLLBACK
 ================================================================================
-git revert <phase2-sha> -- \
-  backend/contractor_ops/upload_quota.py \
-  backend/contractor_ops/plans_router.py \
-  backend/contractor_ops/tasks_router.py
+git revert <commit-sha> -- backend/contractor_ops/upload_quota.py
 ./deploy.sh --prod
 
-`org_storage_usage` collection is harmless if left in place; may drop
-in Atlas afterwards.
+The Int64 field is forward-compatible with the reverted plain-int
+code (it still reads as a Python int), so no data fix is needed on
+rollback.
 
 ================================================================================
-POST-SHIP CHECKLIST
+COMMIT MESSAGE (in .local/.commit_message)
 ================================================================================
-Add to security/pentest-regression-checklist.md:
-  - Org storage quota: upload that would exceed ceiling → 413.
-  - Env-tunable (ORG_STORAGE_LIMIT_GB).
+fix(security): store org storage ledger as Int64, not Int32
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

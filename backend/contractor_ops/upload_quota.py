@@ -8,6 +8,7 @@
 import os
 import logging
 from datetime import datetime, timezone
+from bson import Int64
 from fastapi import HTTPException
 
 from contractor_ops.router import get_db
@@ -53,7 +54,11 @@ async def record_upload(org_id, file_size: int):
         await db.org_storage_usage.update_one(
             {'org_id': org_id},
             {
-                '$inc': {'bytes_used': int(file_size)},
+                # BATCH storage-quota-int64-fix (2026-05-24) — Int64 so
+                # bytes_used can hold the 100GB ceiling. A plain Python
+                # int gets encoded as BSON Int32 (caps at ~2.14GB) when
+                # the first value is small.
+                '$inc': {'bytes_used': Int64(file_size)},
                 '$set': {'updated_at': datetime.now(timezone.utc).isoformat()},
             },
             upsert=True,
