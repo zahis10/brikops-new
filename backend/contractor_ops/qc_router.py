@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Query, BackgroundTasks, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone
@@ -11,6 +11,10 @@ from contractor_ops.router import get_db, get_current_user, _get_project_role, _
 from contractor_ops.rate_limit import check_reminder_rate_limit
 from contractor_ops.msg_logger import mask_phone
 from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
+from contractor_ops.upload_rate_limit import (
+    check_upload_rate_limit, check_upload_bytes, check_content_length,
+)
+from contractor_ops.upload_quota import check_storage_quota, record_upload
 from contractor_ops.projects_router import _natural_sort_key
 
 logger = logging.getLogger(__name__)
@@ -2033,9 +2037,15 @@ MAX_PHOTO_SIZE = 10 * 1024 * 1024
 async def upload_qc_photo(
     run_id: str,
     item_id: str,
+    request: Request,
     file: UploadFile = File(...),
     user: dict = Depends(get_current_user)
 ):
+    # BATCH upload-hardening-phase3a-qc (2026-05-24) — per-user count
+    # limit + Content-Length pre-check (uses this endpoint's 10MB cap,
+    # not the 50MB used by plans endpoints).
+    check_upload_rate_limit(user['id'])
+    check_content_length(request.headers.get('content-length'), MAX_PHOTO_SIZE)
     db = get_db()
 
     run = await db.qc_runs.find_one({"id": run_id}, {"_id": 0})
@@ -2070,8 +2080,17 @@ async def upload_qc_photo(
     if len(content) > MAX_PHOTO_SIZE:
         raise HTTPException(status_code=400, detail="הקובץ גדול מדי (מקסימום 10MB)")
 
+    # BATCH upload-hardening-phase3a-qc (2026-05-24) — byte rate limit +
+    # per-org storage quota, BEFORE the file reaches S3.
+    check_upload_bytes(user['id'], len(content))
+    _proj = await db.projects.find_one({'id': run['project_id']}, {'_id': 0, 'org_id': 1})
+    _org_id = (_proj or {}).get('org_id')
+    await check_storage_quota(_org_id, len(content))
+
     from services.object_storage import save_bytes as obj_save_bytes, generate_url as obj_generate_url
     stored_ref = obj_save_bytes(content, f"qc/{filename}", content_type)
+    # BATCH upload-hardening-phase3a-qc (2026-05-24) — ledger the stored bytes
+    await record_upload(_org_id, len(content))
 
     actor = _actor_name(user)
     photo_meta = {

@@ -1,140 +1,174 @@
 ================================================================================
-BATCH storage-quota-int64-fix — store org_storage_usage.bytes_used as Int64
+BATCH upload-hardening-phase3a-qc — rate-limit + storage quota on QC photo
 ================================================================================
 Date:           2026-05-24
 Branch:         staging
-Severity:       P2 — follow-up to upload-abuse-hardening PHASE 2
-                (PHASE 2 is on staging, NOT yet on prod)
+Severity:       P2 security — close an unprotected upload endpoint
 Files changed:  1 (backend only)
-                  backend/contractor_ops/upload_quota.py   +6 / -1
-Rollback SHA:   0222659   (HEAD before this edit)
+                  backend/contractor_ops/qc_router.py   +14 / -1
+Rollback SHA:   0bc54db   (HEAD before this edit)
 
 BACKEND-ONLY — ./deploy.sh --stag then --prod (EB). NO Capgo, NO ./ship.sh,
-                NO native, NO new dependency (bson ships with pymongo).
+                NO native, NO new dependency.
 
 ================================================================================
-STEP 0.1 — pre-flight output
+STEP 0 — pre-flight outputs
 ================================================================================
-$ grep -n "Int64\|bson\|\$inc\|bytes_used\|def record_upload\|^import\|^from" \
-        backend/contractor_ops/upload_quota.py
-  8: import os
-  9: import logging
- 10: from datetime import datetime, timezone
- 11: from fastapi import HTTPException
- 13: from contractor_ops.router import get_db
- 30:         used = (doc or {}).get('bytes_used', 0)
- 45: async def record_upload(org_id, file_size: int):
- 56:                 '$inc': {'bytes_used': int(file_size)},
 
-⇒ No existing `bson`/`Int64` import. `record_upload` exists at L45 with
-  the plain-int `$inc` at L56. Fix is NOT already in. Safe to proceed.
+0.1 helpers present
+    upload_rate_limit.py: L40 check_upload_rate_limit, L64 check_upload_bytes,
+                         L90 check_content_length
+    upload_quota.py:      L22 check_storage_quota, L46 record_upload
+    ⇒ all 5 helpers present (PHASE 1 + 2 on this branch).
 
-================================================================================
-CONTEXT (why this matters)
-================================================================================
-PHASE 2's `record_upload` did `'$inc': {'bytes_used': int(file_size)}`.
-pymongo encodes a Python int as BSON Int32 when it fits in 32 bits, so
-the first small upload created `bytes_used` as Int32. Int32 caps at
-2,147,483,647 ≈ 2.14 GB, while `ORG_STORAGE_LIMIT_BYTES` is 100 GB —
-the counter field cannot represent the limit it is checked against.
+0.2 upload_qc_photo shape (matches spec)
+    L2029  MAX_PHOTO_SIZE = 10 * 1024 * 1024
+    L2033  async def upload_qc_photo(run_id, item_id, file, user)
+    L2045  _check_qc_access(user, run["project_id"])  ← run["project_id"] in scope
+    L2069  content = await file.read()
+    L2070  if len(content) > MAX_PHOTO_SIZE: raise 400 הקובץ גדול מדי
+    L2073-2074  obj_save_bytes(content, f"qc/{filename}", content_type)
+                ⇒ returns a ref STRING (not an UploadResult); use len(content)
+                  for the ledger.
+    No existing check_upload_rate_limit anywhere in the function. Clean.
 
-Surfaced during PHASE 2 V9 testing: Atlas rejected setting `bytes_used`
-to 107374182400 (100 GB) with "Update not permitted while document
-contains errors" — the value overflows Int32.
-
-Mongo's `$inc` may auto-promote Int32→Int64 on overflow at runtime, but
-that is fragile and the field type is simply wrong. Fix: write the
-`$inc` operand as `bson.Int64`, so `bytes_used` is created/incremented
-as a 64-bit integer.
+0.3 fastapi import
+    L1: from fastapi import APIRouter, HTTPException, Depends, UploadFile,
+                            File, Query, BackgroundTasks
+    ⇒ Request NOT imported. Added.
 
 ================================================================================
-DIFF — backend/contractor_ops/upload_quota.py
+DIFF — backend/contractor_ops/qc_router.py
 ================================================================================
-@@ -10,6 +10,7 @@
- import os
- import logging
- from datetime import datetime, timezone
-+from bson import Int64
- from fastapi import HTTPException
+@@ -1,4 +1,4 @@
+-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Query, BackgroundTasks
++from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Query, BackgroundTasks, Request
 
- from contractor_ops.router import get_db
-@@ -53,7 +54,11 @@
-         await db.org_storage_usage.update_one(
-             {'org_id': org_id},
-             {
--                '$inc': {'bytes_used': int(file_size)},
-+                # BATCH storage-quota-int64-fix (2026-05-24) — Int64 so
-+                # bytes_used can hold the 100GB ceiling. A plain Python
-+                # int gets encoded as BSON Int32 (caps at ~2.14GB) when
-+                # the first value is small.
-+                '$inc': {'bytes_used': Int64(file_size)},
-                 '$set': {'updated_at': datetime.now(timezone.utc).isoformat()},
-             },
-             upsert=True,
-         )
+@@ -11,6 +11,10 @@
+ from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
++from contractor_ops.upload_rate_limit import (
++    check_upload_rate_limit, check_upload_bytes, check_content_length,
++)
++from contractor_ops.upload_quota import check_storage_quota, record_upload
+ from contractor_ops.projects_router import _natural_sort_key
 
-`check_storage_quota` is unchanged — it reads `bytes_used` into a
-Python int (arbitrary precision) and compares against
-`ORG_STORAGE_LIMIT_BYTES` (a Python int). Already correct.
+@@ -2033,9 +2037,15 @@ MAX_PHOTO_SIZE = 10 * 1024 * 1024
+ async def upload_qc_photo(
+     run_id: str,
+     item_id: str,
++    request: Request,
+     file: UploadFile = File(...),
+     user: dict = Depends(get_current_user)
+ ):
++    # BATCH upload-hardening-phase3a-qc (2026-05-24) — per-user count
++    # limit + Content-Length pre-check (uses this endpoint's 10MB cap,
++    # not the 50MB used by plans endpoints).
++    check_upload_rate_limit(user['id'])
++    check_content_length(request.headers.get('content-length'), MAX_PHOTO_SIZE)
+     db = get_db()
+
+@@ -2070,8 +2080,17 @@ async def upload_qc_photo(
+     if len(content) > MAX_PHOTO_SIZE:
+         raise HTTPException(status_code=400, detail="הקובץ גדול מדי (מקסימום 10MB)")
+
++    # BATCH upload-hardening-phase3a-qc (2026-05-24) — byte rate limit +
++    # per-org storage quota, BEFORE the file reaches S3.
++    check_upload_bytes(user['id'], len(content))
++    _proj = await db.projects.find_one({'id': run['project_id']}, {'_id': 0, 'org_id': 1})
++    _org_id = (_proj or {}).get('org_id')
++    await check_storage_quota(_org_id, len(content))
++
+     from services.object_storage import save_bytes as obj_save_bytes, generate_url as obj_generate_url
+     stored_ref = obj_save_bytes(content, f"qc/{filename}", content_type)
++    # BATCH upload-hardening-phase3a-qc (2026-05-24) — ledger the stored bytes
++    await record_upload(_org_id, len(content))
 
 ================================================================================
-EXISTING STAGING DOCUMENT — self-heals
+ORDER OF OPERATIONS (verified in current file)
 ================================================================================
-The org_storage_usage doc currently on staging has `bytes_used` as
-Int32. After deploy, the next successful upload runs `$inc` with an
-Int64 operand → MongoDB stores the result as Int64, so the field
-self-heals on the next upload. No migration needed.
+Hook A (top of body, before db = get_db()):
+  L2047 check_upload_rate_limit(user['id'])
+  L2048 check_content_length(request.headers.get('content-length'), MAX_PHOTO_SIZE)
+                                                                    ^^^^^^^^^^^^^^^
+                                                                    10MB, NOT 50MB
+Body resolves run + access + item + stage lock + validate_upload + read file.
+Existing per-file 10MB cap still runs (L2083-2084) — unchanged.
+Hook B (after size cap, before storage):
+  L2085 check_upload_bytes(user['id'], len(content))
+  L2086 _proj = await db.projects.find_one({'id': run['project_id']}, ...)
+  L2087 _org_id = (_proj or {}).get('org_id')
+  L2088 await check_storage_quota(_org_id, len(content))
+Storage (unchanged):
+  L2093 stored_ref = obj_save_bytes(content, f"qc/{filename}", content_type)
+Hook C (after storage):
+  L2095 await record_upload(_org_id, len(content))
 
-For V4 below: do ONE upload first so the field becomes Int64, THEN
-set the 100GB value in Atlas.
+`_org_id` is always defined before any use (no UnboundLocalError).
+Order: lookup → check_storage_quota → storage → record_upload.
+
+================================================================================
+DESIGN notes (consistent with PHASE 2)
+================================================================================
+- record_upload receives len(content) because obj_save_bytes returns a
+  ref string, not an UploadResult — the exact byte count is already in
+  scope.
+- check_storage_quota fails OPEN on DB error; record_upload is
+  best-effort. Same semantics as PHASE 2.
+- Same fail-open behaviour when org_id is falsy (legacy org-less
+  projects).
+- Hook A uses MAX_PHOTO_SIZE (10MB), NOT the 50MB used in plans
+  endpoints — Content-Length pre-check matches the real per-file cap.
 
 ================================================================================
 DO NOT TOUCH (verified unchanged)
 ================================================================================
-- check_storage_quota — already correct.
-- The 6 PHASE 2 endpoint wirings (plans_router.py x4, tasks_router.py x2).
-- ORG_STORAGE_LIMIT_GB / ORG_STORAGE_LIMIT_BYTES.
-- PHASE 1 limiters, frontend, nginx, native, billing.
+- MAX_PHOTO_SIZE 10MB per-file check — unchanged (additive hooks).
+- validate_upload, content-type allow-list, role/QC-access checks,
+  the stage-status lock — unchanged.
+- obj_save_bytes / object_storage — unchanged.
+- qc_items $push photos update, audit, template logic — unchanged.
+- Other qc_router endpoints — unchanged (only upload_qc_photo).
+- upload_rate_limit.py / upload_quota.py — NOT modified (import only).
+- PHASE 1 + 2 wirings on plans_router.py / tasks_router.py — untouched.
+- Frontend, nginx, native, billing — nothing.
 
 ================================================================================
 VERIFY OUTPUTS
 ================================================================================
-V1  cd backend && python -c "import contractor_ops.upload_quota; print('V1 OK')"
-    → V1 OK   (clean import, no error)
+V1  cd backend && python -c "import contractor_ops.qc_router; print('V1 OK')"
+    → V1 OK   (clean import; catches missing Request import / arg-order
+                error)
 
-V2  grep -n "Int64" backend/contractor_ops/upload_quota.py
-    11: from bson import Int64
-    57: # BATCH storage-quota-int64-fix (2026-05-24) — Int64 so
-    61: '$inc': {'bytes_used': Int64(file_size)},
-    → import present, $inc uses Int64(file_size). ✓
+V2  grep -n "check_upload_rate_limit\|check_content_length\|check_upload_bytes\|check_storage_quota\|record_upload" \
+        backend/contractor_ops/qc_router.py
+    15:    check_upload_rate_limit, check_upload_bytes, check_content_length,   (import)
+    17:from contractor_ops.upload_quota import check_storage_quota, record_upload (import)
+    2047:    check_upload_rate_limit(user['id'])
+    2048:    check_content_length(request.headers.get('content-length'), MAX_PHOTO_SIZE)
+    2085:    check_upload_bytes(user['id'], len(content))
+    2088:    await check_storage_quota(_org_id, len(content))
+    2093:    await record_upload(_org_id, len(content))
+    → 5 hooks + 2 import lines, exactly one of each. ✓
 
 V3  Staging (post-deploy, Zahi):
-    a) Upload one file.
-    b) Atlas → org_storage_usage → confirm `bytes_used` is now type
-       Int64 / Long (not Int32).
-
-V4  V9 quota-trip (now possible on staging):
-    a) After V3 (field is Int64), in Atlas set `bytes_used` to
-       107374182400 (100 GB) — Atlas should accept it now.
-    b) Upload a small file → EXPECT 413 with the Hebrew quota
-       message "מכסת האחסון של הארגון מלאה...".
-    c) Reset `bytes_used` to 0 afterwards (RESET PROCEDURE in
-       PHASE 2 review).
+    a) Upload a QC photo on a run/item → succeeds.
+    b) Atlas → org_storage_usage → `bytes_used` increased by ~photo
+       size and `updated_at` changed → record_upload fired.
+    c) Quota trip: set that org's `bytes_used` to 107374182400 in
+       Atlas → upload a QC photo → EXPECT 413 with the Hebrew quota
+       message. Reset `bytes_used` afterwards.
 
 ================================================================================
 ROLLBACK
 ================================================================================
-git revert <commit-sha> -- backend/contractor_ops/upload_quota.py
+git revert <commit-sha> -- backend/contractor_ops/qc_router.py
 ./deploy.sh --prod
 
-The Int64 field is forward-compatible with the reverted plain-int
-code (it still reads as a Python int), so no data fix is needed on
-rollback.
-
 ================================================================================
-COMMIT MESSAGE (in .local/.commit_message)
+NEXT PHASES (separate batches — NOT this one)
 ================================================================================
-fix(security): store org storage ledger as Int64, not Int32
+- PHASE 3b: handover_router (5 endpoints)
+- PHASE 3c: safety_router + excel_router + import_router
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
