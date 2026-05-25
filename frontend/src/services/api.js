@@ -829,6 +829,22 @@ export const unitPlanService = {
     });
     return response.data;
   },
+  async archive(projectId, unitId, planId, note = '') {
+    const response = await axios.patch(
+      `${API}/projects/${projectId}/units/${unitId}/plans/${planId}/archive`,
+      { note },
+      { headers: getAuthHeader() },
+    );
+    return response.data;
+  },
+  async restore(projectId, unitId, planId) {
+    const response = await axios.patch(
+      `${API}/projects/${projectId}/units/${unitId}/plans/${planId}/restore`,
+      {},
+      { headers: getAuthHeader() },
+    );
+    return response.data;
+  },
 };
 
 export const projectPlanService = {

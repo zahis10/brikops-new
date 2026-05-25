@@ -775,6 +775,7 @@ async def list_unit_plans(
     discipline: Optional[str] = Query(None),
     plan_type: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
+    archived: Optional[bool] = Query(False),
     user: dict = Depends(get_current_user),
 ):
     db = get_db()
@@ -783,6 +784,8 @@ async def list_unit_plans(
     if not unit:
         raise HTTPException(status_code=404, detail='דירה לא נמצאה בפרויקט זה')
     query = {'project_id': project_id, 'unit_id': unit_id}
+    # BATCH unit-plans-archive (2026-05-25) — active list hides archived; ?archived=true returns only archived.
+    query['status'] = 'archived' if archived else {'$ne': 'archived'}
     if discipline:
         query['discipline'] = discipline
     if plan_type:
@@ -894,6 +897,90 @@ async def upload_unit_plan(
 
     from services.object_storage import resolve_urls_in_doc
     return resolve_urls_in_doc(dict(plan_doc))
+
+
+# BATCH unit-plans-archive (2026-05-25) — archive a unit plan.
+@router.patch("/projects/{project_id}/units/{unit_id}/plans/{plan_id}/archive")
+async def archive_unit_plan(
+    project_id: str,
+    unit_id: str,
+    plan_id: str,
+    body: dict = Body(default={}),
+    user: dict = Depends(get_current_user),
+):
+    if user['role'] == 'viewer':
+        raise HTTPException(status_code=403, detail='Viewers have read-only access')
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+    requester_membership = await _get_project_membership(user, project_id)
+    requester_role = requester_membership.get('role', 'none')
+    if requester_role not in PLAN_UPLOAD_ROLES:
+        raise HTTPException(status_code=403, detail='אין לך הרשאה לארכב תוכניות')
+    plan = await db.unit_plans.find_one({
+        'id': plan_id,
+        'project_id': project_id,
+        'unit_id': unit_id,
+        'deletedAt': {'$exists': False},
+        'status': {'$ne': 'archived'},
+    })
+    if not plan:
+        raise HTTPException(status_code=404, detail='תוכנית לא נמצאה או כבר בארכיון')
+    ts = _now()
+    await db.unit_plans.update_one({'id': plan_id}, {'$set': {
+        'status': 'archived',
+        'archive_reason': 'manual',
+        'archived_at': ts,
+        'archived_by': user['id'],
+        'archive_note': (body.get('note') or '').strip(),
+    }})
+    await _audit('unit_plan', plan_id, 'unit_plan_archived', user['id'], {
+        'project_id': project_id,
+        'unit_id': unit_id,
+        'discipline': plan.get('discipline', ''),
+        'filename': plan.get('original_filename', ''),
+    })
+    return {'success': True}
+
+
+# BATCH unit-plans-archive (2026-05-25) — restore a unit plan.
+@router.patch("/projects/{project_id}/units/{unit_id}/plans/{plan_id}/restore")
+async def restore_unit_plan(
+    project_id: str,
+    unit_id: str,
+    plan_id: str,
+    user: dict = Depends(get_current_user),
+):
+    if user['role'] == 'viewer':
+        raise HTTPException(status_code=403, detail='Viewers have read-only access')
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+    requester_membership = await _get_project_membership(user, project_id)
+    requester_role = requester_membership.get('role', 'none')
+    if requester_role not in PLAN_UPLOAD_ROLES:
+        raise HTTPException(status_code=403, detail='אין לך הרשאה לשחזר תוכניות')
+    plan = await db.unit_plans.find_one({
+        'id': plan_id,
+        'project_id': project_id,
+        'unit_id': unit_id,
+        'deletedAt': {'$exists': False},
+        'status': 'archived',
+    })
+    if not plan:
+        raise HTTPException(status_code=404, detail='תוכנית לא נמצאה בארכיון')
+    await db.unit_plans.update_one({'id': plan_id}, {'$unset': {
+        'status': '',
+        'archive_reason': '',
+        'archived_at': '',
+        'archived_by': '',
+        'archive_note': '',
+    }})
+    await _audit('unit_plan', plan_id, 'unit_plan_restored', user['id'], {
+        'project_id': project_id,
+        'unit_id': unit_id,
+        'discipline': plan.get('discipline', ''),
+        'filename': plan.get('original_filename', ''),
+    })
+    return {'success': True}
 
 
 @router.get("/projects/{project_id}/disciplines")

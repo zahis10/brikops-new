@@ -1,116 +1,129 @@
-BATCH discipline-edit-delete — Bug 1 (Task #527)
-=================================================
-Rollback SHA: ac73bad
-Spec: attached_assets/Pasted--BATCH-discipline-ed-1779738450618_1779738450619.txt (399 lines)
-Type: MIXED (backend + frontend) — ./deploy.sh, Capgo OTA, no ./ship.sh, no new dependency
-
-STEP 0 PRE-FLIGHT (all GREEN)
------------------------------
-0.1 backend/contractor_ops/plans_router.py L915 add_project_discipline guard pattern:
-    if user['role'] == 'viewer': raise 403
-    db = get_db(); await _check_project_read_access(user, project_id)
-    requester_membership = await _get_project_membership(user, project_id)
-    requester_role = requester_membership.get('role', 'none')
-    if requester_role not in PLAN_UPLOAD_ROLES: raise 403
-  Helpers imported at L10-11. NO existing PATCH/DELETE for disciplines.
-
-0.2 plans collections — db.project_plans + db.unit_plans; both store key in 'discipline'.
-    Both use `deletedAt` for soft-delete (project_plans additionally has `status:'archived'`).
-    Delete-blocked count filters {project_id, discipline:key, deletedAt:{$exists:False}} on BOTH.
-
-0.3 frontend/src/services/api.js L941-955 disciplineService uses getAuthHeader() everywhere.
-
-0.4 ProjectPlansPage.js — disciplines L78, canManage L139 (UPLOAD_ROLES = ['project_manager','management_team'] L21).
-    Add-discipline JSX at L637-664 (inline "+ תחום" inside `mr-auto flex` gated by canManage).
-    UnitPlansPage.js — gate var is `canUpload` L92 (same UPLOAD_ROLES set L22). Add-control JSX at L432-460.
-    list_project_disciplines mapping BEFORE change (L913):
-      [{'key': c['key'], 'label': c.get('label', c['key']), 'source': 'custom'} for c in custom]
-
-0.5 frontend/src/components/ui/dialog.jsx exists; both pages already import `toast` from 'sonner'.
-
-PER-FILE DIFFS
---------------
-A) backend/contractor_ops/plans_router.py
-   - L912 list_project_disciplines custom mapping: added `'id': c['id']` so modal has stable id for PATCH/DELETE. Defaults branch unchanged.
-   - L969-1003 NEW update_project_discipline (PATCH /projects/{id}/disciplines/{discipline_id}):
-       guard chain mirrors add_project_discipline; 422 'שם תחום נדרש' on empty;
-       404 'תחום לא נמצא'; $set label only; audit project_discipline_rename {project_id,key,old_label,new_label};
-       returns {id,key,label,source:'custom'}.
-   - L1006-1052 NEW delete_project_discipline (DELETE /projects/{id}/disciplines/{discipline_id}):
-       same guard chain; counts NON-deleted plans across db.project_plans + db.unit_plans;
-       if in_use>0 → 409 'לא ניתן למחוק — {n} תוכניות עדיין בתחום זה. שנה את שם התחום או העבר את התוכניות תחילה.';
-       else delete_one + audit project_discipline_delete {project_id,key,label}; returns {success:True}.
-
-B) frontend/src/services/api.js (L957-971)
-   - Appended `update(projectId, disciplineId, label)` → PATCH .../disciplines/{id}, body {label}.
-   - Appended `remove(projectId, disciplineId)` → DELETE .../disciplines/{id}.
-   - Both reuse getAuthHeader().
-
-C) frontend/src/components/DisciplineManagerModal.jsx (NEW, 182 lines)
-   - Radix Dialog from ./ui/dialog (Dialog/DialogContent/DialogHeader/DialogTitle/DialogFooter/DialogClose).
-   - Props: projectId, disciplines, open, onClose, onChanged.
-   - Filters disciplines.filter(d => d.source === 'custom'); empty state 'אין תחומים מותאמים אישית'.
-   - VIEW row: label + Pencil (→ EDIT) + Trash (→ inline confirm).
-   - EDIT mode: text input pre-filled; Enter saves / Esc cancels; "שמור"+"ביטול"; toast 'התחום עודכן'.
-   - DELETE: two-step inline 'בטוח?' (NOT window.confirm) → red "מחק"+"ביטול"; toast 'התחום נמחק' or err.response.data.detail.
-   - Footer: single "סגור" DialogClose. dir="rtl" inherited from app shell.
-
-D) frontend/src/pages/ProjectPlansPage.js
-   - L13: added `Settings` to lucide-react import.
-   - L17: import DisciplineManagerModal.
-   - L106: state `showDisciplineManager`.
-   - L669-678: small h-8 "ניהול" button next to "+ תחום", rendered only when `canManage && disciplines.some(d=>d.source==='custom')`.
-   - L1278-1284: render <DisciplineManagerModal …loadDisciplines/> above BulkPlanUploadModal block.
-
-E) frontend/src/pages/UnitPlansPage.js
-   - L14: added `Settings` to lucide-react import.
-   - L18: import DisciplineManagerModal.
-   - L85: state `showDisciplineManager`.
-   - L463-472: same "ניהול" button gated on `canUpload && disciplines.some(d=>d.source==='custom')`.
-   - L764-770: render <DisciplineManagerModal …loadDisciplines/> before closing div.
-
-VERIFY OUTPUTS
---------------
-V1 `cd backend && python -c "import contractor_ops.plans_router"`:
-    [SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****9991,****0001
-    V1 OK
-
-V2 (frontend build) — DEFERRED to Zahi's deploy.sh stag pipeline (build is too slow inline; spec acceptance is V3 grep coverage).
-
-V3a grep -n "update_project_discipline\|delete_project_discipline" backend/contractor_ops/plans_router.py:
-    969:async def update_project_discipline(
-    1006:async def delete_project_discipline(
-
-V3b grep -n "'id': c['id']" backend/contractor_ops/plans_router.py:
-    912:    return defaults + [{'id': c['id'], 'key': c['key'], 'label': c.get('label', c['key']), 'source': 'custom'} for c in custom]
-
-V3c grep -n "disciplineService" frontend/src/services/api.js:
-    941:export const disciplineService = {
-
-V3d grep -rn "DisciplineManagerModal" frontend/src/pages/ProjectPlansPage.js frontend/src/pages/UnitPlansPage.js frontend/src/components/DisciplineManagerModal.jsx:
-    frontend/src/pages/ProjectPlansPage.js:14:import DisciplineManagerModal from '../components/DisciplineManagerModal';
-    frontend/src/pages/ProjectPlansPage.js:1275:      <DisciplineManagerModal
-    frontend/src/pages/UnitPlansPage.js:15:import DisciplineManagerModal from '../components/DisciplineManagerModal';
-    frontend/src/pages/UnitPlansPage.js:761:      <DisciplineManagerModal
-    frontend/src/components/DisciplineManagerModal.jsx:7:const DisciplineManagerModal = ({ projectId, disciplines, open, onClose, onChanged }) => {
-    frontend/src/components/DisciplineManagerModal.jsx:182:export default DisciplineManagerModal;
-
-V4 MANUAL TEST LIST (run after deploy, do not execute here)
------------------------------------------------------------
-a. As PM open ProjectPlansPage with at least one custom discipline → "ניהול" button visible next to "+ תחום"; absent when only defaults exist.
-b. Click "ניהול" → modal lists ONLY custom rows (defaults hidden); empty-state Hebrew text when none.
-c. Pencil → input pre-filled; save → toast 'התחום עודכן'; row label updates; refresh page → label persists.
-d. Trash → row shows 'בטוח?'; cancel reverts; confirm → toast 'התחום נמחק'; row disappears; refresh confirms.
-e. Try delete on a discipline that still has plans → 409 toast 'לא ניתן למחוק — N תוכניות…'; row stays.
-f. As viewer/contractor (non-PLAN_UPLOAD_ROLES) → "ניהול" button hidden; direct PATCH/DELETE returns 403.
-   UnitPlansPage repeats a-f with `canUpload` gate.
-
-DEPLOY PLAN
------------
-MIXED (backend+frontend) — ./deploy.sh, Capgo OTA, no ./ship.sh, no new dependency.
-
-COMMIT MESSAGE
---------------
-feat(plans): rename and delete custom plan topics (disciplines)
+BATCH unit-plans-archive — Task #528 — Bug 3
+Branch: staging
+Rollback SHA: 8f12ae3
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+============================================================
+STEP 0 — Pre-build verification (from plan)
+============================================================
+- backend/contractor_ops/plans_router.py:
+  * archive_project_plan @ L627, restore_project_plan @ L730 (templates mirrored)
+  * list_unit_plans @ L772 (now L774), upload_unit_plan @ L808
+  * PLAN_UPLOAD_ROLES, _check_project_read_access, _get_project_membership, _audit, _now, Body — all already imported/defined
+- frontend/src/services/api.js: unitPlanService.list forwards `params` via axios → ?archived=true works without service-list change
+- frontend/src/pages/UnitPlansPage.js:
+  * canUpload @ L94, loadPlans @ L120, renderSection call site @ L513–514
+  * detailPlan modal action row @ L723–748 (ארכב inserted after "צפה")
+
+============================================================
+WHAT CHANGED (3 files)
+============================================================
+
+1) backend/contractor_ops/plans_router.py
+   - list_unit_plans: added `archived: Optional[bool] = Query(False)` param and
+     `query['status'] = 'archived' if archived else {'$ne': 'archived'}`
+     → default list now hides archived plans; `?archived=true` returns only archived.
+   - NEW PATCH /projects/{project_id}/units/{unit_id}/plans/{plan_id}/archive
+     * viewer-block → _check_project_read_access → _get_project_membership → PLAN_UPLOAD_ROLES guard
+     * 404 'תוכנית לא נמצאה או כבר בארכיון' if not found/already archived
+     * 403 'אין לך הרשאה לארכב תוכניות' for non-uploaders
+     * sets status='archived', archive_reason='manual', archived_at, archived_by, archive_note
+     * audit 'unit_plan_archived' with project_id/unit_id/discipline/filename
+   - NEW PATCH /projects/{project_id}/units/{unit_id}/plans/{plan_id}/restore
+     * same guard chain
+     * 404 'תוכנית לא נמצאה בארכיון' if not currently archived
+     * 403 'אין לך הרשאה לשחזר תוכניות' for non-uploaders
+     * $unset of status + archive_* fields
+     * audit 'unit_plan_restored'
+   Mirrors archive_project_plan / restore_project_plan exactly. Uses db.unit_plans, scoped by unit_id.
+
+2) frontend/src/services/api.js
+   - unitPlanService.archive(projectId, unitId, planId, note='') → PATCH .../archive
+   - unitPlanService.restore(projectId, unitId, planId)          → PATCH .../restore
+   Both use getAuthHeader().
+
+3) frontend/src/pages/UnitPlansPage.js
+   - lucide import: + Archive, ChevronDown, RotateCcw
+   - state: showArchived, archivedPlans (null until first open), archivedLoading,
+     archivingPlanId, restoringPlanId
+   - loadArchivedPlans(): unitPlanService.list(projectId, unitId, { archived: true })
+   - handleArchivePlan(plan): archive → toast 'התוכנית הועברה לארכיון' → close modal →
+     loadPlans() + (if archivedPlans!==null) loadArchivedPlans()
+   - handleRestorePlan(plan): restore → toast 'התוכנית שוחזרה' → refresh both lists
+   - toggleArchived(): lazy-loads archived list on first open
+   - detailPlan modal action row: NEW "ארכב" secondary button (canUpload only),
+     white bg + red hover, Archive icon, disabled while archiving
+   - NEW inline collapsible "ארכיון" section below renderSection (L513-514).
+     * Per spec correction: MINIMAL ROWS, NOT renderPlanCard
+       (avoids 404 confusion since file_url for archived plans is intentionally not opened)
+     * Each row: name + getDisciplineLabel chip + optional archived_at date
+     * NO onClick → setDetailPlan, NO ארכב button
+     * Only action = "שחזר" (RotateCcw) for canUpload
+     * Empty state: 'אין תוכניות בארכיון'
+     * Loading: small spinner
+
+============================================================
+VERIFICATION
+============================================================
+
+V1 — backend import OK
+  $ cd backend && python -c "import contractor_ops.plans_router"
+  → V1 OK
+
+V3 — required symbols present
+  backend/contractor_ops/plans_router.py:
+    788:    query['status'] = 'archived' if archived else {'$ne': 'archived'}
+    904: async def archive_unit_plan
+    947: async def restore_unit_plan
+  frontend/src/services/api.js:
+    812: export const unitPlanService = {
+    (archive + restore methods added in this section)
+  frontend/src/pages/UnitPlansPage.js:
+     84: const [showArchived, ...]
+    139: const loadArchivedPlans = useCallback
+    152: handleArchivePlan → unitPlanService.archive
+    168: handleRestorePlan → unitPlanService.restore
+    591: {showArchived && (
+    615: onClick={() => handleRestorePlan(plan)}
+    868: onClick={() => handleArchivePlan(detailPlan)}
+
+============================================================
+DEPLOY METHOD
+============================================================
+MIXED — ./deploy.sh, Capgo OTA, no ./ship.sh, no new dependency
+
+- Backend change (list_unit_plans signature + 2 new endpoints) → ./deploy.sh
+- Frontend changes (api.js + UnitPlansPage.js) → Capgo OTA bundle
+- No new npm/pip packages, no DB migration (uses existing db.unit_plans + ad-hoc fields)
+- Legacy unit_plans without `status` are correctly returned by `{'$ne': 'archived'}`
+
+============================================================
+COMMIT MESSAGE
+============================================================
+feat(plans): archive and restore unit (per-apartment) plans
+
+Adds archive/restore for plans attached to individual units, mirroring
+the existing project-level plan archive flow.
+
+Backend (plans_router.py):
+- list_unit_plans now accepts ?archived=bool and hides archived plans
+  from the default list (legacy plans without `status` continue to show)
+- PATCH /projects/{pid}/units/{uid}/plans/{plan_id}/archive
+- PATCH /projects/{pid}/units/{uid}/plans/{plan_id}/restore
+- Same RBAC chain as project plans: viewer-block →
+  _check_project_read_access → PLAN_UPLOAD_ROLES; Hebrew 403/404
+- Audit events: unit_plan_archived / unit_plan_restored
+
+Frontend:
+- unitPlanService.archive() / .restore() in services/api.js
+- UnitPlansPage: "ארכב" action in the plan detail modal (canUpload only)
+- Inline collapsible "ארכיון" section under the plan grid with minimal
+  non-clickable rows + "שחזר" action (avoids 404s for archived URLs)
+
+Task #528 — Bug 3 — branch: staging
+Rollback SHA: 8f12ae3
+
+============================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+============================================================
