@@ -104,6 +104,12 @@ const UnitHomePage = () => {
                   navigate('/projects');
                 } else if (role === 'viewer') {
                   navigate(`/projects/${projectId}/tasks`);
+                } else if (building?.id) {
+                  // BATCH unit-back-nav-fix (2026-05-25) — Bug 4: a unit
+                  // lives inside a building, so the back arrow returns
+                  // to that building's page rather than the project
+                  // structure tab.
+                  navigate(`/projects/${projectId}/buildings/${building.id}`);
                 } else {
                   navigate(`/projects/${projectId}/control?tab=structure`);
                 }

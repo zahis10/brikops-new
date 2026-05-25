@@ -1,213 +1,108 @@
-BATCH storage-admin-panel (2026-05-25b)
-=======================================
+BATCH unit-back-nav-fix (2026-05-25) — Bug 4
+============================================
 Branch:        staging
-Rollback SHA:  1116d40 (HEAD before this edit)
-Type:          MIXED (backend+frontend) — ./deploy.sh, Capgo OTA for
-               the frontend, no ./ship.sh, no new dependency.
-               Ship backend FIRST or together — the new tab calls the
-               new endpoints.
-Files (3):     backend/contractor_ops/upload_quota.py
-               backend/contractor_ops/admin_router.py
-               frontend/src/pages/AdminPage.js
+Rollback SHA:  b9471d0 (HEAD before this edit)
+Type:          FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no new dependency.
+Files (1):     frontend/src/pages/UnitHomePage.js
 
 WHAT & WHY
 ----------
-The per-org storage quota (Phase 2) works, but it has no UI: usage can
-only be seen in the org_storage_usage collection in Atlas, and an org's
-limit can only be changed by hand-editing that doc or by moving the
-global ORG_STORAGE_LIMIT_GB env var (which moves EVERY org at once).
-
-This batch makes it operable from the admin panel:
-  - New "אחסון" tab — every org's usage with a fill bar.
-  - "שנה מגבלה" sets a per-org limit (limit_bytes on org_storage_usage)
-    without touching Atlas.
-  - "החזר לברירת מחדל" removes the override — pinning is not a one-way
-    door.
-
-The global default (ORG_STORAGE_LIMIT_GB, 100GB) stays as the fallback;
-the per-org override lives as `limit_bytes` on the existing
-org_storage_usage doc. No new collection, no migration. Revision 2026-05-25b
-folds in refactor-backlog #21 (2-query / no N+1 list) and #22 (reset
-endpoint).
+Bug 4 of the 2026-05-21 report. The unit page back arrow sent a
+management user to /projects/{id}/control?tab=structure (the project
+structure tab) instead of to the BUILDING the unit sits inside. They
+then had to re-drill building → floor → unit just to reach a
+neighbouring unit. The unit-detail API already returns the unit's
+building {id,name} and UnitHomePage destructures it, so the back arrow
+just needs to use it.
 
 STEP 0 — PRE-FLIGHT (outputs)
 -----------------------------
-0.1  upload_quota.py — Phase 2 in place ✅
-       L19 ORG_STORAGE_LIMIT_BYTES; L22 check_storage_quota;
-       L46 record_upload; both use org_storage_usage collection.
+0.1  grep -n "control?tab=structure\|role === 'contractor'\|building" \
+       frontend/src/pages/UnitHomePage.js
+       60:  const { unit, floor, building, project, kpi } = unitData;
+      103:                if (role === 'contractor') {
+      108:                  navigate(`/projects/${projectId}/control?tab=structure`);
+      131:                items={[project?.name, building?.name, floor?.name]}
+     → `building` is already destructured from unitData (L60); the
+       management branch hard-codes the structure tab (L108). ✅
 
-0.2  admin_router.py:
-       L1: from fastapi import APIRouter, HTTPException, Depends, Query, Request
-       L3: from datetime import datetime, timezone
-       L4: import uuid
-       L10: require_super_admin imported from contractor_ops.router
-       L23: router = APIRouter(prefix="/api")
-       Audit pattern: `await db.audit_events.insert_one({...})` used by
-       admin_update_org (L326) — exactly what the 3 new endpoints use.
+0.2  grep -n 'buildings/:buildingId"' frontend/src/App.js
+      541:          path="/projects/:projectId/buildings/:buildingId"
+     → target route exists. ✅
 
-0.3  organizations.find — confirmed shape `{'_id':0,'id':1,'name':1}`
-     already used elsewhere (admin_recalc_all_orgs L573).
+0.3  Sibling pages (UnitDetailPage / UnitPlansPage /
+     ApartmentDashboardPage) — NOT touched. Out of scope per spec.
 
-0.4  AdminPage.js TABS (L62) — 8 entries ending with `log`:
-       overview / dashboard / users / orgs / billing / activity /
-       qc-templates / log.
-     handleTabClick (L150) navigates for dashboard|users|orgs|billing|
-     activity|qc-templates; falls through to `setActiveTab(tabId)` for
-     anything else → `storage` becomes an in-page tab automatically.
+DIFF — frontend/src/pages/UnitHomePage.js
+-----------------------------------------
+Back-arrow `<button>` onClick — added a NEW branch between `viewer`
+and the existing `else`. Contractor and viewer branches unchanged;
+the structure-tab string is kept verbatim as the no-building fallback.
 
-0.5  Loaders mounted ONCE in L143 useEffect (4 of them, all
-     useCallback). `toast` + Dialog were NOT imported — both added in
-     PART 3. dialog.jsx exports Dialog/DialogPortal/DialogOverlay/
-     DialogTrigger/DialogClose/DialogContent/DialogHeader/DialogFooter/
-     DialogTitle/DialogDescription.
+   - } else {
+   -   navigate(`/projects/${projectId}/control?tab=structure`);
+   - }
+   + } else if (building?.id) {
+   +   // BATCH unit-back-nav-fix (2026-05-25) — Bug 4: a unit
+   +   // lives inside a building, so the back arrow returns
+   +   // to that building's page rather than the project
+   +   // structure tab.
+   +   navigate(`/projects/${projectId}/buildings/${building.id}`);
+   + } else {
+   +   navigate(`/projects/${projectId}/control?tab=structure`);
+   + }
 
-DIFF — upload_quota.py  (one comparison change)
------------------------------------------------
-- Inside the try block of check_storage_quota, after
-  `used = (doc or {}).get('bytes_used', 0)`, ADDED:
-    # BATCH storage-admin-panel (2026-05-25) — a per-org limit
-    # (set from the admin panel) overrides the global default.
-    limit = (doc or {}).get('limit_bytes') or ORG_STORAGE_LIMIT_BYTES
-- Changed the comparison + WARN log line from
-  `ORG_STORAGE_LIMIT_BYTES` to `limit`.
-- The HTTPException(413, "מכסת האחסון של הארגון מלאה...") block is
-  UNCHANGED. record_upload UNCHANGED. NO new helper.
+No new imports, no new state, no other file touched.
 
-DIFF — admin_router.py  (+1 import, +3 endpoints)
--------------------------------------------------
-- L22 ADDED:
-    from contractor_ops.upload_quota import ORG_STORAGE_LIMIT_BYTES
-- Inserted right after admin_update_org (L341 onward):
-  · GET  /admin/storage-usage          → admin_storage_usage
-       2 queries (orgs + org_storage_usage), in-memory join,
-       no N+1. Returns sorted-by-usage-desc list with
-       {org_id, name, bytes_used, limit_bytes, is_custom_limit}.
-  · POST /admin/storage-usage/{org_id}/limit → admin_set_storage_limit
-       Validates limit_gb is int AND not bool, 1..10000 (422 with
-       Hebrew `מגבלה לא תקינה (1-10000 ג"ב)`). Verifies org exists
-       (404). $set limit_bytes (upsert=True). Audit event
-       `set_storage_limit`, payload {org_id, limit_gb}.
-  · DELETE /admin/storage-usage/{org_id}/limit → admin_reset_storage_limit
-       Verifies org exists (404). $unset limit_bytes — NO upsert
-       (no empty docs). Audit event `reset_storage_limit`, payload
-       {org_id}.
-  All 3 use Depends(require_super_admin); same audit pattern as
-  admin_update_org.
+VERIFY
+------
+V1  Frontend build — runs at ./deploy.sh time (not invoked locally).
 
-DIFF — AdminPage.js  (+1 tab, +1 section, +1 dialog)
-----------------------------------------------------
-- L8-14 imports: HardDrive added to lucide; `toast` from 'sonner';
-  Dialog/DialogContent/DialogHeader/DialogTitle/DialogFooter/
-  DialogClose from '../components/ui/dialog'.
-- L75 TABS: inserted `{ id: 'storage', label: 'אחסון', icon: HardDrive }`
-  immediately before `log`. handleTabClick UNCHANGED.
-- L79-85: top-level `formatBytes(n)` helper next to StatCard
-  (>=1GB → "X.X GB", else "N MB").
-- L114-117: 4 new state hooks — storageUsage(null), editLimitOrg(null),
-  newLimitGb(''), savingLimit(false).
-- L161-169: `loadStorageUsage` useCallback (dep [authHeaders]).
-- L171-198: `saveStorageLimit` — client validation int 1..10000 (Hebrew
-  toast), POST {limit_gb}, on ok toast success + close + reload.
-- L200-220: `resetStorageLimit` — DELETE, on ok toast
-  "המגבלה אופסה לברירת המחדל" + close + reload. Shares savingLimit.
-- L222-228: mount useEffect — loadStorageUsage added to body AND dep
-  array, exactly like the existing 4 loaders.
-- L488-542: `{activeTab === 'storage' && (...)}` placed right before
-  the `log` block. HardDrive icon header + count pill; loader / empty
-  / list; per row: name + "מותאם" badge when is_custom_limit + fill
-  bar (emerald <75 / amber 75-90 / red >=90) + `used / limit` text +
-  "שנה מגבלה" button.
-- L544-588: Radix `<Dialog open={!!editLimitOrg}>`; one number input
-  (1..10000); footer = "שמור" / conditional "החזר לברירת מחדל"
-  (ONLY when editLimitOrg?.is_custom_limit) / "ביטול". NO
-  window.prompt / window.confirm.
+V2  grep -n 'buildings/${building.id}\|control?tab=structure' \
+       frontend/src/pages/UnitHomePage.js
+      112:                  navigate(`/projects/${projectId}/buildings/${building.id}`);
+      114:                  navigate(`/projects/${projectId}/control?tab=structure`);
+    → exactly one of each, as expected. ✅
 
-VERIFICATION
-------------
-V1  Backend imports clean:
-      cd backend && python -c "import contractor_ops.upload_quota, contractor_ops.admin_router"
-      → V1 OK
-
-V2  Frontend build — runs at ./deploy.sh time (not invoked locally).
-
-V3  Static grep (literal):
-
-    backend/contractor_ops/upload_quota.py:
-      34:        limit = (doc or {}).get('limit_bytes') or ORG_STORAGE_LIMIT_BYTES
-
-    backend/contractor_ops/admin_router.py:
-      22: from contractor_ops.upload_quota import ORG_STORAGE_LIMIT_BYTES
-     339: @router.get("/admin/storage-usage")
-     361:            'limit_bytes': custom or ORG_STORAGE_LIMIT_BYTES,
-     368: @router.post("/admin/storage-usage/{org_id}/limit")
-     369: async def admin_set_storage_limit(
-     393:        'event_type': 'set_storage_limit',
-     402: @router.delete("/admin/storage-usage/{org_id}/limit")
-     403: async def admin_reset_storage_limit(
-     419:        'event_type': 'reset_storage_limit',
-
-    frontend/src/pages/AdminPage.js:
-       8: TrendingUp, ChevronLeft, LayoutDashboard, HardDrive
-      72: { id: 'storage', label: 'אחסון', icon: HardDrive },
-     111: const [storageUsage, setStorageUsage] = useState(null);
-     158: const loadStorageUsage = useCallback(...)
-     197: const resetStorageLimit = async () => {
-     224: loadStorageUsage();
-     225: }, [loadSystemInfo, loadPaymentRequests, loadQuotaRequests, loadAuditEvents, loadStorageUsage]);
-     485: {activeTab === 'storage' && (
-     488: <HardDrive className="w-4 h-4 text-blue-500" />
-     568: onClick={resetStorageLimit}
-
-V4  Device test — Zahi, after ./deploy.sh --stag then --prod and an
-    app cold-restart x2 for OTA:
-    a) Admin → "אחסון" tab → table with usage bars + "<used> / <limit>".
-    b) "שנה מגבלה" → dialog → 250 → שמור → table shows 250 GB + "מותאם".
-    c) Atlas: that org's org_storage_usage.limit_bytes = 268435456000.
-    d) Re-open same org → "החזר לברירת מחדל" visible → click → "מותאם"
-       gone, table shows 100 GB; Atlas: limit_bytes field removed.
-    e) Org on the default → "שנה מגבלה" pre-shows 100 → save 100 still
-       creates a custom limit (EXPECTED — it is now explicitly pinned);
-       "החזר לברירת מחדל" un-pins. (No reset button for an org without
-       an override.)
-    f) Quota still enforced: an org near its (custom) limit → upload
-       → 413 Hebrew; an org with a raised limit → upload succeeds.
-    g) Invalid input (0, negative, 99999, blank) → Hebrew toast
-       client-side; server returns 422 if reached.
-    h) Non-super-admin → all 3 endpoints return 403.
+V3  Device / browser test (Zahi, after ./deploy.sh --prod + Capgo OTA
+    cold-restart x2):
+    a) Management user: building → floor → unit → press unit back
+       arrow → lands on /projects/{id}/buildings/{buildingId}, NOT
+       the structure tab.
+    b) Building page's own back arrow still works (unchanged).
+    c) Unit with no building (if any exists) → back arrow falls back
+       to the structure tab without error.
+    d) Contractor → /projects; viewer → /projects/{id}/tasks — both
+       unchanged.
 
 DO NOT TOUCH (confirmed unchanged)
 ----------------------------------
-- Global ORG_STORAGE_LIMIT_GB env default — stays the fallback.
-- record_upload and the 413 Hebrew message in check_storage_quota —
-  only the comparison + WARN log line changed.
-- Upload endpoints (Phase 1/2/3a/3b/3c wirings) — call
-  check_storage_quota; per-org limit is transparent.
-- Other 6 AdminPage tabs, their loaders, handleTabClick's navigate
-  branches.
-- No new collection (`limit_bytes` is an optional field on the
-  existing org_storage_usage doc). No migration. No new dependency.
-  No native files.
+- contractor + viewer branches.
+- ?tab=structure fallback string (kept as the no-building fallback).
+- Sibling unit pages (UnitDetailPage / UnitPlansPage /
+  ApartmentDashboardPage).
+- The defects card's `navigate(..., { state: { from: 'unit-home' } })`
+  and every other handler in UnitHomePage.js.
+- Backend, nginx, native, capacitor.config — nothing.
 
-MIXED (backend+frontend) — ./deploy.sh, Capgo OTA for the frontend,
-no ./ship.sh, no new dependency.
+FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no new dependency.
 
 COMMIT MESSAGE (in .local/.commit_message)
 ------------------------------------------
-feat(admin): storage-usage tab — view, raise, and reset per-org limits
+fix(nav): unit page back arrow returns to the unit's building page
 
-Adds an "אחסון" tab to the admin panel: every org's storage usage with
-a fill bar, a button to set a per-org storage limit, and a button to
-reset an org back to the global default — all without editing Atlas.
-Backend adds GET /api/admin/storage-usage (2 queries, no N+1), POST
-and DELETE /api/admin/storage-usage/{org_id}/limit; check_storage_quota
-now honours an optional per-org limit_bytes, falling back to the
-global ORG_STORAGE_LIMIT_GB default. No migration.
+Bug 4 (2026-05-21 report). The unit page (UnitHomePage) back arrow
+sent management users to /control?tab=structure instead of the
+building the unit sits in. The unit-detail API already returns the
+unit's building {id,name}; the back arrow now navigates to
+/projects/{projectId}/buildings/{buildingId} when a building is
+present, falling back to the structure tab only for a unit with no
+building. Contractor/viewer flows unchanged. Frontend-only; Capgo OTA.
 
 ROLLBACK
 --------
-git revert <commit-sha> -- backend/contractor_ops/upload_quota.py \
-  backend/contractor_ops/admin_router.py frontend/src/pages/AdminPage.js
-./deploy.sh --prod
+git revert <commit-sha> -- frontend/src/pages/UnitHomePage.js
+./deploy.sh --prod   (Capgo OTA).
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
