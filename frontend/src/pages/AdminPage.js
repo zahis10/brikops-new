@@ -5,8 +5,10 @@ import { BACKEND_URL } from '../services/api';
 import {
   HardHat, ArrowRight, Users, Loader2, RefreshCw,
   Shield, BarChart3, Building2, CreditCard, ClipboardList,
-  TrendingUp, ChevronLeft, LayoutDashboard
+  TrendingUp, ChevronLeft, LayoutDashboard, HardDrive
 } from 'lucide-react';
+import { toast } from 'sonner';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '../components/ui/dialog';
 
 const ACTION_LABELS = {
   create: 'יצירה',
@@ -67,8 +69,17 @@ const TABS = [
   { id: 'billing', label: 'חיובים', icon: CreditCard },
   { id: 'activity', label: 'פעילות', icon: TrendingUp },
   { id: 'qc-templates', label: 'תבניות בקרת ביצוע / מסירה', icon: ClipboardList },
+  { id: 'storage', label: 'אחסון', icon: HardDrive },
   { id: 'log', label: 'יומן', icon: ClipboardList },
 ];
+
+const formatBytes = (n) => {
+  if (!n || n < 1) return '0';
+  const gb = n / (1024 ** 3);
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  const mb = n / (1024 ** 2);
+  return `${mb.toFixed(0)} MB`;
+};
 
 const StatCard = ({ icon: Icon, label, value, bg, borderColor, numberColor, onClick }) => (
   <div
@@ -97,6 +108,10 @@ const AdminPage = () => {
   const [quotaRequests, setQuotaRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
+  const [storageUsage, setStorageUsage] = useState(null);
+  const [editLimitOrg, setEditLimitOrg] = useState(null);
+  const [newLimitGb, setNewLimitGb] = useState('');
+  const [savingLimit, setSavingLimit] = useState(false);
 
   const authHeaders = useCallback(() => {
     const token = localStorage.getItem('token');
@@ -140,12 +155,74 @@ const AdminPage = () => {
     } catch {}
   }, [authHeaders]);
 
+  const loadStorageUsage = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/admin/storage-usage`, { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setStorageUsage(data.items || []);
+      }
+    } catch {}
+  }, [authHeaders]);
+
+  const saveStorageLimit = async () => {
+    const gb = parseInt(newLimitGb, 10);
+    if (!Number.isInteger(gb) || gb < 1 || gb > 10000) {
+      toast.error('הזן מספר שלם בין 1 ל-10000');
+      return;
+    }
+    setSavingLimit(true);
+    try {
+      const res = await fetch(
+        `${BACKEND_URL}/api/admin/storage-usage/${editLimitOrg.org_id}/limit`,
+        { method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ limit_gb: gb }) });
+      if (res.ok) {
+        toast.success('המגבלה עודכנה');
+        setEditLimitOrg(null);
+        setNewLimitGb('');
+        await loadStorageUsage();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'שגיאה בעדכון המגבלה');
+      }
+    } catch {
+      toast.error('שגיאה בעדכון המגבלה');
+    } finally {
+      setSavingLimit(false);
+    }
+  };
+
+  const resetStorageLimit = async () => {
+    setSavingLimit(true);
+    try {
+      const res = await fetch(
+        `${BACKEND_URL}/api/admin/storage-usage/${editLimitOrg.org_id}/limit`,
+        { method: 'DELETE', headers: authHeaders() });
+      if (res.ok) {
+        toast.success('המגבלה אופסה לברירת המחדל');
+        setEditLimitOrg(null);
+        setNewLimitGb('');
+        await loadStorageUsage();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'שגיאה באיפוס המגבלה');
+      }
+    } catch {
+      toast.error('שגיאה באיפוס המגבלה');
+    } finally {
+      setSavingLimit(false);
+    }
+  };
+
   useEffect(() => {
     loadSystemInfo();
     loadPaymentRequests();
     loadQuotaRequests();
     loadAuditEvents();
-  }, [loadSystemInfo, loadPaymentRequests, loadQuotaRequests, loadAuditEvents]);
+    loadStorageUsage();
+  }, [loadSystemInfo, loadPaymentRequests, loadQuotaRequests, loadAuditEvents, loadStorageUsage]);
 
   const handleTabClick = (tabId) => {
     if (tabId === 'dashboard') { navigate('/admin/dashboard'); return; }
@@ -404,6 +481,103 @@ const AdminPage = () => {
             )}
           </>
         )}
+
+        {activeTab === 'storage' && (
+          <div className="bg-white rounded-xl border shadow-sm p-4">
+            <div className="flex items-center gap-2 mb-4">
+              <HardDrive className="w-4 h-4 text-blue-500" />
+              <h3 className="text-sm font-bold text-slate-700">אחסון ארגונים</h3>
+              {storageUsage && (
+                <span className="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full">{storageUsage.length}</span>
+              )}
+            </div>
+            {storageUsage === null ? (
+              <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
+            ) : storageUsage.length === 0 ? (
+              <div className="text-center py-8 text-sm text-slate-400">אין נתוני אחסון</div>
+            ) : (
+              <div className="space-y-2">
+                {storageUsage.map((org) => {
+                  const pct = org.limit_bytes > 0 ? Math.min(100, (org.bytes_used / org.limit_bytes) * 100) : 0;
+                  const barColor = pct >= 90 ? 'bg-red-500' : pct >= 75 ? 'bg-amber-500' : 'bg-emerald-500';
+                  return (
+                    <div key={org.org_id} className="flex items-center gap-3 py-2 px-2 rounded-lg hover:bg-slate-50">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-medium text-slate-700 truncate">{org.name || org.org_id}</span>
+                          {org.is_custom_limit && (
+                            <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">מותאם</span>
+                          )}
+                        </div>
+                        <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div className={`h-full ${barColor} transition-all`} style={{ width: `${pct}%` }} />
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          {formatBytes(org.bytes_used)} / {formatBytes(org.limit_bytes)}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setEditLimitOrg({
+                            org_id: org.org_id,
+                            name: org.name,
+                            limit_bytes: org.limit_bytes,
+                            is_custom_limit: org.is_custom_limit,
+                          });
+                          setNewLimitGb(String(Math.round(org.limit_bytes / (1024 ** 3))));
+                        }}
+                        className="text-xs px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 font-medium shrink-0"
+                      >
+                        שנה מגבלה
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        <Dialog open={!!editLimitOrg} onOpenChange={(o) => { if (!o) { setEditLimitOrg(null); setNewLimitGb(''); } }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>מגבלת אחסון — {editLimitOrg?.name}</DialogTitle>
+            </DialogHeader>
+            <div className="py-2">
+              <label className="block text-sm text-slate-600 mb-2">מגבלה (ג"ב)</label>
+              <input
+                type="number"
+                min={1}
+                max={10000}
+                value={newLimitGb}
+                onChange={(e) => setNewLimitGb(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <DialogFooter className="flex flex-row-reverse gap-2 sm:justify-start">
+              <button
+                onClick={saveStorageLimit}
+                disabled={savingLimit}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+              >
+                {savingLimit && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                שמור
+              </button>
+              {editLimitOrg?.is_custom_limit && (
+                <button
+                  onClick={resetStorageLimit}
+                  disabled={savingLimit}
+                  className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-sm disabled:opacity-50"
+                >
+                  החזר לברירת מחדל
+                </button>
+              )}
+              <DialogClose asChild>
+                <button className="px-4 py-2 text-slate-500 hover:text-slate-700 rounded-lg text-sm">ביטול</button>
+              </DialogClose>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {activeTab === 'log' && (
           <div className="bg-white rounded-xl border shadow-sm p-4">

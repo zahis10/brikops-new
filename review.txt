@@ -1,113 +1,212 @@
-BATCH g4-import-size-limit (2026-05-25)
+BATCH storage-admin-panel (2026-05-25b)
 =======================================
 Branch:        staging
-Rollback SHA:  f6f1fac (HEAD before this edit)
-Type:          MIXED (frontend+backend) — ./deploy.sh, Capgo OTA for
-               the frontend, no ./ship.sh, no native, no new dep.
-Files (2):     frontend/src/components/handover/G4ImportModal.js
-               backend/contractor_ops/import_router.py
+Rollback SHA:  1116d40 (HEAD before this edit)
+Type:          MIXED (backend+frontend) — ./deploy.sh, Capgo OTA for
+               the frontend, no ./ship.sh, no new dependency.
+               Ship backend FIRST or together — the new tab calls the
+               new endpoints.
+Files (3):     backend/contractor_ops/upload_quota.py
+               backend/contractor_ops/admin_router.py
+               frontend/src/pages/AdminPage.js
 
 WHAT & WHY
 ----------
-Real G4 buyer-data xlsx files exceed the current 5MB cap (xlsx
-formatting/styling overhead inflates a modest sheet well past 5MB).
-Raise MAX_FILE_SIZE 5MB -> 50MB in both the frontend guard and the
-backend check (and their Hebrew error strings). 50MB matches the
-plans-upload cap and stays under the nginx 55MB body limit; MAX_ROWS
-(1000) is unchanged so the parsing-work bound is unaffected.
+The per-org storage quota (Phase 2) works, but it has no UI: usage can
+only be seen in the org_storage_usage collection in Atlas, and an org's
+limit can only be changed by hand-editing that doc or by moving the
+global ORG_STORAGE_LIMIT_GB env var (which moves EVERY org at once).
 
-STEP 0 — PRE-FLIGHT (literal outputs)
--------------------------------------
-0.1 frontend (G4ImportModal.js):
-      5:const MAX_FILE_SIZE = 5 * 1024 * 1024;
-     59:    if (selected.size > MAX_FILE_SIZE) {
-     60:      setError('קובץ גדול מדי (מקסימום 5MB)');
+This batch makes it operable from the admin panel:
+  - New "אחסון" tab — every org's usage with a fill bar.
+  - "שנה מגבלה" sets a per-org limit (limit_bytes on org_storage_usage)
+    without touching Atlas.
+  - "החזר לברירת מחדל" removes the override — pinning is not a one-way
+    door.
 
-0.2 backend (import_router.py):
-     26:MAX_FILE_SIZE = 5 * 1024 * 1024
-     27:MAX_ROWS = 1000
-    147:        if row_idx > MAX_ROWS + data_start:
-    169:        if row_idx > MAX_ROWS + header_row + 1:
-    523:    # len(content) > MAX_FILE_SIZE checks already cover it.
-    528:    if file.size and file.size > MAX_FILE_SIZE:
-    529:        raise HTTPException(status_code=400, detail="קובץ גדול מדי (מקסימום 5MB)")
-    532:    if len(content) > MAX_FILE_SIZE:
-    533:        raise HTTPException(status_code=400, detail="קובץ גדול מדי (מקסימום 5MB)")
+The global default (ORG_STORAGE_LIMIT_GB, 100GB) stays as the fallback;
+the per-org override lives as `limit_bytes` on the existing
+org_storage_usage doc. No new collection, no migration. Revision 2026-05-25b
+folds in refactor-backlog #21 (2-query / no N+1 list) and #22 (reset
+endpoint).
 
-Matches spec exactly — proceed.
+STEP 0 — PRE-FLIGHT (outputs)
+-----------------------------
+0.1  upload_quota.py — Phase 2 in place ✅
+       L19 ORG_STORAGE_LIMIT_BYTES; L22 check_storage_quota;
+       L46 record_upload; both use org_storage_usage collection.
 
-DIFF — frontend/src/components/handover/G4ImportModal.js
---------------------------------------------------------
-L5:  const MAX_FILE_SIZE = 5 * 1024 * 1024;
-  -> const MAX_FILE_SIZE = 50 * 1024 * 1024;
-L60: setError('קובץ גדול מדי (מקסימום 5MB)');
-  -> setError('קובץ גדול מדי (מקסימום 50MB)');
+0.2  admin_router.py:
+       L1: from fastapi import APIRouter, HTTPException, Depends, Query, Request
+       L3: from datetime import datetime, timezone
+       L4: import uuid
+       L10: require_super_admin imported from contractor_ops.router
+       L23: router = APIRouter(prefix="/api")
+       Audit pattern: `await db.audit_events.insert_one({...})` used by
+       admin_update_org (L326) — exactly what the 3 new endpoints use.
 
-DIFF — backend/contractor_ops/import_router.py
-----------------------------------------------
-L26: MAX_FILE_SIZE = 5 * 1024 * 1024
-  -> MAX_FILE_SIZE = 50 * 1024 * 1024
-L529, L533: detail="קובץ גדול מדי (מקסימום 5MB)"
-  -> detail="קובץ גדול מדי (מקסימום 50MB)"
-(both occurrences, via replace_all on the literal string).
+0.3  organizations.find — confirmed shape `{'_id':0,'id':1,'name':1}`
+     already used elsewhere (admin_recalc_all_orgs L573).
+
+0.4  AdminPage.js TABS (L62) — 8 entries ending with `log`:
+       overview / dashboard / users / orgs / billing / activity /
+       qc-templates / log.
+     handleTabClick (L150) navigates for dashboard|users|orgs|billing|
+     activity|qc-templates; falls through to `setActiveTab(tabId)` for
+     anything else → `storage` becomes an in-page tab automatically.
+
+0.5  Loaders mounted ONCE in L143 useEffect (4 of them, all
+     useCallback). `toast` + Dialog were NOT imported — both added in
+     PART 3. dialog.jsx exports Dialog/DialogPortal/DialogOverlay/
+     DialogTrigger/DialogClose/DialogContent/DialogHeader/DialogFooter/
+     DialogTitle/DialogDescription.
+
+DIFF — upload_quota.py  (one comparison change)
+-----------------------------------------------
+- Inside the try block of check_storage_quota, after
+  `used = (doc or {}).get('bytes_used', 0)`, ADDED:
+    # BATCH storage-admin-panel (2026-05-25) — a per-org limit
+    # (set from the admin panel) overrides the global default.
+    limit = (doc or {}).get('limit_bytes') or ORG_STORAGE_LIMIT_BYTES
+- Changed the comparison + WARN log line from
+  `ORG_STORAGE_LIMIT_BYTES` to `limit`.
+- The HTTPException(413, "מכסת האחסון של הארגון מלאה...") block is
+  UNCHANGED. record_upload UNCHANGED. NO new helper.
+
+DIFF — admin_router.py  (+1 import, +3 endpoints)
+-------------------------------------------------
+- L22 ADDED:
+    from contractor_ops.upload_quota import ORG_STORAGE_LIMIT_BYTES
+- Inserted right after admin_update_org (L341 onward):
+  · GET  /admin/storage-usage          → admin_storage_usage
+       2 queries (orgs + org_storage_usage), in-memory join,
+       no N+1. Returns sorted-by-usage-desc list with
+       {org_id, name, bytes_used, limit_bytes, is_custom_limit}.
+  · POST /admin/storage-usage/{org_id}/limit → admin_set_storage_limit
+       Validates limit_gb is int AND not bool, 1..10000 (422 with
+       Hebrew `מגבלה לא תקינה (1-10000 ג"ב)`). Verifies org exists
+       (404). $set limit_bytes (upsert=True). Audit event
+       `set_storage_limit`, payload {org_id, limit_gb}.
+  · DELETE /admin/storage-usage/{org_id}/limit → admin_reset_storage_limit
+       Verifies org exists (404). $unset limit_bytes — NO upsert
+       (no empty docs). Audit event `reset_storage_limit`, payload
+       {org_id}.
+  All 3 use Depends(require_super_admin); same audit pattern as
+  admin_update_org.
+
+DIFF — AdminPage.js  (+1 tab, +1 section, +1 dialog)
+----------------------------------------------------
+- L8-14 imports: HardDrive added to lucide; `toast` from 'sonner';
+  Dialog/DialogContent/DialogHeader/DialogTitle/DialogFooter/
+  DialogClose from '../components/ui/dialog'.
+- L75 TABS: inserted `{ id: 'storage', label: 'אחסון', icon: HardDrive }`
+  immediately before `log`. handleTabClick UNCHANGED.
+- L79-85: top-level `formatBytes(n)` helper next to StatCard
+  (>=1GB → "X.X GB", else "N MB").
+- L114-117: 4 new state hooks — storageUsage(null), editLimitOrg(null),
+  newLimitGb(''), savingLimit(false).
+- L161-169: `loadStorageUsage` useCallback (dep [authHeaders]).
+- L171-198: `saveStorageLimit` — client validation int 1..10000 (Hebrew
+  toast), POST {limit_gb}, on ok toast success + close + reload.
+- L200-220: `resetStorageLimit` — DELETE, on ok toast
+  "המגבלה אופסה לברירת המחדל" + close + reload. Shares savingLimit.
+- L222-228: mount useEffect — loadStorageUsage added to body AND dep
+  array, exactly like the existing 4 loaders.
+- L488-542: `{activeTab === 'storage' && (...)}` placed right before
+  the `log` block. HardDrive icon header + count pill; loader / empty
+  / list; per row: name + "מותאם" badge when is_custom_limit + fill
+  bar (emerald <75 / amber 75-90 / red >=90) + `used / limit` text +
+  "שנה מגבלה" button.
+- L544-588: Radix `<Dialog open={!!editLimitOrg}>`; one number input
+  (1..10000); footer = "שמור" / conditional "החזר לברירת מחדל"
+  (ONLY when editLimitOrg?.is_custom_limit) / "ביטול". NO
+  window.prompt / window.confirm.
 
 VERIFICATION
 ------------
-V1  Frontend build: runs at ./deploy.sh time — not invoked locally.
+V1  Backend imports clean:
+      cd backend && python -c "import contractor_ops.upload_quota, contractor_ops.admin_router"
+      → V1 OK
 
-V2  Static grep (literal):
-    frontend/src/components/handover/G4ImportModal.js:
-       5: const MAX_FILE_SIZE = 50 * 1024 * 1024;
-      59: if (selected.size > MAX_FILE_SIZE) {
-      60: setError('קובץ גדול מדי (מקסימום 50MB)');
-    backend/contractor_ops/import_router.py:
-       26: MAX_FILE_SIZE = 50 * 1024 * 1024
-      523: # len(content) > MAX_FILE_SIZE checks already cover it.
-      528: if file.size and file.size > MAX_FILE_SIZE:
-      529: raise HTTPException(... detail="קובץ גדול מדי (מקסימום 50MB)")
-      532: if len(content) > MAX_FILE_SIZE:
-      533: raise HTTPException(... detail="קובץ גדול מדי (מקסימום 50MB)")
-    NO "5MB" left in any error string. MAX_ROWS = 1000 untouched
-    (L27 still present, L147/L169/L584/L665 references unchanged).
+V2  Frontend build — runs at ./deploy.sh time (not invoked locally).
 
-V3  Backend import:
-      cd backend && python -c "import contractor_ops.import_router"
-      → V3 OK
+V3  Static grep (literal):
+
+    backend/contractor_ops/upload_quota.py:
+      34:        limit = (doc or {}).get('limit_bytes') or ORG_STORAGE_LIMIT_BYTES
+
+    backend/contractor_ops/admin_router.py:
+      22: from contractor_ops.upload_quota import ORG_STORAGE_LIMIT_BYTES
+     339: @router.get("/admin/storage-usage")
+     361:            'limit_bytes': custom or ORG_STORAGE_LIMIT_BYTES,
+     368: @router.post("/admin/storage-usage/{org_id}/limit")
+     369: async def admin_set_storage_limit(
+     393:        'event_type': 'set_storage_limit',
+     402: @router.delete("/admin/storage-usage/{org_id}/limit")
+     403: async def admin_reset_storage_limit(
+     419:        'event_type': 'reset_storage_limit',
+
+    frontend/src/pages/AdminPage.js:
+       8: TrendingUp, ChevronLeft, LayoutDashboard, HardDrive
+      72: { id: 'storage', label: 'אחסון', icon: HardDrive },
+     111: const [storageUsage, setStorageUsage] = useState(null);
+     158: const loadStorageUsage = useCallback(...)
+     197: const resetStorageLimit = async () => {
+     224: loadStorageUsage();
+     225: }, [loadSystemInfo, loadPaymentRequests, loadQuotaRequests, loadAuditEvents, loadStorageUsage]);
+     485: {activeTab === 'storage' && (
+     488: <HardDrive className="w-4 h-4 text-blue-500" />
+     568: onClick={resetStorageLimit}
 
 V4  Device test — Zahi, after ./deploy.sh --stag then --prod and an
     app cold-restart x2 for OTA:
-    a) G4 import modal → xlsx between 5MB and 50MB → accepted, import
-       proceeds.
-    b) File over 50MB → rejected with "מקסימום 50MB".
-    c) A normal small import still works.
+    a) Admin → "אחסון" tab → table with usage bars + "<used> / <limit>".
+    b) "שנה מגבלה" → dialog → 250 → שמור → table shows 250 GB + "מותאם".
+    c) Atlas: that org's org_storage_usage.limit_bytes = 268435456000.
+    d) Re-open same org → "החזר לברירת מחדל" visible → click → "מותאם"
+       gone, table shows 100 GB; Atlas: limit_bytes field removed.
+    e) Org on the default → "שנה מגבלה" pre-shows 100 → save 100 still
+       creates a custom limit (EXPECTED — it is now explicitly pinned);
+       "החזר לברירת מחדל" un-pins. (No reset button for an org without
+       an override.)
+    f) Quota still enforced: an org near its (custom) limit → upload
+       → 413 Hebrew; an org with a raised limit → upload succeeds.
+    g) Invalid input (0, negative, 99999, blank) → Hebrew toast
+       client-side; server returns 422 if reached.
+    h) Non-super-admin → all 3 endpoints return 403.
 
 DO NOT TOUCH (confirmed unchanged)
 ----------------------------------
-- MAX_ROWS = 1000 — kept; row cap is independent of file size.
-- PHASE 3c rate-limit hooks on preview_import (check_upload_rate_limit
-  / check_upload_bytes) — untouched.
-- nginx config (55MB already accommodates a 50MB body).
-- excel_router import_excel — out of scope.
-- No other constant, no native, no capacitor config, no dependency.
+- Global ORG_STORAGE_LIMIT_GB env default — stays the fallback.
+- record_upload and the 413 Hebrew message in check_storage_quota —
+  only the comparison + WARN log line changed.
+- Upload endpoints (Phase 1/2/3a/3b/3c wirings) — call
+  check_storage_quota; per-org limit is transparent.
+- Other 6 AdminPage tabs, their loaders, handleTabClick's navigate
+  branches.
+- No new collection (`limit_bytes` is an optional field on the
+  existing org_storage_usage doc). No migration. No new dependency.
+  No native files.
 
-MIXED (frontend+backend) — ./deploy.sh, Capgo OTA for the frontend,
-no ./ship.sh.
+MIXED (backend+frontend) — ./deploy.sh, Capgo OTA for the frontend,
+no ./ship.sh, no new dependency.
 
 COMMIT MESSAGE (in .local/.commit_message)
 ------------------------------------------
-fix(import): raise the G4 buyer-data import file cap 5MB -> 50MB
+feat(admin): storage-usage tab — view, raise, and reset per-org limits
 
-Real buyer-data xlsx files exceed 5MB (xlsx formatting overhead).
-Raise MAX_FILE_SIZE to 50MB in both the G4ImportModal frontend
-guard and the import_router backend check (and their error
-messages). 50MB matches the plans-upload cap and stays under the
-nginx 55MB body limit; MAX_ROWS (1000) is unchanged.
+Adds an "אחסון" tab to the admin panel: every org's storage usage with
+a fill bar, a button to set a per-org storage limit, and a button to
+reset an org back to the global default — all without editing Atlas.
+Backend adds GET /api/admin/storage-usage (2 queries, no N+1), POST
+and DELETE /api/admin/storage-usage/{org_id}/limit; check_storage_quota
+now honours an optional per-org limit_bytes, falling back to the
+global ORG_STORAGE_LIMIT_GB default. No migration.
 
 ROLLBACK
 --------
-git revert <commit-sha> -- \
-  frontend/src/components/handover/G4ImportModal.js \
-  backend/contractor_ops/import_router.py
+git revert <commit-sha> -- backend/contractor_ops/upload_quota.py \
+  backend/contractor_ops/admin_router.py frontend/src/pages/AdminPage.js
 ./deploy.sh --prod
 
 ================================================================================

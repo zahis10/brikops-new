@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "g4-import-size-limit — raise G4 import cap to 50MB"
+title = "storage-admin-panel review — view, raise, reset per-org limits"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"

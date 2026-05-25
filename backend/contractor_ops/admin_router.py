@@ -335,6 +335,96 @@ async def admin_update_org(org_id: str, request: Request, user: dict = Depends(r
     return {'success': True, 'name': name}
 
 
+# BATCH storage-admin-panel (2026-05-25) — admin storage tab endpoints
+@router.get("/admin/storage-usage")
+async def admin_storage_usage(user: dict = Depends(require_super_admin)):
+    """Every org's storage usage + its effective limit, for the admin
+    Storage tab. 2 queries (orgs + usage docs), joined in memory — no
+    per-org query."""
+    db = get_db()
+    orgs = await db.organizations.find(
+        {}, {'_id': 0, 'id': 1, 'name': 1}
+    ).to_list(10000)
+    usage_docs = await db.org_storage_usage.find(
+        {}, {'_id': 0, 'org_id': 1, 'bytes_used': 1, 'limit_bytes': 1}
+    ).to_list(20000)
+    usage_by_org = {d['org_id']: d for d in usage_docs if d.get('org_id')}
+    items = []
+    for org in orgs:
+        doc = usage_by_org.get(org['id'])
+        used = (doc or {}).get('bytes_used', 0)
+        custom = (doc or {}).get('limit_bytes')
+        items.append({
+            'org_id': org['id'],
+            'name': org.get('name', ''),
+            'bytes_used': used,
+            'limit_bytes': custom or ORG_STORAGE_LIMIT_BYTES,
+            'is_custom_limit': bool(custom),
+        })
+    items.sort(key=lambda x: x['bytes_used'], reverse=True)
+    return {'items': items, 'total': len(items)}
+
+
+@router.post("/admin/storage-usage/{org_id}/limit")
+async def admin_set_storage_limit(
+    org_id: str, request: Request,
+    user: dict = Depends(require_super_admin),
+):
+    """Set a per-org storage limit (GB). Stored as limit_bytes on
+    org_storage_usage; check_storage_quota uses it instead of the
+    global default."""
+    body = await request.json()
+    limit_gb = body.get('limit_gb')
+    if not isinstance(limit_gb, int) or isinstance(limit_gb, bool) \
+            or limit_gb < 1 or limit_gb > 10000:
+        raise HTTPException(status_code=422, detail='מגבלה לא תקינה (1-10000 ג"ב)')
+    db = get_db()
+    org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'id': 1})
+    if not org:
+        raise HTTPException(status_code=404, detail='ארגון לא נמצא')
+    limit_bytes = limit_gb * 1024 * 1024 * 1024
+    await db.org_storage_usage.update_one(
+        {'org_id': org_id},
+        {'$set': {'limit_bytes': limit_bytes}},
+        upsert=True,
+    )
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()),
+        'event_type': 'set_storage_limit',
+        'entity_type': 'organization',
+        'actor_id': user['id'],
+        'payload': {'org_id': org_id, 'limit_gb': limit_gb},
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    })
+    return {'ok': True, 'org_id': org_id, 'limit_gb': limit_gb}
+
+
+@router.delete("/admin/storage-usage/{org_id}/limit")
+async def admin_reset_storage_limit(
+    org_id: str,
+    user: dict = Depends(require_super_admin),
+):
+    """Remove an org's custom storage limit; it reverts to the global
+    default. $unset only — no upsert."""
+    db = get_db()
+    org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'id': 1})
+    if not org:
+        raise HTTPException(status_code=404, detail='ארגון לא נמצא')
+    await db.org_storage_usage.update_one(
+        {'org_id': org_id},
+        {'$unset': {'limit_bytes': ''}},
+    )
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()),
+        'event_type': 'reset_storage_limit',
+        'entity_type': 'organization',
+        'actor_id': user['id'],
+        'payload': {'org_id': org_id},
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    })
+    return {'ok': True, 'org_id': org_id}
+
+
 @router.put("/admin/orgs/{org_id}/owner")
 async def admin_change_org_owner(org_id: str, request: Request, user: dict = Depends(require_stepup)):
     db = get_db()
