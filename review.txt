@@ -1,200 +1,113 @@
-BATCH upload-hardening-phase3c-safety-imports (2026-05-24)
-==========================================================
+BATCH g4-import-size-limit (2026-05-25)
+=======================================
 Branch:        staging
-Rollback SHA:  410a699 (HEAD before this edit)
-Type:          BACKEND-ONLY — ./deploy.sh, no Capgo, no ./ship.sh,
-               no native, no new dependency.
-Files (3):     backend/contractor_ops/safety_router.py
-               backend/contractor_ops/excel_router.py
+Rollback SHA:  f6f1fac (HEAD before this edit)
+Type:          MIXED (frontend+backend) — ./deploy.sh, Capgo OTA for
+               the frontend, no ./ship.sh, no native, no new dep.
+Files (2):     frontend/src/components/handover/G4ImportModal.js
                backend/contractor_ops/import_router.py
 
 WHAT & WHY
 ----------
-PHASE 3c (FINAL) of upload-abuse-hardening. After 3a (qc_router)
-and 3b (handover_router ×5), this batch closes the LAST 3 unwired
-upload endpoints from the original 9-endpoint grep. Every upload
-endpoint in the codebase now carries the PHASE 1+2 hardening.
+Real G4 buyer-data xlsx files exceed the current 5MB cap (xlsx
+formatting/styling overhead inflates a modest sheet well past 5MB).
+Raise MAX_FILE_SIZE 5MB -> 50MB in both the frontend guard and the
+backend check (and their Hebrew error strings). 50MB matches the
+plans-upload cap and stays under the nginx 55MB body limit; MAX_ROWS
+(1000) is unchanged so the parsing-work bound is unaffected.
 
-Pattern split (correct per spec §0.5 trace):
-  A. STORES to S3 — upload_safety_file (safety_router) → FULL 5
-     hooks (count + Content-Length + bytes + quota + ledger).
-  B. PARSE-AND-DISCARD — import_excel (excel_router) and
-     preview_import (import_router) → rate-limit hooks ONLY
-     (count + bytes). NO quota, NO ledger — nothing reaches S3.
+STEP 0 — PRE-FLIGHT (literal outputs)
+-------------------------------------
+0.1 frontend (G4ImportModal.js):
+      5:const MAX_FILE_SIZE = 5 * 1024 * 1024;
+     59:    if (selected.size > MAX_FILE_SIZE) {
+     60:      setError('קובץ גדול מדי (מקסימום 5MB)');
 
-STEP 0 — PRE-FLIGHT (outputs)
------------------------------
-0.1  Helpers — all 5 present:
-     upload_rate_limit.py:40,64,90 (rate_limit, bytes, content_length)
-     upload_quota.py:22,46         (storage_quota, record_upload)
+0.2 backend (import_router.py):
+     26:MAX_FILE_SIZE = 5 * 1024 * 1024
+     27:MAX_ROWS = 1000
+    147:        if row_idx > MAX_ROWS + data_start:
+    169:        if row_idx > MAX_ROWS + header_row + 1:
+    523:    # len(content) > MAX_FILE_SIZE checks already cover it.
+    528:    if file.size and file.size > MAX_FILE_SIZE:
+    529:        raise HTTPException(status_code=400, detail="קובץ גדול מדי (מקסימום 5MB)")
+    532:    if len(content) > MAX_FILE_SIZE:
+    533:        raise HTTPException(status_code=400, detail="קובץ גדול מדי (מקסימום 5MB)")
 
-0.2  upload_safety_file (safety_router.py L1767):
-     - L1772 `db = get_db()` already EARLY ✅
-     - L1777 `content = await file.read()`, L1778 size reject
-     - L1793 stores via `obj_save_bytes`
-     - L54 `MAX_SAFETY_UPLOAD_SIZE = 10 * 1024 * 1024` (module-level)
-       → Hook A uses the SYMBOL directly (no literal needed).
-     - L17 fastapi import had no `Request` → ADDED.
+Matches spec exactly — proceed.
 
-0.3  import_excel (excel_router.py L32):
-     - reads `content` L37, parses CSV in memory, inserts
-       buildings/floors/units rows.
-     - NO `save_bytes` / `StorageService` / any storage helper.
-     - L3 fastapi import has no `Request` (kept that way per spec
-       — Content-Length intentionally omitted).
+DIFF — frontend/src/components/handover/G4ImportModal.js
+--------------------------------------------------------
+L5:  const MAX_FILE_SIZE = 5 * 1024 * 1024;
+  -> const MAX_FILE_SIZE = 50 * 1024 * 1024;
+L60: setError('קובץ גדול מדי (מקסימום 5MB)');
+  -> setError('קובץ גדול מדי (מקסימום 50MB)');
 
-0.4  preview_import (import_router.py L514):
-     - `request: Request` ALREADY param (L516).
-     - `content = await file.read()` L526, `len(content) >
-       MAX_FILE_SIZE` L527, parses xlsx/csv in memory, returns
-       JSON.
-     - L10 fastapi import already has `Request` — NOT touched.
-
-0.5  ⭐ CRITICAL parse-and-discard trace (end-to-end):
-     - import_excel (L32-L117): Read → decode → csv.DictReader →
-       iterate rows → db.buildings/floors/units inserts → audit.
-       Traced end to end — the uploaded file is parsed in memory
-       and never persisted (no disk write, no S3 call, no DB blob
-       field, no background task hand-off).
-     - preview_import (L513-L618): Read → _detect_header_row_xlsx/
-       csv → _parse_xlsx_smart/_parse_csv_smart → _validate_row →
-       _cross_reference → JSON response.
-       Traced end to end — the uploaded file is parsed in memory
-       and never persisted.
-     CONCLUSION: rate-limit hooks ONLY are correct for both. A
-     `record_upload` call here would inflate the ledger for files
-     that occupy zero storage.
-
-DIFF — safety_router.py (FULL 5 hooks)
---------------------------------------
-- L20 fastapi import: added `Request`.
-- L35-38 helper imports added:
-    from contractor_ops.upload_rate_limit import (
-        check_upload_rate_limit, check_upload_bytes, check_content_length,
-    )
-    from contractor_ops.upload_quota import check_storage_quota, record_upload
-- L1774-1779 signature: added `request: Request` after `project_id`,
-  before `file: UploadFile = File(...)` — keeps non-defaulted
-  params first.
-- L1780-1784 HOOK A (top of body):
-    check_upload_rate_limit(user['id'])
-    check_content_length(request.headers.get('content-length'),
-                         MAX_SAFETY_UPLOAD_SIZE)
-- L1794-1800 HOOK B (after len-reject, before obj_save_bytes):
-    check_upload_bytes(user['id'], len(content))
-    _proj = await db.projects.find_one(
-        {'id': project_id}, {'_id': 0, 'org_id': 1})
-    _org_id = (_proj or {}).get('org_id')
-    await check_storage_quota(_org_id, len(content))
-- L1815-1816 HOOK C (right after obj_save_bytes):
-    await record_upload(_org_id, len(content))
-
-DIFF — excel_router.py (rate-limit only)
-----------------------------------------
-- L9 added:
-    from contractor_ops.upload_rate_limit import \
-        check_upload_rate_limit, check_upload_bytes
-- L37-40 HOOK at TOP of import_excel body (before db = get_db()):
-    check_upload_rate_limit(user['id'])
-- L46-49 HOOK after `content = await file.read()`:
-    check_upload_bytes(user['id'], len(content))
-- NO Request param, NO check_content_length, NO quota, NO ledger.
-
-DIFF — import_router.py (rate-limit only)
------------------------------------------
-- L20 added:
-    from contractor_ops.upload_rate_limit import \
-        check_upload_rate_limit, check_upload_bytes
-- L524-527 HOOK at TOP of preview_import body (before
-  _check_import_access):
-    check_upload_rate_limit(user['id'])
-- L538-541 HOOK after the existing `len(content) > MAX_FILE_SIZE`
-  reject:
-    check_upload_bytes(user['id'], len(content))
-- NO change to fastapi import (Request already present).
-- NO check_content_length (existing file.size > MAX_FILE_SIZE
-  pre-read + len(content) > MAX_FILE_SIZE post-read covers it).
-- NO quota, NO ledger.
+DIFF — backend/contractor_ops/import_router.py
+----------------------------------------------
+L26: MAX_FILE_SIZE = 5 * 1024 * 1024
+  -> MAX_FILE_SIZE = 50 * 1024 * 1024
+L529, L533: detail="קובץ גדול מדי (מקסימום 5MB)"
+  -> detail="קובץ גדול מדי (מקסימום 50MB)"
+(both occurrences, via replace_all on the literal string).
 
 VERIFICATION
 ------------
-V1  Import clean:
-      cd backend && python -c "import contractor_ops.safety_router, \
-          contractor_ops.excel_router, contractor_ops.import_router"
-      → V1 OK
+V1  Frontend build: runs at ./deploy.sh time — not invoked locally.
 
-V2  Static grep counts (literal output):
+V2  Static grep (literal):
+    frontend/src/components/handover/G4ImportModal.js:
+       5: const MAX_FILE_SIZE = 50 * 1024 * 1024;
+      59: if (selected.size > MAX_FILE_SIZE) {
+      60: setError('קובץ גדול מדי (מקסימום 50MB)');
+    backend/contractor_ops/import_router.py:
+       26: MAX_FILE_SIZE = 50 * 1024 * 1024
+      523: # len(content) > MAX_FILE_SIZE checks already cover it.
+      528: if file.size and file.size > MAX_FILE_SIZE:
+      529: raise HTTPException(... detail="קובץ גדול מדי (מקסימום 50MB)")
+      532: if len(content) > MAX_FILE_SIZE:
+      533: raise HTTPException(... detail="קובץ גדול מדי (מקסימום 50MB)")
+    NO "5MB" left in any error string. MAX_ROWS = 1000 untouched
+    (L27 still present, L147/L169/L584/L665 references unchanged).
 
-    safety_router.py — 7 hits (2 import lines + 5 hooks):
-       33:    check_upload_rate_limit, check_upload_bytes, check_content_length,
-       35: from contractor_ops.upload_quota import check_storage_quota, record_upload
-       1780:    check_upload_rate_limit(user['id'])
-       1781:    check_content_length(request.headers.get('content-length'), MAX_SAFETY_UPLOAD_SIZE)
-       1794:    check_upload_bytes(user['id'], len(content))
-       1797:    await check_storage_quota(_org_id, len(content))
-       1813:    await record_upload(_org_id, len(content))
-       (Note: 2 import lines instead of the spec's "1 import line"
-       because rate_limit and quota live in two helper modules —
-       same shape used in PHASE 3a + 3b. Hook counts match spec
-       exactly: rate_limit×1, content_length×1, bytes×1, quota×1,
-       record_upload×1.)
+V3  Backend import:
+      cd backend && python -c "import contractor_ops.import_router"
+      → V3 OK
 
-    excel_router.py — 3 hits (1 import line + 2 hooks):
-       6: from contractor_ops.upload_rate_limit import check_upload_rate_limit, check_upload_bytes
-       37:    check_upload_rate_limit(user['id'])
-       46:    check_upload_bytes(user['id'], len(content))
-       NO content_length / quota / record ✅
-
-    import_router.py — 3 hits (1 import line + 2 hooks):
-       17: from contractor_ops.upload_rate_limit import check_upload_rate_limit, check_upload_bytes
-       524:    check_upload_rate_limit(user['id'])
-       538:    check_upload_bytes(user['id'], len(content))
-       NO content_length / quota / record ✅
-
-V3  Staging (after ./deploy.sh --stag) — for Zahi:
-    a) Upload a safety file → succeeds; Atlas → org_storage_usage
-       → bytes_used grew, updated_at changed.
-    b) Excel import + g4 preview → both succeed.
-    c) (optional) Bump an org's bytes_used near 100GB → a safety
-       upload → 413 with the Hebrew quota message. Reset after.
-    d) Spam any of the 3 endpoints from the same user → 429 after
-       the per-user count cap.
+V4  Device test — Zahi, after ./deploy.sh --stag then --prod and an
+    app cold-restart x2 for OTA:
+    a) G4 import modal → xlsx between 5MB and 50MB → accepted, import
+       proceeds.
+    b) File over 50MB → rejected with "מקסימום 50MB".
+    c) A normal small import still works.
 
 DO NOT TOUCH (confirmed unchanged)
 ----------------------------------
-- Existing per-file checks (MAX_SAFETY_UPLOAD_SIZE, MAX_FILE_SIZE,
-  MAX_ROWS) — kept; new hooks are additive.
-- validate_upload, role/access checks, parsing/storage logic.
-- upload_rate_limit.py / upload_quota.py — import only.
-- PHASE 1 / 2 / 3a / 3b wirings on other routers.
-- Frontend, nginx, native, billing.
+- MAX_ROWS = 1000 — kept; row cap is independent of file size.
+- PHASE 3c rate-limit hooks on preview_import (check_upload_rate_limit
+  / check_upload_bytes) — untouched.
+- nginx config (55MB already accommodates a 50MB body).
+- excel_router import_excel — out of scope.
+- No other constant, no native, no capacitor config, no dependency.
 
-FOLLOW-UP (out of scope — noted)
---------------------------------
-- import_excel has no per-file size cap today. Adding one is a
-  separate concern; until then, nginx body cap + the new byte rate
-  limit are the bounds.
-
-BACKEND-ONLY — ./deploy.sh, no Capgo, no ./ship.sh, no new dependency.
+MIXED (frontend+backend) — ./deploy.sh, Capgo OTA for the frontend,
+no ./ship.sh.
 
 COMMIT MESSAGE (in .local/.commit_message)
 ------------------------------------------
-feat(security): rate-limit + quota on the last 3 upload endpoints
+fix(import): raise the G4 buyer-data import file cap 5MB -> 50MB
 
-PHASE 3c (final) of the upload-abuse-hardening. Wires the remaining
-unprotected upload endpoints: upload_safety_file (safety_router) —
-which stores to S3 — gets the full set (count limit + Content-Length
-+ byte limit + storage quota + ledger); import_excel (excel_router)
-and preview_import (import_router) — which parse-and-discard — get
-the rate-limit hooks only (count + byte limit), no quota since
-nothing is stored. All 9 upload endpoints found by the original grep
-are now covered. Backend-only.
+Real buyer-data xlsx files exceed 5MB (xlsx formatting overhead).
+Raise MAX_FILE_SIZE to 50MB in both the G4ImportModal frontend
+guard and the import_router backend check (and their error
+messages). 50MB matches the plans-upload cap and stays under the
+nginx 55MB body limit; MAX_ROWS (1000) is unchanged.
 
 ROLLBACK
 --------
-git revert <commit-sha> -- backend/contractor_ops/safety_router.py \
-                            backend/contractor_ops/excel_router.py \
-                            backend/contractor_ops/import_router.py
+git revert <commit-sha> -- \
+  frontend/src/components/handover/G4ImportModal.js \
+  backend/contractor_ops/import_router.py
 ./deploy.sh --prod
 
 ================================================================================

@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { X, Upload, Download, Loader2, CheckCircle2, AlertTriangle, FileSpreadsheet, RefreshCw, Building2, Search } from 'lucide-react';
 import { g4ImportService } from '../../services/api';
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
 const FILTER_OPTIONS = [
   { id: 'all', label: 'הכל' },
@@ -57,7 +57,7 @@ export default function G4ImportModal({ projectId, onClose }) {
       return;
     }
     if (selected.size > MAX_FILE_SIZE) {
-      setError('קובץ גדול מדי (מקסימום 5MB)');
+      setError('קובץ גדול מדי (מקסימום 50MB)');
       return;
     }
     setFile(selected);

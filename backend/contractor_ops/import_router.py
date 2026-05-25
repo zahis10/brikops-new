@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/projects/{project_id}/import/g4", tags=["import-
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 TEMPLATE_PATH = STATIC_DIR / "g4_template.xlsx"
 
-MAX_FILE_SIZE = 5 * 1024 * 1024
+MAX_FILE_SIZE = 50 * 1024 * 1024
 MAX_ROWS = 1000
 
 HEADER_ALIASES = {
@@ -526,11 +526,11 @@ async def preview_import(
 
     validate_upload(file, ALLOWED_IMPORT_EXTENSIONS, ALLOWED_IMPORT_TYPES)
     if file.size and file.size > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="קובץ גדול מדי (מקסימום 5MB)")
+        raise HTTPException(status_code=400, detail="קובץ גדול מדי (מקסימום 50MB)")
 
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="קובץ גדול מדי (מקסימום 5MB)")
+        raise HTTPException(status_code=400, detail="קובץ גדול מדי (מקסימום 50MB)")
 
     # BATCH upload-hardening-phase3c-safety-imports (2026-05-24) —
     # byte rate limit (real read size). NO storage quota / ledger:
