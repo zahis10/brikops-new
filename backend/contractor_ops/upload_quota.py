@@ -29,13 +29,16 @@ async def check_storage_quota(org_id, incoming_bytes: int):
         db = get_db()
         doc = await db.org_storage_usage.find_one({'org_id': org_id})
         used = (doc or {}).get('bytes_used', 0)
+        # BATCH storage-admin-panel (2026-05-25) — a per-org limit
+        # (set from the admin panel) overrides the global default.
+        limit = (doc or {}).get('limit_bytes') or ORG_STORAGE_LIMIT_BYTES
     except Exception as e:
         logger.warning(f"[STORAGE_QUOTA] check failed open org={org_id}: {e}")
         return
-    if used + incoming_bytes > ORG_STORAGE_LIMIT_BYTES:
+    if used + incoming_bytes > limit:
         logger.warning(
             f"[STORAGE_QUOTA] blocked org={org_id} used={used} "
-            f"incoming={incoming_bytes} limit={ORG_STORAGE_LIMIT_BYTES}"
+            f"incoming={incoming_bytes} limit={limit}"
         )
         raise HTTPException(
             status_code=413,
