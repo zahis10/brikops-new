@@ -951,6 +951,21 @@ export const disciplineService = {
     });
     return response.data;
   },
+  async update(projectId, disciplineId, label) {
+    const response = await axios.patch(
+      `${API}/projects/${projectId}/disciplines/${disciplineId}`,
+      { label },
+      { headers: getAuthHeader() },
+    );
+    return response.data;
+  },
+  async remove(projectId, disciplineId) {
+    const response = await axios.delete(
+      `${API}/projects/${projectId}/disciplines/${disciplineId}`,
+      { headers: getAuthHeader() },
+    );
+    return response.data;
+  },
 };
 
 export const adminUserService = {

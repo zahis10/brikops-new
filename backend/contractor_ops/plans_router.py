@@ -909,7 +909,7 @@ async def list_project_disciplines(
     ).to_list(100)
     for c in custom:
         c.pop('project_id', None)
-    return defaults + [{'key': c['key'], 'label': c.get('label', c['key']), 'source': 'custom'} for c in custom]
+    return defaults + [{'id': c['id'], 'key': c['key'], 'label': c.get('label', c['key']), 'source': 'custom'} for c in custom]
 
 
 @router.post("/projects/{project_id}/disciplines")
@@ -961,6 +961,91 @@ async def add_project_discipline(
     })
 
     return {'key': key, 'label': label, 'source': 'custom'}
+
+
+# BATCH discipline-edit-delete (2026-05-25) — rename a custom discipline's label.
+# key is immutable so plans keep pointing.
+@router.patch("/projects/{project_id}/disciplines/{discipline_id}")
+async def update_project_discipline(
+    project_id: str,
+    discipline_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_current_user),
+):
+    if user['role'] == 'viewer':
+        raise HTTPException(status_code=403, detail='Viewers have read-only access')
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+    requester_membership = await _get_project_membership(user, project_id)
+    requester_role = requester_membership.get('role', 'none')
+    if requester_role not in PLAN_UPLOAD_ROLES:
+        raise HTTPException(status_code=403, detail='אין לך הרשאה לערוך תחומים')
+    label = (body.get('label') or '').strip()
+    if not label:
+        raise HTTPException(status_code=422, detail='שם תחום נדרש')
+    disc = await db.project_disciplines.find_one(
+        {'id': discipline_id, 'project_id': project_id}
+    )
+    if not disc:
+        raise HTTPException(status_code=404, detail='תחום לא נמצא')
+    await db.project_disciplines.update_one(
+        {'id': discipline_id, 'project_id': project_id},
+        {'$set': {'label': label}},
+    )
+    await _audit('project_discipline', discipline_id,
+                 'project_discipline_rename', user['id'], {
+        'project_id': project_id, 'key': disc['key'],
+        'old_label': disc.get('label', ''), 'new_label': label,
+    })
+    return {'id': discipline_id, 'key': disc['key'], 'label': label, 'source': 'custom'}
+
+
+# BATCH discipline-edit-delete (2026-05-25) — delete a custom discipline.
+# Blocked while any plan still references its key.
+@router.delete("/projects/{project_id}/disciplines/{discipline_id}")
+async def delete_project_discipline(
+    project_id: str,
+    discipline_id: str,
+    user: dict = Depends(get_current_user),
+):
+    if user['role'] == 'viewer':
+        raise HTTPException(status_code=403, detail='Viewers have read-only access')
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+    requester_membership = await _get_project_membership(user, project_id)
+    requester_role = requester_membership.get('role', 'none')
+    if requester_role not in PLAN_UPLOAD_ROLES:
+        raise HTTPException(status_code=403, detail='אין לך הרשאה למחוק תחומים')
+    disc = await db.project_disciplines.find_one(
+        {'id': discipline_id, 'project_id': project_id}
+    )
+    if not disc:
+        raise HTTPException(status_code=404, detail='תחום לא נמצא')
+    key = disc['key']
+    proj_count = await db.project_plans.count_documents({
+        'project_id': project_id, 'discipline': key,
+        'deletedAt': {'$exists': False},
+    })
+    unit_count = await db.unit_plans.count_documents({
+        'project_id': project_id, 'discipline': key,
+        'deletedAt': {'$exists': False},
+    })
+    in_use = proj_count + unit_count
+    if in_use > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f'לא ניתן למחוק — {in_use} תוכניות עדיין בתחום זה. '
+                   f'שנה את שם התחום או העבר את התוכניות תחילה.',
+        )
+    await db.project_disciplines.delete_one(
+        {'id': discipline_id, 'project_id': project_id}
+    )
+    await _audit('project_discipline', discipline_id,
+                 'project_discipline_delete', user['id'], {
+        'project_id': project_id, 'key': key,
+        'label': disc.get('label', ''),
+    })
+    return {'success': True}
 
 
 @router.delete("/projects/{project_id}/plans/{plan_id}")

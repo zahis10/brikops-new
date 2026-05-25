@@ -1,109 +1,116 @@
-BATCH unit-back-nav-fix (2026-05-25) — Bug 4
-============================================
-Branch:        staging
-Rollback SHA:  b9471d0 (HEAD before this edit)
-Type:          FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no new dependency.
-Files (1):     frontend/src/pages/UnitHomePage.js
+BATCH discipline-edit-delete — Bug 1 (Task #527)
+=================================================
+Rollback SHA: ac73bad
+Spec: attached_assets/Pasted--BATCH-discipline-ed-1779738450618_1779738450619.txt (399 lines)
+Type: MIXED (backend + frontend) — ./deploy.sh, Capgo OTA, no ./ship.sh, no new dependency
 
-WHAT & WHY
-----------
-Bug 4 of the 2026-05-21 report. The unit page back arrow sent a
-management user to /projects/{id}/control?tab=structure (the project
-structure tab) instead of to the BUILDING the unit sits inside. They
-then had to re-drill building → floor → unit just to reach a
-neighbouring unit. The unit-detail API already returns the unit's
-building {id,name} and UnitHomePage destructures it, so the back arrow
-just needs to use it.
-
-STEP 0 — PRE-FLIGHT (outputs)
+STEP 0 PRE-FLIGHT (all GREEN)
 -----------------------------
-0.1  grep -n "control?tab=structure\|role === 'contractor'\|building" \
-       frontend/src/pages/UnitHomePage.js
-       60:  const { unit, floor, building, project, kpi } = unitData;
-      103:                if (role === 'contractor') {
-      108:                  navigate(`/projects/${projectId}/control?tab=structure`);
-      131:                items={[project?.name, building?.name, floor?.name]}
-     → `building` is already destructured from unitData (L60); the
-       management branch hard-codes the structure tab (L108). ✅
+0.1 backend/contractor_ops/plans_router.py L915 add_project_discipline guard pattern:
+    if user['role'] == 'viewer': raise 403
+    db = get_db(); await _check_project_read_access(user, project_id)
+    requester_membership = await _get_project_membership(user, project_id)
+    requester_role = requester_membership.get('role', 'none')
+    if requester_role not in PLAN_UPLOAD_ROLES: raise 403
+  Helpers imported at L10-11. NO existing PATCH/DELETE for disciplines.
 
-0.2  grep -n 'buildings/:buildingId"' frontend/src/App.js
-      541:          path="/projects/:projectId/buildings/:buildingId"
-     → target route exists. ✅
+0.2 plans collections — db.project_plans + db.unit_plans; both store key in 'discipline'.
+    Both use `deletedAt` for soft-delete (project_plans additionally has `status:'archived'`).
+    Delete-blocked count filters {project_id, discipline:key, deletedAt:{$exists:False}} on BOTH.
 
-0.3  Sibling pages (UnitDetailPage / UnitPlansPage /
-     ApartmentDashboardPage) — NOT touched. Out of scope per spec.
+0.3 frontend/src/services/api.js L941-955 disciplineService uses getAuthHeader() everywhere.
 
-DIFF — frontend/src/pages/UnitHomePage.js
------------------------------------------
-Back-arrow `<button>` onClick — added a NEW branch between `viewer`
-and the existing `else`. Contractor and viewer branches unchanged;
-the structure-tab string is kept verbatim as the no-building fallback.
+0.4 ProjectPlansPage.js — disciplines L78, canManage L139 (UPLOAD_ROLES = ['project_manager','management_team'] L21).
+    Add-discipline JSX at L637-664 (inline "+ תחום" inside `mr-auto flex` gated by canManage).
+    UnitPlansPage.js — gate var is `canUpload` L92 (same UPLOAD_ROLES set L22). Add-control JSX at L432-460.
+    list_project_disciplines mapping BEFORE change (L913):
+      [{'key': c['key'], 'label': c.get('label', c['key']), 'source': 'custom'} for c in custom]
 
-   - } else {
-   -   navigate(`/projects/${projectId}/control?tab=structure`);
-   - }
-   + } else if (building?.id) {
-   +   // BATCH unit-back-nav-fix (2026-05-25) — Bug 4: a unit
-   +   // lives inside a building, so the back arrow returns
-   +   // to that building's page rather than the project
-   +   // structure tab.
-   +   navigate(`/projects/${projectId}/buildings/${building.id}`);
-   + } else {
-   +   navigate(`/projects/${projectId}/control?tab=structure`);
-   + }
+0.5 frontend/src/components/ui/dialog.jsx exists; both pages already import `toast` from 'sonner'.
 
-No new imports, no new state, no other file touched.
+PER-FILE DIFFS
+--------------
+A) backend/contractor_ops/plans_router.py
+   - L912 list_project_disciplines custom mapping: added `'id': c['id']` so modal has stable id for PATCH/DELETE. Defaults branch unchanged.
+   - L969-1003 NEW update_project_discipline (PATCH /projects/{id}/disciplines/{discipline_id}):
+       guard chain mirrors add_project_discipline; 422 'שם תחום נדרש' on empty;
+       404 'תחום לא נמצא'; $set label only; audit project_discipline_rename {project_id,key,old_label,new_label};
+       returns {id,key,label,source:'custom'}.
+   - L1006-1052 NEW delete_project_discipline (DELETE /projects/{id}/disciplines/{discipline_id}):
+       same guard chain; counts NON-deleted plans across db.project_plans + db.unit_plans;
+       if in_use>0 → 409 'לא ניתן למחוק — {n} תוכניות עדיין בתחום זה. שנה את שם התחום או העבר את התוכניות תחילה.';
+       else delete_one + audit project_discipline_delete {project_id,key,label}; returns {success:True}.
 
-VERIFY
-------
-V1  Frontend build — runs at ./deploy.sh time (not invoked locally).
+B) frontend/src/services/api.js (L957-971)
+   - Appended `update(projectId, disciplineId, label)` → PATCH .../disciplines/{id}, body {label}.
+   - Appended `remove(projectId, disciplineId)` → DELETE .../disciplines/{id}.
+   - Both reuse getAuthHeader().
 
-V2  grep -n 'buildings/${building.id}\|control?tab=structure' \
-       frontend/src/pages/UnitHomePage.js
-      112:                  navigate(`/projects/${projectId}/buildings/${building.id}`);
-      114:                  navigate(`/projects/${projectId}/control?tab=structure`);
-    → exactly one of each, as expected. ✅
+C) frontend/src/components/DisciplineManagerModal.jsx (NEW, 182 lines)
+   - Radix Dialog from ./ui/dialog (Dialog/DialogContent/DialogHeader/DialogTitle/DialogFooter/DialogClose).
+   - Props: projectId, disciplines, open, onClose, onChanged.
+   - Filters disciplines.filter(d => d.source === 'custom'); empty state 'אין תחומים מותאמים אישית'.
+   - VIEW row: label + Pencil (→ EDIT) + Trash (→ inline confirm).
+   - EDIT mode: text input pre-filled; Enter saves / Esc cancels; "שמור"+"ביטול"; toast 'התחום עודכן'.
+   - DELETE: two-step inline 'בטוח?' (NOT window.confirm) → red "מחק"+"ביטול"; toast 'התחום נמחק' or err.response.data.detail.
+   - Footer: single "סגור" DialogClose. dir="rtl" inherited from app shell.
 
-V3  Device / browser test (Zahi, after ./deploy.sh --prod + Capgo OTA
-    cold-restart x2):
-    a) Management user: building → floor → unit → press unit back
-       arrow → lands on /projects/{id}/buildings/{buildingId}, NOT
-       the structure tab.
-    b) Building page's own back arrow still works (unchanged).
-    c) Unit with no building (if any exists) → back arrow falls back
-       to the structure tab without error.
-    d) Contractor → /projects; viewer → /projects/{id}/tasks — both
-       unchanged.
+D) frontend/src/pages/ProjectPlansPage.js
+   - L13: added `Settings` to lucide-react import.
+   - L17: import DisciplineManagerModal.
+   - L106: state `showDisciplineManager`.
+   - L669-678: small h-8 "ניהול" button next to "+ תחום", rendered only when `canManage && disciplines.some(d=>d.source==='custom')`.
+   - L1278-1284: render <DisciplineManagerModal …loadDisciplines/> above BulkPlanUploadModal block.
 
-DO NOT TOUCH (confirmed unchanged)
-----------------------------------
-- contractor + viewer branches.
-- ?tab=structure fallback string (kept as the no-building fallback).
-- Sibling unit pages (UnitDetailPage / UnitPlansPage /
-  ApartmentDashboardPage).
-- The defects card's `navigate(..., { state: { from: 'unit-home' } })`
-  and every other handler in UnitHomePage.js.
-- Backend, nginx, native, capacitor.config — nothing.
+E) frontend/src/pages/UnitPlansPage.js
+   - L14: added `Settings` to lucide-react import.
+   - L18: import DisciplineManagerModal.
+   - L85: state `showDisciplineManager`.
+   - L463-472: same "ניהול" button gated on `canUpload && disciplines.some(d=>d.source==='custom')`.
+   - L764-770: render <DisciplineManagerModal …loadDisciplines/> before closing div.
 
-FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no new dependency.
+VERIFY OUTPUTS
+--------------
+V1 `cd backend && python -c "import contractor_ops.plans_router"`:
+    [SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****9991,****0001
+    V1 OK
 
-COMMIT MESSAGE (in .local/.commit_message)
-------------------------------------------
-fix(nav): unit page back arrow returns to the unit's building page
+V2 (frontend build) — DEFERRED to Zahi's deploy.sh stag pipeline (build is too slow inline; spec acceptance is V3 grep coverage).
 
-Bug 4 (2026-05-21 report). The unit page (UnitHomePage) back arrow
-sent management users to /control?tab=structure instead of the
-building the unit sits in. The unit-detail API already returns the
-unit's building {id,name}; the back arrow now navigates to
-/projects/{projectId}/buildings/{buildingId} when a building is
-present, falling back to the structure tab only for a unit with no
-building. Contractor/viewer flows unchanged. Frontend-only; Capgo OTA.
+V3a grep -n "update_project_discipline\|delete_project_discipline" backend/contractor_ops/plans_router.py:
+    969:async def update_project_discipline(
+    1006:async def delete_project_discipline(
 
-ROLLBACK
---------
-git revert <commit-sha> -- frontend/src/pages/UnitHomePage.js
-./deploy.sh --prod   (Capgo OTA).
+V3b grep -n "'id': c['id']" backend/contractor_ops/plans_router.py:
+    912:    return defaults + [{'id': c['id'], 'key': c['key'], 'label': c.get('label', c['key']), 'source': 'custom'} for c in custom]
 
-================================================================================
+V3c grep -n "disciplineService" frontend/src/services/api.js:
+    941:export const disciplineService = {
+
+V3d grep -rn "DisciplineManagerModal" frontend/src/pages/ProjectPlansPage.js frontend/src/pages/UnitPlansPage.js frontend/src/components/DisciplineManagerModal.jsx:
+    frontend/src/pages/ProjectPlansPage.js:14:import DisciplineManagerModal from '../components/DisciplineManagerModal';
+    frontend/src/pages/ProjectPlansPage.js:1275:      <DisciplineManagerModal
+    frontend/src/pages/UnitPlansPage.js:15:import DisciplineManagerModal from '../components/DisciplineManagerModal';
+    frontend/src/pages/UnitPlansPage.js:761:      <DisciplineManagerModal
+    frontend/src/components/DisciplineManagerModal.jsx:7:const DisciplineManagerModal = ({ projectId, disciplines, open, onClose, onChanged }) => {
+    frontend/src/components/DisciplineManagerModal.jsx:182:export default DisciplineManagerModal;
+
+V4 MANUAL TEST LIST (run after deploy, do not execute here)
+-----------------------------------------------------------
+a. As PM open ProjectPlansPage with at least one custom discipline → "ניהול" button visible next to "+ תחום"; absent when only defaults exist.
+b. Click "ניהול" → modal lists ONLY custom rows (defaults hidden); empty-state Hebrew text when none.
+c. Pencil → input pre-filled; save → toast 'התחום עודכן'; row label updates; refresh page → label persists.
+d. Trash → row shows 'בטוח?'; cancel reverts; confirm → toast 'התחום נמחק'; row disappears; refresh confirms.
+e. Try delete on a discipline that still has plans → 409 toast 'לא ניתן למחוק — N תוכניות…'; row stays.
+f. As viewer/contractor (non-PLAN_UPLOAD_ROLES) → "ניהול" button hidden; direct PATCH/DELETE returns 403.
+   UnitPlansPage repeats a-f with `canUpload` gate.
+
+DEPLOY PLAN
+-----------
+MIXED (backend+frontend) — ./deploy.sh, Capgo OTA, no ./ship.sh, no new dependency.
+
+COMMIT MESSAGE
+--------------
+feat(plans): rename and delete custom plan topics (disciplines)
+
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================

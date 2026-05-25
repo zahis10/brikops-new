@@ -8,10 +8,11 @@ import { t } from '../i18n';
 import {
   ArrowRight, Loader2, Upload, FileText, Download, Eye,
   Calendar, User, X, Plus, Search, AlertCircle, FolderOpen,
-  Image, Ruler, FileType, Maximize2
+  Image, Ruler, FileType, Maximize2, Settings
 } from 'lucide-react';
 import PlanViewer from '../components/PlanViewer';
 import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
+import DisciplineManagerModal from '../components/DisciplineManagerModal';
 import DocumentScannerButton from '../components/DocumentScannerButton';
 import { scannedImagesToPdf } from '../utils/scannedImagesToPdf';
 
@@ -78,6 +79,7 @@ const UnitPlansPage = () => {
   const [showAddDiscipline, setShowAddDiscipline] = useState(false);
   const [newDisciplineLabel, setNewDisciplineLabel] = useState('');
   const [addingDiscipline, setAddingDiscipline] = useState(false);
+  const [showDisciplineManager, setShowDisciplineManager] = useState(false);
   const [search, setSearch] = useState('');
   const [loadError, setLoadError] = useState(null);
   const [detailPlan, setDetailPlan] = useState(null);
@@ -455,6 +457,16 @@ const UnitPlansPage = () => {
                 </button>
               )
             )}
+            {canUpload && disciplines.some(d => d.source === 'custom') && (
+              <button
+                onClick={() => setShowDisciplineManager(true)}
+                title="ניהול תחומים"
+                className="whitespace-nowrap px-2 py-1.5 rounded-lg text-[11px] font-medium bg-white border border-slate-200 text-slate-500 hover:border-amber-400 hover:text-amber-600 transition-all flex items-center gap-1"
+              >
+                <Settings className="w-3 h-3" />
+                ניהול
+              </button>
+            )}
           </div>
         </div>
 
@@ -745,6 +757,14 @@ const UnitPlansPage = () => {
           onClose={() => setFullscreenPlan(null)}
         />
       )}
+
+      <DisciplineManagerModal
+        projectId={projectId}
+        disciplines={disciplines}
+        open={showDisciplineManager}
+        onClose={() => setShowDisciplineManager(false)}
+        onChanged={loadDisciplines}
+      />
     </div>
   );
 };
