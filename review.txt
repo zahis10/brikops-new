@@ -1,128 +1,169 @@
-BATCH unit-plans-archive — Task #528 — Bug 3
+BATCH unit-plans-archive-mirror-general — Bug 3 UX rework
 Branch: staging
-Rollback SHA: 8f12ae3
+Rollback SHA: 24e7544
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
 ============================================================
-STEP 0 — Pre-build verification (from plan)
+STEP 0 — Pre-flight outputs
 ============================================================
-- backend/contractor_ops/plans_router.py:
-  * archive_project_plan @ L627, restore_project_plan @ L730 (templates mirrored)
-  * list_unit_plans @ L772 (now L774), upload_unit_plan @ L808
-  * PLAN_UPLOAD_ROLES, _check_project_read_access, _get_project_membership, _audit, _now, Body — all already imported/defined
-- frontend/src/services/api.js: unitPlanService.list forwards `params` via axios → ?archived=true works without service-list change
-- frontend/src/pages/UnitPlansPage.js:
-  * canUpload @ L94, loadPlans @ L120, renderSection call site @ L513–514
-  * detailPlan modal action row @ L723–748 (ארכב inserted after "צפה")
+
+0.1  General page archive pattern (frontend/src/pages/ProjectPlansPage.js):
+       105: const [showArchiveModal, setShowArchiveModal] = useState(false);
+       106: const [archiveTarget, setArchiveTarget] = useState(null);
+       107: const [archiveNote, setArchiveNote] = useState('');
+       341: const openArchiveModal = (plan) => { ... }
+       347: const handleArchive = async () => { ...
+            projectPlanService.archive(projectId, archiveTarget.id, archiveNote) ... }
+       578: onClick={() => navigate(`/projects/${projectId}/plans/archive`)}
+       1106: onClick={() => { setDetailPlan(null); openArchiveModal(detailPlan); }}
+       1197-1230: confirm-modal markup ("להעביר לארכיון?")
+
+0.2  General archive page exists + is routed:
+       frontend/src/pages/ProjectPlansArchivePage.js — 410 lines
+       frontend/src/App.js:
+         L48: const ProjectPlansArchivePage = React.lazy(...)
+         L453: path="/projects/:projectId/plans/archive"
+
+0.3  Bug 3 state to remove (UnitPlansPage.js) — confirmed present pre-edit:
+       showArchived, archivedPlans, archivedLoading, restoringPlanId,
+       loadArchivedPlans, toggleArchived, handleRestorePlan,
+       handleArchivePlan, ChevronDown, RotateCcw
+
+0.4  Reused backend endpoints (NO backend change in this batch):
+       backend/contractor_ops/plans_router.py
+         L904: async def archive_unit_plan
+         L947: async def restore_unit_plan
+
+0.5  Reused api.js methods (NO api.js change in this batch):
+       frontend/src/services/api.js
+         L812: export const unitPlanService = {
+         L832: async archive(projectId, unitId, planId, note = '')
+         L840: async restore(projectId, unitId, planId)
 
 ============================================================
 WHAT CHANGED (3 files)
 ============================================================
 
-1) backend/contractor_ops/plans_router.py
-   - list_unit_plans: added `archived: Optional[bool] = Query(False)` param and
-     `query['status'] = 'archived' if archived else {'$ne': 'archived'}`
-     → default list now hides archived plans; `?archived=true` returns only archived.
-   - NEW PATCH /projects/{project_id}/units/{unit_id}/plans/{plan_id}/archive
-     * viewer-block → _check_project_read_access → _get_project_membership → PLAN_UPLOAD_ROLES guard
-     * 404 'תוכנית לא נמצאה או כבר בארכיון' if not found/already archived
-     * 403 'אין לך הרשאה לארכב תוכניות' for non-uploaders
-     * sets status='archived', archive_reason='manual', archived_at, archived_by, archive_note
-     * audit 'unit_plan_archived' with project_id/unit_id/discipline/filename
-   - NEW PATCH /projects/{project_id}/units/{unit_id}/plans/{plan_id}/restore
-     * same guard chain
-     * 404 'תוכנית לא נמצאה בארכיון' if not currently archived
-     * 403 'אין לך הרשאה לשחזר תוכניות' for non-uploaders
-     * $unset of status + archive_* fields
-     * audit 'unit_plan_restored'
-   Mirrors archive_project_plan / restore_project_plan exactly. Uses db.unit_plans, scoped by unit_id.
+1) frontend/src/pages/UnitPlansArchivePage.js  (NEW, 410 lines)
+   - Mirrors ProjectPlansArchivePage.js exactly with unit-scope adaptations:
+     * useParams → { projectId, unitId }
+     * unitService.get(unitId) (was projectService.get)
+     * unitPlanService.list(projectId, unitId, { archived: true })
+       (was projectPlanService.listArchived)
+     * unitPlanService.restore(projectId, unitId, restoreTarget.id)
+       (was projectPlanService.restore)
+     * back arrow + "תוכניות פעילות" link → /projects/{pid}/units/{uid}/plans
+     * header subtitle: {project} · {building} · {floor} · דירה {label}
+   - Same MANAGE_ROLES gate, same Hebrew toasts, same restore-confirm modal
+     ("שחזור תוכנית" → green "שחזר לתוכניות פעילות" / "ביטול")
+   - export default UnitPlansArchivePage
 
-2) frontend/src/services/api.js
-   - unitPlanService.archive(projectId, unitId, planId, note='') → PATCH .../archive
-   - unitPlanService.restore(projectId, unitId, planId)          → PATCH .../restore
-   Both use getAuthHeader().
+2) frontend/src/App.js  (+2 lines: lazy import + route)
+   - L49: const UnitPlansArchivePage = React.lazy(() => import('./pages/UnitPlansArchivePage'));
+   - L464-471: <Route path="/projects/:projectId/units/:unitId/plans/archive" ...>
+     placed next to the existing project-archive route, both above the
+     active-plans route.
 
-3) frontend/src/pages/UnitPlansPage.js
-   - lucide import: + Archive, ChevronDown, RotateCcw
-   - state: showArchived, archivedPlans (null until first open), archivedLoading,
-     archivingPlanId, restoringPlanId
-   - loadArchivedPlans(): unitPlanService.list(projectId, unitId, { archived: true })
-   - handleArchivePlan(plan): archive → toast 'התוכנית הועברה לארכיון' → close modal →
-     loadPlans() + (if archivedPlans!==null) loadArchivedPlans()
-   - handleRestorePlan(plan): restore → toast 'התוכנית שוחזרה' → refresh both lists
-   - toggleArchived(): lazy-loads archived list on first open
-   - detailPlan modal action row: NEW "ארכב" secondary button (canUpload only),
-     white bg + red hover, Archive icon, disabled while archiving
-   - NEW inline collapsible "ארכיון" section below renderSection (L513-514).
-     * Per spec correction: MINIMAL ROWS, NOT renderPlanCard
-       (avoids 404 confusion since file_url for archived plans is intentionally not opened)
-     * Each row: name + getDisciplineLabel chip + optional archived_at date
-     * NO onClick → setDetailPlan, NO ארכב button
-     * Only action = "שחזר" (RotateCcw) for canUpload
-     * Empty state: 'אין תוכניות בארכיון'
-     * Loading: small spinner
+3) frontend/src/pages/UnitPlansPage.js  (rework)
+   REMOVED (Bug 3's inline UX):
+     - lucide imports: ChevronDown, RotateCcw  (Archive kept — reused)
+     - state: showArchived, archivedPlans, archivedLoading, restoringPlanId
+     - handlers: loadArchivedPlans, toggleArchived,
+                 handleRestorePlan, handleArchivePlan
+     - the inline collapsible "ארכיון" section JSX below renderSection
+     - the "ארכב" direct-archive button in the detail-modal action row
+   KEPT (unchanged):
+     - Archive icon import, archivingPlanId state, the whole upload flow,
+       loadPlans, renderSection/renderPlanCard, discipline filter,
+       detailPlan modal markup (except the replaced button)
+   ADDED (mirror general page):
+     - state: showArchiveModal, archiveTarget, archiveNote
+     - openArchiveModal(plan) + handleArchive() — verbatim mirror of
+       ProjectPlansPage L341-362, swapping projectPlanService.archive →
+       unitPlanService.archive(projectId, unitId, archiveTarget.id,
+       archiveNote)
+     - Header "ארכיון" link in the amber header bar (always visible —
+       fixes the bug where archiving the last active plan hid the entire
+       archive UI). Mirrors ProjectPlansPage L577-583.
+     - Detail-modal action button — replaced "ארכב" with "ארכיון"
+       (label and behavior match general page L1106):
+       onClick={() => { setDetailPlan(null); openArchiveModal(detailPlan); }}
+     - Archive confirm-modal JSX at the bottom of the page (next to the
+       other modals), markup mirrors ProjectPlansPage L1197-1230.
+
+============================================================
+DEPLOY METHOD
+============================================================
+FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no backend, no new dependency
+
+- No backend touched (Bug 3's endpoints reused as-is).
+- No api.js change (Bug 3's unitPlanService.archive/.restore reused).
+- No new npm/pip packages, no native, no nginx, no capacitor.config.
+- Ships via ./deploy.sh --prod (Capgo OTA bundle only).
 
 ============================================================
 VERIFICATION
 ============================================================
 
-V1 — backend import OK
-  $ cd backend && python -c "import contractor_ops.plans_router"
-  → V1 OK
+V1 — Frontend CRA build:
+  $ cd frontend && REACT_APP_BACKEND_URL=<dummy> CI=true npm run build
+  → "The build folder is ready to be deployed." (clean, no errors,
+     no new ESLint warnings — full output trimmed for brevity).
 
-V3 — required symbols present
-  backend/contractor_ops/plans_router.py:
-    788:    query['status'] = 'archived' if archived else {'$ne': 'archived'}
-    904: async def archive_unit_plan
-    947: async def restore_unit_plan
-  frontend/src/services/api.js:
-    812: export const unitPlanService = {
-    (archive + restore methods added in this section)
-  frontend/src/pages/UnitPlansPage.js:
-     84: const [showArchived, ...]
-    139: const loadArchivedPlans = useCallback
-    152: handleArchivePlan → unitPlanService.archive
-    168: handleRestorePlan → unitPlanService.restore
-    591: {showArchived && (
-    615: onClick={() => handleRestorePlan(plan)}
-    868: onClick={() => handleArchivePlan(detailPlan)}
+V2.1 — New page registered + file exists:
+  $ grep -n "UnitPlansArchivePage" frontend/src/App.js \
+        frontend/src/pages/UnitPlansArchivePage.js
+  frontend/src/App.js:49:  const UnitPlansArchivePage = React.lazy(...)
+  frontend/src/App.js:468:    <UnitPlansArchivePage />
+  frontend/src/pages/UnitPlansArchivePage.js:21:  const UnitPlansArchivePage = () => {
+  frontend/src/pages/UnitPlansArchivePage.js:409: export default UnitPlansArchivePage;
 
-============================================================
-DEPLOY METHOD
-============================================================
-MIXED — ./deploy.sh, Capgo OTA, no ./ship.sh, no new dependency
+V2.2 — Modal state + handlers + header link present:
+  $ grep -n "showArchiveModal\|openArchiveModal\|handleArchive\|units/.*plans/archive" \
+        frontend/src/pages/UnitPlansPage.js
+   85: const [showArchiveModal, setShowArchiveModal] = useState(false);
+  138: const openArchiveModal = (plan) => {
+  144: const handleArchive = async () => {
+  427: onClick={() => navigate(`/projects/${projectId}/units/${unitId}/plans/archive`)}
+  787: onClick={() => { setDetailPlan(null); openArchiveModal(detailPlan); }}
+  816: {showArchiveModal && archiveTarget && (
+  840: onKeyDown={e => { if (e.key === 'Enter') handleArchive(); }}
+  848: onClick={handleArchive}
 
-- Backend change (list_unit_plans signature + 2 new endpoints) → ./deploy.sh
-- Frontend changes (api.js + UnitPlansPage.js) → Capgo OTA bundle
-- No new npm/pip packages, no DB migration (uses existing db.unit_plans + ad-hoc fields)
-- Legacy unit_plans without `status` are correctly returned by `{'$ne': 'archived'}`
+⭐ V2.3 — Critical clean-removal grep (word-boundary, MUST be zero):
+  $ grep -wn "showArchived\|archivedPlans\|archivedLoading\|restoringPlanId\
+\|loadArchivedPlans\|toggleArchived\|handleRestorePlan\|handleArchivePlan\
+\|ChevronDown\|RotateCcw" frontend/src/pages/UnitPlansPage.js
+  → ZERO HITS — CLEAN. Every Bug-3 inline-section name (4 state, 4
+    handlers, 2 imports) is removed; no dangling refs.
 
 ============================================================
 COMMIT MESSAGE
 ============================================================
-feat(plans): archive and restore unit (per-apartment) plans
+fix(plans): align unit-plans archive UX 1:1 with the general page
 
-Adds archive/restore for plans attached to individual units, mirroring
-the existing project-level plan archive flow.
+Bug 3 shipped a "lighter" archive UX on the per-apartment plans
+page (inline collapsible section + direct archive button). That
+diverged from the general plans page's UX and had a real bug —
+archiving the last active plan made the entire archive UI vanish.
+This batch mirrors the general page exactly: a separate
+/projects/{pid}/units/{uid}/plans/archive page, an "ארכיון" link in
+the unit-plans header, and an "להעביר לארכיון?" confirm modal with
+an optional note input in place of the direct-archive button.
+Frontend-only — reuses Bug 3's backend endpoints unchanged.
 
-Backend (plans_router.py):
-- list_unit_plans now accepts ?archived=bool and hides archived plans
-  from the default list (legacy plans without `status` continue to show)
-- PATCH /projects/{pid}/units/{uid}/plans/{plan_id}/archive
-- PATCH /projects/{pid}/units/{uid}/plans/{plan_id}/restore
-- Same RBAC chain as project plans: viewer-block →
-  _check_project_read_access → PLAN_UPLOAD_ROLES; Hebrew 403/404
-- Audit events: unit_plan_archived / unit_plan_restored
+Files:
+- frontend/src/pages/UnitPlansArchivePage.js  (NEW, mirror of
+  ProjectPlansArchivePage, unit-scope)
+- frontend/src/App.js                         (+1 lazy import,
+  +1 route)
+- frontend/src/pages/UnitPlansPage.js         (remove Bug-3 inline
+  UI/state, add header link + confirm modal + handlers, switch
+  detail-modal button)
 
-Frontend:
-- unitPlanService.archive() / .restore() in services/api.js
-- UnitPlansPage: "ארכב" action in the plan detail modal (canUpload only)
-- Inline collapsible "ארכיון" section under the plan grid with minimal
-  non-clickable rows + "שחזר" action (avoids 404s for archived URLs)
-
-Task #528 — Bug 3 — branch: staging
-Rollback SHA: 8f12ae3
+Branch: staging
+Rollback SHA: 24e7544
 
 ============================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

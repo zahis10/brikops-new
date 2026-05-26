@@ -43,6 +43,7 @@ const ProjectControlPage = React.lazy(() => import('./pages/ProjectControlPage')
 const UnitDetailPage = React.lazy(() => import('./pages/UnitDetailPage'));
 const UnitHomePage = React.lazy(() => import('./pages/UnitHomePage'));
 const UnitPlansPage = React.lazy(() => import('./pages/UnitPlansPage'));
+const UnitPlansArchivePage = React.lazy(() => import('./pages/UnitPlansArchivePage'));
 const ProjectTasksPage = React.lazy(() => import('./pages/ProjectTasksPage'));
 const ProjectPlansPage = React.lazy(() => import('./pages/ProjectPlansPage'));
 const ProjectPlansArchivePage = React.lazy(() => import('./pages/ProjectPlansArchivePage'));
@@ -454,6 +455,14 @@ const AppRoutes = () => {
           element={
             <ProtectedRoute>
               <ProjectPlansArchivePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/units/:unitId/plans/archive"
+          element={
+            <ProtectedRoute>
+              <UnitPlansArchivePage />
             </ProtectedRoute>
           }
         />

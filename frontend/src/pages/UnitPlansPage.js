@@ -8,7 +8,7 @@ import { t } from '../i18n';
 import {
   ArrowRight, Loader2, Upload, FileText, Download, Eye,
   Calendar, User, X, Plus, Search, AlertCircle, FolderOpen,
-  Image, Ruler, FileType, Maximize2, Settings, Archive, ChevronDown, RotateCcw
+  Image, Ruler, FileType, Maximize2, Settings, Archive
 } from 'lucide-react';
 import PlanViewer from '../components/PlanViewer';
 import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
@@ -80,12 +80,11 @@ const UnitPlansPage = () => {
   const [newDisciplineLabel, setNewDisciplineLabel] = useState('');
   const [addingDiscipline, setAddingDiscipline] = useState(false);
   const [showDisciplineManager, setShowDisciplineManager] = useState(false);
-  // BATCH unit-plans-archive (2026-05-25) — inline archive section + per-plan archive action.
-  const [showArchived, setShowArchived] = useState(false);
-  const [archivedPlans, setArchivedPlans] = useState(null);
-  const [archivedLoading, setArchivedLoading] = useState(false);
+  // BATCH unit-plans-archive-mirror-general (2026-05-26) — confirm-modal state (mirrors general page).
   const [archivingPlanId, setArchivingPlanId] = useState(null);
-  const [restoringPlanId, setRestoringPlanId] = useState(null);
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState(null);
+  const [archiveNote, setArchiveNote] = useState('');
   const [search, setSearch] = useState('');
   const [loadError, setLoadError] = useState(null);
   const [detailPlan, setDetailPlan] = useState(null);
@@ -135,57 +134,28 @@ const UnitPlansPage = () => {
     }
   }, [projectId, unitId]);
 
-  // BATCH unit-plans-archive (2026-05-25)
-  const loadArchivedPlans = useCallback(async () => {
-    try {
-      setArchivedLoading(true);
-      const data = await unitPlanService.list(projectId, unitId, { archived: true });
-      setArchivedPlans(Array.isArray(data) ? data : []);
-    } catch {
-      toast.error('שגיאה בטעינת הארכיון');
-      setArchivedPlans([]);
-    } finally {
-      setArchivedLoading(false);
-    }
-  }, [projectId, unitId]);
+  // BATCH unit-plans-archive-mirror-general (2026-05-26) — mirror ProjectPlansPage archive flow.
+  const openArchiveModal = (plan) => {
+    setArchiveTarget(plan);
+    setArchiveNote('');
+    setShowArchiveModal(true);
+  };
 
-  const handleArchivePlan = async (plan) => {
-    if (!plan) return;
-    setArchivingPlanId(plan.id);
+  const handleArchive = async () => {
+    if (!archiveTarget) return;
+    setArchivingPlanId(archiveTarget.id);
     try {
-      await unitPlanService.archive(projectId, unitId, plan.id);
+      await unitPlanService.archive(projectId, unitId, archiveTarget.id, archiveNote);
       toast.success('התוכנית הועברה לארכיון');
-      setDetailPlan(null);
+      setShowArchiveModal(false);
+      setArchiveTarget(null);
+      if (detailPlan?.id === archiveTarget.id) setDetailPlan(null);
       loadPlans();
-      if (archivedPlans !== null) loadArchivedPlans();
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'שגיאה בארכוב');
+      toast.error(err?.response?.data?.detail || 'שגיאה בהעברה לארכיון');
     } finally {
       setArchivingPlanId(null);
     }
-  };
-
-  const handleRestorePlan = async (plan) => {
-    if (!plan) return;
-    setRestoringPlanId(plan.id);
-    try {
-      await unitPlanService.restore(projectId, unitId, plan.id);
-      toast.success('התוכנית שוחזרה');
-      loadArchivedPlans();
-      loadPlans();
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || 'שגיאה בשחזור');
-    } finally {
-      setRestoringPlanId(null);
-    }
-  };
-
-  const toggleArchived = () => {
-    setShowArchived((prev) => {
-      const next = !prev;
-      if (next && archivedPlans === null) loadArchivedPlans();
-      return next;
-    });
   };
 
   useEffect(() => { loadUnit(); loadDisciplines(); }, [loadUnit, loadDisciplines]);
@@ -452,6 +422,14 @@ const UnitPlansPage = () => {
                 )}
               </div>
             </div>
+            {/* BATCH unit-plans-archive-mirror-general (2026-05-26) — header link to archive page */}
+            <button
+              onClick={() => navigate(`/projects/${projectId}/units/${unitId}/plans/archive`)}
+              className="flex items-center gap-1 text-[11px] text-amber-100 hover:text-white transition-colors shrink-0"
+            >
+              <Archive className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">ארכיון</span>
+            </button>
           </div>
         </div>
       </div>
@@ -571,65 +549,6 @@ const UnitPlansPage = () => {
           <div className="space-y-5">
             {renderSection('שינויי דיירים', tenantPlans, 'violet')}
             {renderSection('תוכניות כלליות', standardPlans, 'amber')}
-
-            {/* BATCH unit-plans-archive (2026-05-25) — inline archive section */}
-            <div className="space-y-2 pt-2">
-              <button
-                type="button"
-                onClick={toggleArchived}
-                className="w-full flex items-center justify-between px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors"
-              >
-                <span className="flex items-center gap-2">
-                  <Archive className="w-3.5 h-3.5" />
-                  ארכיון
-                  {archivedPlans && archivedPlans.length > 0 && (
-                    <span className="text-[10px] opacity-60">({archivedPlans.length})</span>
-                  )}
-                </span>
-                <ChevronDown className={`w-4 h-4 transition-transform ${showArchived ? 'rotate-180' : ''}`} />
-              </button>
-              {showArchived && (
-                <div className="bg-slate-50 rounded-xl border border-slate-200 p-2 space-y-1">
-                  {archivedLoading ? (
-                    <div className="flex justify-center py-4">
-                      <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
-                    </div>
-                  ) : !archivedPlans || archivedPlans.length === 0 ? (
-                    <div className="text-center py-4 text-xs text-slate-400">אין תוכניות בארכיון</div>
-                  ) : (
-                    archivedPlans.map((plan) => (
-                      <div key={plan.id} className="flex items-center gap-2 px-2 py-2 bg-white rounded-lg border border-slate-100">
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-medium text-slate-700 truncate">
-                            {plan.name || plan.original_filename || ''}
-                          </div>
-                          <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400">
-                            <span className="px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">
-                              {getDisciplineLabel(plan.discipline)}
-                            </span>
-                            {plan.archived_at && <span>{formatDate(plan.archived_at)}</span>}
-                          </div>
-                        </div>
-                        {canUpload && (
-                          <button
-                            onClick={() => handleRestorePlan(plan)}
-                            disabled={restoringPlanId === plan.id}
-                            className="px-2.5 py-1.5 text-[11px] font-medium bg-white border border-slate-200 text-slate-600 rounded-lg hover:border-amber-400 hover:text-amber-600 disabled:opacity-50 flex items-center gap-1 shrink-0"
-                          >
-                            {restoringPlanId === plan.id ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <RotateCcw className="w-3 h-3" />
-                            )}
-                            שחזר
-                          </button>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
           </div>
         )}
       </div>
@@ -865,16 +784,11 @@ const UnitPlansPage = () => {
                 </a>
                 {canUpload && (
                   <button
-                    onClick={() => handleArchivePlan(detailPlan)}
-                    disabled={archivingPlanId === detailPlan.id}
-                    className="px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    onClick={() => { setDetailPlan(null); openArchiveModal(detailPlan); }}
+                    className="px-3 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-1.5"
                   >
-                    {archivingPlanId === detailPlan.id ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Archive className="w-4 h-4" />
-                    )}
-                    ארכב
+                    <Archive className="w-4 h-4" />
+                    ארכיון
                   </button>
                 )}
               </div>
@@ -897,6 +811,58 @@ const UnitPlansPage = () => {
         onClose={() => setShowDisciplineManager(false)}
         onChanged={loadDisciplines}
       />
+
+      {/* BATCH unit-plans-archive-mirror-general (2026-05-26) — archive confirm modal */}
+      {showArchiveModal && archiveTarget && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => { setShowArchiveModal(false); setArchiveTarget(null); }} />
+          <div className="relative z-10 w-full sm:max-w-sm sm:mx-4 p-5 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl" dir="rtl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-slate-800">להעביר לארכיון?</h3>
+              <button onClick={() => { setShowArchiveModal(false); setArchiveTarget(null); }} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors">
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div className="bg-slate-50 rounded-xl px-3 py-2.5">
+                <p className="text-xs text-slate-500">תוכנית</p>
+                <p className="text-sm font-medium text-slate-800 mt-0.5 break-words line-clamp-2">{archiveTarget.name || archiveTarget.original_filename}</p>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-600 mb-1.5 block">הערה (אופציונלי)</label>
+                <input
+                  type="text"
+                  value={archiveNote}
+                  onChange={e => setArchiveNote(e.target.value)}
+                  placeholder="למה מועברת לארכיון?"
+                  className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
+                  autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter') handleArchive(); }}
+                />
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-xs text-amber-700">
+                התוכנית תועבר לארכיון ותוכל לשחזר אותה בכל עת מדף הארכיון.
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleArchive}
+                  disabled={!!archivingPlanId}
+                  className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-sm font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {archivingPlanId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
+                  העבר לארכיון
+                </button>
+                <button
+                  onClick={() => { setShowArchiveModal(false); setArchiveTarget(null); }}
+                  className="px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 transition-colors"
+                >
+                  ביטול
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
