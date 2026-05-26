@@ -23,13 +23,22 @@ logger = logging.getLogger(__name__)
 
 async def _generate_and_save_thumbnail(plan_id: str, file_bytes: bytes, file_type: str, storage_key: str, collection: str = 'project_plans'):
     try:
-        from services.thumbnail_service import generate_thumbnail
+        from services.thumbnail_service import generate_thumbnail, get_pdf_page_count
+        updates = {}
         thumb_url = await generate_thumbnail(file_bytes, file_type, storage_key)
         if thumb_url:
+            updates['thumbnail_url'] = thumb_url
+        # BATCH plan-page-count (2026-05-25) — store the PDF page
+        # count so the plan card can show an "N עמודים" badge.
+        if file_type == 'application/pdf':
+            page_count = await get_pdf_page_count(file_bytes)
+            if page_count:
+                updates['page_count'] = page_count
+        if updates:
             db = get_db()
             coll = getattr(db, collection)
-            await coll.update_one({'id': plan_id}, {'$set': {'thumbnail_url': thumb_url}})
-            logger.info(f"[THUMB] Saved for plan {plan_id} in {collection}")
+            await coll.update_one({'id': plan_id}, {'$set': updates})
+            logger.info(f"[THUMB] Saved {list(updates.keys())} for plan {plan_id} in {collection}")
     except Exception as e:
         logger.warning(f"[THUMB] Failed for plan {plan_id}: {e}")
 

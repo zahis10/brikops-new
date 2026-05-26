@@ -331,6 +331,12 @@ const UnitPlansPage = () => {
                 <span>{fi.label}{plan.file_size ? ` · ${formatFileSize(plan.file_size)}` : ''}</span>
               </>
             )}
+            {plan.page_count > 1 && (
+              <>
+                <span>·</span>
+                <span>{plan.page_count} עמודים</span>
+              </>
+            )}
           </div>
           {plan.plan_type === 'tenant_changes' && (
             <span className="inline-block mt-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">

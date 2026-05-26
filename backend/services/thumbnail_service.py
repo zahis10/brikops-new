@@ -61,6 +61,31 @@ def _generate_pdf_thumb(file_bytes: bytes) -> Optional[bytes]:
         return None
 
 
+def _count_pdf_pages(file_bytes: bytes) -> Optional[int]:
+    """BATCH plan-page-count (2026-05-25) — PDF page count via
+    poppler's pdfinfo. None when poppler is unavailable or on any
+    error (fail-soft, same posture as PDF thumbnails)."""
+    if not _check_poppler():
+        return None
+    try:
+        from pdf2image import pdfinfo_from_bytes
+        info = pdfinfo_from_bytes(file_bytes)
+        pages = info.get('Pages')
+        return int(pages) if pages else None
+    except Exception as e:
+        logger.warning(f"[THUMB] PDF page count failed: {e}")
+        return None
+
+
+async def get_pdf_page_count(file_bytes: bytes) -> Optional[int]:
+    """Async wrapper — runs the poppler call off the event loop."""
+    try:
+        return await asyncio.to_thread(_count_pdf_pages, file_bytes)
+    except Exception as e:
+        logger.warning(f"[THUMB] page count thread failed: {e}")
+        return None
+
+
 async def generate_thumbnail(file_bytes: bytes, file_type: str, storage_key: str) -> Optional[str]:
     try:
         thumb_bytes = None

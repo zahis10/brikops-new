@@ -1,6 +1,6 @@
-BATCH unit-plans-archive-mirror-general — Bug 3 UX rework
+BATCH plan-page-count — "N עמודים" badge on multi-page plan cards
 Branch: staging
-Rollback SHA: 24e7544
+Rollback SHA: a4dd96b
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
@@ -8,162 +8,189 @@ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 STEP 0 — Pre-flight outputs
 ============================================================
 
-0.1  General page archive pattern (frontend/src/pages/ProjectPlansPage.js):
-       105: const [showArchiveModal, setShowArchiveModal] = useState(false);
-       106: const [archiveTarget, setArchiveTarget] = useState(null);
-       107: const [archiveNote, setArchiveNote] = useState('');
-       341: const openArchiveModal = (plan) => { ... }
-       347: const handleArchive = async () => { ...
-            projectPlanService.archive(projectId, archiveTarget.id, archiveNote) ... }
-       578: onClick={() => navigate(`/projects/${projectId}/plans/archive`)}
-       1106: onClick={() => { setDetailPlan(null); openArchiveModal(detailPlan); }}
-       1197-1230: confirm-modal markup ("להעביר לארכיון?")
+0.1  Thumbnail pipeline (backend/services/thumbnail_service.py):
+       1: import io
+       2: import logging
+       3: import asyncio
+       4: from typing import Optional
+       6: from PIL import Image
+       7: from services.object_storage import save_bytes as obj_save_bytes
+       9: logger = logging.getLogger(__name__)
+      18: def _check_poppler() -> bool:
+      48: if not _check_poppler():
+      51:     from pdf2image import convert_from_bytes
+      64: async def generate_thumbnail(file_bytes, file_type, storage_key)
+     → All expected symbols present, NO pre-existing pdfinfo/page-count
+       helper. `io`, `logging`, `asyncio`, `Optional` already imported.
 
-0.2  General archive page exists + is routed:
-       frontend/src/pages/ProjectPlansArchivePage.js — 410 lines
-       frontend/src/App.js:
-         L48: const ProjectPlansArchivePage = React.lazy(...)
-         L453: path="/projects/:projectId/plans/archive"
+0.2  Background-task helper (backend/contractor_ops/plans_router.py):
+      24: async def _generate_and_save_thumbnail(plan_id, file_bytes, file_type, storage_key, collection='project_plans')
+     235: asyncio.create_task(_generate_and_save_thumbnail(..., 'project_plans'))   # project plan upload
+     432: asyncio.create_task(_generate_and_save_thumbnail(..., 'project_plans'))   # plan version/replace
+     896: asyncio.create_task(_generate_and_save_thumbnail(..., 'unit_plans'))      # unit plan upload
+     → Single helper, 3 callsites (project upload + replace + unit
+       upload). Extending this ONE helper covers every plan type — no
+       upload-endpoint change.
 
-0.3  Bug 3 state to remove (UnitPlansPage.js) — confirmed present pre-edit:
-       showArchived, archivedPlans, archivedLoading, restoringPlanId,
-       loadArchivedPlans, toggleArchived, handleRestorePlan,
-       handleArchivePlan, ChevronDown, RotateCcw
+0.3  Plan-card metadata rows (BOTH pages):
+     ProjectPlansPage.js — inline filteredPlans.map at L718, current
+     metadata row (L750-761) before edit:
+         <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-400">
+           <span>{formatDate(plan.created_at)}</span>
+           {plan.current_version > 1 && (<span ...>v{...}</span>)}
+           {(plan.file_type || plan.file_size) && (
+             <><span>·</span><span>{fi.label}{...formatFileSize...}</span></>
+           )}
+         </div>
 
-0.4  Reused backend endpoints (NO backend change in this batch):
-       backend/contractor_ops/plans_router.py
-         L904: async def archive_unit_plan
-         L947: async def restore_unit_plan
-
-0.5  Reused api.js methods (NO api.js change in this batch):
-       frontend/src/services/api.js
-         L812: export const unitPlanService = {
-         L832: async archive(projectId, unitId, planId, note = '')
-         L840: async restore(projectId, unitId, planId)
+     UnitPlansPage.js — renderPlanCard at L299, current metadata row
+     (L326-334) before edit:
+         <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-400">
+           <span>{formatDate(plan.created_at)}</span>
+           {(plan.file_type || plan.file_size) && (
+             <><span>·</span><span>{fi.label}{...formatFileSize...}</span></>
+           )}
+         </div>
 
 ============================================================
-WHAT CHANGED (3 files)
+WHAT CHANGED (4 files, exactly as spec'd)
 ============================================================
 
-1) frontend/src/pages/UnitPlansArchivePage.js  (NEW, 410 lines)
-   - Mirrors ProjectPlansArchivePage.js exactly with unit-scope adaptations:
-     * useParams → { projectId, unitId }
-     * unitService.get(unitId) (was projectService.get)
-     * unitPlanService.list(projectId, unitId, { archived: true })
-       (was projectPlanService.listArchived)
-     * unitPlanService.restore(projectId, unitId, restoreTarget.id)
-       (was projectPlanService.restore)
-     * back arrow + "תוכניות פעילות" link → /projects/{pid}/units/{uid}/plans
-     * header subtitle: {project} · {building} · {floor} · דירה {label}
-   - Same MANAGE_ROLES gate, same Hebrew toasts, same restore-confirm modal
-     ("שחזור תוכנית" → green "שחזר לתוכניות פעילות" / "ביטול")
-   - export default UnitPlansArchivePage
+1) backend/services/thumbnail_service.py  (+27 lines, +1 sibling helper pair)
+   Added AFTER `_generate_pdf_thumb` (L64) and BEFORE `generate_thumbnail`:
 
-2) frontend/src/App.js  (+2 lines: lazy import + route)
-   - L49: const UnitPlansArchivePage = React.lazy(() => import('./pages/UnitPlansArchivePage'));
-   - L464-471: <Route path="/projects/:projectId/units/:unitId/plans/archive" ...>
-     placed next to the existing project-archive route, both above the
-     active-plans route.
+       def _count_pdf_pages(file_bytes: bytes) -> Optional[int]:
+           """BATCH plan-page-count (2026-05-25) — PDF page count via
+           poppler's pdfinfo. None when poppler is unavailable or on any
+           error (fail-soft, same posture as PDF thumbnails)."""
+           if not _check_poppler():
+               return None
+           try:
+               from pdf2image import pdfinfo_from_bytes
+               info = pdfinfo_from_bytes(file_bytes)
+               pages = info.get('Pages')
+               return int(pages) if pages else None
+           except Exception as e:
+               logger.warning(f"[THUMB] PDF page count failed: {e}")
+               return None
 
-3) frontend/src/pages/UnitPlansPage.js  (rework)
-   REMOVED (Bug 3's inline UX):
-     - lucide imports: ChevronDown, RotateCcw  (Archive kept — reused)
-     - state: showArchived, archivedPlans, archivedLoading, restoringPlanId
-     - handlers: loadArchivedPlans, toggleArchived,
-                 handleRestorePlan, handleArchivePlan
-     - the inline collapsible "ארכיון" section JSX below renderSection
-     - the "ארכב" direct-archive button in the detail-modal action row
-   KEPT (unchanged):
-     - Archive icon import, archivingPlanId state, the whole upload flow,
-       loadPlans, renderSection/renderPlanCard, discipline filter,
-       detailPlan modal markup (except the replaced button)
-   ADDED (mirror general page):
-     - state: showArchiveModal, archiveTarget, archiveNote
-     - openArchiveModal(plan) + handleArchive() — verbatim mirror of
-       ProjectPlansPage L341-362, swapping projectPlanService.archive →
-       unitPlanService.archive(projectId, unitId, archiveTarget.id,
-       archiveNote)
-     - Header "ארכיון" link in the amber header bar (always visible —
-       fixes the bug where archiving the last active plan hid the entire
-       archive UI). Mirrors ProjectPlansPage L577-583.
-     - Detail-modal action button — replaced "ארכב" with "ארכיון"
-       (label and behavior match general page L1106):
-       onClick={() => { setDetailPlan(null); openArchiveModal(detailPlan); }}
-     - Archive confirm-modal JSX at the bottom of the page (next to the
-       other modals), markup mirrors ProjectPlansPage L1197-1230.
+
+       async def get_pdf_page_count(file_bytes: bytes) -> Optional[int]:
+           """Async wrapper — runs the poppler call off the event loop."""
+           try:
+               return await asyncio.to_thread(_count_pdf_pages, file_bytes)
+           except Exception as e:
+               logger.warning(f"[THUMB] page count thread failed: {e}")
+               return None
+
+   `generate_thumbnail` UNCHANGED. Same `_check_poppler()` fail-soft
+   posture as the existing PDF-thumb path.
+
+2) backend/contractor_ops/plans_router.py  (helper extended at L24)
+   `_generate_and_save_thumbnail` reworked verbatim per spec:
+     - imports both `generate_thumbnail` AND `get_pdf_page_count`
+     - collects an `updates` dict instead of inline `{'$set': {...}}`
+     - sets `thumbnail_url` when thumb succeeds
+     - for `file_type == 'application/pdf'` calls `get_pdf_page_count`
+       and adds `page_count` when truthy
+     - single `coll.update_one(..., {'$set': updates})` only when
+       `updates` is non-empty — preserves the one-write-per-call
+       invariant
+     - logs `list(updates.keys())` so we see what was written
+   All 3 callsites (L235, L432, L896) reused unchanged.
+
+3) frontend/src/pages/ProjectPlansPage.js  (card badge, L764-769 new)
+   Appended to the same metadata row that holds date / version / file
+   size, after the file-size block:
+       {plan.page_count > 1 && (
+         <>
+           <span>·</span>
+           <span>{plan.page_count} עמודים</span>
+         </>
+       )}
+   Plain text span, no new icon, no new import.
+
+4) frontend/src/pages/UnitPlansPage.js  (card badge, L337-342 new)
+   Same insertion in `renderPlanCard`'s metadata row, after the
+   file-size block. Plain text span, no new icon, no new import.
 
 ============================================================
 DEPLOY METHOD
 ============================================================
-FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no backend, no new dependency
+MIXED (backend+frontend) — ./deploy.sh, Capgo OTA, no ./ship.sh, no new dependency
 
-- No backend touched (Bug 3's endpoints reused as-is).
-- No api.js change (Bug 3's unitPlanService.archive/.restore reused).
-- No new npm/pip packages, no native, no nginx, no capacitor.config.
-- Ships via ./deploy.sh --prod (Capgo OTA bundle only).
+- Backend (thumbnail_service.py + plans_router.py) → ./deploy.sh --stag
+  then --prod (EB Docker).
+- Frontend (ProjectPlansPage.js + UnitPlansPage.js) → Capgo OTA bundle
+  carried by ./deploy.sh --prod.
+- No native, no capacitor.config, no nginx, no new npm/pip package.
+- `pdf2image` + poppler are already wired for PDF thumbnails.
+- If poppler is absent on the EB host, page counts silently no-op (same
+  posture as PDF thumbnails) — the badge just won't appear.
 
 ============================================================
 VERIFICATION
 ============================================================
 
-V1 — Frontend CRA build:
+V1 — Backend imports clean:
+  $ cd backend && python -c "import services.thumbnail_service, contractor_ops.plans_router; print('OK')"
+  [SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****9991,****0001
+  OK
+  → No ImportError. Both modules load cleanly.
+
+V2 — Frontend CRA build:
   $ cd frontend && REACT_APP_BACKEND_URL=<dummy> CI=true npm run build
-  → "The build folder is ready to be deployed." (clean, no errors,
-     no new ESLint warnings — full output trimmed for brevity).
+  ...
+  The build folder is ready to be deployed.
+  → Clean. No errors, no new ESLint warnings.
 
-V2.1 — New page registered + file exists:
-  $ grep -n "UnitPlansArchivePage" frontend/src/App.js \
-        frontend/src/pages/UnitPlansArchivePage.js
-  frontend/src/App.js:49:  const UnitPlansArchivePage = React.lazy(...)
-  frontend/src/App.js:468:    <UnitPlansArchivePage />
-  frontend/src/pages/UnitPlansArchivePage.js:21:  const UnitPlansArchivePage = () => {
-  frontend/src/pages/UnitPlansArchivePage.js:409: export default UnitPlansArchivePage;
+V3 — Static checks:
+  $ grep -n "get_pdf_page_count\|_count_pdf_pages" backend/services/thumbnail_service.py
+   64: def _count_pdf_pages(file_bytes: bytes) -> Optional[int]:
+   80: async def get_pdf_page_count(file_bytes: bytes) -> Optional[int]:
+   83:     return await asyncio.to_thread(_count_pdf_pages, file_bytes)
 
-V2.2 — Modal state + handlers + header link present:
-  $ grep -n "showArchiveModal\|openArchiveModal\|handleArchive\|units/.*plans/archive" \
-        frontend/src/pages/UnitPlansPage.js
-   85: const [showArchiveModal, setShowArchiveModal] = useState(false);
-  138: const openArchiveModal = (plan) => {
-  144: const handleArchive = async () => {
-  427: onClick={() => navigate(`/projects/${projectId}/units/${unitId}/plans/archive`)}
-  787: onClick={() => { setDetailPlan(null); openArchiveModal(detailPlan); }}
-  816: {showArchiveModal && archiveTarget && (
-  840: onKeyDown={e => { if (e.key === 'Enter') handleArchive(); }}
-  848: onClick={handleArchive}
+  $ grep -n "page_count" backend/contractor_ops/plans_router.py
+   26: from services.thumbnail_service import generate_thumbnail, get_pdf_page_count
+   34: page_count = await get_pdf_page_count(file_bytes)
+   35: if page_count:
+   36:     updates['page_count'] = page_count
 
-⭐ V2.3 — Critical clean-removal grep (word-boundary, MUST be zero):
-  $ grep -wn "showArchived\|archivedPlans\|archivedLoading\|restoringPlanId\
-\|loadArchivedPlans\|toggleArchived\|handleRestorePlan\|handleArchivePlan\
-\|ChevronDown\|RotateCcw" frontend/src/pages/UnitPlansPage.js
-  → ZERO HITS — CLEAN. Every Bug-3 inline-section name (4 state, 4
-    handlers, 2 imports) is removed; no dangling refs.
+  $ grep -n "page_count" frontend/src/pages/ProjectPlansPage.js frontend/src/pages/UnitPlansPage.js
+   frontend/src/pages/ProjectPlansPage.js:761:  {plan.page_count > 1 && (
+   frontend/src/pages/ProjectPlansPage.js:764:    <span>{plan.page_count} עמודים</span>
+   frontend/src/pages/UnitPlansPage.js:334:      {plan.page_count > 1 && (
+   frontend/src/pages/UnitPlansPage.js:337:        <span>{plan.page_count} עמודים</span>
+
+V4 — Manual (staging, for Zahi):
+  a) Upload/scan a multi-page PDF plan → card shows "N עמודים".
+  b) Single-page PDF / image plan → no badge.
+  c) Old plan uploaded pre-batch → no badge until re-upload/new version.
+  d) Both general project-plans page AND per-apartment unit-plans page.
 
 ============================================================
 COMMIT MESSAGE
 ============================================================
-fix(plans): align unit-plans archive UX 1:1 with the general page
+feat(plans): show an "N עמודים" badge on multi-page plan cards
 
-Bug 3 shipped a "lighter" archive UX on the per-apartment plans
-page (inline collapsible section + direct archive button). That
-diverged from the general plans page's UX and had a real bug —
-archiving the last active plan made the entire archive UI vanish.
-This batch mirrors the general page exactly: a separate
-/projects/{pid}/units/{uid}/plans/archive page, an "ארכיון" link in
-the unit-plans header, and an "להעביר לארכיון?" confirm modal with
-an optional note input in place of the direct-archive button.
-Frontend-only — reuses Bug 3's backend endpoints unchanged.
+Bug 6 follow-up (2026-05-21 report). Scanned/multi-page PDF plans
+looked identical to single-page ones. The thumbnail background task
+now also computes the PDF page count (poppler pdfinfo, fail-soft) and
+stores it as page_count on the plan doc; the plan card shows an
+"N עמודים" badge when page_count > 1, on both the general and the
+per-apartment plans pages. Backend + frontend; Capgo OTA for frontend.
 
 Files:
-- frontend/src/pages/UnitPlansArchivePage.js  (NEW, mirror of
-  ProjectPlansArchivePage, unit-scope)
-- frontend/src/App.js                         (+1 lazy import,
-  +1 route)
-- frontend/src/pages/UnitPlansPage.js         (remove Bug-3 inline
-  UI/state, add header link + confirm modal + handlers, switch
-  detail-modal button)
+- backend/services/thumbnail_service.py     (+1 sibling helper pair —
+  _count_pdf_pages + get_pdf_page_count, fail-soft via _check_poppler)
+- backend/contractor_ops/plans_router.py    (_generate_and_save_thumbnail
+  extended to also store page_count for application/pdf — single
+  update_one preserved)
+- frontend/src/pages/ProjectPlansPage.js    (badge in card metadata row)
+- frontend/src/pages/UnitPlansPage.js       (badge in card metadata row)
 
 Branch: staging
-Rollback SHA: 24e7544
+Rollback SHA: a4dd96b
 
 ============================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
