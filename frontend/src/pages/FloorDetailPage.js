@@ -127,6 +127,14 @@ export default function FloorDetailPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const fromParam = searchParams.get('from');
+  const returnToParam = searchParams.get('returnTo');
+  const safeReturnTo = (() => {
+    if (!returnToParam) return null;
+    try {
+      const dec = decodeURIComponent(returnToParam);
+      return (dec.startsWith('/') && !dec.startsWith('//') && !dec.startsWith('/\\')) ? dec : null;
+    } catch { return null; }
+  })();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -229,6 +237,7 @@ export default function FloorDetailPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <button onClick={() => {
+                if (safeReturnTo) { navigate(safeReturnTo); return; }
                 const base = buildingId
                   ? `/projects/${projectId}/buildings/${buildingId}/qc`
                   : `/projects/${projectId}/qc`;

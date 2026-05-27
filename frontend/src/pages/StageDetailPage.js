@@ -763,6 +763,7 @@ export default function StageDetailPage() {
   const navState = location.state || {};
   const isUnitMode = navState.scope === 'unit';
   const unitName = navState.unitName || '';
+  const unitIdForJump = navState.unitId || '';
   const returnToPath = navState.returnTo || '';
 
   const [loading, setLoading] = useState(true);
@@ -1692,6 +1693,19 @@ export default function StageDetailPage() {
                 <h1 className="text-base font-bold flex items-center gap-2">
                   <ClipboardCheck className="w-4 h-4 text-amber-400" />
                   {isUnitMode && unitName ? `${stage.title} — ${unitName}` : stage.title}
+                  {isUnitMode && unitIdForJump && (
+                    <button
+                      onClick={() => {
+                        const returnTo = encodeURIComponent(location.pathname + location.search);
+                        navigate(`/projects/${projectId}/units/${unitIdForJump}/defects?returnTo=${returnTo}`);
+                      }}
+                      className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-200 border border-amber-400/40 hover:bg-amber-500/30 transition-colors font-medium"
+                      title="עבור לליקויי הדירה"
+                    >
+                      <AlertCircle className="w-3 h-3" />
+                      ליקויים
+                    </button>
+                  )}
                 </h1>
                 <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                   {(stage.pre_work_documentation || stage.has_prework_items) && (

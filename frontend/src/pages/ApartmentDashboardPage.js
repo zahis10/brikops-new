@@ -19,7 +19,8 @@ import { FEATURES } from '../config/features';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2,
   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
-  SlidersHorizontal, Search, X, Download, Pencil, Save, Info, Trash2
+  SlidersHorizontal, Search, X, Download, Pencil, Save, Info, Trash2,
+  ClipboardCheck
 } from 'lucide-react';
 
 const APARTMENT_DEFAULT_FILTERS = {
@@ -388,6 +389,16 @@ const ApartmentDashboardPage = () => {
   }
 
   const { unit, floor, building, project, kpi } = unitData;
+
+  const returnToParam = searchParams.get('returnTo');
+  const safeReturnTo = (() => {
+    if (!returnToParam) return null;
+    try {
+      const dec = decodeURIComponent(returnToParam);
+      return (dec.startsWith('/') && !dec.startsWith('//') && !dec.startsWith('/\\')) ? dec : null;
+    } catch { return null; }
+  })();
+  const floorIdForQc = floor?.id || unit?.floor_id || '';
   const effectiveLabel = unit.effective_label || unit.unit_no || '';
 
   const openCount = (kpi?.open ?? 0) + (kpi?.reopened ?? 0);
@@ -441,6 +452,7 @@ const ApartmentDashboardPage = () => {
           <div className="flex items-center gap-3">
             <button
               onClick={() => {
+                if (safeReturnTo) { navigate(safeReturnTo); return; }
                 const navState = location.state;
                 if (navState?.from === 'unit-home') {
                   navigate(`/projects/${projectId}/units/${unitId}`);
@@ -471,6 +483,19 @@ const ApartmentDashboardPage = () => {
                 >
                   <Pencil className="w-3.5 h-3.5 text-white" />
                 </button>
+                {floorIdForQc && (
+                  <button
+                    onClick={() => {
+                      const returnTo = encodeURIComponent(location.pathname + location.search);
+                      navigate(`/projects/${projectId}/floors/${floorIdForQc}?returnTo=${returnTo}`);
+                    }}
+                    className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-white/20 hover:bg-white/30 transition-colors font-medium"
+                    title="עבור לבקרת ביצוע של הקומה"
+                  >
+                    <ClipboardCheck className="w-3 h-3" />
+                    בקרת ביצוע
+                  </button>
+                )}
               </div>
               <Breadcrumbs
                 items={[project?.name, building?.name, floor?.name]}
