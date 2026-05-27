@@ -63,8 +63,16 @@ PER-FILE CHANGES
 @@ navigate(stageWithFrom, { state: { ... } })
    returnTo: returnToFinal,
    unitName: unit.unit_name || unit.unit_no,
-+  unitId: unit.id,
++  unitId: unit.unit_id,
    scope: 'unit',
+
+CORRECTION 2026-05-27 (Zahi): the field on the unit object returned by
+`qcService.getUnitsStatus(floorId)` is `unit_id`, not `id` (matches the
+neighbouring `unit.unit_id` accesses three lines above in the same
+function). The initial patch used `unit.id` → `navState.unitId` was
+`undefined` → the new "ליקויים" button in StageDetailPage never
+rendered. Corrected to `unit.unit_id`. One-line fix; nothing else in
+StageDetailPage / ApartmentDashboardPage / FloorDetailPage changes.
 
 --- frontend/src/pages/StageDetailPage.js (PART 1) ---
 @@ render scope hooks (around L767)

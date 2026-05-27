@@ -73,7 +73,7 @@ export default function UnitQCSelectionPage() {
           state: {
             returnTo: returnToFinal,
             unitName: unit.unit_name || unit.unit_no,
-            unitId: unit.id,
+            unitId: unit.unit_id,
             scope: 'unit',
           }
         }
