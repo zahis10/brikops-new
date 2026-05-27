@@ -770,7 +770,21 @@ export default function StageDetailPage() {
   const unitIdForJump = navState.unitId || unitIdFromUrl;
   const unitName = navState.unitName || unitNameFromUrl;
   const isUnitMode = navState.scope === 'unit' || !!unitIdForJump;
-  const returnToPath = navState.returnTo || '';
+  // CORRECTION 2026-05-27 — also read returnTo from the URL as a
+  // fallback when navState is null (HOP 4 of the Matrix → QC →
+  // defects → back → QC → back → Matrix chain). Same security guard
+  // as ApartmentDashboardPage/FloorDetailPage: reject `//` and `/\`
+  // to prevent open-redirect via a crafted URL.
+  const returnToFromUrl = searchParams.get('returnTo') || '';
+  const returnToCandidate = navState.returnTo || returnToFromUrl;
+  const returnToPath = (() => {
+    if (!returnToCandidate) return '';
+    return (
+      returnToCandidate.startsWith('/')
+      && !returnToCandidate.startsWith('//')
+      && !returnToCandidate.startsWith('/\\')
+    ) ? returnToCandidate : '';
+  })();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

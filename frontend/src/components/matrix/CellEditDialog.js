@@ -129,6 +129,12 @@ export default function CellEditDialog({
       const sp = new URLSearchParams();
       sp.set('unitId', unit.id);
       if (unitName) sp.set('unitName', String(unitName));
+      // CORRECTION 2026-05-27 — also put returnTo in the URL so HOP 4
+      // (QC → back → Matrix) survives the QC↔defects roundtrip where
+      // router state is wiped between hops. Same URL-encoding pattern
+      // as unitId/unitName above. URLSearchParams handles encoding;
+      // StageDetailPage reads with searchParams.get() (decoded).
+      if (returnTo) sp.set('returnTo', returnTo);
       const qcUrl =
         `/projects/${projectId}/qc/floors/${unit.floor_id}` +
         `/run/${runId}/stage/${stage.id}?${sp.toString()}`;
