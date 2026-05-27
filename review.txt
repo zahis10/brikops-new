@@ -10,7 +10,7 @@ Files changed:  3 (1 backend + 2 frontend) — same three files as #532
                   frontend/src/pages/ExecutionMatrixPage.js
                   frontend/src/components/matrix/CellEditDialog.js
 
-WHY
+WHYש
 ---
 After #532 shipped, clicking "מעבר לסעיף בבקרת ביצוע" on a matrix cell
 whose stage is unit-scope (e.g. ריצוף דירה) landed on the QC stage page
