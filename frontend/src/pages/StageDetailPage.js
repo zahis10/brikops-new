@@ -761,9 +761,15 @@ export default function StageDetailPage() {
   const [searchParams] = useSearchParams();
   const fromParam = searchParams.get('from');
   const navState = location.state || {};
-  const isUnitMode = navState.scope === 'unit';
-  const unitName = navState.unitName || '';
-  const unitIdForJump = navState.unitId || '';
+  // FOLLOWUP 2026-05-27 — read unit context from EITHER router state
+  // (first visit via UnitQCSelectionPage) OR URL params (revisit via
+  // the QC→defects→back roundtrip, where router state is null but the
+  // URL still carries ?unitId=…&unitName=…). Survives hard refresh too.
+  const unitIdFromUrl = searchParams.get('unitId') || '';
+  const unitNameFromUrl = searchParams.get('unitName') || '';
+  const unitIdForJump = navState.unitId || unitIdFromUrl;
+  const unitName = navState.unitName || unitNameFromUrl;
+  const isUnitMode = navState.scope === 'unit' || !!unitIdForJump;
   const returnToPath = navState.returnTo || '';
 
   const [loading, setLoading] = useState(true);
@@ -1693,19 +1699,6 @@ export default function StageDetailPage() {
                 <h1 className="text-base font-bold flex items-center gap-2">
                   <ClipboardCheck className="w-4 h-4 text-amber-400" />
                   {isUnitMode && unitName ? `${stage.title} — ${unitName}` : stage.title}
-                  {isUnitMode && unitIdForJump && (
-                    <button
-                      onClick={() => {
-                        const returnTo = encodeURIComponent(location.pathname + location.search);
-                        navigate(`/projects/${projectId}/units/${unitIdForJump}/defects?returnTo=${returnTo}`);
-                      }}
-                      className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-200 border border-amber-400/40 hover:bg-amber-500/30 transition-colors font-medium"
-                      title="עבור לליקויי הדירה"
-                    >
-                      <AlertCircle className="w-3 h-3" />
-                      ליקויים
-                    </button>
-                  )}
                 </h1>
                 <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                   {(stage.pre_work_documentation || stage.has_prework_items) && (
@@ -1735,6 +1728,26 @@ export default function StageDetailPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {isUnitMode && unitIdForJump && (
+                <button
+                  onClick={() => {
+                    // Encode unit context into the returnTo URL so the
+                    // QC → defects → back roundtrip restores the button
+                    // and the title's "— <unit>" suffix on return.
+                    const sp = new URLSearchParams(location.search);
+                    sp.set('unitId', unitIdForJump);
+                    if (unitName) sp.set('unitName', unitName);
+                    const stageUrlForReturn = `${location.pathname}?${sp.toString()}`;
+                    const returnTo = encodeURIComponent(stageUrlForReturn);
+                    navigate(`/projects/${projectId}/units/${unitIdForJump}/defects?returnTo=${returnTo}`);
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-amber-500/30 text-amber-100 border border-amber-400/50 hover:bg-amber-500/40 transition-colors font-semibold"
+                  title="מעבר לליקויים של הדירה"
+                >
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  מעבר לליקויים של הדירה
+                </button>
+              )}
               <button onClick={() => { load(); loadTimeline(); }} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
                 <RefreshCw className="w-4 h-4" />
               </button>

@@ -489,11 +489,11 @@ const ApartmentDashboardPage = () => {
                       const returnTo = encodeURIComponent(location.pathname + location.search);
                       navigate(`/projects/${projectId}/floors/${floorIdForQc}?returnTo=${returnTo}`);
                     }}
-                    className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-white/20 hover:bg-white/30 transition-colors font-medium"
-                    title="עבור לבקרת ביצוע של הקומה"
+                    className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-white text-amber-700 hover:bg-amber-50 transition-colors font-semibold shadow-sm"
+                    title="מעבר לבקרת ביצוע של הקומה"
                   >
-                    <ClipboardCheck className="w-3 h-3" />
-                    בקרת ביצוע
+                    <ClipboardCheck className="w-3.5 h-3.5" />
+                    מעבר לבקרת ביצוע של הקומה
                   </button>
                 )}
               </div>

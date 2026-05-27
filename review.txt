@@ -1,225 +1,203 @@
 ================================================================================
-BATCH qc-defects-quicknav — Task #531 — review
+BATCH #531 FOLLOWUP — placement + roundtrip + styling — review
 ================================================================================
-Date:         2026-05-27
-Branch:       staging
-Rollback SHA: 12656f0  (HEAD prior to first edit in this batch)
-Files changed (4):
-  frontend/src/pages/UnitQCSelectionPage.js   (+1 line  — propagate unitId)
-  frontend/src/pages/StageDetailPage.js       (+15 lines — read unitId + jump button)
-  frontend/src/pages/ApartmentDashboardPage.js (+25 lines — import, safeReturnTo,
-                                                back-arrow short-circuit, jump button)
-  frontend/src/pages/FloorDetailPage.js       (+9 lines  — safeReturnTo, back short-circuit)
+Date:          2026-05-27
+Branch:        staging
+Rollback SHA:  523f1b7  (HEAD prior to first edit in this followup)
+Files changed (2):
+  frontend/src/pages/StageDetailPage.js        (hooks + button move + onClick + style)
+  frontend/src/pages/ApartmentDashboardPage.js (button style + label)
 
 FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no backend, no new dependency.
 
 ================================================================================
-STEP 0 — DISCOVERY (verified against staging HEAD 12656f0)
+STEP 0 — STATE BEFORE EDIT (verified on 523f1b7)
 ================================================================================
-0.1  StageDetailPage unit-rendering mode — CRITICAL FINDING
-     grep -n "isUnitMode\|unitName\|unit_id\|unitId\|grouped\|byUnit" \
-       frontend/src/pages/StageDetailPage.js
-     L767  const isUnitMode = navState.scope === 'unit';
-     L768  const unitName = navState.unitName || '';
-     (no `navState.unitId`, no `grouped`, no `byUnit`. `items` is a flat
-      list belonging to one run — not grouped per unit.)
-     → StageDetailPage is effectively SINGLE-UNIT when `isUnitMode`.
-       Floor-mode aggregates many units → no per-unit button possible →
-       gate the button on `isUnitMode && unitIdForJump`.
-     → BLOCKER: today there is NO unit id in router state. The single
-       caller `UnitQCSelectionPage.js:71-78` only passes
-       `{ returnTo, unitName, scope: 'unit' }`. Fixed in PART 1.5 by
-       also passing `unitId: unit.id`. StageDetailPage now reads
-       `navState.unitId` and renders ONE header button next to the
-       stage title.
-
-0.2  ApartmentDashboardPage back-arrow handler — confirmed at L457-466:
-       onClick={() => {
-         const navState = location.state;
-         if (navState?.from === 'unit-home') { navigate(`/projects/${projectId}/units/${unitId}`); }
-         else if (navState?.buildingId)      { navigate(`/projects/${projectId}/buildings/${navState.buildingId}/defects`); }
-         else                                 { navigate(`/projects/${projectId}/units/${unitId}`); }
-       }}
-     Floor id reachable in render scope at L394:
-       const { unit, floor, building, project, kpi } = unitData;
-     → `floorIdForQc = floor?.id || unit?.floor_id || ''`. OK.
-
-0.3  FloorDetailPage back-arrow handler — confirmed at L242-249:
-       onClick={() => {
-         const base = buildingId ? `/projects/${projectId}/buildings/${buildingId}/qc`
-                                 : `/projects/${projectId}/qc`;
-         const url = fromParam === 'qc' && buildingId ? `${base}?from=qc` : base;
-         navigate(url);
-       }}
-     `useSearchParams` already imported (L131). OK.
-
-0.4  StageDetailPage already imports `useLocation` (L763 — `const location = useLocation();`). OK.
+0.1  #531 + unit_id fix present:
+       StageDetailPage.js:767  const isUnitMode = navState.scope === 'unit';
+       StageDetailPage.js:769  const unitIdForJump = navState.unitId || '';
+       UnitQCSelectionPage.js:79 unitId: unit.unit_id,
+0.2  Current button placement / styling confirmed:
+       - "ליקויים" button inside the `<h1>` next to the stage title
+         (StageDetailPage L1697-1709).
+       - "בקרת ביצוע" button in the amber header with `bg-white/20`
+         translucent styling (ApartmentDashboardPage L489-501).
 
 ================================================================================
-PER-FILE CHANGES
+PART 1 — StageDetailPage.js : URL fallback for unit context
 ================================================================================
+BEFORE (L767-770):
+  const isUnitMode = navState.scope === 'unit';
+  const unitName = navState.unitName || '';
+  const unitIdForJump = navState.unitId || '';
+  const returnToPath = navState.returnTo || '';
 
---- frontend/src/pages/UnitQCSelectionPage.js (PART 1.5) ---
-@@ navigate(stageWithFrom, { state: { ... } })
-   returnTo: returnToFinal,
-   unitName: unit.unit_name || unit.unit_no,
-+  unitId: unit.unit_id,
-   scope: 'unit',
+AFTER (L767-776):
+  // FOLLOWUP 2026-05-27 — read unit context from EITHER router state
+  // (first visit via UnitQCSelectionPage) OR URL params (revisit via
+  // the QC→defects→back roundtrip, where router state is null but the
+  // URL still carries ?unitId=…&unitName=…). Survives hard refresh too.
+  const unitIdFromUrl = searchParams.get('unitId') || '';
+  const unitNameFromUrl = searchParams.get('unitName') || '';
+  const unitIdForJump = navState.unitId || unitIdFromUrl;
+  const unitName = navState.unitName || unitNameFromUrl;
+  const isUnitMode = navState.scope === 'unit' || !!unitIdForJump;
+  const returnToPath = navState.returnTo || '';
 
-CORRECTION 2026-05-27 (Zahi): the field on the unit object returned by
-`qcService.getUnitsStatus(floorId)` is `unit_id`, not `id` (matches the
-neighbouring `unit.unit_id` accesses three lines above in the same
-function). The initial patch used `unit.id` → `navState.unitId` was
-`undefined` → the new "ליקויים" button in StageDetailPage never
-rendered. Corrected to `unit.unit_id`. One-line fix; nothing else in
-StageDetailPage / ApartmentDashboardPage / FloorDetailPage changes.
+`goBack()` UNCHANGED. Gates UNCHANGED — only the sources widened.
 
---- frontend/src/pages/StageDetailPage.js (PART 1) ---
-@@ render scope hooks (around L767)
-   const isUnitMode = navState.scope === 'unit';
-   const unitName = navState.unitName || '';
-+  const unitIdForJump = navState.unitId || '';
-   const returnToPath = navState.returnTo || '';
+================================================================================
+PART 2 — StageDetailPage.js : button moved + new onClick + new styling
+================================================================================
+2.1  Removed the button from inside the `<h1>`. Title reverts to:
+       <h1 className="text-base font-bold flex items-center gap-2">
+         <ClipboardCheck className="w-4 h-4 text-amber-400" />
+         {isUnitMode && unitName ? `${stage.title} — ${unitName}` : stage.title}
+       </h1>
 
-@@ dark header next to stage title (around L1696-1711)
-   <h1 className="text-base font-bold flex items-center gap-2">
-     <ClipboardCheck className="w-4 h-4 text-amber-400" />
-     {isUnitMode && unitName ? `${stage.title} — ${unitName}` : stage.title}
-+    {isUnitMode && unitIdForJump && (
-+      <button
-+        onClick={() => {
-+          const returnTo = encodeURIComponent(location.pathname + location.search);
-+          navigate(`/projects/${projectId}/units/${unitIdForJump}/defects?returnTo=${returnTo}`);
-+        }}
-+        className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md
-+                   bg-amber-500/20 text-amber-200 border border-amber-400/40
-+                   hover:bg-amber-500/30 transition-colors font-medium"
-+        title="עבור לליקויי הדירה"
-+      >
-+        <AlertCircle className="w-3 h-3" />
-+        ליקויים
-+      </button>
-+    )}
-   </h1>
+2.2  Added a NEW button as the FIRST child of the left controls
+     container (the `<div className="flex items-center gap-2">` at
+     L1733 — the one holding the refresh button + pct/total display).
+     Visual order in RTL: …title group… | [מעבר לליקויים של הדירה] |
+     [refresh] | [0% / 0/N].
 
-`goBack()` and everything else UNCHANGED. `AlertCircle` was already in
-the lucide import — no new dependency.
+       {isUnitMode && unitIdForJump && (
+         <button
+           onClick={() => {
+             // Encode unit context into the returnTo URL so the
+             // QC → defects → back roundtrip restores the button
+             // and the title's "— <unit>" suffix on return.
+             const sp = new URLSearchParams(location.search);
+             sp.set('unitId', unitIdForJump);
+             if (unitName) sp.set('unitName', unitName);
+             const stageUrlForReturn = `${location.pathname}?${sp.toString()}`;
+             const returnTo = encodeURIComponent(stageUrlForReturn);
+             navigate(`/projects/${projectId}/units/${unitIdForJump}/defects?returnTo=${returnTo}`);
+           }}
+           className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md
+                      bg-amber-500/30 text-amber-100 border border-amber-400/50
+                      hover:bg-amber-500/40 transition-colors font-semibold"
+           title="מעבר לליקויים של הדירה"
+         >
+           <AlertCircle className="w-3.5 h-3.5" />
+           מעבר לליקויים של הדירה
+         </button>
+       )}
 
---- frontend/src/pages/ApartmentDashboardPage.js (PART 2) ---
-@@ lucide import — `ClipboardCheck` added (single trailing import)
-   ..., Pencil, Save, Info, Trash2,
-+  ClipboardCheck
- } from 'lucide-react';
+Diff vs the #531 button:
+  • Position: inside `<h1>` → left controls container, first child.
+  • Label + title: "ליקויים" / "עבור לליקויי הדירה" → "מעבר לליקויים של הדירה" (both).
+  • className: text-[10px]→text-xs; gap-1→gap-1.5; px-2 py-0.5→px-2.5 py-1;
+              bg/20→/30; text-amber-200→/100; border /40→/50; hover /30→/40;
+              font-medium→font-semibold.
+  • Icon: w-3 h-3 → w-3.5 h-3.5.
+  • onClick: now encodes `unitId` + `unitName` into the returnTo URL
+    (URLSearchParams clone of current location.search → set unitId,
+    optionally unitName → encode `${pathname}?${sp}`).
 
-@@ render scope, right after `const { unit, floor, ... } = unitData;`
-+  const returnToParam = searchParams.get('returnTo');
-+  const safeReturnTo = (() => {
-+    if (!returnToParam) return null;
-+    try {
-+      const dec = decodeURIComponent(returnToParam);
-+      return (dec.startsWith('/') && !dec.startsWith('//') && !dec.startsWith('/\\')) ? dec : null;
-+    } catch { return null; }
-+  })();
-+  const floorIdForQc = floor?.id || unit?.floor_id || '';
+Gating (`isUnitMode && unitIdForJump`) unchanged.
 
-@@ back-arrow onClick — short-circuit BEFORE existing branches
-   onClick={() => {
-+    if (safeReturnTo) { navigate(safeReturnTo); return; }
-     const navState = location.state;
-     ...
-   }}
+================================================================================
+PART 3 — ApartmentDashboardPage.js : "בקרת ביצוע" styling + label
+================================================================================
+BEFORE (L489-500):
+  <button
+    onClick={...}
+    className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md
+               bg-white/20 hover:bg-white/30 transition-colors font-medium"
+    title="עבור לבקרת ביצוע של הקומה"
+  >
+    <ClipboardCheck className="w-3 h-3" />
+    בקרת ביצוע
+  </button>
 
-@@ header — jump button next to title, gated on floorIdForQc
-+  {floorIdForQc && (
-+    <button
-+      onClick={() => {
-+        const returnTo = encodeURIComponent(location.pathname + location.search);
-+        navigate(`/projects/${projectId}/floors/${floorIdForQc}?returnTo=${returnTo}`);
-+      }}
-+      className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md
-+                 bg-white/20 hover:bg-white/30 transition-colors font-medium"
-+      title="עבור לבקרת ביצוע של הקומה"
-+    >
-+      <ClipboardCheck className="w-3 h-3" />
-+      בקרת ביצוע
-+    </button>
-+  )}
+AFTER (L489-500):
+  <button
+    onClick={...}                                    // UNCHANGED
+    className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md
+               bg-white text-amber-700 hover:bg-amber-50 transition-colors
+               font-semibold shadow-sm"
+    title="מעבר לבקרת ביצוע של הקומה"
+  >
+    <ClipboardCheck className="w-3.5 h-3.5" />
+    מעבר לבקרת ביצוע של הקומה
+  </button>
 
---- frontend/src/pages/FloorDetailPage.js (PART 3) ---
-@@ render scope hooks (just after fromParam at L132)
-   const fromParam = searchParams.get('from');
-+  const returnToParam = searchParams.get('returnTo');
-+  const safeReturnTo = (() => {
-+    if (!returnToParam) return null;
-+    try {
-+      const dec = decodeURIComponent(returnToParam);
-+      return (dec.startsWith('/') && !dec.startsWith('//') && !dec.startsWith('/\\')) ? dec : null;
-+    } catch { return null; }
-+  })();
-
-@@ dark-header back-arrow onClick — short-circuit BEFORE existing logic
-   onClick={() => {
-+    if (safeReturnTo) { navigate(safeReturnTo); return; }
-     const base = buildingId ? ... : ...;
-     const url = fromParam === 'qc' && buildingId ? `${base}?from=qc` : base;
-     navigate(url);
-   }}
-
-Existing `from=qc` fallback unchanged.
+bg `white/20` → solid `white`; added `text-amber-700`; hover
+`white/30` → `amber-50`; `font-medium` → `font-semibold`; added
+`shadow-sm`; text-[10px]→text-xs; padding px-2 py-0.5→px-2.5 py-1;
+icon w-3→w-3.5. onClick + gating (`floorIdForQc`) UNCHANGED.
 
 ================================================================================
 VERIFY V1 — build
 ================================================================================
 $ cd frontend && REACT_APP_BACKEND_URL=https://dummy.local CI=true npm run build
   Compiled with warnings.
-  (only pre-existing capacitor apple-sign-in source-map ENOENT warnings —
-   NOT NEW, NOT from this batch. No new ESLint warnings. No errors.)
-  The build folder is ready to be deployed.
+  (only the pre-existing capacitor apple-sign-in source-map ENOENT
+   warnings — NOT NEW, NOT from this batch. No new ESLint warnings.
+   No errors.)
 
-VERIFY V2 — grep `returnTo` across the four files
+VERIFY V2 — static greps
 ================================================================================
-StageDetailPage.js
-  L767  const returnToPath = navState.returnTo || ''; (existing — goBack)
-  L1699 const returnTo = encodeURIComponent(...);       (NEW — builds it)
-  L1700 navigate(`/projects/.../defects?returnTo=${returnTo}`);
-ApartmentDashboardPage.js
-  L393  const returnToParam = searchParams.get('returnTo');     (NEW — reads)
-  L395  if (!returnToParam) return null;
-  L397  const dec = decodeURIComponent(returnToParam);          (guarded)
-  L489  const returnTo = encodeURIComponent(...);               (NEW — builds for floor jump)
-  L490  navigate(`/projects/.../floors/${floorIdForQc}?returnTo=${returnTo}`);
-FloorDetailPage.js
-  L130  const returnToParam = searchParams.get('returnTo');     (NEW — reads)
-  L132  if (!returnToParam) return null;
-  L134  const dec = decodeURIComponent(returnToParam);          (guarded)
-UnitQCSelectionPage.js
-  L74   returnTo: returnToFinal,                                 (unchanged — passes it via router state to StageDetailPage as before)
+$ grep -n "unitIdFromUrl\|unitNameFromUrl\|sp.set('unitId'" \
+    frontend/src/pages/StageDetailPage.js
+  768:  const unitIdFromUrl = searchParams.get('unitId') || '';
+  769:  const unitNameFromUrl = searchParams.get('unitName') || '';
+  770:  const unitIdForJump = navState.unitId || unitIdFromUrl;
+  771:  const unitName = navState.unitName || unitNameFromUrl;
+  1738:                    sp.set('unitId', unitIdForJump);
+  (4 expected matches + an incidental bonus on L770/771 where the OR
+   keeps referencing the fallback — pattern correct.)
 
-Pattern correct: StageDetailPage + ApartmentDashboardPage BUILD a
-returnTo; ApartmentDashboardPage + FloorDetailPage READ + guard it.
+$ grep -n "מעבר לליקויים של הדירה" frontend/src/pages/StageDetailPage.js
+  1745:                  title="מעבר לליקויים של הדירה"
+  1748:                  מעבר לליקויים של הדירה
+
+$ grep -n "מעבר לבקרת ביצוע של הקומה" frontend/src/pages/ApartmentDashboardPage.js
+  493:                    title="מעבר לבקרת ביצוע של הקומה"
+  496:                    מעבר לבקרת ביצוע של הקומה
+
+$ grep -n "bg-white text-amber-700" frontend/src/pages/ApartmentDashboardPage.js
+  492:                    className="inline-flex items-center gap-1.5 ... bg-white text-amber-700 ..."
+
+All V2 expectations met.
 
 ================================================================================
-FOLLOW-UP NOTE (not in this batch)
+DO-NOT-TOUCH CHECK
 ================================================================================
-FloorDetailPage's stage-card links into StageDetailPage do not forward
-the inbound `safeReturnTo`. A QC→defects→floor→stage chain therefore
-loses the original returnTo at the floor → stage hop. This would need
-care (StageDetailPage's `goBack()` already mixes its own returnToPath
-with `stage_id`/`from=qc` rewriting — a naive forward would conflict).
-Out of scope per the spec.
+- UnitQCSelectionPage.js, FloorDetailPage.js — untouched in this batch.
+- `unitId: unit.unit_id` line from the prior correction — present.
+- Defects-page back-arrow `safeReturnTo` short-circuit (#531) — unchanged.
+- StageDetailPage `goBack()` — unchanged.
+- Button gates (`isUnitMode && unitIdForJump`, `floorIdForQc`) — unchanged.
+- Backend, native, capacitor.config, nginx — nothing.
 
 ================================================================================
 COMMIT MESSAGE
 ================================================================================
-feat(nav): bidirectional quick-nav between QC stage and unit defects
+fix(nav): QC↔defects nav — placement, roundtrip persistence, styling
 
-Field-workflow feature (Zahi 2026-05-25). Adds a "ליקויים" jump from
-the QC stage view to a unit's defects page, and a "בקרת ביצוע" jump
-from the unit defects page to that unit's floor QC page. Both carry an
-encoded `returnTo` query param so the destination's back arrow returns
-to the exact origin (survives refresh; open-redirect-guarded).
-Existing back behavior is preserved as the fallback. Frontend-only;
-Capgo OTA.
+Three pieces of follow-up on the #531 QC↔defects nav after Zahi's
+staging review (2026-05-27):
+
+(1) Move the "ליקויים" button on StageDetailPage from inside the
+    `<h1>` to the LEFT side of the dark header, next to the refresh
+    button — grouped with the action controls.
+
+(2) Encode unit context (unitId + unitName) into the URL of the
+    returnTo target, and read those URL params as a fallback when
+    router state is null. Fixes the QC→defects→back→QC roundtrip
+    losing the button + the title's "— <unit>" suffix on return.
+
+(3) Both buttons: bigger text (text-xs), slightly more padding,
+    brighter accents, larger icons (w-3.5 h-3.5). Defects-page
+    button: solid white background with amber text + shadow —
+    clearly visible against the amber gradient header.
+    Labels: "ליקויים" / "בקרת ביצוע" → descriptive
+    "מעבר לליקויים של הדירה" / "מעבר לבקרת ביצוע של הקומה".
+
+Frontend-only, Capgo OTA. Two files: StageDetailPage.js +
+ApartmentDashboardPage.js.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
