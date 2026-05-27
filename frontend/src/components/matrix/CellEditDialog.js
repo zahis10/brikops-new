@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, Loader2, ClipboardCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import StatusButtonGrid from './StatusButtonGrid';
 import CellHistoryList from './CellHistoryList';
 import { matrixService } from '../../services/matrixService';
+import { qcService } from '../../services/api';
 
 /**
  * Cell edit dialog — bottom sheet on mobile, centered popover on desktop.
@@ -22,8 +24,10 @@ import { matrixService } from '../../services/matrixService';
  *   canEdit: bool (from permissions.can_edit)
  */
 export default function CellEditDialog({
-  open, onClose, onSave, projectId, unit, stage, cell, building, floor, canEdit,
+  open, onClose, onSave, projectId, unit, stage, cell, building, floor, canEdit, floorRunId,
 }) {
+  const navigate = useNavigate();
+  const location = useLocation();
   const isTag = stage?.type === 'tag';
   const [status, setStatus] = useState(cell?.status || null);
   const [note, setNote] = useState(cell?.note || '');
@@ -32,6 +36,7 @@ export default function CellEditDialog({
   const [history, setHistory] = useState(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [openingQc, setOpeningQc] = useState(false);
 
   // AbortController for in-flight history request — prevents
   // setState-on-unmounted-component warning when user closes
@@ -95,6 +100,43 @@ export default function CellEditDialog({
   const hasChange = isTag
     ? textValue !== (cell?.text_value || '') || note !== (cell?.note || '')
     : status !== (cell?.status || null) || note !== (cell?.note || '');
+
+  const handleGoToQc = async () => {
+    if (!unit?.floor_id || !stage?.id || !unit?.id) return;
+    setOpeningQc(true);
+    try {
+      let runId = floorRunId;
+      if (!runId) {
+        const runData = await qcService.getFloorRun(unit.floor_id);
+        runId = runData?.run?.id;
+      }
+      if (!runId) {
+        toast.error('לא נמצאה ריצת בקרת ביצוע פעילה לקומה');
+        return;
+      }
+      const returnTo = `${location.pathname}${location.search}`;
+      const unitName = unit.unit_no || unit.id;
+      const sp = new URLSearchParams();
+      sp.set('unitId', unit.id);
+      if (unitName) sp.set('unitName', String(unitName));
+      const qcUrl =
+        `/projects/${projectId}/qc/floors/${unit.floor_id}` +
+        `/run/${runId}/stage/${stage.id}?${sp.toString()}`;
+      onClose?.();
+      navigate(qcUrl, {
+        state: {
+          scope: 'unit',
+          unitId: unit.id,
+          unitName: String(unitName),
+          returnTo,
+        },
+      });
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'שגיאה בפתיחת בקרת ביצוע');
+    } finally {
+      setOpeningQc(false);
+    }
+  };
 
   const handleSave = async () => {
     if (!hasChange || !canEdit || saving) return;
@@ -204,9 +246,25 @@ export default function CellEditDialog({
                     Manual matrix edits on these stages are transient —
                     overwritten on next QC change. PM custom stages have
                     source !== 'base' and don't show this. */}
-                {stage?.source === 'base' && canEdit && (
+                {stage?.source === 'base' && (
                   <div className="mt-2 px-3 py-2 rounded-md bg-amber-50 border border-amber-200 text-[12px] text-amber-800 leading-relaxed">
-                    שלב זה מתעדכן אוטומטית מבקרת הביצוע. עריכה ידנית עלולה להידחק בעדכון בקרת הביצוע הבא.
+                    {canEdit && (
+                      <p className="mb-2">
+                        שלב זה מתעדכן אוטומטית מבקרת הביצוע. עריכה ידנית עלולה להידחק בעדכון בקרת הביצוע הבא.
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleGoToQc}
+                      disabled={openingQc || !unit?.floor_id}
+                      className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-white text-amber-700 hover:bg-amber-50 transition-colors font-semibold shadow-sm disabled:opacity-50"
+                      title="פתח את השלב הזה בבקרת ביצוע של הדירה"
+                    >
+                      {openingQc
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <ClipboardCheck className="w-3.5 h-3.5" />}
+                      מעבר לסעיף בבקרת ביצוע
+                    </button>
                   </div>
                 )}
               </div>

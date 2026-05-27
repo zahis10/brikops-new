@@ -319,6 +319,11 @@ export default function ExecutionMatrixPage() {
         cell={editing?.cell}
         building={editing ? buildingsById[editing.unit.building_id] : null}
         floor={editing ? floorsById[editing.unit.floor_id] : null}
+        floorRunId={
+          editing && data?.runs_by_floor
+            ? (data.runs_by_floor[editing.unit.floor_id] || null)
+            : null
+        }
         canEdit={canEdit}
       />
 

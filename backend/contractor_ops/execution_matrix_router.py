@@ -312,6 +312,25 @@ async def get_matrix(
         ).to_list(100)
     buildings_by_id = {b["id"]: b for b in buildings}
 
+    # BATCH execution-matrix-qc-drillthrough (2026-05-27) — expose
+    # floor → active QC run mapping so the matrix cell modal can build
+    # a direct deep-link into the QC stage. Same predicate as
+    # `get_or_create_floor_run` (qc_router.py:954): one floor-scope
+    # run per floor. Floors with no run yet are absent from the map;
+    # the cell modal falls back to a per-click `qcService.getFloorRun`
+    # call (which creates the run).
+    runs_by_floor = {}
+    if floor_ids:
+        async for r in db.qc_runs.find(
+            {
+                "project_id": project_id,
+                "floor_id": {"$in": floor_ids},
+                "scope": {"$ne": "unit"},
+            },
+            {"_id": 0, "id": 1, "floor_id": 1},
+        ):
+            runs_by_floor[r["floor_id"]] = r["id"]
+
     units.sort(key=lambda u: _unit_sort_key(u, buildings_by_id, floors_by_id))
 
     stage_ids = [s["id"] for s in stages]
@@ -331,6 +350,7 @@ async def get_matrix(
         "cells": cells_summary,
         "floors": floors,
         "buildings": buildings,
+        "runs_by_floor": runs_by_floor,
         # Phase 2C Bug 2 fix — frontend hydrates the hide-toggle state in
         # StageManagementDialog from this list. Without it, every save
         # un-hides previously hidden base stages.
