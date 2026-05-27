@@ -1,91 +1,106 @@
 ================================================================================
-BATCH execution-matrix-qc-drillthrough — Feature 2
-Drill-through from a matrix cell to the underlying QC stage
+CORRECTION to #532 (execution-matrix-qc-drillthrough) — support unit-scope
+stages, not only floor-scope
 ================================================================================
 Date:           2026-05-27
 Branch:         staging
-Rollback SHA:   a04c7d6
-Files changed:  3 (1 backend + 2 frontend)
+Rollback SHA:   86ee82d  (post-#532 HEAD)
+Files changed:  3 (1 backend + 2 frontend) — same three files as #532
                   backend/contractor_ops/execution_matrix_router.py
                   frontend/src/pages/ExecutionMatrixPage.js
                   frontend/src/components/matrix/CellEditDialog.js
 
+WHY
+---
+After #532 shipped, clicking "מעבר לסעיף בבקרת ביצוע" on a matrix cell
+whose stage is unit-scope (e.g. ריצוף דירה) landed on the QC stage page
+with "שלב לא נמצא". Root cause: BrikOps stores floor-scope and
+unit-scope QC items in two different runs (floor run keyed by floor_id
+with scope:{$ne:'unit'}; unit run keyed by unit_id with scope:'unit').
+#532 exposed only floor runs. For a unit-scope stage, the floor run
+doesn't carry that stage's items → "stage not found".
+
 ================================================================================
-STEP 0 — PRE-FLIGHT (verified in plan-mode discovery)
+STEP 0 — PRE-FLIGHT
 ================================================================================
-0.1 get_matrix:
-    execution_matrix_router.py:257 def get_matrix(...)
-    Return dict at :350 (pre-edit :327) — no runs_by_floor, no qc_runs query.
-    floor_ids already computed at :296. Insertion point: after buildings
-    block (:313), before units.sort (:315).
+0.1 unit-run predicate:
+    qc_router.py:1100 async def get_or_create_unit_run(unit_id, ...)
+    qc_router.py:1120   db.qc_runs.find_one({"unit_id": unit_id, "scope": "unit"}, ...)
+    → bulk version below uses same predicate with {$in: unit_ids} + project_id.
 
-0.2 QC floor-run predicate:
-    qc_router.py:954 db.qc_runs.find_one(
-        {"floor_id": floor_id, "scope": {"$ne": "unit"}}, ...)
-    Bulk version added: same predicate + project_id (defence in depth)
-    + {$in: floor_ids}.
+0.2 matrix endpoint already returns stage.scope:
+    execution_matrix_router.py:172 "scope": s.get("scope"),  (_resolve_visible_stages)
+    execution_matrix_router.py:286 "scope": s.get("scope"),  (template_stages)
+    → frontend can read stage.scope today; no backend change needed for scope itself.
 
-0.3 CellEditDialog wiring:
-    ExecutionMatrixPage.js:312-323 <CellEditDialog ... floor=... canEdit=... />
-    State `editing = {unit, stage, cell}` at :58.
-
-0.4 Feature 1 followup URL fallback on prod:
-    StageDetailPage.js:768 const unitIdFromUrl  = searchParams.get('unitId') || '';
-    StageDetailPage.js:769 const unitNameFromUrl = searchParams.get('unitName') || '';
-    PRESENT — drill-through navigation pattern (state + URL) is safe.
-
-0.5 qcService.getFloorRun:
-    api.js:1358 — present. Per-click fallback wired in PART 3.4.
+0.3 qcService.getUnitRun:
+    frontend/src/services/api.js:1358 getFloorRun(floorId)
+    frontend/src/services/api.js:1362 getUnitRun(unitId)
+    → both present.
 
 ================================================================================
 PART 1 DIFF — backend/contractor_ops/execution_matrix_router.py
 ================================================================================
-After buildings_by_id construction (~:316), inserted bulk floor-run query:
+After the existing runs_by_floor block (#532), added sibling bulk query:
 
-    runs_by_floor = {}
-    if floor_ids:
+    unit_ids_for_runs = [u["id"] for u in units if u.get("id")]
+    runs_by_unit = {}
+    if unit_ids_for_runs:
         async for r in db.qc_runs.find(
             {
                 "project_id": project_id,
-                "floor_id": {"$in": floor_ids},
-                "scope": {"$ne": "unit"},
+                "unit_id": {"$in": unit_ids_for_runs},
+                "scope": "unit",
             },
-            {"_id": 0, "id": 1, "floor_id": 1},
+            {"_id": 0, "id": 1, "unit_id": 1},
         ):
-            runs_by_floor[r["floor_id"]] = r["id"]
+            runs_by_unit[r["unit_id"]] = r["id"]
 
-Added to return dict next to "floors"/"buildings":
-    "runs_by_floor": runs_by_floor,
-
-No other backend change. QC sync direction lock (qc_to_matrix_sync.py D1)
-untouched — this batch READS qc_runs, never writes.
+Added to return dict next to runs_by_floor:
+    "runs_by_unit": runs_by_unit,
 
 ================================================================================
 PART 2 DIFF — frontend/src/pages/ExecutionMatrixPage.js
 ================================================================================
-Inside <CellEditDialog .../>, added one prop next to floor:
+Added one more prop on <CellEditDialog .../> next to floorRunId:
 
-    floorRunId={
-      editing && data?.runs_by_floor
-        ? (data.runs_by_floor[editing.unit.floor_id] || null)
+    unitRunId={
+      editing && data?.runs_by_unit
+        ? (data.runs_by_unit[editing.unit.id] || null)
         : null
     }
 
 ================================================================================
 PART 3 DIFF — frontend/src/components/matrix/CellEditDialog.js
 ================================================================================
-3.1 Imports — added react-router-dom + qcService + ClipboardCheck icon.
-3.2 Props — added floorRunId.
-3.3 Hooks — added useNavigate, useLocation, openingQc state.
-3.4 Handler handleGoToQc — resolves runId (prop OR getFloorRun fallback),
-    builds returnTo = pathname+search, encodes ?unitId=&unitName= into the
-    QC URL AND passes them in router state {scope, unitId, unitName,
-    returnTo}. Closes dialog before navigate. toast.error on failure.
-3.5 Banner — base-stage banner gate relaxed from
-    `stage?.source === 'base' && canEdit` to `stage?.source === 'base'`.
-    Warning <p> remains canEdit-gated INSIDE the amber div. New white
-    "מעבר לסעיף בבקרת ביצוע" button visible to ALL viewers of base stages
-    (read-friendly navigation). disabled={openingQc || !unit?.floor_id}.
+- Added `unitRunId` to props destructure (next to floorRunId).
+- Replaced the run-resolution block in handleGoToQc with scope-aware
+  selection:
+
+    const isUnitStage = stage?.scope === 'unit';
+    let runId = isUnitStage ? unitRunId : floorRunId;
+    if (!runId) {
+      if (isUnitStage) {
+        const runData = await qcService.getUnitRun(unit.id);
+        runId = runData?.run?.id;
+      } else {
+        const runData = await qcService.getFloorRun(unit.floor_id);
+        runId = runData?.run?.id;
+      }
+    }
+    if (!runId) {
+      toast.error(
+        isUnitStage
+          ? 'לא נמצאה ריצת בקרת ביצוע פעילה לדירה'
+          : 'לא נמצאה ריצת בקרת ביצוע פעילה לקומה'
+      );
+      return;
+    }
+
+Everything else in handleGoToQc UNCHANGED: same returnTo, same
+?unitId=&unitName= URL params, same router state {scope:'unit',
+unitId, unitName, returnTo}, same onClose-before-navigate, same
+try/finally. Banner gating, styling, label, title, disabled — unchanged.
 
 ================================================================================
 VERIFY
@@ -97,68 +112,61 @@ V1 Backend imports clean:
 V2 Frontend build clean:
    $ cd frontend && REACT_APP_BACKEND_URL=https://dummy.example.com CI=true npm run build
    EXIT=0
-   "Compiled with warnings." — warnings are pre-existing capacitor
-   source-map ENOENT noise only (@capacitor-community/apple-sign-in
-   definitions.ts/index.ts/web.ts). No new ESLint warnings. No new
-   warnings from changed files.
+   Only pre-existing @capacitor-community/apple-sign-in source-map ENOENT
+   warnings (definitions.ts / index.ts / web.ts). No new ESLint warnings.
+   No warnings from changed files.
 
 V3 grep checks:
-   $ grep -n "runs_by_floor" backend/contractor_ops/execution_matrix_router.py
-     322:    runs_by_floor = {}
-     332:            runs_by_floor[r["floor_id"]] = r["id"]
-     353:        "runs_by_floor": runs_by_floor,
+   $ grep -n "runs_by_unit" backend/contractor_ops/execution_matrix_router.py
+     339:    runs_by_unit = {}
+     349:            runs_by_unit[r["unit_id"]] = r["id"]
+     371:        "runs_by_unit": runs_by_unit,
      → 3 matches (≥2 expected) ✓
 
-   $ grep -n "runs_by_floor\|floorRunId" frontend/src/pages/ExecutionMatrixPage.js
-     322:        floorRunId={
-     323:          editing && data?.runs_by_floor
-     324:            ? (data.runs_by_floor[editing.unit.floor_id] || null)
+   $ grep -n "runs_by_unit\|unitRunId" frontend/src/pages/ExecutionMatrixPage.js
+     327:        unitRunId={
+     328:          editing && data?.runs_by_unit
+     329:            ? (data.runs_by_unit[editing.unit.id] || null)
      → 3 matches (≥2 expected) ✓
 
-   $ grep -n "handleGoToQc\|floorRunId\|qcService\|useNavigate" frontend/src/components/matrix/CellEditDialog.js
-     2:import { useNavigate, useLocation } from 'react-router-dom';
-     9:import { qcService } from '../../services/api';
-     27:  open, onClose, onSave, projectId, unit, stage, cell, building, floor, canEdit, floorRunId,
-     29:  const navigate = useNavigate();
-     104:  const handleGoToQc = async () => {
-     108:      let runId = floorRunId;
-     110:        const runData = await qcService.getFloorRun(unit.floor_id);
-     258:                      onClick={handleGoToQc}
-     → 8 matches (≥4 expected) ✓
+   $ grep -n "isUnitStage\|unitRunId\|getUnitRun" frontend/src/components/matrix/CellEditDialog.js
+     27:  open, onClose, onSave, ..., floorRunId, unitRunId,
+     108:      const isUnitStage = stage?.scope === 'unit';
+     109:      let runId = isUnitStage ? unitRunId : floorRunId;
+     111:        if (isUnitStage) {
+     112:          const runData = await qcService.getUnitRun(unit.id);
+     121:          isUnitStage
+     → 6 matches (≥3 expected) ✓
 
 ================================================================================
 DEPLOY
 ================================================================================
 MIXED (backend+frontend) — ./deploy.sh, Capgo OTA, no ./ship.sh, no new dependency.
 
-Deploy ORDER: backend FIRST or together. Per-click getFloorRun fallback
-handles missing runs_by_floor → stale-FE / fresh-BE window is harmless.
+Backend FIRST or together. Frontend has a per-click getUnitRun /
+getFloorRun fallback → brief stale-FE / fresh-BE window is harmless.
 
 ================================================================================
 COMMIT MESSAGE (also in .local/.commit_message)
 ================================================================================
-feat(matrix): drill-through from a matrix cell to the underlying QC stage
+fix(matrix): drill-through also resolves unit-scope stages (not only floors)
 
-Feature 2 (Zahi 2026-05-25). The execution matrix is auto-derived from
-QC. The cell modal warned PMs that base-stage edits are transient but
-offered no quick way to actually OPEN that stage in QC. This batch adds
-a one-tap drill-through from the cell modal directly to the QC stage
-section anchored to the unit, in single-unit mode, with returnTo back
-to the matrix.
+Follow-up correction on #532. Unit-scope stages (e.g. ריצוף דירה) live
+in a SEPARATE qc_run (scope:'unit', keyed by unit_id), while #532's
+drill-through only looked up floor runs (scope:{$ne:'unit'}, keyed by
+floor_id). Clicking the new "מעבר לסעיף בבקרת ביצוע" button on a
+unit-scope cell landed on a QC URL with the floor run's id, and
+StageDetailPage rendered "שלב לא נמצא".
 
-Backend: extends GET /api/execution-matrix/{project_id} with
-`runs_by_floor: {floor_id: run_id}` — one extra DB query against qc_runs
-(same scope:{$ne:'unit'} predicate that get_or_create_floor_run uses).
-Floors with no run fall back to a per-click getFloorRun.
+Backend: extends the matrix endpoint with a sibling
+`runs_by_unit: {unit_id: run_id}` map — same query pattern as
+runs_by_floor, with scope:'unit'. Frontend: CellEditDialog now selects
+between `floorRunId` and `unitRunId` based on `stage.scope`, with a
+parallel per-click `qcService.getUnitRun` fallback for units without a
+unit run yet. All other behaviour (URL pattern, ?unitId=&unitName=,
+router state, returnTo, banner gating, styling) UNCHANGED.
 
-Frontend: CellEditDialog gets a "מעבר לסעיף בבקרת ביצוע" button inside
-the existing amber base-stage banner. Navigates to
-/projects/{pid}/qc/floors/{floorId}/run/{runId}/stage/{stageId}?unitId=…&unitName=…
-with router state {scope:'unit', unitId, unitName, returnTo} so
-StageDetailPage opens in single-unit mode and the QC↔defects nav
-(Feature 1 followup) chains correctly back through the matrix.
-
-Backend + frontend; Capgo OTA for the frontend.
+MIXED — backend + frontend; Capgo OTA for the frontend.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

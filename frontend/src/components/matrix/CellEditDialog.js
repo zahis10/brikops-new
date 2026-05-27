@@ -24,7 +24,7 @@ import { qcService } from '../../services/api';
  *   canEdit: bool (from permissions.can_edit)
  */
 export default function CellEditDialog({
-  open, onClose, onSave, projectId, unit, stage, cell, building, floor, canEdit, floorRunId,
+  open, onClose, onSave, projectId, unit, stage, cell, building, floor, canEdit, floorRunId, unitRunId,
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -105,13 +105,23 @@ export default function CellEditDialog({
     if (!unit?.floor_id || !stage?.id || !unit?.id) return;
     setOpeningQc(true);
     try {
-      let runId = floorRunId;
+      const isUnitStage = stage?.scope === 'unit';
+      let runId = isUnitStage ? unitRunId : floorRunId;
       if (!runId) {
-        const runData = await qcService.getFloorRun(unit.floor_id);
-        runId = runData?.run?.id;
+        if (isUnitStage) {
+          const runData = await qcService.getUnitRun(unit.id);
+          runId = runData?.run?.id;
+        } else {
+          const runData = await qcService.getFloorRun(unit.floor_id);
+          runId = runData?.run?.id;
+        }
       }
       if (!runId) {
-        toast.error('לא נמצאה ריצת בקרת ביצוע פעילה לקומה');
+        toast.error(
+          isUnitStage
+            ? 'לא נמצאה ריצת בקרת ביצוע פעילה לדירה'
+            : 'לא נמצאה ריצת בקרת ביצוע פעילה לקומה'
+        );
         return;
       }
       const returnTo = `${location.pathname}${location.search}`;

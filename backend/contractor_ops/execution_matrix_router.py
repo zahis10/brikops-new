@@ -331,6 +331,23 @@ async def get_matrix(
         ):
             runs_by_floor[r["floor_id"]] = r["id"]
 
+    # CORRECTION 2026-05-27 — unit-scope stages live in a SEPARATE run
+    # (`scope:'unit'`, keyed by unit_id). The matrix needs BOTH maps;
+    # the cell modal selects between them based on `stage.scope`. Same
+    # bounded query pattern as `runs_by_floor`.
+    unit_ids_for_runs = [u["id"] for u in units if u.get("id")]
+    runs_by_unit = {}
+    if unit_ids_for_runs:
+        async for r in db.qc_runs.find(
+            {
+                "project_id": project_id,
+                "unit_id": {"$in": unit_ids_for_runs},
+                "scope": "unit",
+            },
+            {"_id": 0, "id": 1, "unit_id": 1},
+        ):
+            runs_by_unit[r["unit_id"]] = r["id"]
+
     units.sort(key=lambda u: _unit_sort_key(u, buildings_by_id, floors_by_id))
 
     stage_ids = [s["id"] for s in stages]
@@ -351,6 +368,7 @@ async def get_matrix(
         "floors": floors,
         "buildings": buildings,
         "runs_by_floor": runs_by_floor,
+        "runs_by_unit": runs_by_unit,
         # Phase 2C Bug 2 fix — frontend hydrates the hide-toggle state in
         # StageManagementDialog from this list. Without it, every save
         # un-hides previously hidden base stages.

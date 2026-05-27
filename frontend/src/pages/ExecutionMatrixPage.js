@@ -324,6 +324,11 @@ export default function ExecutionMatrixPage() {
             ? (data.runs_by_floor[editing.unit.floor_id] || null)
             : null
         }
+        unitRunId={
+          editing && data?.runs_by_unit
+            ? (data.runs_by_unit[editing.unit.id] || null)
+            : null
+        }
         canEdit={canEdit}
       />
 
