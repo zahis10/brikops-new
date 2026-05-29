@@ -14,6 +14,7 @@ const _EVICT_EVERY = 25;
 
 let _dbPromise = null;
 let _writesSinceEvict = 0;
+let _evictedOnOpen = false;
 
 function _supported() {
   return typeof indexedDB !== 'undefined';
@@ -37,7 +38,16 @@ function _openDb() {
         store.createIndex('ts', 'ts', { unique: false });
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      resolve(req.result);
+      // Bound the store even in light sessions (<25 writes): run eviction
+      // once per session on first successful DB open, in addition to the
+      // every-Nth-write trigger. Fire-and-forget, fail-soft.
+      if (!_evictedOnOpen) {
+        _evictedOnOpen = true;
+        cacheEvict().catch(() => {});
+      }
+    };
     req.onerror = () => resolve(null);
     req.onblocked = () => resolve(null);
   }).catch(() => null);

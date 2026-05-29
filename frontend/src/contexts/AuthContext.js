@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import axios from 'axios';
 import { toast } from 'sonner';
 import { BACKEND_URL, configService } from '../services/api';
+import { cacheClearAll } from '../services/offlineCache';
 import { setLanguage } from '../i18n';
 
 const AuthContext = createContext(null);
@@ -108,6 +109,19 @@ export const AuthProvider = ({ children }) => {
         setLanguage(userData.preferred_language);
       }
       setUser(userData);
+      // Offline cache hygiene: if a DIFFERENT user authenticated than the one
+      // whose data is cached on this device, wipe the cache before new field
+      // GETs repopulate it (shared-device safety). Fail-soft — never blocks
+      // bootstrap. Gated implicitly: cacheClearAll is a no-op when the store
+      // is empty / IndexedDB unavailable.
+      try {
+        const uid = String(userData?.id ?? userData?.user_id ?? userData?.phone ?? userData?.email ?? '');
+        const lastUid = localStorage.getItem('brikops_last_uid') || '';
+        if (uid && uid !== lastUid) {
+          cacheClearAll();
+          localStorage.setItem('brikops_last_uid', uid);
+        }
+      } catch (_) { /* cache hygiene must never break login */ }
       setNetworkError(false);
       toastShownRef.current = false;
       if (retryTimerRef.current) {
@@ -222,6 +236,10 @@ export const AuthProvider = ({ children }) => {
     setNetworkError(false);
     localStorage.removeItem('token');
     _clearBrikopsCookie();
+    // Wipe the offline read-cache so the next user on a shared device can't
+    // be served the previous user's cached project data. Fire-and-forget,
+    // fail-soft — cacheClearAll never throws or blocks.
+    try { cacheClearAll(); } catch (_) { /* never block logout */ }
   };
 
   const refreshUser = useCallback(async () => {

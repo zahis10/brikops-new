@@ -1,3 +1,60 @@
+################################################################################
+# ADDENDUM 2026-05-29 — 2 FOLLOW-UP FIXES (#533)
+# commit: fix(offline): clear read-cache on logout + bound eviction on db-open
+################################################################################
+Scope: ONLY these two fixes. Frontend-only, behind FEATURES.OFFLINE_MODE,
+no new dependency. Branch staging. NOT deployed.
+
+FIX 1 (MUST) — clear offline cache on logout (+ on user change).
+  Problem: cacheClearAll() existed but was wired to nothing → on a shared
+  device the previous user's cached project data could be served offline to
+  the next user.
+  - frontend/src/contexts/AuthContext.js:5
+      + import { cacheClearAll } from '../services/offlineCache';
+  - logout() (AuthContext.js:242) — after token/cookie clear:
+      + try { cacheClearAll(); } catch (_) { /* never block logout */ }
+      (fire-and-forget, fail-soft).
+  - fetchCurrentUser() success (AuthContext.js:115-127) — login/bootstrap
+    user-change guard (implemented; was the optional case):
+      + uid = String(userData?.id ?? userData?.user_id ?? userData?.phone ?? userData?.email ?? '')
+      + if (uid && uid !== localStorage 'brikops_last_uid') { cacheClearAll();
+        localStorage.setItem('brikops_last_uid', uid); }
+      Wrapped in try/catch — never breaks login. /auth/me is not cached, so
+      the clear runs before any field GET repopulates the store.
+
+FIX 2 (SHOULD) — bound the cache in light sessions.
+  Problem: eviction only ran "every 25th write" → a session with <25 writes
+  never triggered it → store could grow across sessions.
+  - frontend/src/services/offlineCache.js:17  + let _evictedOnOpen = false;
+  - _openDb() onsuccess (offlineCache.js:44-53) — run cacheEvict() ONCE per
+    session on first successful DB open, in addition to the every-25th-write
+    trigger. Fire-and-forget (.catch(()=>{})), fail-soft. _dbPromise is
+    already assigned when onsuccess fires, so cacheEvict()'s internal _openDb
+    reuses the same connection (no recursion/re-open).
+
+ADDENDUM VERIFY:
+  - Build: cd frontend && REACT_APP_BACKEND_URL=https://dummy.example.com CI=true npm run build
+      EXIT=0 — only the pre-existing @capacitor-community/apple-sign-in
+      source-map warnings. No new ESLint warnings.
+  - Flag OFF still = zero change: both new code paths are unconditional cache
+    HYGIENE (clear/evict on an empty or never-populated store = no-op), and
+    the cache is only ever POPULATED behind FEATURES.OFFLINE_MODE (api.js
+    success guard). With the flag off the store stays empty, so clear/evict
+    do nothing observable. cacheClearAll/cacheEvict are no-ops when IndexedDB
+    is unavailable.
+  - PII deny-list + /auth exclusion UNCHANGED:
+      grep _OFFLINE_PII_DENY → /qc/run/{}/team-contacts + /qc/projects/{}/approvers
+      still present and checked first; interceptor count still 1; no auth path
+      in the whitelist.
+  - logout calls cacheClearAll(): AuthContext.js:242 ✓
+  - eviction runs on db-open: offlineCache.js:49-51 (_evictedOnOpen guard) ✓
+
+FILES TOUCHED BY ADDENDUM (2):
+  EDIT frontend/src/contexts/AuthContext.js   (import + logout clear + user-change clear)
+  EDIT frontend/src/services/offlineCache.js  (evict-on-open)
+
+(The original BATCH 1 review for #533 follows below, unchanged.)
+
 ================================================================================
 BATCH offline-foundation-read-cache — Offline mode, BATCH 1 of N:
 persistent read-cache + graceful-offline + status banner (behind a flag)
