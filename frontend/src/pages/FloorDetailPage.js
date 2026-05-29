@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { qcService } from '../services/api';
+import { prefetchFloorForOffline } from '../services/offlinePrefetch';
+import { FEATURES } from '../config/features';
+import { toast } from 'sonner';
 import {
   ArrowRight, Loader2, ClipboardCheck,
   CheckCircle2, XCircle, Clock, Building2, Layers, RefreshCw, Lock,
-  AlertCircle, RotateCcw, ShieldCheck, FileText, Home, ChevronLeft
+  AlertCircle, RotateCcw, ShieldCheck, FileText, Home, ChevronLeft, DownloadCloud
 } from 'lucide-react';
 import { qcStageStatusLabel } from '../utils/qcLabels';
 import { getStageVisualStatusLite, getFloorVisualStatus, getQualityBadge, getReviewBadge, getFloorQualityBadge } from '../utils/qcVisualStatus';
@@ -140,6 +143,35 @@ export default function FloorDetailPage() {
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
   const [unitsStatus, setUnitsStatus] = useState(null);
+  const [prep, setPrep] = useState({ status: 'idle', done: 0, total: 0, failed: 0 });
+
+  const handlePrepareOffline = async () => {
+    if (prep.status === 'running') return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      toast.error('אין חיבור — התחבר לרשת כדי להכין לאופליין');
+      return;
+    }
+    setPrep({ status: 'running', done: 0, total: 0, failed: 0 });
+    let r;
+    try {
+      r = await prefetchFloorForOffline(floorId, {
+        onProgress: ({ done, total, failed }) => setPrep({ status: 'running', done, total, failed }),
+      });
+    } catch (_) {
+      r = { total: 0, done: 0, failed: 0, floorFailed: true };
+    }
+    // Hard failure: couldn't even enumerate the floor's units → nothing was
+    // warmed. Do NOT report success (avoids a false "מוכן" with an empty cache).
+    if (r.floorFailed) {
+      setPrep({ status: 'partial', ...r });
+      toast.error('ההכנה נכשלה — בדוק את החיבור ונסה שוב');
+      return;
+    }
+    setPrep({ status: r.failed ? 'partial' : 'done', ...r });
+    toast.success(
+      r.failed ? `הוכנו ${r.done} דירות, ${r.failed} נכשלו` : 'הקומה מוכנה לעבודה אופליין'
+    );
+  };
 
   const load = useCallback(async () => {
     try {
@@ -266,6 +298,41 @@ export default function FloorDetailPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {FEATURES.OFFLINE_MODE && (
+                <button
+                  onClick={handlePrepareOffline}
+                  disabled={prep.status === 'running'}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors ${
+                    prep.status === 'done'
+                      ? 'bg-emerald-600/20 text-emerald-300'
+                      : prep.status === 'partial'
+                      ? 'bg-amber-600/20 text-amber-300'
+                      : 'bg-slate-700 hover:bg-slate-600 text-slate-100'
+                  } ${prep.status === 'running' ? 'opacity-70 cursor-wait' : ''}`}
+                >
+                  {prep.status === 'running' ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>מכין דירות… {Math.min(prep.done + prep.failed, prep.total)}/{prep.total}</span>
+                    </>
+                  ) : prep.status === 'done' ? (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>מוכן לאופליין</span>
+                    </>
+                  ) : prep.status === 'partial' ? (
+                    <>
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      <span>מוכן ({prep.failed} לא נטענו — נסה שוב)</span>
+                    </>
+                  ) : (
+                    <>
+                      <DownloadCloud className="w-3.5 h-3.5" />
+                      <span>הכן לעבודה אופליין</span>
+                    </>
+                  )}
+                </button>
+              )}
               <button onClick={() => load()} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
                 <RefreshCw className="w-4 h-4" />
               </button>
