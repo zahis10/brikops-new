@@ -8,6 +8,7 @@ import { setLanguage } from './i18n';
 import { Toaster } from './components/ui/sonner';
 import TrialBanner from './components/TrialBanner';
 import CompleteAccountBanner from './components/CompleteAccountBanner';
+import OfflineBanner from './components/OfflineBanner';
 import CompleteAccountModal from './components/CompleteAccountModal';
 import PaywallModal from './components/PaywallModal';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -654,6 +655,7 @@ function App() {
                 <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:right-2 focus:z-[9999] focus:bg-amber-500 focus:text-white focus:px-4 focus:py-2 focus:rounded-lg focus:text-sm focus:font-medium">
                   דלג לתוכן הראשי
                 </a>
+                <OfflineBanner />
                 <PaywallConnector />
                 <TrialBanner />
                 <CompleteAccountBanner />

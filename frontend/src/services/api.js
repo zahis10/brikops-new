@@ -1,5 +1,7 @@
 import axios from 'axios';
 import { downloadBlob } from '../utils/fileDownload';
+import { FEATURES } from '../config/features';
+import { cachePutRead, cacheGetRead } from './offlineCache';
 
 const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '');
 const API = `${BACKEND_URL}/api`;
@@ -35,6 +37,45 @@ export function clearProjectCache(projectId) {
 let _paywallCallback = null;
 export const setPaywallCallback = (cb) => { _paywallCallback = cb; };
 
+// Field-read GET paths safe to cache for offline VIEWING (text only).
+// EXCLUDES auth/billing/admin/invites/PII by omission. Tested against
+// the URL path. The DENY list below overrides this allow list.
+const _OFFLINE_CACHEABLE = [
+  /\/api\/projects(\?|$)/,                 // project list
+  /\/api\/projects\/[^/]+(\?|$)/,          // project detail
+  /\/api\/projects\/[^/]+\/(hierarchy|dashboard|buildings)(\?|$)/,
+  /\/api\/buildings\/[^/]+\/(floors|defects-summary)(\?|$)/,
+  /\/api\/floors\/[^/]+\/units(\?|$)/,
+  /\/api\/units\/[^/]+(\/tasks)?(\?|$)/,
+  /\/api\/tasks\/[^/]+(\?|$)/,             // defect detail
+  /\/api\/qc\//,                           // QC reads (runs/units/stages/meta)
+];
+// PII deny list — overrides the broad qc allow above. team-contacts
+// carries phones; approvers carries names. Checked FIRST so these
+// never reach the device cache (Zahi decision 2026-05-29).
+const _OFFLINE_PII_DENY = [
+  /\/api\/qc\/run\/[^/]+\/team-contacts/,
+  /\/api\/qc\/projects\/[^/]+\/approvers/,
+];
+function _isOfflineCacheable(url) {
+  if (!url) return false;
+  if (_OFFLINE_PII_DENY.some(re => re.test(url))) return false;
+  return _OFFLINE_CACHEABLE.some(re => re.test(url));
+}
+function _isNetworkError(error) {
+  // No response object => transport/network failure (offline, DNS, timeout).
+  return !!error && !error.response;
+}
+// Cache key MUST include query params so e.g. ?status=open and
+// ?status=closed don't overwrite each other in the offline store.
+function _cacheKey(config) {
+  const base = config?.url || '';
+  const p = config?.params;
+  if (!p) return base;
+  try { return base + '?' + new URLSearchParams(p).toString(); }
+  catch { return base; }
+}
+
 axios.interceptors.response.use(
   (response) => {
     const newToken = response.headers['x-new-token'];
@@ -42,9 +83,19 @@ axios.interceptors.response.use(
       localStorage.setItem('token', newToken);
       document.cookie = 'brikops_logged_in=1; domain=.brikops.com; path=/; max-age=2592000; SameSite=Lax; Secure';
     }
+    try {
+      if (
+        FEATURES.OFFLINE_MODE &&
+        response.config?.method === 'get' &&
+        _isOfflineCacheable(response.config?.url)
+      ) {
+        // fire-and-forget — must not block or alter the online response
+        cachePutRead(_cacheKey(response.config), response.data);
+      }
+    } catch (_) { /* cache must never affect the online path */ }
     return response;
   },
-  (error) => {
+  async (error) => {
     // NOTE: Do NOT add 401 handling here.
     // Auth errors are handled in AuthContext.fetchCurrentUser.
     // Adding token cleanup here would bypass the network
@@ -63,6 +114,27 @@ axios.interceptors.response.use(
           `[API Error] ${error.response.status} ${error.config?.method?.toUpperCase()} ${error.config?.url} request_id=${requestId}`
         );
       }
+    }
+    if (
+      FEATURES.OFFLINE_MODE &&
+      _isNetworkError(error) &&
+      error.config?.method === 'get' &&
+      _isOfflineCacheable(error.config?.url)
+    ) {
+      try {
+        const cached = await cacheGetRead(_cacheKey(error.config));
+        if (cached !== null && cached !== undefined) {
+          // Resolve with a synthetic response so callers render cached data.
+          return {
+            data: cached,
+            status: 200,
+            statusText: 'OK (offline-cache)',
+            headers: {},
+            config: error.config,
+            __fromOfflineCache: true,
+          };
+        }
+      } catch (_) { /* fall through to reject */ }
     }
     return Promise.reject(error);
   }

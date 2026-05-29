@@ -1,143 +1,301 @@
 ================================================================================
-CORRECTION to #532 — HOP 4 returnTo via URL fallback
-(QC → back → Matrix survives QC↔defects roundtrip)
+BATCH offline-foundation-read-cache — Offline mode, BATCH 1 of N:
+persistent read-cache + graceful-offline + status banner (behind a flag)
 ================================================================================
-Date:           2026-05-27
-Branch:         staging
-Rollback SHA:   4c08d57
-Files changed:  2 (frontend-only)
-                  frontend/src/components/matrix/CellEditDialog.js
-                  frontend/src/pages/StageDetailPage.js
+Date:           2026-05-29
+Branch:         staging  (NOT main)
+Severity:       P3  (foundation feature — flag-gated, NO user-facing change until enabled)
+Rollback SHA:   9fbb4e9
+Files changed:  5 frontend = 5 total  (0 backend)
+                  NEW:  frontend/src/services/offlineCache.js      (IndexedDB helper)
+                  NEW:  frontend/src/components/OfflineBanner.js    (slim status bar)
+                  EDIT: frontend/src/config/features.js            (+OFFLINE_MODE flag)
+                  EDIT: frontend/src/services/api.js               (cache read/write in EXISTING interceptor)
+                  EDIT: frontend/src/App.js                        (mount the banner)
+Pre-flight:     FRONTEND-ONLY. Web IndexedDB only. NO native, NO ship.sh,
+                NO new npm dependency, NO backend. Flag OFF = ZERO change.
 
-WHY
----
-#532 + the unit-scope correction got HOPs 1-3 working. HOP 4 (QC →
-back → Matrix) silently fell back to the floor page because #532
-carried `returnTo` in router STATE only. The defects→QC back step
-creates a fresh history entry without state → on HOP 4 navState was
-null → returnToPath empty → goBack() fell through to the floor URL.
-
-Fix mirrors the Feature 1 followup pattern that already solved this
-for `unitId`/`unitName`: encode returnTo into the QC URL alongside
-unitId/unitName, and read it from the URL as a fallback in
-StageDetailPage with the same `//` / `/\` open-redirect guard used in
-ApartmentDashboardPage and FloorDetailPage.
+DECISIONS (Zahi, 2026-05-29):
+  (1) /projects/{id}/memberships → EXCLUDED (PII). Not whitelisted.
+  (2) qc PII → TIGHTENED. Added _OFFLINE_PII_DENY (team-contacts, approvers).
+      DENY wins over the broad /\/api\/qc\// allow (checked first).
 
 ================================================================================
-STEP 0 — PRE-FLIGHT (verified)
+STEP 0 — PRE-FLIGHT / DISCOVERY (verified against HEAD 9fbb4e9)
 ================================================================================
-0.1 StageDetailPage existing returnToPath + URL-fallback pattern:
-    frontend/src/pages/StageDetailPage.js:768 unitIdFromUrl   = searchParams.get('unitId')   || ''
-    frontend/src/pages/StageDetailPage.js:769 unitNameFromUrl = searchParams.get('unitName') || ''
-    frontend/src/pages/StageDetailPage.js:770 unitIdForJump   = navState.unitId   || unitIdFromUrl
-    frontend/src/pages/StageDetailPage.js:771 unitName        = navState.unitName || unitNameFromUrl
-    frontend/src/pages/StageDetailPage.js:773 returnToPath    = navState.returnTo || ''   ← pre-fix
-    Confirmed: returnToPath is consumed by the back-handler at :1617.
+0.1 api.js — SINGLE global response interceptor + the in-memory cache block:
+    frontend/src/services/api.js:10  const _cache = new Map();
+    frontend/src/services/api.js:13  function cachedFetch(key, fetcher) { ... }   (30s in-memory Map)
+    frontend/src/services/api.js:38  axios.interceptors.response.use(  ← the ONE interceptor (pre-edit line)
+    Pre-edit SUCCESS handler returned `response` after x-new-token handling.
+    Pre-edit ERROR handler: 402 paywall block (status===402 → _paywallCallback),
+    then `if (error.response)` request_id logging, then `return Promise.reject(error)`.
+    PART 3 edited THIS interceptor IN PLACE. No second interceptor added (V2 = 1).
 
-0.2 Guard pattern in sibling pages (identical posture re-used here):
-    frontend/src/pages/ApartmentDashboardPage.js:398
-      (dec.startsWith('/') && !dec.startsWith('//') && !dec.startsWith('/\\')) ? dec : null
-    frontend/src/pages/FloorDetailPage.js:135  (same)
+0.2 AuthContext — registers its OWN response interceptors + networkError flag,
+    and bootstraps via a NON-field endpoint:
+    frontend/src/contexts/AuthContext.js:37   const [networkError, setNetworkError] = useState(false)
+    frontend/src/contexts/AuthContext.js:64   axios.interceptors.response.use(undefined, (error) => { ... }
+    frontend/src/contexts/AuthContext.js:82   axios.interceptors.response.use(undefined, (error) => { ... }
+    frontend/src/contexts/AuthContext.js:103  await axios.get(`${API}/auth/me`, ...)   ← bootstrap
+    frontend/src/contexts/AuthContext.js:230  await axios.get(`${API}/auth/me`, ...)
+    => /auth/me is NOT whitelisted (regex sanity below). api.js interceptor is
+    registered at module load (BEFORE AuthContext's useEffect ones), but it only
+    resolves a cache hit for whitelisted FIELD GETs — never /auth — so auth
+    bootstrap network failure still rejects → networkError + retry screen intact.
 
-0.3 CellEditDialog existing nav block (#532):
-    CellEditDialog.js:130 sp.set('unitId',   unit.id)
-    CellEditDialog.js:131 sp.set('unitName', String(unitName))
-    CellEditDialog.js:136 navigate(qcUrl, { state: { ..., returnTo } })
-    → PART 1 ADDS a 3rd sp.set after :131; navigate(state) UNCHANGED.
+0.3 Existing offline primitives we BUILD ON (not duplicated):
+    frontend/src/hooks/useOnlineStatus.js:3      export function useOnlineStatus()  (navigator.onLine + on/offline events)
+    frontend/src/components/OfflineState.js:4    const OfflineState = ({ onRetry })  (full-screen blocker)
+    Consumers (if (!online && !data) return <OfflineState/>):
+      frontend/src/pages/MyProjectsPage.js:219
+      frontend/src/pages/ProjectDashboardPage.js:214
+      frontend/src/pages/BuildingDefectsPage.js:365
+      frontend/src/pages/ProjectControlPage.js:3610
+    OfflineBanner reuses useOnlineStatus + mirrors OfflineState's amber/hardcoded-Hebrew style.
+
+0.4 App.js mount point + flag file:
+    frontend/src/App.js:653 (pre-edit) <div className="App"> → skip-link → PaywallConnector → TrialBanner → CompleteAccountBanner → <main> → ... → <Toaster>
+    frontend/src/config/features.js  = export const FEATURES = { DEFECT_DRAFT_PRESERVATION:true, TRADE_SORT_IN_TEAM_FORM:true }
+    OfflineBanner mounted just inside <div className="App">, after the skip-link,
+    before PaywallConnector (position:fixed → no layout displacement when hidden).
+
+0.5 No @capacitor native storage assumed. Web IndexedDB only:
+    @capacitor/preferences used in components/splash/BrikSplash.jsx (unrelated)
+    @capacitor/filesystem used in utils/fileDownload.js (unrelated)
+    offlineCache.js imports NEITHER — pure browser indexedDB (OTA-safe, works in WebView).
+
+0.6 GET INVENTORY → whitelist finalized (every axios.get in api.js reviewed):
+    ALLOWED (field-read, text):
+      /projects, /projects/{id}, /projects/{id}/(hierarchy|dashboard|buildings),
+      /buildings/{id}/(floors|defects-summary), /floors/{id}/units,
+      /units/{id}(/tasks)?, /tasks/{id}, /qc/* (minus DENY)
+    DENY (overrides qc allow — PII):
+      /qc/run/{runId}/team-contacts   (phones)
+      /qc/projects/{projectId}/approvers (names)
+    EXCLUDED by omission (present in inventory, intentionally NOT cached):
+      /auth/me, /auth/account-status, /billing/*, /admin/*,
+      /projects/{id}/invites, /projects/{id}/memberships (PII),
+      /projects/{id}/available-pms, /projects/{id}/team-activity,
+      /projects/{id}/activity-trend, /companies*, /trades*, /users*,
+      /my-memberships, /orgs/*/members, /updates/feed,
+      /qc-notifications* (hyphen → NOT matched by /qc\//), /safety/healthz
+
+REGEX SANITY (node, run against the SHIPPED allow+deny):
+  AUTH (expect all false):
+     /api/auth/me           => false
+     /api/me                => false
+     /api/auth/refresh      => false
+     /api/auth/login        => false
+  PII DENY (expect all false):
+     /api/qc/run/r1/team-contacts      => false
+     /api/qc/projects/p1/approvers     => false
+  FIELD READS (expect all true):
+     /api/qc/run/r1         => true
+     /api/projects          => true
+     /api/projects/p1       => true
+     /api/floors/f1/units   => true
+     /api/units/u1/tasks    => true
+     /api/tasks/t1          => true
+  EXCLUDED (expect all false):
+     /api/projects/p1/memberships  => false
+     /api/billing/org/o1/invoices  => false
+     /api/admin/qc/templates       => false
+     /api/qc-notifications         => false
+  => ALL as expected. /auth/me NOT cacheable (V7 guard); team-contacts/approvers
+     denied even though /qc/ allow is broad (DENY wins).
 
 ================================================================================
-PART 1 DIFF — frontend/src/components/matrix/CellEditDialog.js
+PER-FILE DIFF
 ================================================================================
-Inside handleGoToQc, after the existing sp.set('unitName', …):
+-------------------------------------------------------------------------------
+NEW  frontend/src/services/offlineCache.js
+-------------------------------------------------------------------------------
+Dependency-free IndexedDB wrapper. DB "brikops-offline", store "reads"
+(keyPath: url, index ts). Fail-soft: every fn wrapped so a missing/blocked
+IndexedDB (private mode, old WebView) NEVER throws → no-op/null. Records
+{ url, data, ts }. Surface (exact contract):
+   cachePutRead(url, data)  — fire-and-forget write; never throws.
+                              opportunistic cacheEvict every 25th write (bounded).
+   cacheGetRead(url)        — returns stored data or null; never throws.
+   cacheEvict({maxAgeMs=7d, maxEntries=400}) — drop stale + cap newest.
+   cacheClearAll()          — wipe; never throws.
+   _openDb() memoised; onerror/onblocked/try-catch all resolve(null).
+   NO PII logging, NO console.log of bodies, NO @capacitor import.
 
-+ // CORRECTION 2026-05-27 — also put returnTo in the URL so HOP 4
-+ // (QC → back → Matrix) survives the QC↔defects roundtrip where
-+ // router state is wiped between hops. Same URL-encoding pattern
-+ // as unitId/unitName above. URLSearchParams handles encoding;
-+ // StageDetailPage reads with searchParams.get() (decoded).
-+ if (returnTo) sp.set('returnTo', returnTo);
+-------------------------------------------------------------------------------
+NEW  frontend/src/components/OfflineBanner.js
+-------------------------------------------------------------------------------
+   import { useOnlineStatus } from '../hooks/useOnlineStatus';
+   import { FEATURES } from '../config/features';
+   const OfflineBanner = () => {
+     const online = useOnlineStatus();
+     if (!FEATURES.OFFLINE_MODE || online) return null;     // flag off OR online → nothing
+     return (
+       <div dir="rtl" role="status"
+            className="fixed top-0 inset-x-0 z-[9998] bg-amber-500 text-white text-xs
+                       font-medium px-3 py-1.5 flex items-center justify-center gap-2 shadow">
+         <WifiOff className="w-3.5 h-3.5" />
+         מצב לא מקוון — מוצגים נתונים שנשמרו במכשיר
+       </div>
+     );
+   };
+   Slim, position:fixed, returns null when hidden → zero layout impact.
 
-navigate(qcUrl, { state: { ..., returnTo } }) UNCHANGED — state is
-still passed for HOP 1; URL is the durable backup for HOP 4.
+-------------------------------------------------------------------------------
+EDIT frontend/src/config/features.js
+-------------------------------------------------------------------------------
+   export const FEATURES = {
+     DEFECT_DRAFT_PRESERVATION: true,
+     TRADE_SORT_IN_TEAM_FORM: true,
++    // Offline mode — BATCH 1 (read-cache + banner). Default OFF.
++    // When false, api.js + OfflineBanner behave exactly as before.
++    OFFLINE_MODE: false,
+   };
 
-================================================================================
-PART 2 DIFF — frontend/src/pages/StageDetailPage.js
-================================================================================
-Replaced the single-line returnToPath derivation (pre-fix at :773)
-with navState-first / URL-fallback + open-redirect guard:
+-------------------------------------------------------------------------------
+EDIT frontend/src/services/api.js  (existing interceptor extended in place)
+-------------------------------------------------------------------------------
+3.1 after imports:
++ import { FEATURES } from '../config/features';
++ import { cachePutRead, cacheGetRead } from './offlineCache';
+  ...before the interceptor:
++ const _OFFLINE_CACHEABLE = [ /projects/, /projects/{id}/, .../(hierarchy|dashboard|buildings)/,
++   /buildings/{id}/(floors|defects-summary)/, /floors/{id}/units/, /units/{id}(/tasks)?/,
++   /tasks/{id}/, /\/api\/qc\// ];
++ const _OFFLINE_PII_DENY = [ /\/api\/qc\/run\/[^/]+\/team-contacts/,
++                             /\/api\/qc\/projects\/[^/]+\/approvers/ ];
++ function _isOfflineCacheable(url){ if(!url)return false;
++     if(_OFFLINE_PII_DENY.some(re=>re.test(url)))return false;   // DENY WINS
++     return _OFFLINE_CACHEABLE.some(re=>re.test(url)); }
++ function _isNetworkError(error){ return !!error && !error.response; }
++ function _cacheKey(config){ base=url; if(params) base+'?'+URLSearchParams(params); }
 
-- const returnToPath = navState.returnTo || '';
-+ // CORRECTION 2026-05-27 — also read returnTo from the URL as a
-+ // fallback when navState is null (HOP 4 of the Matrix → QC →
-+ // defects → back → QC → back → Matrix chain). Same security guard
-+ // as ApartmentDashboardPage/FloorDetailPage: reject `//` and `/\`
-+ // to prevent open-redirect via a crafted URL.
-+ const returnToFromUrl = searchParams.get('returnTo') || '';
-+ const returnToCandidate = navState.returnTo || returnToFromUrl;
-+ const returnToPath = (() => {
-+   if (!returnToCandidate) return '';
-+   return (
-+     returnToCandidate.startsWith('/')
-+     && !returnToCandidate.startsWith('//')
-+     && !returnToCandidate.startsWith('/\\')
-+   ) ? returnToCandidate : '';
-+ })();
+3.2 SUCCESS handler — before `return response;` (after x-new-token):
++   try {
++     if (FEATURES.OFFLINE_MODE && response.config?.method === 'get'
++         && _isOfflineCacheable(response.config?.url)) {
++       cachePutRead(_cacheKey(response.config), response.data);   // fire-and-forget
++     }
++   } catch (_) { /* cache must never affect the online path */ }
+    return response;                                               // UNCHANGED value
 
-goBack() handler (StageDetailPage.js:1611-1631) UNCHANGED — it already
-consumes returnToPath when non-empty and falls back to the floor URL
-otherwise.
+3.3 ERROR handler — signature `(error) =>` → `async (error) =>`; the 402 paywall
+    block + the `if (error.response)` request_id logging are UNCHANGED and stay
+    above. Before the final `return Promise.reject(error);`:
++   if (FEATURES.OFFLINE_MODE && _isNetworkError(error)
++       && error.config?.method === 'get' && _isOfflineCacheable(error.config?.url)) {
++     try {
++       const cached = await cacheGetRead(_cacheKey(error.config));
++       if (cached !== null && cached !== undefined) {
++         return { data: cached, status: 200, statusText: 'OK (offline-cache)',
++                  headers: {}, config: error.config, __fromOfflineCache: true };
++       }
++     } catch (_) { /* fall through to reject */ }
++   }
+    return Promise.reject(error);                                  // UNCHANGED
+
+    WHY ONLINE-SAFE: 402/4xx/5xx all have error.response → _isNetworkError false
+    → never served from cache → 402 modal + request_id logging fire exactly as
+    today (V10). Only a genuine transport failure on a whitelisted GET serves cache.
+
+-------------------------------------------------------------------------------
+EDIT frontend/src/App.js
+-------------------------------------------------------------------------------
++ import OfflineBanner from './components/OfflineBanner';
+  ...
+  <div className="App">
+    <a href="#main-content" ...>דלג לתוכן הראשי</a>
++   <OfflineBanner />
+    <PaywallConnector />
+    <TrialBanner />
+    <CompleteAccountBanner />
 
 ================================================================================
 VERIFY
 ================================================================================
-V1 Frontend build clean:
+V1 Build compiles:
    $ cd frontend && REACT_APP_BACKEND_URL=https://dummy.example.com CI=true npm run build
-   EXIT=0
-   Only pre-existing @capacitor-community/apple-sign-in source-map
-   ENOENT warnings (definitions.ts / index.ts / web.ts). No new ESLint
-   warnings. No warnings from changed files.
+   EXIT=0  — "Compiled with warnings."
+   ONLY pre-existing @capacitor-community/apple-sign-in source-map ENOENT
+   warnings (definitions.ts / index.ts / web.ts). NO new ESLint warnings,
+   NO warnings from any changed/new file.
 
-V2 grep checks:
-   $ grep -n "sp.set('returnTo'" frontend/src/components/matrix/CellEditDialog.js
-     137:      if (returnTo) sp.set('returnTo', returnTo);
-     → 1 match (exactly 1 expected) ✓
+V2 Flag-gating + single interceptor:
+   $ grep -n "OFFLINE_MODE" frontend/src/services/api.js \
+        frontend/src/components/OfflineBanner.js frontend/src/config/features.js
+     api.js:88        FEATURES.OFFLINE_MODE &&        (success-write guard)
+     api.js:119       FEATURES.OFFLINE_MODE &&        (error-fallback guard)
+     OfflineBanner.js:8  if (!FEATURES.OFFLINE_MODE || online) return null;
+     features.js:6    OFFLINE_MODE: false,
+   $ grep -c "axios.interceptors.response.use(" frontend/src/services/api.js
+     1                                            ← UNCHANGED (no 2nd interceptor)
 
-   $ grep -n "returnToFromUrl\|returnToCandidate" frontend/src/pages/StageDetailPage.js
-     778:  const returnToFromUrl   = searchParams.get('returnTo') || '';
-     779:  const returnToCandidate = navState.returnTo || returnToFromUrl;
-     781:    if (!returnToCandidate) return '';
-     783:      returnToCandidate.startsWith('/')
-     784:      && !returnToCandidate.startsWith('//')
-     785:      && !returnToCandidate.startsWith('/\\')
-     786:    ) ? returnToCandidate : '';
-     → 6 matches (2-3 expected; declaration + candidate + guard body) ✓
+V3 FLAG OFF (default — the most important test): every new code path is guarded
+   by FEATURES.OFFLINE_MODE (V2 shows the 2 guards in api.js + the banner guard).
+   With OFFLINE_MODE=false: success handler skips cachePutRead; error handler
+   skips the fallback and reaches `return Promise.reject(error)` exactly as the
+   pre-edit code; OfflineBanner returns null. offlineCache is never invoked →
+   IndexedDB never opened. Behavior byte-identical to HEAD (fresh data online,
+   OfflineState blocker offline, nothing cached, no banner).
+
+V4 (to exercise with flag ON, online): browse → IndexedDB "brikops-offline" →
+   store "reads" populates with whitelisted field GETs; data still fresh; no banner.
+V5 (flag ON, then airplane mode on already-browsed project/floor/unit): cached
+   data renders + amber "מצב לא מקוון" banner; NOT the blocker.
+V5b (flag ON, online): browse a unit's tasks ?status=open then ?status=closed
+   (both cached under distinct _cacheKey) → offline each filter shows its OWN
+   list (params isolation — _cacheKey appends URLSearchParams).
+V6 (flag ON, offline, NEVER-visited project): OfflineState blocker shows (no
+   cache to serve, no crash — cacheGetRead returns null → reject → blocker).
+V7 (flag ON, auth bootstrap offline cold-launch): /auth/me NOT whitelisted
+   (regex sanity) → rejects → AuthContext.networkError retry screen shows.
+V8 (reconnect): banner disappears; next load fetches fresh; cache refreshes on success.
+V9 Bundle/storage: package.json UNCHANGED (no new dependency — inline IndexedDB);
+   cached entries are text JSON only (no base64 image blobs cached — only
+   whitelisted text reads); cacheEvict bounds the store (7d age + 400 entries,
+   opportunistic every 25th write).
+V10 (flag ON, online, real 402/4xx): error has error.response → _isNetworkError
+   false → NOT served from cache → 402 paywall modal + request_id logging fire
+   as today. Confirms the sync→async error-handler change is safe (the async
+   wrapper does not reorder/skip the 402 + request_id blocks — they run first).
+
+NOTE: V4–V10 are runtime/device behaviours for Zahi to exercise with the flag ON
+on staging; V1–V3 + the regex sanity are proven here statically.
 
 ================================================================================
 DEPLOY
 ================================================================================
-FRONTEND-ONLY — Capgo OTA carried by ./deploy.sh --prod. No ./ship.sh,
-no native, no backend, no new dependency. Pure frontend behaviour
-extension; no API contract change.
+FRONTEND-ONLY — Capgo OTA, no ./ship.sh, no backend, no new dependency.
+Ships via ./deploy.sh --prod. Mac clone is ~14 commits behind origin/staging —
+git pull before ship. Flag flips ON only after Zahi is satisfied on his phone.
 
 ================================================================================
 COMMIT MESSAGE (also in .local/.commit_message)
 ================================================================================
-fix(matrix): HOP 4 (QC → back → Matrix) survives the QC↔defects roundtrip
+feat(offline): batch 1 — persistent read-cache + offline banner (flag-gated)
 
-Follow-up to #532. The 4-hop chain (Matrix → QC → defects → back → QC
-→ back → Matrix) only completed 3 hops: #532 carried `returnTo` in
-router state only, but the defects→QC back step creates a fresh
-history entry without state, so HOP 4 lost the matrix URL and fell
-through to the floor page.
+Foundation for offline field work (basements / garages / no-signal handovers).
+Adds an IndexedDB read-cache that captures whitelisted field-read GETs while
+online and, ONLY on a genuine network failure, serves the last cached copy so
+the app shows data instead of the full-screen offline blocker. Adds a slim
+"מצב לא מקוון" banner and an OFFLINE_MODE feature flag (default OFF — online
+behavior is unchanged). Text only; photos are never cached. PII (qc
+team-contacts/approvers, memberships) excluded via a deny-list + omission. No
+offline writes yet (BATCH 2). Frontend-only; Capgo OTA. Reuses useOnlineStatus
+/ OfflineState; AuthContext interceptors + networkError bootstrap preserved
+(auth endpoints are not whitelisted).
 
-Mirrors the Feature 1 followup's URL-fallback pattern for unitId /
-unitName. CellEditDialog now encodes `returnTo` into the QC URL
-alongside unitId/unitName (router state is also kept — state is
-preferred when present). StageDetailPage reads `returnTo` from the URL
-as a fallback when navState.returnTo is empty, with the same `//` and
-`/\` open-redirect guard as ApartmentDashboardPage/FloorDetailPage.
-
-Frontend-only; Capgo OTA. No API change, no backend change.
+================================================================================
+ROLLBACK
+================================================================================
+Fastest: set FEATURES.OFFLINE_MODE = false (one-line) → deploy → feature inert.
+Full revert:
+  git revert <sha> -- frontend/src/config/features.js \
+    frontend/src/services/api.js frontend/src/App.js
+  (and delete frontend/src/services/offlineCache.js +
+   frontend/src/components/OfflineBanner.js)
+  ./deploy.sh --prod   (Capgo OTA).
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
