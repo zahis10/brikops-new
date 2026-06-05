@@ -76,6 +76,45 @@ function _cacheKey(config) {
   catch { return base; }
 }
 
+// Offline INSTANT-READ path. When the device is definitively offline and this
+// is a cacheable GET we have cached, serve it from cache with NO network call
+// (swap the per-request adapter). This avoids waiting for each GET to time out
+// before the response error-handler fallback kicks in — a QC apartment fires
+// several sequential GETs, so those timeouts otherwise stack into seconds.
+// ONLINE PATH IS UNTOUCHED: when navigator.onLine !== false we return config
+// synchronously — no cache read, no await, zero added latency.
+axios.interceptors.request.use(
+  async (config) => {
+    if (
+      FEATURES.OFFLINE_MODE &&
+      typeof navigator !== 'undefined' &&
+      navigator.onLine === false &&
+      (config?.method || 'get').toLowerCase() === 'get' &&
+      _isOfflineCacheable(config?.url)
+    ) {
+      try {
+        const cached = await cacheGetRead(_cacheKey(config));
+        if (cached !== null && cached !== undefined) {
+          // Resolve from cache without ever hitting the network.
+          config.adapter = () => Promise.resolve({
+            data: cached,
+            status: 200,
+            statusText: 'OK (offline-cache)',
+            headers: {},
+            config,
+            request: {},
+            __fromOfflineCache: true,
+          });
+        }
+        // Cache MISS: leave config unchanged so the request proceeds and fails
+        // fast into the existing response error-handler / blocker path.
+      } catch (_) { /* cache must never affect the request path */ }
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
 axios.interceptors.response.use(
   (response) => {
     const newToken = response.headers['x-new-token'];
@@ -86,10 +125,13 @@ axios.interceptors.response.use(
     try {
       if (
         FEATURES.OFFLINE_MODE &&
+        !response.__fromOfflineCache &&
         response.config?.method === 'get' &&
         _isOfflineCacheable(response.config?.url)
       ) {
-        // fire-and-forget — must not block or alter the online response
+        // fire-and-forget — must not block or alter the online response.
+        // Skip when the response itself came from the offline cache (request
+        // interceptor adapter), so an offline read isn't redundantly re-written.
         cachePutRead(_cacheKey(response.config), response.data);
       }
     } catch (_) { /* cache must never affect the online path */ }

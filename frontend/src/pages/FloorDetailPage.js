@@ -160,9 +160,12 @@ export default function FloorDetailPage() {
   // prefetch started on floor A could still be running when the user is on floor
   // B. currentFloorRef tracks the active floor; stale runs drop their setState.
   const currentFloorRef = useRef(floorId);
-  // Ref lock for re-entrancy — more robust than closing over prep.status, which
-  // can be stale across the auto effect + a near-simultaneous manual tap.
-  const prefetchRunningRef = useRef(false);
+  // Per-floor re-entrancy lock — a Set of floorIds currently being warmed. Must
+  // be per-floor (not a single boolean): the auto effect pre-marks a floor in
+  // _autoWarmedFloors then calls runPrefetch, so a global lock held by floor A
+  // would silently block floor B's auto-warm while B is already marked warmed,
+  // leaving B unprepared with no retry that session.
+  const warmingFloorsRef = useRef(new Set());
   useEffect(() => {
     currentFloorRef.current = floorId;
     // New floor → reset the button so it never shows the previous floor's state.
@@ -173,16 +176,16 @@ export default function FloorDetailPage() {
   // silent:true (auto background warm) is quiet and only updates `prep`.
   // Note: this MUST NOT consult _autoWarmedFloors — a manual tap always re-warms.
   const runPrefetch = async ({ silent }) => {
-    if (prefetchRunningRef.current) return;                // re-entrancy guard (ref lock)
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       if (!silent) toast.error('אין חיבור — התחבר לרשת כדי להכין לאופליין');
       return;
     }
     const floorAtStart = floorId;
+    if (warmingFloorsRef.current.has(floorAtStart)) return; // per-floor re-entrancy guard
     // Drop any state update once we're no longer mounted OR the user moved to a
     // different floor while this run was in flight.
     const stillCurrent = () => mountedRef.current && currentFloorRef.current === floorAtStart;
-    prefetchRunningRef.current = true;
+    warmingFloorsRef.current.add(floorAtStart);
     setPrep({ status: 'running', done: 0, total: 0, failed: 0 });
     let r;
     try {
@@ -192,7 +195,7 @@ export default function FloorDetailPage() {
     } catch (_) {
       r = { total: 0, done: 0, failed: 0, floorFailed: true };
     } finally {
-      prefetchRunningRef.current = false;
+      warmingFloorsRef.current.delete(floorAtStart);
     }
     if (!stillCurrent()) return;                           // unmounted or floor changed mid-warm
     // Hard failure: couldn't even enumerate the floor's units → nothing was
