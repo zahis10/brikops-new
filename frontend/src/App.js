@@ -17,6 +17,8 @@ import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { CapacitorUpdater } from '@capgo/capacitor-updater';
 import BrikSplash from './components/splash/BrikSplash';
+import { FEATURES } from './config/features';
+import { startOutboxSync } from './services/offlineSync';
 import './App.css';
 import './index.css';
 
@@ -626,6 +628,10 @@ function App() {
         console.warn('Capgo notifyAppReady failed:', e);
       }
     }
+    // BATCH 3a: start the offline write-sync engine (online + foreground
+    // listeners + one startup flush). No-op when the flag is off; runs on
+    // web + native since the QC outbox is platform-agnostic.
+    if (FEATURES.OFFLINE_MODE) startOutboxSync();
   }, []);
 
   useEffect(() => {

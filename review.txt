@@ -1,179 +1,158 @@
-================================================================
-BATCH 2c — Instant Offline Reads + Per-Floor Prefetch Lock
-Task #536 · FRONTEND-ONLY · Capgo OTA
-================================================================
-
-ROLLBACK SHA (HEAD before this work): d12ea07
-Branch: main
-
-SCOPE: 2 frontend files. No backend, no native, no new dependency.
-Gated on FEATURES.OFFLINE_MODE (true in prod). Builds on BATCH 1/2/2b.
-
-----------------------------------------------------------------
-WHY
-----------------------------------------------------------------
-FIX 1 (the important one): after preparing a floor offline, opening a
-cached apartment offline still took several seconds. BATCH 1 only served
-the cache from the axios ERROR handler, so each cached GET first tried the
-network and waited for it to time out before falling back. A QC apartment
-fires several sequential GETs (getUnitRun → getRun → unit get → getTasks),
-so the timeouts stacked into a multi-second wait even though the data was
-cached the whole time.
-
-FIX 2 (race found in #535 review): the auto effect pre-marks a floor in
-_autoWarmedFloors then calls runPrefetch, but the re-entrancy lock was a
-single global boolean. Opening floor A (warm starts) then jumping to floor
-B within ~1-2s left B blocked by A's lock while B was already marked warmed
-→ B silently unprepared, no retry that session.
-
-----------------------------------------------------------------
-STEP 0 — discovery (read-only, pre-edit)
-----------------------------------------------------------------
-api.js:
-  4:import { cachePutRead, cacheGetRead } from './offlineCache';
-  60:function _isOfflineCacheable(url)   71:function _cacheKey(config)
-  65:function _isNetworkError(error)
-  79:axios.interceptors.response.use(     <-- ONLY interceptor (no request one)
-  88-93: success-handler cache write
-  119-134: error-handler offline-cache fallback (BATCH 1 safety net)
-  => CONFIRMED: NO existing axios.interceptors.request.use anywhere.
-
-FloorDetailPage.js:
-  19:const _autoWarmedFloors = new Set();
-  165:const prefetchRunningRef = useRef(false);   <-- global boolean to replace
-  176/185/195: guard / acquire / release
-  181:floorAtStart   184:stillCurrent   240/241:_autoWarmedFloors guard
-
-----------------------------------------------------------------
-CHANGE 1 — api.js  (FIX 1 + FIX 1b)
-----------------------------------------------------------------
-NEW axios REQUEST interceptor (added BEFORE the existing response one):
-  - Runs only when: FEATURES.OFFLINE_MODE && navigator.onLine === false &&
-    method is GET && _isOfflineCacheable(url).
-  - On cache HIT: swaps config.adapter to resolve {status:200,
-    __fromOfflineCache:true} from cache — NO network call → instant.
-  - On cache MISS: config returned unchanged → request proceeds and fails
-    fast into the existing blocker path.
-  - ONLINE PATH UNTOUCHED: when navigator.onLine !== false the interceptor
-    returns config synchronously — no cache read, no await, zero latency.
-  - Reuses _isOfflineCacheable/_cacheKey/cacheGetRead unchanged → /auth* is
-    still non-cacheable, so offline auth still hits the retry screen.
-
-FIX 1b: response SUCCESS handler now also requires !response.__fromOfflineCache
-so an offline read isn't redundantly re-written to IndexedDB on every open.
-
-BATCH 1 response error-handler fallback: KEPT as the WebView "false-online"
-safety net (untouched).
-
-----------------------------------------------------------------
-CHANGE 2 — FloorDetailPage.js  (FIX 2)
-----------------------------------------------------------------
-Replaced global `prefetchRunningRef = useRef(false)` with per-floor
-`warmingFloorsRef = useRef(new Set())`:
-  - guard:   if (warmingFloorsRef.current.has(floorAtStart)) return;
-  - acquire: warmingFloorsRef.current.add(floorAtStart);
-  - release: warmingFloorsRef.current.delete(floorAtStart);  (in finally)
-Offline-toast early-return now sits BEFORE the lock. stillCurrent gating,
-floorFailed handling, silent toasts, and the auto effect are unchanged.
-
-----------------------------------------------------------------
-DIFF (git diff)
-----------------------------------------------------------------
- frontend/src/pages/FloorDetailPage.js | 15 +++++++-----
- frontend/src/services/api.js          | 44 ++++++++++++++++++++++++++++++++++-
- 2 files changed, 52 insertions(+), 7 deletions(-)
-
---- frontend/src/services/api.js ---
-+// Offline INSTANT-READ path. ... (online path untouched)
-+axios.interceptors.request.use(
-+  async (config) => {
-+    if (
-+      FEATURES.OFFLINE_MODE &&
-+      typeof navigator !== 'undefined' &&
-+      navigator.onLine === false &&
-+      (config?.method || 'get').toLowerCase() === 'get' &&
-+      _isOfflineCacheable(config?.url)
-+    ) {
-+      try {
-+        const cached = await cacheGetRead(_cacheKey(config));
-+        if (cached !== null && cached !== undefined) {
-+          config.adapter = () => Promise.resolve({
-+            data: cached, status: 200, statusText: 'OK (offline-cache)',
-+            headers: {}, config, request: {}, __fromOfflineCache: true,
-+          });
-+        }
-+      } catch (_) { /* cache must never affect the request path */ }
-+    }
-+    return config;
-+  },
-+  (error) => Promise.reject(error)
-+);
-
- axios.interceptors.response.use(
-   (response) => {
-     try {
-       if (
-         FEATURES.OFFLINE_MODE &&
-+        !response.__fromOfflineCache &&
-         response.config?.method === 'get' &&
-         _isOfflineCacheable(response.config?.url)
-       ) {
-         cachePutRead(_cacheKey(response.config), response.data);
-
---- frontend/src/pages/FloorDetailPage.js ---
--  const prefetchRunningRef = useRef(false);
-+  const warmingFloorsRef = useRef(new Set());
-   ...
-   const runPrefetch = async ({ silent }) => {
--    if (prefetchRunningRef.current) return;
-     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-       if (!silent) toast.error('אין חיבור — התחבר לרשת כדי להכין לאופליין');
-       return;
-     }
-     const floorAtStart = floorId;
-+    if (warmingFloorsRef.current.has(floorAtStart)) return;
-     ...
--    prefetchRunningRef.current = true;
-+    warmingFloorsRef.current.add(floorAtStart);
-     ...
-     } finally {
--      prefetchRunningRef.current = false;
-+      warmingFloorsRef.current.delete(floorAtStart);
-     }
-
-----------------------------------------------------------------
-V1 — production build (REACT_APP_BACKEND_URL=... CI=true npm run build)
-----------------------------------------------------------------
-PASS — "The build folder is ready to be deployed." with no warnings.
-(CI=true treats any ESLint warning as a build-failing error → clean.)
-
-----------------------------------------------------------------
-V2 — static greps
-----------------------------------------------------------------
-- prefetchRunningRef in FloorDetailPage.js → NONE (old global boolean gone).
-- warmingFloorsRef present at 4 sites (decl + has/add/delete).
-- api.js: interceptors.request.use @86, navigator.onLine === false @91,
-  __fromOfflineCache @106 (request adapter) + @128 (success-handler skip).
-
-----------------------------------------------------------------
-DEVICE TESTS TO RUN ON THE BUILD (V3–V8)
-----------------------------------------------------------------
-V3 instant offline open: prepare a floor online → go offline → open an
-   unvisited apartment on it → opens ~instantly (no multi-second wait).
-V4 online unchanged: with network on, browse normally → no added latency,
-   data fresh, no cache reads on the online path.
-V5 offline no-cache: open an apartment on a floor never prepared, offline →
-   blocker shows, no hang.
-V6 auth offline: cold-launch the app offline → AuthContext network-retry
-   screen still appears (auth is not cacheable).
-V7 rapid floor-switch: open floor A, immediately move to floor B and stay →
-   BOTH reach "מוכן לאופליין"; B's apartments open offline (was skipped).
-V8 manual re-prepare: tap "הכן לעבודה אופליין" on a not-currently-warming
-   floor → re-warms as before.
-
-----------------------------------------------------------------
+================================================================================
+BATCH 3a — Offline QC Capture (marks + notes) via Outbox + Sync   (Task #537)
+================================================================================
 FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency.
-COMMIT: feat(offline): batch 2c — instant offline reads + per-floor prefetch lock
-================================================================
+
+ROLLBACK SHA (pre-change HEAD): 6d28dc1
+  Restore with:  git reset --hard 6d28dc1   (Zahi runs git — agent does not)
+
+--------------------------------------------------------------------------------
+WHAT & WHY
+--------------------------------------------------------------------------------
+First offline-WRITE batch. Today, marking a QC item offline fails: handleSave
+PATCHes each changed item via qcService.updateItem, and offline those reject →
+"שגיאה בשמירה" and the worker's marks are LOST.
+
+This batch lets a worker mark QC items (status תקין/לא-תקין + note) OFFLINE,
+keeps the marks on screen, persists them across an app restart, and auto-syncs
+on reconnect. Everything gated on FEATURES.OFFLINE_MODE (currently true). Flag
+OFF = today's behavior exactly (no outbox DB, online save path byte-for-byte).
+
+Scope (narrow): QC status + note ONLY. NO photos (BATCH 3b). Approve/submit/
+reject stay ONLINE-gated (never queued). Conflict: last-write-wins on replay.
+
+--------------------------------------------------------------------------------
+STEP 0 — KEY VERIFIED FACTS
+--------------------------------------------------------------------------------
+- QC checklist items PRE-EXIST on the run → marking is an UPDATE to an existing
+  (runId,itemId), not a create. No server-assigned-ID problem.
+- StageDetailPage already holds unsaved marks in localChanges {itemId:{status?,
+  note?}} and the ENTIRE display overlays it. The overlay line (StageItemRow):
+      const currentStatus = localState?.status ?? item.status;   (now line 142)
+  Every filter uses localChanges[i.id]?.status ?? i.status. So queued marks
+  render via the existing overlay with ZERO new render logic.
+- qcService.updateItem(runId, itemId, data)  — api.js line 1488 (confirmed).
+- useOnlineStatus.js exists and is reused for button disabling.
+- offlineCache.js read-cache uses DB "brikops-offline"/store "reads"; the new
+  outbox uses a SEPARATE DB "brikops-outbox" so eviction never drops a write.
+- Online handleSave path = updateItem → clear localChanges → load() (UNCHANGED).
+
+--------------------------------------------------------------------------------
+PER-FILE CHANGES (2 NEW + 2 EDITS)
+--------------------------------------------------------------------------------
+NEW  frontend/src/services/offlineOutbox.js
+  Dependency-free IndexedDB write queue. DB "brikops-outbox", store
+  "qc_item_updates", keyPath "key" = `${runId}::${itemId}` (re-marking an item
+  OVERWRITES its op → one op/item, local last-write-wins). Fail-soft (never
+  throws; missing/blocked IndexedDB → null/[]/0/no-op). Records {key,runId,
+  itemId,payload,ts,failed}. No PII logging (notes never logged). Exports:
+    enqueueQcUpdate(runId,itemId,{status?,note?})
+    getQcUpdatesForRun(runId) → { [itemId]: {status?,note?} }
+    getAllQcUpdates() → [{key,runId,itemId,payload,ts,failed}]
+    removeQcUpdate(runId,itemId), markQcUpdateFailed(runId,itemId), outboxCount()
+
+NEW  frontend/src/services/offlineSync.js
+  Render-less flush-on-reconnect engine. Imports qcService from ./api (no raw
+  axios). flushOutbox() → {synced,failed}:
+    - no-op if !FEATURES.OFFLINE_MODE or navigator.onLine===false
+    - re-entrancy guard (_flushing); throttle 3 concurrent; never throws
+    - per op await qcService.updateItem(runId,itemId,payload):
+        * 2xx RESOLVED  → removeQcUpdate   ← THE ONLY removeQcUpdate call site
+        * !error.response (NETWORK) → KEEP (retried next flush)
+        * error.response (4xx/5xx) → markQcUpdateFailed + KEEP (never dropped)
+    - if synced>0 → dispatch CustomEvent('brikops:outbox-synced',{detail:{runIds,
+      failed}})
+  startOutboxSync() — idempotent (_started guard): addEventListener('online',
+  flush) + visibilitychange→(visible&&online)→flush + one startup flush.
+
+EDIT frontend/src/pages/StageDetailPage.js
+  - imports: FEATURES, useOnlineStatus, {enqueueQcUpdate, getQcUpdatesForRun}.
+  - new state: queuedItemIds (Set); const online = useOnlineStatus().
+  - load(): after the existing setLocalChanges({}) reset, hydrate from outbox —
+    getQcUpdatesForRun(runId); if pending → setLocalChanges(prev=>({...pending,
+    ...prev})) (outbox UNDER fresh edits: prev wins) + setQueuedItemIds; else
+    setQueuedItemIds(new Set()). Wrapped fail-soft; flag-gated.
+  - handleSave: ONLINE path byte-for-byte UNCHANGED. Added shared queueOffline()
+    (enqueue each localChanges entry, mark queued, setHasChanges(false),
+    setLastSavedAt, toast "נשמר במכשיר — יישלח כשתחזור הרשת", NO clear, NO load()).
+    Proactive offline branch (flag && navigator.onLine===false) → queueOffline.
+    Catch: flag && !err.response (NETWORK, incl. WebView false-online) →
+    queueOffline; err.response present (real 4xx/validation) → today's
+    "שגיאה בשמירה" toast (NOT enqueued).
+  - per-item "ממתין לשליחה" chip (StageItemRow isQueued prop, blue pill, Clock).
+  - save button: hasUnsaved = keys not in queuedItemIds; active only on
+    hasUnsaved; when all queued → muted "ממתין לשליחה" state.
+  - approve/submit/reject: first-line gate `if (navigator.onLine===false){
+    toast.error('אפשר לאשר רק כשיש חיבור לרשת');return;}` + buttons disabled and
+    muted via `online` (useOnlineStatus) with offline title hints.
+  - synced-event useEffect [runId, load]: on 'brikops:outbox-synced' with no
+    runIds or this runId → setQueuedItemIds(new Set()) + load() (re-hydrates
+    only still-pending outbox ⇒ synced keys drop, rows show server status).
+
+EDIT frontend/src/App.js
+  - import {FEATURES}; import {startOutboxSync}.
+  - in the existing once useEffect([]) (StatusBar/Capgo): after the native
+    block, `if (FEATURES.OFFLINE_MODE) startOutboxSync();` (runs web + native).
+
+--------------------------------------------------------------------------------
+VERIFY
+--------------------------------------------------------------------------------
+V1 build — `cd frontend && REACT_APP_BACKEND_URL=https://dummy.example.com
+  CI=true npm run build`:
+  ❗ The full CRA/CRACO build was repeatedly SIGTERM'd by the container (exit
+     code -1 / 143, EMPTY build log) — the documented exit143 behavior on this
+     box, made worse by the two running workflows holding memory. I did NOT
+     restart workflows (Zahi protocol). Could not capture a clean build log.
+  FALLBACK (as pre-agreed): @babel/parser parse of all 4 changed files →
+     OK  src/services/offlineOutbox.js
+     OK  src/services/offlineSync.js
+     OK  src/pages/StageDetailPage.js
+     OK  src/App.js
+  Plus manual eslint-config-react-app checks: every new import is used
+  (useOnlineStatus, enqueueQcUpdate, getQcUpdatesForRun, FEATURES in
+  StageDetailPage; FEATURES, startOutboxSync in App; getAllQcUpdates,
+  removeQcUpdate, markQcUpdateFailed, qcService in offlineSync) — no
+  unused-vars. (Standalone eslint can't run: repo uses CRA's embedded
+  eslint-config-react-app, not an eslint.config.js flat config.)
+  ⇒ Zahi: please run the real CI build locally to confirm the ESLint gate.
+
+V2 static (all PASS):
+  - Outbox DB = "brikops-outbox" (NOT "brikops-offline").                  ✓
+  - removeQcUpdate called ONLY in offlineSync flushOutbox 2xx path.        ✓
+  - sync uses qcService.updateItem — no raw axios.                         ✓
+  - FEATURES.OFFLINE_MODE gating in offlineSync, StageDetailPage (load,
+    synced-effect, handleSave x2), App.                                    ✓
+  - approve/submit/reject offline gates present (navigator.onLine + online
+    disabled state).                                                       ✓
+  - online handleSave path unchanged (updateItem → clear → load()).        ✓
+
+V3 flag OFF (by code path): outbox IndexedDB is opened only inside
+  enqueue/get/getAll/remove/markFailed/count, and EVERY caller of those
+  (handleSave offline branch, load hydrate, flushOutbox, startOutboxSync) is
+  FEATURES.OFFLINE_MODE-gated ⇒ flag OFF never opens "brikops-outbox" and the
+  save path is today's exact behavior (online success + offline error toast).
+
+DEVICE TESTS V4–V8 (for Zahi on-device — cannot be run here):
+  V4 offline capture: offline, mark items + note → שמור → toast "נשמר במכשיר…",
+     marks STAY with blue "ממתין לשליחה" chip, NO error toast.
+  V5 persist + sync: kill+reopen app while still offline → marks still there
+     (hydrated). Restore network → auto-sync, chip clears, rows show server
+     status.
+  V6 approval gate: offline → approve/submit/reject disabled + "אפשר לאשר רק
+     כשיש חיבור לרשת".
+  V7 last-write-wins: re-mark a queued item offline → outbox op overwritten;
+     on replay server ends with the latest value.
+  V8 ⭐⭐ NO DATA LOSS — run ALL 4 permutations (2xx / network-drop mid-sync /
+     4xx-5xx / app-kill-before-sync). In every SYNCED case CONFIRM ON A 2ND
+     DEVICE/WEB that the server actually has the marks. A cleared "ממתין" with
+     no server record = removeQcUpdate firing on non-2xx → STOP and fix.
+     (Code: removeQcUpdate is unreachable except after an awaited 2xx resolve.)
+
+--------------------------------------------------------------------------------
+COMMIT MESSAGE (also in .local/.commit_message)
+--------------------------------------------------------------------------------
+feat(offline): batch 3a — offline QC capture (marks + notes) via outbox + sync
+
+--------------------------------------------------------------------------------
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================
+================================================================================

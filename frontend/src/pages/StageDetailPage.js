@@ -13,6 +13,9 @@ import { useAuth } from '../contexts/AuthContext';
 import WhatsAppRejectionModal from '../components/WhatsAppRejectionModal';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { compressImage } from '../utils/imageCompress';
+import { FEATURES } from '../config/features';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { enqueueQcUpdate, getQcUpdatesForRun } from '../services/offlineOutbox';
 
 const PhotoAnnotation = React.lazy(() => import('../components/PhotoAnnotation'));
 
@@ -132,7 +135,7 @@ const PhotoLightbox = ({ src, onClose }) => {
   );
 };
 
-const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, localState, onNoteChange, onUploadPhotos, uploadState, onRetryUpload, itemErrors, isHighlighted, isGreenFlash, isPendingReview, canApproveThis, onRejectItem, canSendWhatsApp, onWhatsAppCta }, ref) => {
+const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, localState, onNoteChange, onUploadPhotos, uploadState, onRetryUpload, itemErrors, isHighlighted, isGreenFlash, isPendingReview, canApproveThis, onRejectItem, canSendWhatsApp, onWhatsAppCta, isQueued }, ref) => {
   const currentStatus = localState?.status ?? item.status;
   const currentNote = localState?.note ?? item.note ?? '';
   const cfg = STATUS_CONFIG[currentStatus] || STATUS_CONFIG.pending;
@@ -249,6 +252,12 @@ const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, loca
         {badgeText && (
           <span className={`text-[11px] px-2 py-0.5 rounded-full border ${(currentNote || '').trim() ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
             {badgeText}
+          </span>
+        )}
+        {isQueued && (
+          <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 flex items-center gap-1">
+            <Clock className="w-3 h-3" />
+            ממתין לשליחה
           </span>
         )}
       </div>
@@ -793,6 +802,7 @@ export default function StageDetailPage() {
   const [runData, setRunData] = useState(null);
   const [localChanges, setLocalChanges] = useState({});
   const [hasChanges, setHasChanges] = useState(false);
+  const [queuedItemIds, setQueuedItemIds] = useState(() => new Set());
   const [uploadingItems, setUploadingItems] = useState({});
   const hasActiveUploads = useMemo(() => {
     return Object.values(uploadingItems).some(item => item.files.some(f => f.status === 'uploading'));
@@ -815,6 +825,7 @@ export default function StageDetailPage() {
   const [overrideReason, setOverrideReason] = useState('');
   const [overrideSubmitting, setOverrideSubmitting] = useState(false);
   const { user } = useAuth();
+  const online = useOnlineStatus();
   const [timelineData, setTimelineData] = useState(null);
   const [activeFilter, setActiveFilter] = useState('all');
   const [lastRejectedItemId, setLastRejectedItemId] = useState(null);
@@ -849,6 +860,21 @@ export default function StageDetailPage() {
         setLocalChanges({});
         setHasChanges(false);
       }
+      // BATCH 3a: hydrate queued offline marks from the outbox so they survive
+      // an app restart and keep rendering through the existing localChanges
+      // overlay. Outbox goes UNDER any fresh edit (prev wins) — race-safe.
+      if (FEATURES.OFFLINE_MODE) {
+        try {
+          const pending = await getQcUpdatesForRun(runId);
+          const pendingIds = Object.keys(pending);
+          if (pendingIds.length) {
+            setLocalChanges(prev => ({ ...pending, ...prev }));
+            setQueuedItemIds(new Set(pendingIds));
+          } else {
+            setQueuedItemIds(new Set());
+          }
+        } catch (_) { /* outbox must never break load */ }
+      }
     } catch (err) {
       if (err.response?.status === 403) {
         setError('אין הרשאה לצפות בבקרת ביצוע');
@@ -859,6 +885,21 @@ export default function StageDetailPage() {
       setLoading(false);
     }
   }, [runId]);
+
+  // BATCH 3a: when the sync engine confirms queued writes for this run reached
+  // the server, clear the local "ממתין" state and reload so the rows show the
+  // server-confirmed status. load() re-hydrates from whatever remains pending.
+  useEffect(() => {
+    if (!FEATURES.OFFLINE_MODE) return;
+    const onSynced = (e) => {
+      const runIds = e?.detail?.runIds;
+      if (Array.isArray(runIds) && runIds.length && !runIds.includes(runId)) return;
+      setQueuedItemIds(new Set());
+      load();
+    };
+    window.addEventListener('brikops:outbox-synced', onSynced);
+    return () => window.removeEventListener('brikops:outbox-synced', onSynced);
+  }, [runId, load]);
 
   const softLoadGeneration = useRef(0);
 
@@ -993,6 +1034,7 @@ export default function StageDetailPage() {
   const isInconsistent = stage?.computed_status === 'approved' && hasBlockingFailures;
 
   const handleApprove = async () => {
+    if (navigator.onLine === false) { toast.error('אפשר לאשר רק כשיש חיבור לרשת'); return; }
     if (hasBlockingFailures) {
       toast.error(`לא ניתן לאשר — יש ${blockingFailCount} פריטים שנכשלו`);
       return;
@@ -1013,6 +1055,7 @@ export default function StageDetailPage() {
   };
 
   const handleReject = async () => {
+    if (navigator.onLine === false) { toast.error('אפשר לאשר רק כשיש חיבור לרשת'); return; }
     if (!rejectReason.trim()) {
       toast.error('יש לציין סיבת דחייה');
       return;
@@ -1107,6 +1150,18 @@ export default function StageDetailPage() {
     });
   }, [localChanges, stage]);
 
+  // BATCH 3a: dirty changes NOT yet queued to the outbox. The שמור button is
+  // active only for these; when every change is queued we show a muted
+  // "ממתין לשליחה" state instead.
+  const hasUnsaved = useMemo(
+    () => Object.keys(localChanges).some(id => !queuedItemIds.has(id)),
+    [localChanges, queuedItemIds]
+  );
+  const unsavedCount = useMemo(
+    () => Object.keys(localChanges).filter(id => !queuedItemIds.has(id)).length,
+    [localChanges, queuedItemIds]
+  );
+
   const handleSave = async () => {
     if (!runId || Object.keys(localChanges).length === 0) return;
     if (hasFailWithoutNote) {
@@ -1114,6 +1169,32 @@ export default function StageDetailPage() {
       return;
     }
     setSaving(true);
+
+    // BATCH 3a — offline capture. Persist the current marks to the outbox,
+    // keep them on screen, and clear the dirty flag without calling load().
+    // Reused by the proactive-offline branch AND the network-error catch.
+    const queueOffline = async () => {
+      const ids = [];
+      for (const [itemId, change] of Object.entries(localChanges)) {
+        const payload = {};
+        if (change.status !== undefined) payload.status = change.status;
+        if (change.note !== undefined) payload.note = change.note;
+        await enqueueQcUpdate(runId, itemId, payload);
+        ids.push(itemId);
+      }
+      setQueuedItemIds(prev => new Set([...prev, ...ids]));
+      setHasChanges(false);
+      setLastSavedAt(Date.now());
+      toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
+      // DO NOT clear localChanges, DO NOT call load() — marks stay visible.
+    };
+
+    // Proactive offline: skip the doomed network round-trip entirely.
+    if (FEATURES.OFFLINE_MODE && navigator.onLine === false) {
+      try { await queueOffline(); } finally { setSaving(false); }
+      return;
+    }
+
     const savedItemIds = [];
     try {
       const promises = Object.entries(localChanges).map(([itemId, change]) => {
@@ -1134,6 +1215,13 @@ export default function StageDetailPage() {
       toast.success(`${savedItemIds.length} סעיפים נשמרו`);
       await load();
     } catch (err) {
+      // Distinguish a NETWORK error (no response — includes the WebView
+      // "false online" case) from a real server rejection. Only the former
+      // gets queued; a 4xx/validation/permission keeps today's error toast.
+      if (FEATURES.OFFLINE_MODE && !err.response) {
+        await queueOffline();
+        return;
+      }
       const detail = err.response?.data?.detail;
       const msg = typeof detail === 'object' ? detail.message : (typeof detail === 'string' ? detail : err.message);
       toast.error('שגיאה בשמירה: ' + msg);
@@ -1461,6 +1549,7 @@ export default function StageDetailPage() {
 
   const handleSubmitStage = async () => {
     if (!runId) return;
+    if (navigator.onLine === false) { toast.error('אפשר לאשר רק כשיש חיבור לרשת'); return; }
     if (hasActiveUploads) {
       toast.error('ממתין לסיום העלאות');
       return;
@@ -2112,6 +2201,7 @@ export default function StageDetailPage() {
               canEdit={runData?.can_edit}
               isLocked={isLocked || isApproved}
               localState={localChanges[item.id]}
+              isQueued={queuedItemIds.has(item.id)}
               onToggle={handleToggle}
               onNoteChange={handleNoteChange}
               onUploadPhotos={handlePhotosSelected}
@@ -2311,22 +2401,29 @@ export default function StageDetailPage() {
 
             <div className="flex gap-2">
               {canSubmitOrEdit && (
-                <button onClick={handleSave} disabled={saving || !hasChanges || hasFailWithoutNote}
-                  aria-label="שמור שינויים"
-                  className={`flex-1 flex items-center justify-center gap-2 font-bold min-h-[48px] rounded-xl text-sm transition-all ${
-                    hasChanges && !hasFailWithoutNote ? 'bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white shadow-sm' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  }`}>
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  {saving ? 'שומר...' : `שמור${hasChanges ? ` (${Object.keys(localChanges).length})` : ''}`}
-                </button>
+                (hasUnsaved || queuedItemIds.size === 0) ? (
+                  <button onClick={handleSave} disabled={saving || !hasUnsaved || hasFailWithoutNote}
+                    aria-label="שמור שינויים"
+                    className={`flex-1 flex items-center justify-center gap-2 font-bold min-h-[48px] rounded-xl text-sm transition-all ${
+                      hasUnsaved && !hasFailWithoutNote ? 'bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white shadow-sm' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    }`}>
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    {saving ? 'שומר...' : `שמור${hasUnsaved ? ` (${unsavedCount})` : ''}`}
+                  </button>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center gap-2 font-bold min-h-[48px] rounded-xl text-sm bg-slate-100 text-slate-500" dir="rtl">
+                    <Clock className="w-4 h-4" />
+                    ממתין לשליחה
+                  </div>
+                )
               )}
 
               {canSubmitOrEdit && (
-                <button onClick={handleSubmitStage} disabled={submitting || !submitBlockers.canSubmit || hasChanges || hasActiveUploads}
+                <button onClick={handleSubmitStage} disabled={submitting || !submitBlockers.canSubmit || hasChanges || hasActiveUploads || !online}
                   aria-label="שלח לאישור"
-                  title={hasActiveUploads ? 'ממתין לסיום העלאות' : undefined}
+                  title={!online ? 'אפשר לשלוח לאישור רק כשיש חיבור לרשת' : (hasActiveUploads ? 'ממתין לסיום העלאות' : undefined)}
                   className={`flex-1 flex items-center justify-center gap-2 font-bold min-h-[48px] rounded-xl text-sm transition-all ${
-                    submitBlockers.canSubmit && !hasChanges && !hasActiveUploads
+                    submitBlockers.canSubmit && !hasChanges && !hasActiveUploads && online
                       ? 'bg-slate-700 hover:bg-slate-800 text-white shadow-sm'
                       : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                   }`}>
@@ -2348,15 +2445,17 @@ export default function StageDetailPage() {
                     </div>
                   )}
                   <div className="flex gap-2">
-                  <button onClick={handleApprove} disabled={approving || hasBlockingFailures}
+                  <button onClick={handleApprove} disabled={approving || hasBlockingFailures || !online}
                     aria-label="אשר שלב"
-                    className={`flex-1 flex items-center justify-center gap-2 font-bold min-h-[48px] rounded-xl text-sm shadow-sm transition-all ${hasBlockingFailures ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-emerald-500 hover:bg-emerald-600 text-white'}`}>
+                    title={!online ? 'אפשר לאשר רק כשיש חיבור לרשת' : undefined}
+                    className={`flex-1 flex items-center justify-center gap-2 font-bold min-h-[48px] rounded-xl text-sm shadow-sm transition-all ${hasBlockingFailures || !online ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-emerald-500 hover:bg-emerald-600 text-white'}`}>
                     {approving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
                     {approving ? 'מאשר...' : 'אשר שלב'}
                   </button>
-                  <button onClick={() => setShowRejectModal(true)} disabled={rejecting}
+                  <button onClick={() => setShowRejectModal(true)} disabled={rejecting || !online}
                     aria-label="דחה שלב"
-                    className="flex-1 flex items-center justify-center gap-2 font-bold min-h-[48px] rounded-xl text-sm bg-red-500 hover:bg-red-600 text-white shadow-sm transition-all">
+                    title={!online ? 'אפשר לדחות רק כשיש חיבור לרשת' : undefined}
+                    className={`flex-1 flex items-center justify-center gap-2 font-bold min-h-[48px] rounded-xl text-sm shadow-sm transition-all ${!online ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600 text-white'}`}>
                     <ShieldX className="w-4 h-4" />
                     דחה שלב
                   </button>
