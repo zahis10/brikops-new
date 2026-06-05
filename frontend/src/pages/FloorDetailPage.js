@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { qcService } from '../services/api';
 import { prefetchFloorForOffline } from '../services/offlinePrefetch';
@@ -11,6 +11,12 @@ import {
 } from 'lucide-react';
 import { qcStageStatusLabel } from '../utils/qcLabels';
 import { getStageVisualStatusLite, getFloorVisualStatus, getQualityBadge, getReviewBadge, getFloorQualityBadge } from '../utils/qcVisualStatus';
+
+// Floors already auto-warmed for offline this app session. Survives component
+// remounts (revisit a floor → no second background burst); cleared on a full
+// app reload — which is fine, the IndexedDB cache itself persists. Read ONLY by
+// the auto-trigger effect, never by runPrefetch, so a MANUAL tap always re-warms.
+const _autoWarmedFloors = new Set();
 
 const STAGE_STATUS_ICONS = {
   approved: ShieldCheck,
@@ -145,33 +151,64 @@ export default function FloorDetailPage() {
   const [unitsStatus, setUnitsStatus] = useState(null);
   const [prep, setPrep] = useState({ status: 'idle', done: 0, total: 0, failed: 0 });
 
-  const handlePrepareOffline = async () => {
-    if (prep.status === 'running') return;
+  // A background prefetch may finish AFTER the user has navigated away. Guard
+  // every setState behind this so we never touch an unmounted component.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
+  // React Router reuses this component across :floorId changes (no unmount), so a
+  // prefetch started on floor A could still be running when the user is on floor
+  // B. currentFloorRef tracks the active floor; stale runs drop their setState.
+  const currentFloorRef = useRef(floorId);
+  // Ref lock for re-entrancy — more robust than closing over prep.status, which
+  // can be stale across the auto effect + a near-simultaneous manual tap.
+  const prefetchRunningRef = useRef(false);
+  useEffect(() => {
+    currentFloorRef.current = floorId;
+    // New floor → reset the button so it never shows the previous floor's state.
+    setPrep({ status: 'idle', done: 0, total: 0, failed: 0 });
+  }, [floorId]);
+
+  // Shared prepare logic. silent:false (manual tap) shows toasts as before;
+  // silent:true (auto background warm) is quiet and only updates `prep`.
+  // Note: this MUST NOT consult _autoWarmedFloors — a manual tap always re-warms.
+  const runPrefetch = async ({ silent }) => {
+    if (prefetchRunningRef.current) return;                // re-entrancy guard (ref lock)
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      toast.error('אין חיבור — התחבר לרשת כדי להכין לאופליין');
+      if (!silent) toast.error('אין חיבור — התחבר לרשת כדי להכין לאופליין');
       return;
     }
+    const floorAtStart = floorId;
+    // Drop any state update once we're no longer mounted OR the user moved to a
+    // different floor while this run was in flight.
+    const stillCurrent = () => mountedRef.current && currentFloorRef.current === floorAtStart;
+    prefetchRunningRef.current = true;
     setPrep({ status: 'running', done: 0, total: 0, failed: 0 });
     let r;
     try {
-      r = await prefetchFloorForOffline(floorId, {
-        onProgress: ({ done, total, failed }) => setPrep({ status: 'running', done, total, failed }),
+      r = await prefetchFloorForOffline(floorAtStart, {
+        onProgress: (p) => { if (stillCurrent()) setPrep({ status: 'running', ...p }); },
       });
     } catch (_) {
       r = { total: 0, done: 0, failed: 0, floorFailed: true };
+    } finally {
+      prefetchRunningRef.current = false;
     }
+    if (!stillCurrent()) return;                           // unmounted or floor changed mid-warm
     // Hard failure: couldn't even enumerate the floor's units → nothing was
     // warmed. Do NOT report success (avoids a false "מוכן" with an empty cache).
     if (r.floorFailed) {
       setPrep({ status: 'partial', ...r });
-      toast.error('ההכנה נכשלה — בדוק את החיבור ונסה שוב');
+      if (!silent) toast.error('ההכנה נכשלה — בדוק את החיבור ונסה שוב');
       return;
     }
     setPrep({ status: r.failed ? 'partial' : 'done', ...r });
-    toast.success(
+    if (!silent) toast.success(
       r.failed ? `הוכנו ${r.done} דירות, ${r.failed} נכשלו` : 'הקומה מוכנה לעבודה אופליין'
     );
   };
+
+  const handlePrepareOffline = () => runPrefetch({ silent: false });  // manual tap
 
   const load = useCallback(async () => {
     try {
@@ -192,6 +229,19 @@ export default function FloorDetailPage() {
   }, [floorId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Auto-prepare the floor for offline in the background, ONCE per floor per
+  // session, AFTER the floor's own load finished (so it never delays the
+  // foreground screen), online only. Silent: no toasts on the auto path.
+  useEffect(() => {
+    if (!FEATURES.OFFLINE_MODE) return;
+    if (loading || error) return;                         // wait for the floor's own load
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    if (_autoWarmedFloors.has(floorId)) return;           // already warmed this session
+    _autoWarmedFloors.add(floorId);
+    runPrefetch({ silent: true });                        // background, fire-and-forget
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, error, floorId]);
 
   if (loading) {
     return (

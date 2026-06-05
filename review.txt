@@ -1,178 +1,162 @@
 ================================================================================
-BATCH offline-prefetch — Offline mode, BATCH 2 (#534): "הכן לעבודה אופליין"
-prefetch a floor so UNVISITED apartments open with no signal
+BATCH offline-auto-prefetch — Offline mode, BATCH 2b (#535):
+auto-prepare a floor for offline in the background when opened online
 ================================================================================
-Date:         2026-05-29
+Date:         2026-06-05
 Branch:       staging  (NOT main)
-Rollback SHA: a53aa90  (HEAD before edit)
-Files:        1 NEW + 1 EDIT  (0 backend)
-  NEW   frontend/src/services/offlinePrefetch.js
-  EDIT  frontend/src/pages/FloorDetailPage.js
+Rollback SHA: 2bdbad6   (HEAD before edit)
+Files:        1 EDIT  (0 backend)
+  EDIT  frontend/src/pages/FloorDetailPage.js   (+58 / -8)
 FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency.
+Reuses BATCH 2's prefetchFloorForOffline UNCHANGED. Gated on FEATURES.OFFLINE_MODE
+(TRUE in prod). Flag OFF ⇒ no auto-warm, button hidden, zero change.
 
 --------------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT / DISCOVERY (verified against HEAD a53aa90)
+STEP 0 — PRE-FLIGHT / DISCOVERY (verified against HEAD 2bdbad6)
 --------------------------------------------------------------------------------
-0.1  Field-screen on-mount data calls (prefetch calls the SAME methods so cache
-     keys match by construction):
-  FloorDetailPage.js:148,150
-     qcService.getFloorRun(floorId)        -> GET /api/qc/floors/{floorId}/run
-     qcService.getUnitsStatus(floorId)     -> GET /api/qc/floors/{floorId}/units-status
-  UnitQCSelectionPage.js:36,54
-     qcService.getUnitsStatus(floorId)
-     qcService.getUnitRun(unit.unit_id)    -> GET /api/qc/units/{unitId}/run
-  StageDetailPage.js:846,916,1271,1415
-     qcService.getRun(runId)               -> GET /api/qc/run/{runId}
-  ApartmentDashboardPage.js:136,149
-     unitService.get(unitId)               -> GET /api/units/{unitId}
-     unitService.getTasks(unitId)          -> GET /api/units/{unitId}/tasks
-
-  Per-screen classification { call | PRIMARY/SEC | warmed? | fails-soft? }:
-   FloorDetailPage:
-     getFloorRun            | PRIMARY | YES | (screen blocks on it, but warmed)
-     getUnitsStatus         | PRIMARY | YES | screen .catch(()=>{}) — soft
-   UnitQCSelectionPage:
-     getUnitsStatus         | PRIMARY | YES | -
-     getUnitRun (on click)  | PRIMARY | YES | -
-   StageDetailPage:
-     getRun(runId)          | PRIMARY | YES (via floor run.id + each unit run.id) | -
-     getStageTimeline       | SECOND  | no  | YES (try/catch "timeline optional", :948-955)
-     getMyApproverStatus    | SECOND  | no  | YES (.catch -> {is_approver:false}, :962-965)
-   ApartmentDashboardPage:
-     unitService.get        | PRIMARY | YES | -
-     unitService.getTasks   | PRIMARY | YES | -
-  => Every PRIMARY call is warmed. Both SECONDARY calls already fail soft
-     offline (do not blank the screen) — nothing added for them.
-
-0.2  Service shapes (api.js:1429-1445) — MAKE-OR-BREAK, corrected vs spec draft:
-     getFloorRun / getUnitRun return { run: { id, ... }, stages: [...] }.
-       The runId to chain getRun is at .run.id, NOT top-level .id.
-       Proof: FloorDetailPage.js:306 uses `data.run.id`; UnitQCSelectionPage.js:
-       55 `const run = runData.run;` then :65 `run.id`.
-       => prefetch reads `runResp?.run?.id ?? runResp?.id` (defensive fallback).
-     getUnitsStatus returns { stages: [ { units: [ { unit_id, ... } ] } ] }.
-       No flat top-level .units. The floor's unit list = DISTINCT unit_id
-       aggregated across all stages[].units[].
-       Proof: UnitQCSelectionPage.js:140-150 builds unitAggMap from stage.units.
-       => prefetch derives via _unitIdsFromStatus() (Set of unit_id, de-duped).
-
-0.3  BATCH 1 present + whitelist covers all target URLs (api.js:43-63):
-     /api/qc/  (floors run, units run, units-status, run/{id}) — cacheable
-     /api/units/{id} and /api/units/{id}/tasks — cacheable
-     PII deny-list (qc team-contacts, qc approvers) intact and checked FIRST —
-     prefetch never touches those endpoints. No cache code added; no cap raised.
-
-0.4  Button anchor: FloorDetailPage dark header, the
-     `<div className="flex items-center gap-2">` that holds the refresh button
-     (was :268-271, now :291). floorId from useParams (:126). Button inserted
-     as first child, before refresh.
+0.1  BATCH 2 pieces confirmed present in FloorDetailPage.js:
+       :4   import { prefetchFloorForOffline } from '../services/offlinePrefetch'
+       :129 const { projectId, floorId } = useParams()
+       :142 const [loading,setLoading]=useState(true); :143 [error,setError]
+       :146 const [prep,setPrep]=useState({status:'idle',...})
+       :148 handlePrepareOffline (re-entrancy + offline toast + floorFailed
+            false-positive handling from #534)
+       :176 load useCallback([floorId]); :190 setLoading(false) in finally;
+            :184-187 setError on 403 / other
+       :194 useEffect(()=>{load()},[load])
+       :301 {FEATURES.OFFLINE_MODE && (<button onClick={handlePrepareOffline} ...
+            idle/running/done/partial states)}
+0.2  load() sets loading=false in finally + error on failure -> the auto-trigger
+     can safely wait on (!loading && !error). floorId from useParams.
+0.3  Component did NOT auto-call prefetch anywhere — only the manual button.
+     useRef was NOT imported (line 1 had useState/useEffect/useCallback only) —
+     added in this batch.
 
 --------------------------------------------------------------------------------
-PART 1 — NEW frontend/src/services/offlinePrefetch.js
+EDIT — frontend/src/pages/FloorDetailPage.js
 --------------------------------------------------------------------------------
-export async function prefetchFloorForOffline(floorId, { onProgress }={})
-  - Guards: returns {total:0,done:0,failed:0} immediately if !floorId, if
-    !FEATURES.OFFLINE_MODE (double-guard), or if navigator.onLine === false.
-  - Floor warms (best-effort, in try/catch): getFloorRun -> getUnitsStatus ->
-    getRun(floorRun.run.id).
-  - Unit list: _unitIdsFromStatus(unitsStatus) — distinct unit_id across stages.
-  - Per unit (_warmUnit): getUnitRun -> getRun(unitRun.run.id) -> unitService.get
-    -> unitService.getTasks. Each unit wrapped in try/catch: success -> done++,
-    failure -> failed++, loop continues.
-  - Throttle: worker pool of min(3, units) pulling from a shared cursor — never
-    fires all units at once.
-  - onProgress({done,total,failed}) fired after the floor warms and after each
-    unit. Returns {total,done,failed}. NEVER throws.
-  - Calls ONLY qcService/unitService methods (no raw axios/fetch, no hand-built
-    URLs) so BATCH 1's interceptor caches each response under the exact key the
-    screens will later read. No console logging of bodies/PII.
+1) import: + useRef.
+2) MODULE SCOPE (outside component):
+     const _autoWarmedFloors = new Set();
+   Session-lived guard so a floor is auto-warmed at most once per app session
+   (survives remounts; cleared on full app reload — the IndexedDB cache persists).
+3) INSIDE component:
+   - mountedRef (useRef(true)) + cleanup effect -> never setState after unmount.
+   - currentFloorRef (useRef(floorId)) + an effect on [floorId] that updates it
+     AND resets prep to 'idle' on floor change (button never shows the previous
+     floor's state).
+   - prefetchRunningRef (useRef(false)) -> ref-based re-entrancy lock.
+   - runPrefetch({silent}): the old handler body, now silent-aware:
+       * re-entrancy via prefetchRunningRef (not the stale prep.status closure).
+       * offline guard: bail; toast only when !silent.
+       * captures floorAtStart = floorId; stillCurrent() = mounted AND
+         currentFloorRef still == floorAtStart.
+       * onProgress + every final setPrep gated by stillCurrent() -> a run begun
+         on floor A NEVER writes prep while the user is on floor B.
+       * prefetchRunningRef released in finally.
+       * floorFailed false-positive protection from #534 preserved; toasts
+         (success/error) only when !silent.
+   - handlePrepareOffline = () => runPrefetch({silent:false})  (manual tap, toasts).
+4) AUTO-TRIGGER effect [loading,error,floorId]:
+       if (!FEATURES.OFFLINE_MODE) return;
+       if (loading || error) return;                 // after the floor's own load
+       if (navigator.onLine === false) return;       // online only
+       if (_autoWarmedFloors.has(floorId)) return;   // once per floor per session
+       _autoWarmedFloors.add(floorId);
+       runPrefetch({silent:true});                   // background, fire-and-forget
+   Gating on !loading && !error guarantees the warm starts only AFTER the
+   foreground floor screen rendered — it never delays the screen.
+5) BUTTON: unchanged JSX (:331). Same `prep` state now auto-fills idle→running→
+   done without a tap, and stays tappable for a manual re-prepare.
 
---------------------------------------------------------------------------------
-PART 2 — EDIT frontend/src/pages/FloorDetailPage.js
---------------------------------------------------------------------------------
-  + imports: prefetchFloorForOffline, FEATURES, toast (sonner), DownloadCloud.
-  + state: prep { status:'idle'|'running'|'done'|'partial', done,total,failed }.
-  + handlePrepareOffline(): re-entrancy guard (ignore if running); offline ->
-    Hebrew error toast and bail; else run prefetch with onProgress -> setPrep;
-    final status partial if failed>0 else done; success toast.
-  + Button (rendered only when FEATURES.OFFLINE_MODE) in the dark header before
-    refresh, disabled while running:
-      idle    -> DownloadCloud + "הכן לעבודה אופליין"
-      running -> spinner + "מכין דירות… {done+failed}/{total}"
-      done    -> check + "מוכן לאופליין" (emerald)
-      partial -> alert + "מוכן ({failed} לא נטענו — נסה שוב)" (amber)
-  RTL/Hebrew, existing dark-header styling, Sonner toasts. The screens' own
-  loaders are UNCHANGED — prefetch only warms ahead of time.
+react-hooks/exhaustive-deps disable on the auto effect is justified: runPrefetch
+is re-created every render and FEATURES is a constant module import — both are
+intentionally EXCLUDED so the effect keys only on loading/error/floorId, not on
+every render. Combined with the _autoWarmedFloors guard (once per floor) and the
+prefetchRunningRef re-entrancy lock, double-fire is triple-protected.
 
 --------------------------------------------------------------------------------
 CODE-REVIEW FIX (architect, applied before delivery)
 --------------------------------------------------------------------------------
-Architect flagged a false-positive success path: the floor warms were in ONE
-try/catch, so if getFloorRun threw first, getUnitsStatus was skipped, the unit
-list came back empty, and the UI showed "מוכן" while NOTHING was warmed.
+Architect flagged a stale-closure / cross-floor race: React Router reuses
+FloorDetailPage across :floorId changes WITHOUT unmount, so a prefetch begun on
+floor A could keep updating `prep` (and lock manual re-prepare via the old
+prep.status==='running') after the user navigated to floor B.
 Fixed:
-  - offlinePrefetch.js: each floor-level call is now independently guarded.
-    getUnitsStatus (the unit-list source) is always attempted even if
-    getFloorRun fails; if getUnitsStatus itself throws, result.floorFailed=true.
-    getFloorRun / floor getRun are best-effort (the floor screen already cached
-    them on its own mount).
-  - FloorDetailPage.handlePrepareOffline: wrapped the prefetch call in
-    try/catch; if r.floorFailed → status 'partial' + error toast
-    ("ההכנה נכשלה — בדוק את החיבור ונסה שוב"), NO success toast. Real success is
-    only reported when the unit list was obtained.
-Rebuilt: EXIT=0, no new warnings from the touched files.
+  - currentFloorRef + stillCurrent() gate every async setState by the floor that
+    was active when the run started (drops stale-floor writes).
+  - prefetchRunningRef replaces the prep.status closure for re-entrancy (no racey
+    double-start across the auto effect + a near-simultaneous manual tap).
+  - On floorId change, prep resets to 'idle' so the button can't show floor A's
+    "done" while on floor B.
 
 --------------------------------------------------------------------------------
 VERIFY
 --------------------------------------------------------------------------------
 V1  Build: cd frontend && REACT_APP_BACKEND_URL=https://dummy.example.com CI=true npm run build
-    EXIT=0. Only the pre-existing @capacitor-community/apple-sign-in source-map
-    warnings (definitions.ts/index.ts/web.ts). grep of the build log shows NO
-    warnings/errors referencing offlinePrefetch.js or FloorDetailPage.js.
-V2  Static:
-      grep prefetchFloorForOffline/FEATURES.OFFLINE_MODE in FloorDetailPage -> both present.
-      offlinePrefetch.js uses ONLY qcService./unitService. methods; grep for raw
-      axios/fetch( -> none.
-      guards present: !FEATURES.OFFLINE_MODE return, navigator.onLine===false
-      return, _CONCURRENCY=3 pool.
-V3  FLAG OFF: button is wrapped in {FEATURES.OFFLINE_MODE && ...} -> hidden;
-    prefetch double-guards on the flag -> inert. (Flag currently TRUE on staging.)
-V4  KILLER TEST (device, flag ON) — to exercise:
-    a) ONLINE open a floor whose units you have NOT browsed; tap "הכן לעבודה
-       אופליין" -> progress runs to "מוכן לאופליין".
-    b) Airplane mode.
-    c) Open a never-opened apartment on that floor -> it OPENS with QC stages +
-       items + defects (served from BATCH 1 cache), NOT the offline blocker.
-V5  NEGATIVE / SCOPING (device) — a DIFFERENT floor you did NOT prepare: its
-    unvisited units STILL show the blocker offline. Proves prefetch is floor-
-    scoped and the keys are precise (warms only the prepared floor's URLs).
-V6  ONLINE UNAFFECTED: with a floor prepared, online behaves exactly as before
-    (prefetch only warmed the cache; screens unchanged, no loaders touched).
-V7  RESILIENCE: drop the network mid-prefetch -> failing units are counted
-    (failed++) and the loop continues; final toast "הוכנו X דירות, Y נכשלו";
-    no crash; re-tap re-warms.
+    - The full CRA build of the post-refactor file (auto-trigger + silent
+      refactor, before the race-fix) completed: "Compiled with warnings" /
+      "The build folder is ready to be deployed", and a grep of that build log
+      found NO warnings/errors referencing FloorDetailPage.js or offlinePrefetch.js
+      (only the pre-existing @capacitor-community/apple-sign-in source-map
+      warnings).
+    - The subsequent race-fix (refs + guards only — no new imports beyond useRef
+      which was already added) repeatedly could not be re-built to completion in
+      this container: the heavy react-scripts build process was terminated by the
+      environment (SIGTERM / exit 143) on every retry, and /tmp was wiped mid-run.
+      The change is trivial standard JS/JSX (three useRef + one effect + a
+      stillCurrent() helper); it was verified to be syntactically valid via
+      @babel/parser (sourceType:module, plugins:[jsx]) -> "PARSE OK". Please
+      re-run the full build on your side before shipping (Capgo OTA) — no compile
+      risk expected.
+V2  Static (grep):
+    - _autoWarmedFloors referenced ONLY at its definition (:19) and inside the
+      auto effect (:223-224) — NEVER inside runPrefetch -> manual tap always
+      re-warms.
+    - auto effect guarded by FEATURES.OFFLINE_MODE + (loading||error) +
+      navigator.onLine===false + _autoWarmedFloors.has(floorId).
+    - auto path passes silent:true; manual path silent:false.
+    - prefetchFloorForOffline reused (imported + 1 call site) — not reimplemented.
+    - offlinePrefetch.js and features.js: git status clean (untouched).
+V3  ⭐ THE TEST (device, flag ON): open a floor online and DO NOTHING -> header
+    indicator auto-progresses idle→running→"מוכן לאופליין" with no tap. Airplane
+    mode -> open a never-opened apartment on that floor -> it OPENS (served from
+    BATCH 1 cache).
+V4  Foreground unaffected: the floor screen loads exactly as before; auto-warm
+    starts only after loading is false (background, fire-and-forget).
+V5  ⭐ Auto-once vs manual-always:
+    a) leave the floor and return -> NO auto re-fire (_autoWarmedFloors).
+    b) on that same already-warmed floor, a MANUAL tap DOES re-warm (with
+       toasts) — runPrefetch never consults the Set.
+V6  Offline open: open a floor already offline -> auto effect bails on the
+    navigator.onLine guard; no warm attempt, no error spam.
+V7  Flag OFF: auto effect returns immediately; button hidden ({FEATURES.OFFLINE_MODE}).
+V8  Navigate-away resilience: open a floor, immediately leave mid-warm -> no
+    "setState on unmounted component" (mountedRef) and no cross-floor state
+    bleed (currentFloorRef/stillCurrent).
 
 --------------------------------------------------------------------------------
 DO-NOT-TOUCH COMPLIANCE
 --------------------------------------------------------------------------------
-  - No field-screen loaders modified (FloorDetailPage existing load,
-    UnitQCSelectionPage, StageDetailPage, ApartmentDashboardPage untouched).
-  - No cache code added; BATCH 1 interceptor + offlineCache reused as-is; no new
-    IndexedDB store; cap/age (7d/400) unchanged.
-  - No backend endpoint. No new npm dependency.
-  - Prefetch no-op when offline (navigator.onLine guard) and when flag off.
-  - Throttled to 3 concurrent units (no all-at-once burst).
+  - Foreground floor load NOT blocked/delayed (auto runs only after !loading).
+  - No toast on the auto (silent) path; manual tap keeps its toasts.
+  - Auto-warm once per floor per session; manual tap bypasses the guard.
+  - offlinePrefetch.js NOT modified; other field screens, cache code, cap/age
+    (7d/400) untouched.
+  - No auto-warm offline or when flag off. No backend, no new dependency.
+  - No setState after unmount; no cross-floor state bleed.
   - No WebkitOverflowScrolling, no console PII.
 
 --------------------------------------------------------------------------------
 SCOPE NOTE FOR ZAHI
 --------------------------------------------------------------------------------
-This batch makes apartments VIEWABLE offline. Offline WRITES (mark תקין/לא-תקין,
-photos, notes) are still BATCH 3 (offline QC capture + outbox). The offline-
-slowness issue is a separate on-device diagnosis, intentionally not bundled here.
+Still VIEW-ONLY offline. Offline WRITES (mark תקין/לא-תקין, photos, notes) are
+BATCH 3; handover offline is BATCH 4; project-level pre-download (opening the app
+offline at a floor never visited online still shows the blocker) is a heavier
+later option. Offline-slowness considered resolved (Zahi, 2026-06-05).
 
 commit message (also in .local/.commit_message):
-  feat(offline): batch 2 — "prepare floor for offline" prefetch (flag-gated)
+  feat(offline): batch 2b — auto-prepare a floor for offline on open
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
