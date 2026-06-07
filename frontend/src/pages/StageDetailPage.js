@@ -809,6 +809,13 @@ export default function StageDetailPage() {
   }, [uploadingItems]);
   const hasActiveUploadsRef = useRef(false);
   useEffect(() => { hasActiveUploadsRef.current = hasActiveUploads; }, [hasActiveUploads]);
+  // BATCH 3a: live mirrors of localChanges + queuedItemIds so the synced-event
+  // handler (effect deps [runId, load]) reads CURRENT values, not a stale
+  // closure — same ref pattern as hasActiveUploadsRef / the 2b race fix.
+  const localChangesRef = useRef({});
+  useEffect(() => { localChangesRef.current = localChanges; }, [localChanges]);
+  const queuedItemIdsRef = useRef(new Set());
+  useEffect(() => { queuedItemIdsRef.current = queuedItemIds; }, [queuedItemIds]);
   const [validationErrors, setValidationErrors] = useState([]);
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [timeSinceSave, setTimeSinceSave] = useState('');
@@ -891,11 +898,26 @@ export default function StageDetailPage() {
   // server-confirmed status. load() re-hydrates from whatever remains pending.
   useEffect(() => {
     if (!FEATURES.OFFLINE_MODE) return;
-    const onSynced = (e) => {
+    const onSynced = async (e) => {
       const runIds = e?.detail?.runIds;
       if (Array.isArray(runIds) && runIds.length && !runIds.includes(runId)) return;
+      // Capture CURRENT unsaved edits (in localChanges but NOT yet queued) via
+      // live refs — load() resets localChanges, so without this the worker's
+      // in-progress marks would be wiped the moment a sync lands. Read from refs
+      // to dodge this effect's stale [runId, load] closure.
+      const liveChanges = localChangesRef.current || {};
+      const liveQueued = queuedItemIdsRef.current || new Set();
+      const unsaved = {};
+      for (const [itemId, change] of Object.entries(liveChanges)) {
+        if (!liveQueued.has(itemId)) unsaved[itemId] = change;
+      }
       setQueuedItemIds(new Set());
-      load();
+      await load(); // resets localChanges + re-hydrates whatever remains pending
+      // Re-apply the fresh unsaved marks ON TOP of the reloaded/hydrated state.
+      if (Object.keys(unsaved).length) {
+        setLocalChanges(prev => ({ ...prev, ...unsaved }));
+        setHasChanges(true);
+      }
     };
     window.addEventListener('brikops:outbox-synced', onSynced);
     return () => window.removeEventListener('brikops:outbox-synced', onSynced);

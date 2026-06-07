@@ -86,8 +86,16 @@ EDIT frontend/src/pages/StageDetailPage.js
     toast.error('אפשר לאשר רק כשיש חיבור לרשת');return;}` + buttons disabled and
     muted via `online` (useOnlineStatus) with offline title hints.
   - synced-event useEffect [runId, load]: on 'brikops:outbox-synced' with no
-    runIds or this runId → setQueuedItemIds(new Set()) + load() (re-hydrates
-    only still-pending outbox ⇒ synced keys drop, rows show server status).
+    runIds or this runId → CAPTURE current unsaved edits (localChanges keys NOT
+    in queuedItemIds) via live refs (localChangesRef/queuedItemIdsRef, kept in
+    sync like hasActiveUploadsRef — avoids the stale [runId,load] closure) →
+    setQueuedItemIds(new Set()) → await load() (re-hydrates only still-pending
+    outbox ⇒ synced keys drop, rows show server status) → re-apply the captured
+    unsaved marks ON TOP: setLocalChanges(prev=>({...prev,...unsaved})) +
+    setHasChanges(true). Without this, a sync landing mid-marking wiped the
+    worker's not-yet-saved fresh marks (load resets localChanges).
+  - new live refs: localChangesRef + queuedItemIdsRef (each a one-line useEffect
+    mirror), used ONLY by the synced handler.
 
 EDIT frontend/src/App.js
   - import {FEATURES}; import {startOutboxSync}.
@@ -125,6 +133,8 @@ V2 static (all PASS):
   - approve/submit/reject offline gates present (navigator.onLine + online
     disabled state).                                                       ✓
   - online handleSave path unchanged (updateItem → clear → load()).        ✓
+  - synced handler reads live refs (localChangesRef/queuedItemIdsRef), not
+    the stale closure; re-applies unsaved on top after await load().        ✓
 
 V3 flag OFF (by code path): outbox IndexedDB is opened only inside
   enqueue/get/getAll/remove/markFailed/count, and EVERY caller of those
@@ -147,6 +157,13 @@ DEVICE TESTS V4–V8 (for Zahi on-device — cannot be run here):
      DEVICE/WEB that the server actually has the marks. A cleared "ממתין" with
      no server record = removeQcUpdate firing on non-2xx → STOP and fix.
      (Code: removeQcUpdate is unreachable except after an awaited 2xx resolve.)
+  V9 ⭐ UNSAVED EDITS SURVIVE SYNC (the fix in this revision):
+     offline → mark item A + save (A becomes queued "ממתין לשליחה") → WITHOUT
+     saving, mark 2 MORE items B & C (fresh unsaved edits) → reconnect → sync
+     completes. EXPECT: A shows the server-confirmed status (chip cleared), AND
+     B & C are STILL on screen with their marks and the save button ACTIVE
+     (hasChanges true). Regression check: before the fix the sync's load() wiped
+     B & C; they must NOT disappear now.
 
 --------------------------------------------------------------------------------
 COMMIT MESSAGE (also in .local/.commit_message)
