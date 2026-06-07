@@ -4,6 +4,8 @@ import { toast } from 'sonner';
 import { BACKEND_URL, configService } from '../services/api';
 import { cacheClearAll } from '../services/offlineCache';
 import { setLanguage } from '../i18n';
+import { FEATURES } from '../config/features';
+import { flushOutbox } from '../services/offlineSync';
 
 const AuthContext = createContext(null);
 
@@ -91,6 +93,7 @@ export const AuthProvider = ({ children }) => {
       setUser(null);
       setNetworkError(false);
       localStorage.removeItem('token');
+      try { localStorage.removeItem('brikops_offline_user'); } catch (_) {}
       _clearBrikopsCookie();
       toast.info('החיבור פג, אנא התחבר מחדש');
       setTimeout(() => { window.location.href = '/login'; }, 1500);
@@ -120,8 +123,21 @@ export const AuthProvider = ({ children }) => {
         if (uid && uid !== lastUid) {
           cacheClearAll();
           localStorage.setItem('brikops_last_uid', uid);
+          // Different user — drop the previous user's offline snapshot before
+          // the new one is written below (never surface a prior identity).
+          try { localStorage.removeItem('brikops_offline_user'); } catch (_) {}
         }
       } catch (_) { /* cache hygiene must never break login */ }
+      // BATCH 3a-bis (A.1): store the user PROFILE (no new credential — the JWT
+      // already lives in localStorage) so a cold launch while offline can enter
+      // with the cached identity. Same hygiene as the cache (cleared on logout /
+      // auth-error / user-change). Never logged.
+      if (FEATURES.OFFLINE_MODE) {
+        try { localStorage.setItem('brikops_offline_user', JSON.stringify(userData)); }
+        catch (_) { /* never break login */ }
+        // (B.2) bootstrap success ⇒ network is genuinely usable ⇒ drain backlog.
+        try { flushOutbox().catch(() => {}); } catch (_) {}
+      }
       setNetworkError(false);
       toastShownRef.current = false;
       if (retryTimerRef.current) {
@@ -134,13 +150,33 @@ export const AuthProvider = ({ children }) => {
         setUser(null);
         setNetworkError(false);
         localStorage.removeItem('token');
+        try { localStorage.removeItem('brikops_offline_user'); } catch (_) {}
         _clearBrikopsCookie();
         if (retryTimerRef.current) {
           clearTimeout(retryTimerRef.current);
           retryTimerRef.current = null;
         }
       } else {
-        setNetworkError(true);
+        // BATCH 3a-bis (A.2): NETWORK bootstrap failure (this branch is never an
+        // auth error). If we hold a saved snapshot + token, ENTER offline with
+        // the cached identity instead of the blocking retry screen. The retry
+        // loop below is UNCHANGED, so the server revalidates the moment network
+        // returns — fresh user replaces the snapshot, or a 401/403 logs out as
+        // today. The snapshot NEVER overrides a real auth rejection.
+        let enteredOffline = false;
+        if (FEATURES.OFFLINE_MODE && !_isAuthError(error)) {
+          try {
+            const raw = localStorage.getItem('brikops_offline_user');
+            if (raw && localStorage.getItem('token')) {
+              const snap = JSON.parse(raw);
+              if (snap && typeof snap === 'object' && snap.id) {
+                setUser(snap);
+                enteredOffline = true;
+              }
+            }
+          } catch (_) { /* fall through to the retry screen */ }
+        }
+        setNetworkError(!enteredOffline);
         if (isRetry && !toastShownRef.current) {
           toast.error('בעיית חיבור');
           toastShownRef.current = true;
@@ -235,6 +271,7 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
     setNetworkError(false);
     localStorage.removeItem('token');
+    try { localStorage.removeItem('brikops_offline_user'); } catch (_) {}
     _clearBrikopsCookie();
     // Wipe the offline read-cache so the next user on a shared device can't
     // be served the previous user's cached project data. Fire-and-forget,

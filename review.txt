@@ -1,174 +1,152 @@
 ================================================================================
-BATCH 3a — Offline QC Capture (marks + notes) via Outbox + Sync   (Task #537)
+BATCH offline-entry-sync-reliability  (Offline 3a-bis)
+(A) offline entry after app-kill   (B) sync retry + more triggers
+(C) queued-mark attribution        — 3 field findings from Zahi's 3a device test
 ================================================================================
-FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency.
+Date:          2026-06-07     Branch: staging (NOT main)
+FRONTEND-ONLY — Capgo OTA, NO native, NO ship.sh, NO backend, NO new dependency.
+All gated on FEATURES.OFFLINE_MODE. Flag OFF = today's behavior byte-for-byte.
 
-ROLLBACK SHA (pre-change HEAD): 6d28dc1
-  Restore with:  git reset --hard 6d28dc1   (Zahi runs git — agent does not)
+ROLLBACK SHA (pre-change HEAD): e037a49
+  Restore with:  git reset --hard e037a49   (Zahi runs git — agent does not)
 
---------------------------------------------------------------------------------
-WHAT & WHY
---------------------------------------------------------------------------------
-First offline-WRITE batch. Today, marking a QC item offline fails: handleSave
-PATCHes each changed item via qcService.updateItem, and offline those reject →
-"שגיאה בשמירה" and the worker's marks are LOST.
-
-This batch lets a worker mark QC items (status תקין/לא-תקין + note) OFFLINE,
-keeps the marks on screen, persists them across an app restart, and auto-syncs
-on reconnect. Everything gated on FEATURES.OFFLINE_MODE (currently true). Flag
-OFF = today's behavior exactly (no outbox DB, online save path byte-for-byte).
-
-Scope (narrow): QC status + note ONLY. NO photos (BATCH 3b). Approve/submit/
-reject stay ONLINE-gated (never queued). Conflict: last-write-wins on replay.
+Files changed: 3 frontend = 3 total (0 backend)
+  EDIT frontend/src/contexts/AuthContext.js   (A offline entry + B.2 auth-flush)
+  EDIT frontend/src/services/offlineSync.js   (B.1 interval + B.4 resume)
+  EDIT frontend/src/pages/StageDetailPage.js  (B.3 stage-open flush + C name)
 
 --------------------------------------------------------------------------------
-STEP 0 — KEY VERIFIED FACTS
+STEP 0 — PRE-FLIGHT (verified outputs)
 --------------------------------------------------------------------------------
-- QC checklist items PRE-EXIST on the run → marking is an UPDATE to an existing
-  (runId,itemId), not a create. No server-assigned-ID problem.
-- StageDetailPage already holds unsaved marks in localChanges {itemId:{status?,
-  note?}} and the ENTIRE display overlays it. The overlay line (StageItemRow):
-      const currentStatus = localState?.status ?? item.status;   (now line 142)
-  Every filter uses localChanges[i.id]?.status ?? i.status. So queued marks
-  render via the existing overlay with ZERO new render logic.
-- qcService.updateItem(runId, itemId, data)  — api.js line 1488 (confirmed).
-- useOnlineStatus.js exists and is reused for button disabling.
-- offlineCache.js read-cache uses DB "brikops-offline"/store "reads"; the new
-  outbox uses a SEPARATE DB "brikops-outbox" so eviction never drops a write.
-- Online handleSave path = updateItem → clear localChanges → load() (UNCHANGED).
+0.1 AuthContext bootstrap shape CONFIRMED:
+    - success path: setUser(userData) + brikops_last_uid / cacheClearAll hygiene
+      (BATCH 1) at lines ~117-124.
+    - catch: `if (_isAuthError(error))` → full logout (setToken/​setUser null,
+      removeItem token, clear cookie); ELSE (network) → setNetworkError(true) +
+      RETRY_DELAY_MS(5000) retry timer that re-calls fetchCurrentUser(true) only
+      if the saved token still matches.
+    - _isAuthError = 401 || 403, EXCEPT 403 pending_deletion (returns false).
+    - SEPARATE mid-session 401 interceptor (lines ~82-100) clears token + cookie
+      and redirects /login (skips /auth/* urls).
+    - /auth/me is NOT in any read-cache (BATCH 1 V7 guard) — confirmed:
+      offlineCache.js has NO auth/​/me whitelist entry at all.
+0.2 offlineSync triggers (HEAD before): online event + visibilitychange(visible)
+    + one startup flush; _started idempotency guard; outboxCount available from
+    offlineOutbox (line 173).
+0.3 StageDetailPage: attribution line renders resolveActorName(item.
+    updated_by_name) when currentStatus!=='pending' (was ~line 266); component
+    ALREADY reads `const { user } = useAuth();` — clean source for the logged-in
+    display name (user.full_name || user.name). queuedItemIds + localState exist.
+0.4 @capacitor/app present in package.json ("^7") — B.4 uses it via dynamic
+    import, NO new dependency added.
+No divergence from the spec's assumptions.
 
 --------------------------------------------------------------------------------
-PER-FILE CHANGES (2 NEW + 2 EDITS)
+PART A — AuthContext.js : OFFLINE ENTRY (lockout fix)
 --------------------------------------------------------------------------------
-NEW  frontend/src/services/offlineOutbox.js
-  Dependency-free IndexedDB write queue. DB "brikops-outbox", store
-  "qc_item_updates", keyPath "key" = `${runId}::${itemId}` (re-marking an item
-  OVERWRITES its op → one op/item, local last-write-wins). Fail-soft (never
-  throws; missing/blocked IndexedDB → null/[]/0/no-op). Records {key,runId,
-  itemId,payload,ts,failed}. No PII logging (notes never logged). Exports:
-    enqueueQcUpdate(runId,itemId,{status?,note?})
-    getQcUpdatesForRun(runId) → { [itemId]: {status?,note?} }
-    getAllQcUpdates() → [{key,runId,itemId,payload,ts,failed}]
-    removeQcUpdate(runId,itemId), markQcUpdateFailed(runId,itemId), outboxCount()
+SHANNON-GRADE LINE (held): the snapshot NEVER overrides a real auth rejection.
+It is read ONLY in the NETWORK branch (`else` of `_isAuthError`, plus an explicit
+`&& !_isAuthError(error)` guard). A 401/403 logs out exactly as today. NO new
+credential is stored — the JWT already lives in localStorage; this adds only the
+user PROFILE for boot, with the SAME hygiene as the BATCH 1 cache.
 
-NEW  frontend/src/services/offlineSync.js
-  Render-less flush-on-reconnect engine. Imports qcService from ./api (no raw
-  axios). flushOutbox() → {synced,failed}:
-    - no-op if !FEATURES.OFFLINE_MODE or navigator.onLine===false
-    - re-entrancy guard (_flushing); throttle 3 concurrent; never throws
-    - per op await qcService.updateItem(runId,itemId,payload):
-        * 2xx RESOLVED  → removeQcUpdate   ← THE ONLY removeQcUpdate call site
-        * !error.response (NETWORK) → KEEP (retried next flush)
-        * error.response (4xx/5xx) → markQcUpdateFailed + KEEP (never dropped)
-    - if synced>0 → dispatch CustomEvent('brikops:outbox-synced',{detail:{runIds,
-      failed}})
-  startOutboxSync() — idempotent (_started guard): addEventListener('online',
-  flush) + visibilitychange→(visible&&online)→flush + one startup flush.
+A.1 STORE — success path, right after the brikops_last_uid hygiene block (gated
+    FEATURES.OFFLINE_MODE): localStorage.setItem('brikops_offline_user',
+    JSON.stringify(userData)) in try/catch (never breaks login). Never logged.
+A.2 USE — network bootstrap failure (the else branch): if FEATURES.OFFLINE_MODE
+    && !_isAuthError(error) && a stored snapshot + token exist && snap.id →
+    setUser(snap); enteredOffline=true. Then setNetworkError(!enteredOffline)
+    (entered ⇒ no blocking retry screen). The EXISTING retry timer scheduling is
+    UNCHANGED → background revalidation: fresh userData replaces the snapshot, or
+    a 401/403 triggers today's full logout, even mid-offline-session.
+A.3 CLEAR — snapshot removed at EVERY session-end (the same 4 places the token /
+    cache are cleared): logout(), the _isAuthError catch branch, the mid-session
+    401 interceptor, and the brikops_last_uid user-change block (different user
+    ⇒ drop prior identity before the new snapshot is written).
+A.4 UNTOUCHED: read-cache whitelist (/auth stays non-cacheable), _isAuthError
+    logic, retry-loop timing (RETRY_DELAY_MS), x-new-token rotation.
 
-EDIT frontend/src/pages/StageDetailPage.js
-  - imports: FEATURES, useOnlineStatus, {enqueueQcUpdate, getQcUpdatesForRun}.
-  - new state: queuedItemIds (Set); const online = useOnlineStatus().
-  - load(): after the existing setLocalChanges({}) reset, hydrate from outbox —
-    getQcUpdatesForRun(runId); if pending → setLocalChanges(prev=>({...pending,
-    ...prev})) (outbox UNDER fresh edits: prev wins) + setQueuedItemIds; else
-    setQueuedItemIds(new Set()). Wrapped fail-soft; flag-gated.
-  - handleSave: ONLINE path byte-for-byte UNCHANGED. Added shared queueOffline()
-    (enqueue each localChanges entry, mark queued, setHasChanges(false),
-    setLastSavedAt, toast "נשמר במכשיר — יישלח כשתחזור הרשת", NO clear, NO load()).
-    Proactive offline branch (flag && navigator.onLine===false) → queueOffline.
-    Catch: flag && !err.response (NETWORK, incl. WebView false-online) →
-    queueOffline; err.response present (real 4xx/validation) → today's
-    "שגיאה בשמירה" toast (NOT enqueued).
-  - per-item "ממתין לשליחה" chip (StageItemRow isQueued prop, blue pill, Clock).
-  - save button: hasUnsaved = keys not in queuedItemIds; active only on
-    hasUnsaved; when all queued → muted "ממתין לשליחה" state.
-  - approve/submit/reject: first-line gate `if (navigator.onLine===false){
-    toast.error('אפשר לאשר רק כשיש חיבור לרשת');return;}` + buttons disabled and
-    muted via `online` (useOnlineStatus) with offline title hints.
-  - synced-event useEffect [runId, load]: on 'brikops:outbox-synced' with no
-    runIds or this runId → CAPTURE current unsaved edits (localChanges keys NOT
-    in queuedItemIds) via live refs (localChangesRef/queuedItemIdsRef, kept in
-    sync like hasActiveUploadsRef — avoids the stale [runId,load] closure) →
-    setQueuedItemIds(new Set()) → await load() (re-hydrates only still-pending
-    outbox ⇒ synced keys drop, rows show server status) → re-apply the captured
-    unsaved marks ON TOP: setLocalChanges(prev=>({...prev,...unsaved})) +
-    setHasChanges(true). Without this, a sync landing mid-marking wiped the
-    worker's not-yet-saved fresh marks (load resets localChanges).
-  - new live refs: localChangesRef + queuedItemIdsRef (each a one-line useEffect
-    mirror), used ONLY by the synced handler.
+--------------------------------------------------------------------------------
+PART B — offlineSync.js (+ AuthContext flush + StageDetailPage flush) : SYNC
+--------------------------------------------------------------------------------
+B.1 RETRY INTERVAL — startOutboxSync(): setInterval 30_000ms; no-op if flag off
+    or offline; else `if ((await outboxCount()) > 0) flushOutbox()`. Cheap count,
+    flush only on backlog ⇒ a stranded op never waits longer than ~30s online
+    (the FINDING B fix).
+B.2 FLUSH AFTER AUTH — AuthContext success path: flushOutbox().catch(()=>{}) when
+    flag on. Bootstrap/​revalidation success is a stronger "network usable" signal
+    than navigator.onLine. (import { flushOutbox } from '../services/offlineSync';
+    no cycle — offlineSync imports only ./api + ./offlineOutbox + ./config; api.js
+    does NOT import AuthContext, verified.)
+B.3 FLUSH ON STAGE OPEN — StageDetailPage load() hydrate: after queuedItemIds set
+    non-empty AND navigator.onLine !== false → fire-and-forget flushOutbox().
+B.4 CAPACITOR RESUME — startOutboxSync(): dynamic import('@capacitor/app') in
+    try/catch → App.addListener('appStateChange', ({isActive}) => isActive &&
+    flushOutbox()). Belt-and-suspenders for iOS; JS-only on an already-installed
+    plugin (still OTA). Absent-plugin → .catch no-op (would skip, not crash).
+POLICY UNTOUCHED: flushOutbox success/​error path is byte-for-byte — removeQcUpdate
+    ONLY on 2xx-resolve (line 49); network(!error.response) KEEP; 4xx/5xx
+    markQcUpdateFailed + KEEP. Only TRIGGERS were added around it.
 
-EDIT frontend/src/App.js
-  - import {FEATURES}; import {startOutboxSync}.
-  - in the existing once useEffect([]) (StatusBar/Capgo): after the native
-    block, `if (FEATURES.OFFLINE_MODE) startOutboxSync();` (runs web + native).
+--------------------------------------------------------------------------------
+PART C — StageDetailPage.js : queued-mark attribution
+--------------------------------------------------------------------------------
+When the displayed status comes from the LOCAL overlay (localState?.status set =
+isLocalMark), attribution renders the logged-in user's display name
+(currentUserName = user.full_name || user.name || 'אתה') instead of the stale
+server item.updated_by_name (which is empty pre-sync → "משתמש לא ידוע"). Layout
+unchanged; the stale server timestamp is suppressed for a local mark
+(!isLocalMark && item.updated_at). currentUserName passed as a new StageItemRow
+prop. Items WITHOUT a local override are unchanged (still resolveActorName +
+server time).
 
 --------------------------------------------------------------------------------
 VERIFY
 --------------------------------------------------------------------------------
-V1 build — `cd frontend && REACT_APP_BACKEND_URL=https://dummy.example.com
-  CI=true npm run build`:
-  ❗ The full CRA/CRACO build was repeatedly SIGTERM'd by the container (exit
-     code -1 / 143, EMPTY build log) — the documented exit143 behavior on this
-     box, made worse by the two running workflows holding memory. I did NOT
-     restart workflows (Zahi protocol). Could not capture a clean build log.
-  FALLBACK (as pre-agreed): @babel/parser parse of all 4 changed files →
-     OK  src/services/offlineOutbox.js
-     OK  src/services/offlineSync.js
-     OK  src/pages/StageDetailPage.js
-     OK  src/App.js
-  Plus manual eslint-config-react-app checks: every new import is used
-  (useOnlineStatus, enqueueQcUpdate, getQcUpdatesForRun, FEATURES in
-  StageDetailPage; FEATURES, startOutboxSync in App; getAllQcUpdates,
-  removeQcUpdate, markQcUpdateFailed, qcService in offlineSync) — no
-  unused-vars. (Standalone eslint can't run: repo uses CRA's embedded
-  eslint-config-react-app, not an eslint.config.js flat config.)
-  ⇒ Zahi: please run the real CI build locally to confirm the ESLint gate.
+V1 build — `cd frontend && CI=true npm run build`:
+   ❗ Full CRACO build again SIGTERM'd by the container (exit -1/143, empty log) —
+     the documented exit143 case, made worse by the two running workflows holding
+     memory; workflows NOT restarted (Zahi protocol). FALLBACK (pre-agreed):
+     @babel/parser parsed all 3 changed files → OK / OK / OK. No new unused
+     imports (FEATURES + flushOutbox used in AuthContext; outboxCount used in
+     offlineSync; flushOutbox + currentUserName used in StageDetailPage).
+     ⇒ Zahi: run the real CI build locally to confirm the ESLint gate.
 
 V2 static (all PASS):
-  - Outbox DB = "brikops-outbox" (NOT "brikops-offline").                  ✓
-  - removeQcUpdate called ONLY in offlineSync flushOutbox 2xx path.        ✓
-  - sync uses qcService.updateItem — no raw axios.                         ✓
-  - FEATURES.OFFLINE_MODE gating in offlineSync, StageDetailPage (load,
-    synced-effect, handleSave x2), App.                                    ✓
-  - approve/submit/reject offline gates present (navigator.onLine + online
-    disabled state).                                                       ✓
-  - online handleSave path unchanged (updateItem → clear → load()).        ✓
-  - synced handler reads live refs (localChangesRef/queuedItemIdsRef), not
-    the stale closure; re-applies unsaved on top after await load().        ✓
+   - snapshot READ only inside the network branch (`!_isAuthError`).        ✓
+   - snapshot CLEARED in logout + auth-error + 401-interceptor + user-change
+     (4 removeItem sites) + STORE on success + READ on network-fail.        ✓
+   - /auth NOT whitelisted anywhere (offlineCache has no auth/​/me entry).    ✓
+   - B.1 interval + B.2 auth-flush + B.3 stage-flush + B.4 resume present.   ✓
+   - flushOutbox success/error policy untouched (removeQcUpdate only 2xx).   ✓
+   - no import cycle (api.js does not import AuthContext).                   ✓
+   - @capacitor/app NOT added as a new dep (already "^7").                   ✓
 
-V3 flag OFF (by code path): outbox IndexedDB is opened only inside
-  enqueue/get/getAll/remove/markFailed/count, and EVERY caller of those
-  (handleSave offline branch, load hydrate, flushOutbox, startOutboxSync) is
-  FEATURES.OFFLINE_MODE-gated ⇒ flag OFF never opens "brikops-outbox" and the
-  save path is today's exact behavior (online success + offline error toast).
+V3 flag OFF (by code path): no snapshot stored (A.1 gated), never read (A.2
+   gated), no 30s interval / no auth-flush / no stage-flush / no resume listener
+   (all gated) ⇒ bootstrap + save exactly as today.
 
 DEVICE TESTS V4–V8 (for Zahi on-device — cannot be run here):
-  V4 offline capture: offline, mark items + note → שמור → toast "נשמר במכשיר…",
-     marks STAY with blue "ממתין לשליחה" chip, NO error toast.
-  V5 persist + sync: kill+reopen app while still offline → marks still there
-     (hydrated). Restore network → auto-sync, chip clears, rows show server
-     status.
-  V6 approval gate: offline → approve/submit/reject disabled + "אפשר לאשר רק
-     כשיש חיבור לרשת".
-  V7 last-write-wins: re-mark a queued item offline → outbox op overwritten;
-     on replay server ends with the latest value.
-  V8 ⭐⭐ NO DATA LOSS — run ALL 4 permutations (2xx / network-drop mid-sync /
-     4xx-5xx / app-kill-before-sync). In every SYNCED case CONFIRM ON A 2ND
-     DEVICE/WEB that the server actually has the marks. A cleared "ממתין" with
-     no server record = removeQcUpdate firing on non-2xx → STOP and fix.
-     (Code: removeQcUpdate is unreachable except after an awaited 2xx resolve.)
-  V9 ⭐ UNSAVED EDITS SURVIVE SYNC (the fix in this revision):
-     offline → mark item A + save (A becomes queued "ממתין לשליחה") → WITHOUT
-     saving, mark 2 MORE items B & C (fresh unsaved edits) → reconnect → sync
-     completes. EXPECT: A shows the server-confirmed status (chip cleared), AND
-     B & C are STILL on screen with their marks and the save button ACTIVE
-     (hasChanges true). Regression check: before the fix the sync's load() wiped
-     B & C; they must NOT disappear now.
+   V4 ⭐ OFFLINE ENTRY: airplane → KILL app → relaunch STILL OFFLINE → you get IN
+      (no retry screen), see cached floors, can mark + save (queued), offline
+      banner shows. (The lockout is gone.)
+   V5 ⭐ REVALIDATION + SECURITY: from V4 restore network → session revalidates
+      (fresh user replaces snapshot) + queued marks sync. THEN revoke the session
+      server-side (or expired token) → relaunch offline → you still get in →
+      restore network → you are LOGGED OUT as today (401 beats the snapshot).
+   V6 ⭐ RETRY (FINDING B regression): airplane → mark+save (queued) → turn
+      airplane OFF with the app OPEN/foreground and DO NOTHING → within ~30s the
+      "ממתין" clears itself (no bg/fg needed). Confirm on a 2nd device the server
+      has it.
+   V7 LOGOUT HYGIENE: logout → snapshot + cache cleared → next offline cold-launch
+      does NOT enter (shows normal login — nobody is logged in).
+   V8 ATTRIBUTION (FINDING C): a queued/unsaved mark shows YOUR name, not
+      "משתמש לא ידוע"; after sync it shows the server attribution as before.
 
 --------------------------------------------------------------------------------
 COMMIT MESSAGE (also in .local/.commit_message)
 --------------------------------------------------------------------------------
-feat(offline): batch 3a — offline QC capture (marks + notes) via outbox + sync
+fix(offline): 3a-bis — offline entry after app-kill, sync retry/triggers, queued-mark name
 
 --------------------------------------------------------------------------------
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

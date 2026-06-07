@@ -16,6 +16,7 @@ import { compressImage } from '../utils/imageCompress';
 import { FEATURES } from '../config/features';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { enqueueQcUpdate, getQcUpdatesForRun } from '../services/offlineOutbox';
+import { flushOutbox } from '../services/offlineSync';
 
 const PhotoAnnotation = React.lazy(() => import('../components/PhotoAnnotation'));
 
@@ -135,8 +136,13 @@ const PhotoLightbox = ({ src, onClose }) => {
   );
 };
 
-const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, localState, onNoteChange, onUploadPhotos, uploadState, onRetryUpload, itemErrors, isHighlighted, isGreenFlash, isPendingReview, canApproveThis, onRejectItem, canSendWhatsApp, onWhatsAppCta, isQueued }, ref) => {
+const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, localState, onNoteChange, onUploadPhotos, uploadState, onRetryUpload, itemErrors, isHighlighted, isGreenFlash, isPendingReview, canApproveThis, onRejectItem, canSendWhatsApp, onWhatsAppCta, isQueued, currentUserName }, ref) => {
   const currentStatus = localState?.status ?? item.status;
+  // BATCH 3a-bis (C): when the displayed status comes from the LOCAL overlay
+  // (queued/unsaved mark), attribute it to the logged-in user — the stale server
+  // updated_by_name is empty for a not-yet-synced mark ("משתמש לא ידוע").
+  const isLocalMark = localState?.status != null;
+  const markActorName = isLocalMark ? (currentUserName || 'אתה') : resolveActorName(item.updated_by_name);
   const currentNote = localState?.note ?? item.note ?? '';
   const cfg = STATUS_CONFIG[currentStatus] || STATUS_CONFIG.pending;
   const isFail = currentStatus === 'fail';
@@ -263,11 +269,11 @@ const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, loca
       </div>
 
       {/* 3. Metadata (who marked + when) */}
-      {currentStatus !== 'pending' && (item.updated_at || item.updated_by_name !== undefined) && (
+      {currentStatus !== 'pending' && (isLocalMark || item.updated_at || item.updated_by_name !== undefined) && (
         <p className="text-xs text-slate-600 mt-2 leading-normal" dir="rtl">
           {currentStatus === 'pass' ? 'סומן תקין' : 'סומן לא תקין'}
-          {resolveActorName(item.updated_by_name) && <> ע"י <span className="font-medium text-slate-700">{resolveActorName(item.updated_by_name)}</span></>}
-          {item.updated_at && <span className="text-slate-400"> • {formatShortTime(item.updated_at)}</span>}
+          {markActorName && <> ע"י <span className="font-medium text-slate-700">{markActorName}</span></>}
+          {!isLocalMark && item.updated_at && <span className="text-slate-400"> • {formatShortTime(item.updated_at)}</span>}
         </p>
       )}
 
@@ -877,6 +883,9 @@ export default function StageDetailPage() {
           if (pendingIds.length) {
             setLocalChanges(prev => ({ ...pending, ...prev }));
             setQueuedItemIds(new Set(pendingIds));
+            // (B.3) opened a stage with a backlog while online — don't make the
+            // worker wait for the next interval/foreground; drain now.
+            if (navigator.onLine !== false) { flushOutbox().catch(() => {}); }
           } else {
             setQueuedItemIds(new Set());
           }
@@ -2224,6 +2233,7 @@ export default function StageDetailPage() {
               isLocked={isLocked || isApproved}
               localState={localChanges[item.id]}
               isQueued={queuedItemIds.has(item.id)}
+              currentUserName={user?.full_name || user?.name || 'אתה'}
               onToggle={handleToggle}
               onNoteChange={handleNoteChange}
               onUploadPhotos={handlePhotosSelected}

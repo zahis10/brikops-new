@@ -12,7 +12,7 @@
 
 import { FEATURES } from '../config/features';
 import { qcService } from './api';
-import { getAllQcUpdates, removeQcUpdate, markQcUpdateFailed } from './offlineOutbox';
+import { getAllQcUpdates, removeQcUpdate, markQcUpdateFailed, outboxCount } from './offlineOutbox';
 
 const _CONCURRENCY = 3;
 
@@ -90,6 +90,26 @@ export function startOutboxSync() {
       flushOutbox().catch(() => {});
     }
   });
+
+  // (B.1) Safety-net retry. A sparse trigger can fire a beat before the radio is
+  // truly ready (the attempt network-fails → correctly KEPT → but nothing retries
+  // it). A cheap IndexedDB count every 30s flushes ONLY when there is a backlog
+  // and we are online, so a stranded op never waits longer than ~30s.
+  setInterval(async () => {
+    if (!FEATURES.OFFLINE_MODE) return;
+    if (!_isOnline()) return;
+    try { if ((await outboxCount()) > 0) flushOutbox().catch(() => {}); }
+    catch (_) { /* never throw */ }
+  }, 30000);
+
+  // (B.4) Capacitor app-resume — belt-and-suspenders for iOS where the WebView's
+  // visibilitychange can be unreliable. Dynamic import of an ALREADY-installed
+  // plugin (@capacitor/app, used in App.js) — JS-only, still OTA, no new dep.
+  import('@capacitor/app').then(({ App }) => {
+    App.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) flushOutbox().catch(() => {});
+    });
+  }).catch(() => {});
 
   // Startup flush in case we launched already-online with a backlog.
   flushOutbox().catch(() => {});
