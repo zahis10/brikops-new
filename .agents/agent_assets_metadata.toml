@@ -408,3 +408,9 @@ id = "n3GRCZVIEZaH4WUd0Zg1o"
 uri = "file://.local/tasks/batch-5-offline-defect-create-plan.md"
 type = "text"
 title = "BATCH 5 — Offline Defect Create: plan (revised, dormant-flag)"
+
+[[outputs]]
+id = "QUNl4MTS4ie3QMpxCcIch"
+uri = "file://.local/plans/ratelimit-resilience-plan.md"
+type = "text"
+title = "BATCH ratelimit-resilience — תוכנית מלאה (לאישור)"
