@@ -414,3 +414,9 @@ id = "QUNl4MTS4ie3QMpxCcIch"
 uri = "file://.local/plans/ratelimit-resilience-plan.md"
 type = "text"
 title = "BATCH ratelimit-resilience — תוכנית מלאה (לאישור)"
+
+[[outputs]]
+id = "9rLSR7BOGq20E1BBnS86O"
+uri = "file://.local/plans/offline-newdefect-modal-plan.md"
+type = "text"
+title = "תוכנית — offline-newdefect-modal (⛔ PII gate, צריך החלטה לפני מימוש)"
