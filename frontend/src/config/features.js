@@ -10,5 +10,5 @@ export const FEATURES = {
   // confirmed live on prod, flip this to true + redeploy to activate. Gates ONLY
   // the enqueue (NewDefectModal) + the pending hydrate/badge (ApartmentDashboard).
   // The outbox store + sync drain ship live but are no-ops while nothing is queued.
-  OFFLINE_DEFECT_CREATE: false,
+  OFFLINE_DEFECT_CREATE: true,
 };
