@@ -396,3 +396,9 @@ id = "Dhtr3VoH4w3d2M7eH8RuO"
 uri = "file://review_v2_diff.txt"
 type = "text"
 title = "review_v2_diff.txt — FULL diff v1+v2 (3 files, +33/-1)"
+
+[[outputs]]
+id = "17tXl6BHCJSaWBUZXLl8-"
+uri = "file://.local/tasks/batch-3b-offline-photos-plan.md"
+type = "text"
+title = "PLAN — BATCH 3b: Offline QC Photos (capture → queue → sync)"
