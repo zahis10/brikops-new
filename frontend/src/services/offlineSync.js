@@ -23,18 +23,46 @@ const _CONCURRENCY = 3;
 let _flushing = false;
 let _started = false;
 
+// FIX 2 — 429/503 backoff. When the sync's OWN requests hit a server-busy status
+// we stop adding load for a cooldown (the 30s interval + reconnect triggers would
+// otherwise keep hammering a rate-limited user). Honored at the top of flushOutbox.
+let _backoffUntil = 0;
+const _BACKOFF_MS = 60000;
+// FIX 3 — coalesce bursty reconnect triggers into ONE flush.
+let _flushTimer = null;
+
 function _isOnline() {
   return !(typeof navigator !== 'undefined' && navigator.onLine === false);
+}
+
+// A sync request hit a server-busy status (rate-limit / overloaded). EXACTLY
+// {429,503} — a transient must NOT be treated as a real rejection (no markFailed)
+// and must back the WHOLE flush off, not just the current drain.
+function _isTransientStatus(error) {
+  const s = error?.response?.status;
+  return s === 429 || s === 503;
+}
+
+// online + visibilitychange + appStateChange + startup can all fire within a
+// second of a reconnect → several flushes. Debounce them into one (~1500ms).
+function scheduleFlush() {
+  if (_flushTimer) return;
+  _flushTimer = setTimeout(() => {
+    _flushTimer = null;
+    flushOutbox().catch(() => {});
+  }, 1500);
 }
 
 // Attempt to flush every pending op once. Returns { synced, failed }.
 export async function flushOutbox() {
   if (!FEATURES.OFFLINE_MODE || !_isOnline()) return { synced: 0, failed: 0 };
   if (_flushing) return { synced: 0, failed: 0 };  // re-entrancy guard
+  if (Date.now() < _backoffUntil) return { synced: 0, failed: 0 };  // 429/503 cooldown
   _flushing = true;
 
   let synced = 0;
   let failed = 0;
+  let hitBackoff = false;  // a 429/503 in ANY drain aborts the WHOLE flush
   const syncedRunIds = new Set();
   const syncedUnitIds = new Set();
 
@@ -54,40 +82,53 @@ export async function flushOutbox() {
           synced += 1;
           syncedRunIds.add(op.runId);
         } catch (error) {
-          if (!error || !error.response) {
+          if (_isTransientStatus(error)) {
+            // Server BUSY (429/503) — back the WHOLE flush off 60s; KEEP (transient).
+            _backoffUntil = Date.now() + _BACKOFF_MS;
+            hitBackoff = true;
+          } else if (!error || !error.response) {
             // Network failure — KEEP, retried on the next flush.
           } else {
-            // Server REJECTED (4xx/5xx) — flag + KEEP, never silently drop.
+            // Server REJECTED (real 4xx/5xx) — flag + KEEP, never silently drop.
             await markQcUpdateFailed(op.runId, op.itemId);
             failed += 1;
           }
         }
       }));
+      if (hitBackoff) break;
     }
 
     // BATCH 3b — drain queued photo blobs with the IDENTICAL data-loss policy.
     // Runs even when there are no pending marks (photos can outlive the marks).
-    const photoOps = await getAllPhotos();
-    for (let i = 0; i < photoOps.length; i += _CONCURRENCY) {
-      const chunk = photoOps.slice(i, i + _CONCURRENCY);
-      await Promise.all(chunk.map(async (op) => {
-        if (!op || !op.key || !op.runId || !op.itemId || !op.blob) return;
-        try {
-          await qcService.uploadPhoto(op.runId, op.itemId, op.blob);
-          // RESOLVED ⇒ 2xx ⇒ the server has it ⇒ THE ONLY removePhoto call site.
-          await removePhoto(op.key);
-          synced += 1;
-          syncedRunIds.add(op.runId);
-        } catch (error) {
-          if (!error || !error.response) {
-            // Network failure — KEEP, retried on the next flush.
-          } else {
-            // Server REJECTED (4xx/5xx) — flag + KEEP, never silently drop.
-            await markPhotoFailed(op.key);
-            failed += 1;
+    // SKIPPED entirely if a transient (429/503) already tripped backoff — piling
+    // photos onto the same rate-limited user would just eat more 429s.
+    if (!hitBackoff) {
+      const photoOps = await getAllPhotos();
+      for (let i = 0; i < photoOps.length; i += _CONCURRENCY) {
+        const chunk = photoOps.slice(i, i + _CONCURRENCY);
+        await Promise.all(chunk.map(async (op) => {
+          if (!op || !op.key || !op.runId || !op.itemId || !op.blob) return;
+          try {
+            await qcService.uploadPhoto(op.runId, op.itemId, op.blob);
+            // RESOLVED ⇒ 2xx ⇒ the server has it ⇒ THE ONLY removePhoto call site.
+            await removePhoto(op.key);
+            synced += 1;
+            syncedRunIds.add(op.runId);
+          } catch (error) {
+            if (_isTransientStatus(error)) {
+              _backoffUntil = Date.now() + _BACKOFF_MS;
+              hitBackoff = true;
+            } else if (!error || !error.response) {
+              // Network failure — KEEP, retried on the next flush.
+            } else {
+              // Server REJECTED (real 4xx/5xx) — flag + KEEP, never silently drop.
+              await markPhotoFailed(op.key);
+              failed += 1;
+            }
           }
-        }
-      }));
+        }));
+        if (hitBackoff) break;
+      }
     }
 
     // BATCH 5 — drain queued defect-creates. SHIPS LIVE but no-ops while the
@@ -98,34 +139,41 @@ export async function flushOutbox() {
     // throws BEFORE the photo loop (no POST to a non-existent id), and the record
     // is removed ONLY after all three succeed (idempotent backend makes a
     // partial-success retry safe — create returns the existing task, no dup).
-    const defectOps = await getAllDefectCreates();
-    for (let i = 0; i < defectOps.length; i += _CONCURRENCY) {
-      const chunk = defectOps.slice(i, i + _CONCURRENCY);
-      await Promise.all(chunk.map(async (op) => {
-        if (!op || !op.key || !op.payload) return;
-        try {
-          await taskService.create(op.payload);
-          const photos = Array.isArray(op.photos) ? op.photos : [];
-          for (const ph of photos) {
-            if (ph && ph.blob) await taskService.uploadAttachment(op.key, ph.blob);
+    // Also skipped if a transient already tripped backoff above (same user).
+    if (!hitBackoff) {
+      const defectOps = await getAllDefectCreates();
+      for (let i = 0; i < defectOps.length; i += _CONCURRENCY) {
+        const chunk = defectOps.slice(i, i + _CONCURRENCY);
+        await Promise.all(chunk.map(async (op) => {
+          if (!op || !op.key || !op.payload) return;
+          try {
+            await taskService.create(op.payload);
+            const photos = Array.isArray(op.photos) ? op.photos : [];
+            for (const ph of photos) {
+              if (ph && ph.blob) await taskService.uploadAttachment(op.key, ph.blob);
+            }
+            if (op.assign && op.assign.company_id) {
+              await taskService.assign(op.key, op.assign);
+            }
+            // RESOLVED ⇒ full 2xx ⇒ THE ONLY removeDefectCreate call site.
+            await removeDefectCreate(op.key);
+            synced += 1;
+            if (op.unitId) syncedUnitIds.add(op.unitId);
+          } catch (error) {
+            if (_isTransientStatus(error)) {
+              _backoffUntil = Date.now() + _BACKOFF_MS;
+              hitBackoff = true;
+            } else if (!error || !error.response) {
+              // Network failure — KEEP, retried on the next flush.
+            } else {
+              // Server REJECTED (real 4xx/5xx) — flag + KEEP, never silently drop.
+              await markDefectCreateFailed(op.key);
+              failed += 1;
+            }
           }
-          if (op.assign && op.assign.company_id) {
-            await taskService.assign(op.key, op.assign);
-          }
-          // RESOLVED ⇒ full 2xx ⇒ THE ONLY removeDefectCreate call site.
-          await removeDefectCreate(op.key);
-          synced += 1;
-          if (op.unitId) syncedUnitIds.add(op.unitId);
-        } catch (error) {
-          if (!error || !error.response) {
-            // Network failure — KEEP, retried on the next flush.
-          } else {
-            // Server REJECTED (4xx/5xx) — flag + KEEP, never silently drop.
-            await markDefectCreateFailed(op.key);
-            failed += 1;
-          }
-        }
-      }));
+        }));
+        if (hitBackoff) break;
+      }
     }
   } catch (_) {
     /* sync must never throw */
@@ -150,11 +198,11 @@ export function startOutboxSync() {
   if (_started || typeof window === 'undefined') return;
   _started = true;
 
-  const onOnline = () => { flushOutbox().catch(() => {}); };
+  const onOnline = () => { scheduleFlush(); };
   window.addEventListener('online', onOnline);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && _isOnline()) {
-      flushOutbox().catch(() => {});
+      scheduleFlush();
     }
   });
 
@@ -174,10 +222,10 @@ export function startOutboxSync() {
   // plugin (@capacitor/app, used in App.js) — JS-only, still OTA, no new dep.
   import('@capacitor/app').then(({ App }) => {
     App.addListener('appStateChange', ({ isActive }) => {
-      if (isActive) flushOutbox().catch(() => {});
+      if (isActive) scheduleFlush();
     });
   }).catch(() => {});
 
   // Startup flush in case we launched already-online with a backlog.
-  flushOutbox().catch(() => {});
+  scheduleFlush();
 }

@@ -1,198 +1,147 @@
-BATCH 5 — OFFLINE DEFECT CREATE (backend client-id + frontend outbox/sync/UI)
-============================================================================
-Branch: staging  |  Rollback SHA: f3652b8  |  Status: CODE COMPLETE — UNVERIFIED-BY-BUILD
-Ships DORMANT (FEATURES.OFFLINE_DEFECT_CREATE = false) — single ./deploy.sh, feature INERT until the flag is flipped.
+BATCH ratelimit-resilience — survive a 429 burst (serve cache on 429/503, sync backoff + coalesce)
+=================================================================================================
+Branch: staging  |  Rollback SHA: 6577911  |  Status: CODE COMPLETE
+FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency.
+Gated on FEATURES.OFFLINE_MODE (already on in prod). Server rate limit UNCHANGED.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT GREPS (proof of isolation & call-site counts)
-------------------------------------------------------------------
-$ grep -n DB_VERSION src/services/offlineOutbox.js
-  22:const DB_VERSION = 3;        # bumped 2 -> 3 (3a marks + 3b photos stores untouched)
-
-$ grep -rn defect_creates src/services/offlineOutbox.js
-  21:const DEFECT_STORE = 'defect_creates';
-  # new store lives ONLY in the outbox DB ('brikops-outbox'); guarded create on v2->v3 upgrade.
-
-$ grep -rn enqueueDefectCreate src/
-  src/components/NewDefectModal.js:22: import { enqueueDefectCreate } ...
-  src/components/NewDefectModal.js:667: await enqueueDefectCreate({   # the ONLY enqueue site
-  src/services/offlineOutbox.js:386: export async function enqueueDefectCreate(record)
-
-$ grep -rn removeDefectCreate src/
-  src/services/offlineSync.js:116: await removeDefectCreate(op.key);   # ONLY remove site = full-2xx path
-  src/services/offlineOutbox.js:439: export async function removeDefectCreate(key)
-
-$ grep -rn OFFLINE_DEFECT_CREATE src/ | grep -v config/features.js
-  NewDefectModal.js:681  proactive (navigator.onLine===false) enqueue gate
-  NewDefectModal.js:698  reactive (create catch && !err.response) enqueue gate
-  ApartmentDashboardPage.js:160  loadTasks pending-merge gate
-  ApartmentDashboardPage.js:203  brikops:outbox-synced listener gate
-  offlineSync.js:95  (comment only — drain ships live but no-ops on empty store)
-
-$ grep -n OFFLINE_DEFECT_CREATE src/config/features.js
-  13:  OFFLINE_DEFECT_CREATE: false,       # DORMANT default
-
-# create payload carries company_id ONLY (NEVER assignee_id):
-#   taskData (NewDefectModal.js ~632) has no assignee_id; the contractor assign
-#   travels in a SEPARATE `assign:{company_id,assignee_id}` field replayed after create.
+Files changed: 2 frontend = 2 total (0 backend)
+  EDIT: frontend/src/services/api.js          (serve cache on 429/503)
+  EDIT: frontend/src/services/offlineSync.js  (429 backoff + coalesce triggers)
 
 ------------------------------------------------------------------
-WHAT THIS BATCH DOES
+STEP 0 — PRE-FLIGHT (verified against HEAD 6577911)
 ------------------------------------------------------------------
-Lets a PM create a defect while offline. The task id is minted CLIENT-side (valid
-UUID), the create payload + photo blobs + the contractor-assign are written to an
-IndexedDB outbox, and the defect shows immediately in the unit list with an amber
-"ממתין לשליחה" badge. A background drain (in the existing flushOutbox, after the
-3a marks + 3b photos drains) replays create -> photos -> assign when the network
-returns, then the list reloads and the pending row is replaced by the real task.
+0.1 api.js — BATCH 1/2c shape confirmed:
+  - request interceptor (line ~86): serves cache when navigator.onLine === false
+    for a cacheable GET (instant-read, swaps adapter).
+  - response SUCCESS (line ~118): caches cacheable GET bodies (fire-and-forget).
+  - response ERROR (pre-edit line ~160): served cache ONLY on _isNetworkError
+    (!error.response) for a cacheable GET. 402 paywall (line ~145) + request_id
+    logging (line ~151) present and UNCHANGED.
+  Pre-edit cache-fallback block (the one this batch widens):
+      if (FEATURES.OFFLINE_MODE && _isNetworkError(error)
+          && error.config?.method === 'get' && _isOfflineCacheable(error.config?.url)) {
+        const cached = await cacheGetRead(_cacheKey(error.config));
+        if (cached != null) return { data: cached, status: 200,
+          statusText: 'OK (offline-cache)', headers:{}, config: error.config,
+          __fromOfflineCache: true };
+      }
 
-The backend accepts an optional client-supplied `id` on POST /api/tasks so the
-queued photos reference the FINAL id from the start (no temp-id remap) and a sync
-retry is idempotent (returns the existing task — no duplicate, no mutation).
-
-DEPLOY MODEL: the WHOLE batch (backend + frontend) ships in ONE ./deploy.sh while
-OFFLINE_DEFECT_CREATE is false. The outbox store + sync drain are live but inert
-(nothing is ever queued while the flag is off). After the backend is confirmed
-live on prod, flip the flag to true + redeploy to activate. No deploy-ordering.
-
-------------------------------------------------------------------
-EDIT A.1 — backend/contractor_ops/schemas.py
-------------------------------------------------------------------
-- TaskCreate gained `id: Optional[str] = None` (Optional already imported). Absent/null
-  id ⇒ unchanged server-minted path.
-
-------------------------------------------------------------------
-EDIT A.2 — backend/contractor_ops/tasks_router.py (create_task)
-------------------------------------------------------------------
-- ALL existing auth (require_roles PM/management) + project/building/floor/unit
-  validation run FIRST and are UNCHANGED. The client id is only the PK — it grants
-  no access.
-- New client-id block replaces the old `task_id = str(uuid.uuid4())`:
-    * empty/absent id  -> server mints (old behavior, unchanged).
-    * non-UUID id      -> 400 INVALID_ID.
-    * id exists, SAME project (already access-checked) -> `return existing`
-      (idempotent; NEVER update_one — a replay must not mutate an existing task).
-    * id exists, OTHER project -> 409 ID_CONFLICT (generic message; v4 UUIDs not
-      enumerable, existence-only leak).
-    * id free          -> task_id = client_id.
-- The assignee_id-on-create rejection (400 ASSIGNEE_NOT_ALLOWED_ON_CREATE) below is
-  untouched.
+0.2 offlineSync.js — confirmed flushOutbox guards (OFFLINE_MODE / _isOnline /
+  _flushing re-entrancy) + 3 drains (marks -> photos -> defect-creates), each
+  2xx-only remove / network-KEEP / 4xx-5xx markFailed+KEEP. Triggers in
+  startOutboxSync: online, visibilitychange, 30s setInterval, Capacitor
+  appStateChange, startup flush. Pre-edit triggers all called flushOutbox()
+  directly.
 
 ------------------------------------------------------------------
-EDIT B.0 — frontend/src/config/features.js
+PART 1 — api.js : serve cache on 429/503  [FIX 1]
 ------------------------------------------------------------------
-- Added OFFLINE_DEFECT_CREATE: false (DORMANT). Gates ONLY the enqueue (modal) and
-  the pending hydrate/badge/listener (ApartmentDashboard). Store + drain ship live.
+- Added helper (after _isNetworkError):
+    function _isTransient(error) {
+      return _isNetworkError(error)
+        || error?.response?.status === 429
+        || error?.response?.status === 503;
+    }
+  EXACTLY {network, 429, 503}. Deliberately NOT `status >= 500` (would wrongly
+  include 500/502/504) and NOT any other 4xx.
+- Response ERROR handler: cache-fallback trigger changed `_isNetworkError(error)`
+  -> `_isTransient(error)` (same cacheable-GET + cache-hit conditions). On a hit
+  the synthetic 200 now carries statusText 'OK (cache; was <429|503|offline>)'.
+- NO cache hit on a 429/503 -> falls through to the normal Promise.reject(error)
+  (today's behavior; we never fabricate data).
+- UNCHANGED: 402 paywall, request_id logging, the online success cache-write, the
+  request-interceptor instant-read path. 401/403/404/409/422 are NOT transient ->
+  never served from cache (reach today's handling).
 
 ------------------------------------------------------------------
-EDIT B.1 — frontend/src/services/offlineOutbox.js
+PART 2 — offlineSync.js : 429 backoff + coalesce  [FIX 2 + FIX 3]
 ------------------------------------------------------------------
-- DB_VERSION 2 -> 3.
-- onupgradeneeded: guarded creation of DEFECT_STORE 'defect_creates' (keyPath 'key').
-  The 3a 'qc_item_updates' + 3b 'qc_photo_uploads' stores are left UNTOUCHED.
-- New helpers/exports (mirror the photo-store style):
-    enqueueDefectCreate(record)        -> key = client task UUID; stores
-                                          {key,payload,photos:[{name,blob}],assign,unitId,ts,failed}
-    getAllDefectCreates()              -> drain source (FAIL-SOFT -> [])
-    getDefectCreatesForUnit(unitId)    -> hydrate one unit list (FAIL-SOFT -> [])
-    removeDefectCreate(key)            -> delete one (called ONLY on full 2xx)
-    markDefectCreateFailed(key)        -> flag + KEEP row
-  CRITICAL: every getter is FAIL-SOFT -> [] (a missing/just-upgraded store NEVER
-  throws — the live drain reads this on every flush; a throw would break the already-
-  shipped 3a/3b marks+photos sync).
+FIX 2 (backoff):
+- Module state: `let _backoffUntil = 0;` + `const _BACKOFF_MS = 60000;` and a
+  helper `_isTransientStatus(error)` = status === 429 || 503 (EXACTLY {429,503}).
+- flushOutbox top guard (after OFFLINE_MODE/_isOnline/_flushing):
+    if (Date.now() < _backoffUntil) return { synced:0, failed:0 };   // cooldown
+- `let hitBackoff = false;` per flush. In ALL THREE drains' catch, classification
+  is now:
+    transient (429/503)  -> _backoffUntil = now + 60s; hitBackoff = true; KEEP
+                            (NO markFailed — transient, not a rejection).
+    network (!response)  -> KEEP, retried next flush (unchanged).
+    other 4xx/5xx        -> markFailed + KEEP (unchanged).
+- After each drain's chunk loop: `if (hitBackoff) break;`. The photos drain and
+  the defect-create drain are each wrapped in `if (!hitBackoff) { ... }`. So a 429
+  in the marks drain ABORTS the ENTIRE flush (photos + creates do not run this
+  cycle) — they hit the SAME rate-limited user. Everything resumes after the 60s
+  cooldown via the top guard. removeQcUpdate / removePhoto / removeDefectCreate
+  stay 2xx-only (unchanged). Nothing is ever dropped on any error.
+
+FIX 3 (coalesce):
+- Added scheduleFlush(): coalesces calls within 1500ms (single setTimeout guarded
+  by _flushTimer) -> one flushOutbox().
+- Triggers now call scheduleFlush() instead of flushOutbox() directly:
+    online event, visibilitychange (visible+online), Capacitor appStateChange
+    (isActive), and the startup flush.
+- The 30s safety-net interval STILL calls flushOutbox() directly (already paced).
 
 ------------------------------------------------------------------
-EDIT B.4 — frontend/src/services/offlineSync.js (flushOutbox)
+DO NOT TOUCH — honored
 ------------------------------------------------------------------
-- Imported taskService + getAllDefectCreates/removeDefectCreate/markDefectCreateFailed.
-- Added a THIRD drain block after the photos drain (before the synced event),
-  throttle 3, SEQUENTIAL per defect: create -> photos loop -> assign(only if
-  company_id) -> removeDefectCreate.
-    * full 2xx          -> removeDefectCreate(key)  (ONLY delete site) + syncedUnitIds.add
-    * !err.response     -> KEEP (still offline / timeout) — retried next flush
-    * 4xx/5xx response  -> markDefectCreateFailed(key) + KEEP (never silently drop)
-  Sequential so a create network-fail throws BEFORE any photo POST to a non-existent
-  id; the record is removed ONLY after all three steps succeed (idempotent backend
-  makes a partial-success retry safe — create returns the existing task, no dup).
-- 'brikops:outbox-synced' now fires when (syncedRunIds.size>0 || syncedUnitIds.size>0)
-  and the event detail gained `unitIds` so the open unit list reloads after a defect drain.
+- Server rate limit: untouched (it's a DoS guard).
+- Cache served ONLY on network OR 429/503 — never on 401/403/404/409/422.
+- Outbox items never dropped on 429 — backoff + KEEP + retry; remove sites 2xx-only.
+- Online success path, 402 paywall, request_id logging: unchanged.
+- Everything under FEATURES.OFFLINE_MODE. No backend, no native, no new dep.
 
 ------------------------------------------------------------------
-EDIT B.2 — frontend/src/components/NewDefectModal.js (handleSubmit)
+VERIFICATION
 ------------------------------------------------------------------
-- Imported enqueueDefectCreate.
-- Offline branch gated on FEATURES.OFFLINE_MODE && FEATURES.OFFLINE_DEFECT_CREATE
-  (whole block is dead code while dormant). Mutually exclusive triggers:
-    * PROACTIVE  navigator.onLine===false  -> mint id, saveOffline, return (never POST).
-    * REACTIVE   create catch && !err.response -> mint id, saveOffline, return.
-  A real server 4xx/5xx (err.response set) falls through to today's toast — bad data
-  is NOT silently queued.
-- mintId(): window.crypto.randomUUID() with a valid RFC-4122-v4 string fallback (so a
-  WebView without crypto.randomUUID still produces a backend-acceptable UUID — never
-  a 400-wedge on sync).
-- saveOffline: payload = {...taskData, id} (company_id ONLY, NEVER assignee_id — create
-  rejects assignee_id with 400 which would wedge the queue forever); photos = images
-  mapped to {name,blob}; assign = {company_id,assignee_id} replayed separately; then
-  clearDefectDraft(), queued toast "הליקוי נשמר במכשיר — יישלח כשתחזור הרשת", revoke
-  preview URLs, onSuccess(id).
-- ONLINE path (create -> doUploadAndAssign) is byte-for-byte unchanged.
+V1 (build): CRA `CI=true npm run build` NOT run here — the dev container SIGTERMs
+   the build (exit 143) while the workflows run, and per the standing rule the
+   agent does not restart workflows. Substituted @babel/core (preset-react)
+   transform of BOTH changed files -> OK (both parse/compile clean).
+V2 (static, confirmed by grep):
+   - api.js: _isTransient = network || 429 || 503 (lines 74-77); error handler
+     uses _isTransient (line 178); statusText 'OK (cache; was ...)' (line 189).
+     The only `status >= 500` in the file (line 726) is PRE-EXISTING unrelated
+     code (isServerError), NOT _isTransient.
+   - offlineSync.js: _backoffUntil top-guard (line 60); _isTransientStatus in all
+     three drains (lines 85,118,163) each setting 60s backoff + hitBackoff; three
+     `if (hitBackoff) break;` (98,130,175); photos+defect drains gated by
+     `if (!hitBackoff)` (105,143); scheduleFlush wired into online (201),
+     visibility (205), appStateChange (225), startup (230); the 30s interval keeps
+     direct flushOutbox() (216).
+V3 ⭐ PANIC GONE (how to exercise): force a 429 on GET /api/projects (devtools
+   override or trip the limit) -> projects list renders LAST-KNOWN from cache, not
+   an empty "all deleted" screen. Same for a unit/building defects list + QC lists.
+   (Logic verified statically; runtime needs a device + a primed cache.)
+V4 No-cache 429: a 429 on a cacheable GET with no cache yet -> falls through to
+   reject (today's behavior). Confirmed by code path (cached == null -> reject).
+V5 Sync backoff: a 429 during a flush sets _backoffUntil = now+60s and aborts the
+   whole flush; the top guard returns early for 60s (no repeated POSTs), then
+   resumes; items KEPT (no markFailed on transient) -> nothing dropped.
+V6 Coalesce: online/visibility/resume/startup go through scheduleFlush -> one
+   flush within 1500ms instead of 3-4.
+V7 ⭐⭐ STATUS WHITELIST exactly {429,503}: verified _isTransient and
+   _isTransientStatus include ONLY network/429/503. 401 (re-auth), 403 (SECURITY:
+   lost-access leak), 404 (deleted-resource inverse bug), 409/422 (validation) are
+   NOT in the set -> NOT served from cache / NOT backed off -> reach normal handling.
+
+NOT verified here (needs device + primed cache + live limiter): the runtime V3/V5
+behavior. Logic reviewed; recommend Zahi exercise V3 + V5 post-deploy.
 
 ------------------------------------------------------------------
-EDIT B.3 — frontend/src/pages/ApartmentDashboardPage.js (loadTasks + render)
+COMMIT MESSAGE (written to .local/.commit_message)
 ------------------------------------------------------------------
-- Imported useRef + getDefectCreatesForUnit.
-- loadTasks (gated): after the server list, prepend synthesized pending rows from
-  getDefectCreatesForUnit(unitId): {...payload, id:key, status:'open', created_at:ts,
-  image_url:<first photo blobURL>, _pendingUpload:true}. Dedup by id (drop a local
-  copy whose key already exists server-side, so no duplicate flash after sync).
-  Blob URLs tracked in pendingUrlsRef and revoked before each re-hydrate.
-- Unmount effect: revoke remaining pending blob URLs (no leak).
-- Listener (gated): on 'brikops:outbox-synced' -> loadTasks().
-- Render: both task rows (main list + blocking row) show an amber "ממתין לשליחה"
-  badge instead of StatusPill for _pendingUpload rows, and their onClick is guarded
-  (no navigate to /tasks/{id} for a not-yet-server task — toast instead).
+fix(offline): survive a 429 burst — serve cache on rate-limit, back off + coalesce sync
 
-------------------------------------------------------------------
-ISOLATION / DO-NOT-TOUCH HONORED
-------------------------------------------------------------------
-- 3a 'qc_item_updates' + 3b 'qc_photo_uploads' stores and their drains: untouched.
-- Read-cache DB 'brikops-offline': untouched (separate DB from the outbox).
-- Online defect-create happy path: byte-for-byte unchanged.
-- enqueueDefectCreate reachable from exactly one place (modal); removeDefectCreate
-  from exactly one place (sync full-2xx).
-- All new code is behind OFFLINE_DEFECT_CREATE except the outbox store + the drain,
-  which are inert while nothing is queued (enqueue is flag-gated).
+ROLLBACK:
+  Fastest: FEATURES.OFFLINE_MODE=false (disables cache-serve + sync entirely).
+  Targeted: git revert 6577911 -- frontend/src/services/api.js frontend/src/services/offlineSync.js
 
-------------------------------------------------------------------
-SECURITY
-------------------------------------------------------------------
-- Added MED-E to security/pentest-regression-checklist.md (client-supplied task id:
-  garbage->400, cross-project->409 + no mutation, replay->idempotent no-overwrite).
+FOLLOW-UP (logged, NOT this batch): the app fires ~30 GETs per project open —
+close to the per-user limit even in normal use. Long-term: batch the project-open
+loads into fewer calls, and/or give read GETs a higher per-user limit than writes.
 
-------------------------------------------------------------------
-VERIFICATION PERFORMED (build fallback)
-------------------------------------------------------------------
-- Backend: `python -m py_compile` on schemas.py + tasks_router.py -> OK. Manual
-  read-through confirms pid/db are defined ABOVE the new client-id block and that
-  `return existing` strips _id.
-- Frontend: @babel/core (preset-react) transform of all 5 changed files -> OK.
-  CRA `CI=true npm run build` is NOT run here: the dev container SIGTERMs the build
-  (exit 143) while workflows are running, and per the standing rule the agent does
-  NOT restart workflows.
-- Static greps above confirm: DB_VERSION=3, single enqueue/remove sites, all flag
-  gates present, create payload free of assignee_id, store isolated to the outbox DB.
-- Flag-off drain: getAllDefectCreates() is fail-soft -> [] and nothing is ever
-  enqueued while dormant, so the new drain block is a confirmed no-op in prod.
-
-NOT verified here (needs a live backend + 2 PM tokens + seeded project/unit):
-  the runtime POST /api/tasks idempotency + cross-project 409 + payload-split
-  behavior (MED-E). Logic reviewed; recommend Zahi run MED-E post-deploy.
-
-ACTION FOR ZAHI:
-  1. Run the real `CI=true npm run build` (or ship.sh) on a clean container.
-  2. ./deploy.sh (ships dormant — feature inert).
-  3. Confirm backend live on prod, run MED-E from the checklist.
-  4. Flip FEATURES.OFFLINE_DEFECT_CREATE -> true + redeploy to activate.
-
+FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

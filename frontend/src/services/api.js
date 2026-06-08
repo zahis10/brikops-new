@@ -66,6 +66,16 @@ function _isNetworkError(error) {
   // No response object => transport/network failure (offline, DNS, timeout).
   return !!error && !error.response;
 }
+// "Transient — serve last-known instead of blanking" set: a network failure OR
+// a server-busy 429 (rate-limit) / 503. EXACTLY {network, 429, 503} — NOTHING
+// else. 401/403/404/409/422/500/502/504 are real answers and must reach normal
+// handling (never served from cache). Deliberately NOT `status >= 500` (that
+// would wrongly include 500/502/504). See pentest checklist V7 / inverse-bug.
+function _isTransient(error) {
+  return _isNetworkError(error)
+    || error?.response?.status === 429
+    || error?.response?.status === 503;
+}
 // Cache key MUST include query params so e.g. ?status=open and
 // ?status=closed don't overwrite each other in the offline store.
 function _cacheKey(config) {
@@ -157,9 +167,15 @@ axios.interceptors.response.use(
         );
       }
     }
+    // Serve the last-known cached copy for a cacheable GET on a TRANSIENT error
+    // (network OR 429/503). A 429 burst (reconnect/navigation tripping the
+    // per-user rate limit) used to render an EMPTY list — "all projects deleted"
+    // panic. Last-known data beats a blank. NO cache hit ⇒ fall through to the
+    // normal reject (we never fabricate data). Non-transient statuses
+    // (401/403/404/409/422/...) are NOT served — they reach today's handling.
     if (
       FEATURES.OFFLINE_MODE &&
-      _isNetworkError(error) &&
+      _isTransient(error) &&
       error.config?.method === 'get' &&
       _isOfflineCacheable(error.config?.url)
     ) {
@@ -170,7 +186,7 @@ axios.interceptors.response.use(
           return {
             data: cached,
             status: 200,
-            statusText: 'OK (offline-cache)',
+            statusText: 'OK (cache; was ' + (error.response?.status || 'offline') + ')',
             headers: {},
             config: error.config,
             __fromOfflineCache: true,
