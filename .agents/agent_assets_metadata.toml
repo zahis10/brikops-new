@@ -420,3 +420,9 @@ id = "9rLSR7BOGq20E1BBnS86O"
 uri = "file://.local/plans/offline-newdefect-modal-plan.md"
 type = "text"
 title = "תוכנית — offline-newdefect-modal (⛔ PII gate, צריך החלטה לפני מימוש)"
+
+[[outputs]]
+id = "GAiVjaYNnh_i155_hnIYT"
+uri = "file://.local/plans/defects-backnav-origin-plan.md"
+type = "text"
+title = "תוכנית BATCH defects-backnav-origin (לעיון, טרם יישום)"
