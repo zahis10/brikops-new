@@ -1,151 +1,132 @@
-BATCH offline-newdefect-modal — New-Defect modal usable offline (cache companies PII-trimmed,
-allSettled, quiet offline errors)
+BATCH defects-backnav-origin — fix the broken "back" chain from a unit's defects
+(building-defects → unit-defects → task → back loses the origin)
 =================================================================================================
-Branch: staging  |  Rollback SHA: 46e8c10  |  Status: CODE COMPLETE
+Branch: staging  |  Rollback SHA: aae8c2d  |  Severity: P2 (prod nav bug)  |  Status: CODE COMPLETE
 FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency.
-Gated on FEATURES.OFFLINE_MODE. Online responses UNCHANGED. memberships still NEVER cached.
+NOT flag-gated (navigation correctness fix, no behavior toggle). Reuses the existing
+?returnTo URL-param pattern (#531) + the existing open-redirect guard.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Files changed: 3 frontend = 3 total (0 backend)
-  EDIT: frontend/src/services/api.js              (companies cacheable, PII-TRIMMED before write)
-  EDIT: frontend/src/components/NewDefectModal.js (Promise.all -> allSettled + offline-aware toasts + copy)
-  EDIT: frontend/src/services/offlinePrefetch.js  (warm companies once/project)
+Files changed: 2 frontend = 2 total (0 backend)
+  EDIT: frontend/src/pages/BuildingDefectsPage.js     (origin -> URL ?returnTo)
+  EDIT: frontend/src/pages/ApartmentDashboardPage.js  (preserve URL on task open, BOTH sites)
 
 ------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT (verified against HEAD 46e8c10)
+THE BUG (Zahi, prod, exact URLs)
 ------------------------------------------------------------------
-0.1 whitelist + companies path:
-  - projectCompanyService.list(pid) -> GET /api/projects/{id}/companies (api.js:539-543),
-    resolves to response.data (an array).
-  - /companies was NOT in _OFFLINE_CACHEABLE; memberships denied via _OFFLINE_PII_DENY.
-  ⭐⭐ PII GATE RESULT — response shape of GET /projects/{id}/companies
-     (companies_router.py:83-88) returns project_companies docs with projection {'_id':0}
-     = ALL fields. Per the create doc (companies_router.py:68-77) each company carries:
-       id, project_id, name, trade            <- business
-       contact_name, contact_phone (phone_e164), contact_phone_raw, contact_email  <- PERSONAL PII
-     The GLOBAL /companies route (companies_router.py:31-40) was deliberately PII-stripped
-     to {id,name,trade} for pentest CRIT-2 (2026-04-22); the PROJECT-scoped route was not.
-     => A raw whitelist add would write personal PII to device IndexedDB. STOPPED & reported.
-     Zahi chose OPTION (b): cache PII-TRIMMED to {id,name,trade} client-side. Implemented below.
+Open a defect /tasks/{taskId} -> back to the unit's defects
+/projects/{pid}/units/{unitId}/defects -> back AGAIN -> went to
+/projects/{pid}/units/{unitId} then /projects/{pid}/buildings/{bid},
+INSTEAD of /projects/{pid}/buildings/{bid}/defects (the BUILDING defects, the origin).
 
-0.2 loadCompanies + shape gate:
-  - Old: Promise.all([projectCompanyService.list(pid), projectService.getMemberships(pid)])
-      .then(([compData, memData]) => setCompanies(normalizeList(compData)); setProjectMembers(normalizeList(memData)))
-      .catch(...toast.error('שגיאה בטעינת חברות')...)
-    => a memberships rejection rejected the whole Promise.all -> companies blank even if cached.
-  - SHAPE GATE: BOTH services resolve to response.data (arrays): getMemberships api.js:248,
-    projectCompanyService.list api.js:542. => allSettled rewrite uses normalizeList(compRes.value)
-    DIRECTLY (NOT .value.data) — identical shape to the old destructured .then. CONFIRMED.
-  - buildings/floors/units loaders each toast.error(...) in .catch (NewDefectModal.js:192/202/212).
-
-0.3 offlinePrefetch.js — prefetchFloorForOffline(floorId) is FLOOR-scoped (only floorId +
-  run/units data). projectId not passed in -> derived from floorRun (run carries project_id,
-  qc_router.py:983; floor-run route returns the run).
+ROOT CAUSE: the origin lived in ROUTER STATE only, wiped across the task round-trip.
+- BuildingDefectsPage opened unit-defects with state:{from:'building-defects', buildingId}
+  but no URL returnTo.
+- ApartmentDashboardPage's task-open passed a BARE returnTo (/units/{unitId}/defects),
+  dropping the origin. TaskDetailPage's back -> fresh navigation with EMPTY state ->
+  buildingId gone -> back-arrow fell to the else fallback -> unit page -> building page.
+FIX: carry the origin in the URL (survives the round-trip) via the existing ?returnTo param.
 
 ------------------------------------------------------------------
-PART 1 — api.js : cache companies PII-TRIMMED  [option (b)]
+STEP 0 — PRE-FLIGHT (verified against HEAD aae8c2d)
 ------------------------------------------------------------------
-- Added named regex const _OFFLINE_COMPANIES_RE = /\/api\/projects\/[^/]+\/companies(\?|$)/
-  and pushed it into _OFFLINE_CACHEABLE (so the cache layer considers the endpoint).
-- Added _trimForCache(url, data): when url matches _OFFLINE_COMPANIES_RE AND data is an array,
-  maps each company to {id, name, trade} ONLY — DROPS contact_name / contact_phone /
-  contact_phone_raw / contact_email. Any other url -> data returned UNCHANGED (URL-specific;
-  qc/units/tasks keep full bodies).
-- The ONLY cache-write site (success handler) now writes
-  cachePutRead(_cacheKey(response.config), _trimForCache(response.config?.url, response.data)).
-  => trimming applies ONLY to what is WRITTEN to cache; the ONLINE response (response.data)
-  is untouched — the modal online still receives full company data as today.
-- PII deny-list + memberships exclusion UNCHANGED. Mirrors CRIT-2.
+grep confirmed all anchor sites:
+- BuildingDefectsPage:575 — navigate('.../units/${unit.id}/defects',
+  { state:{from:'building-defects', buildingId} }) — router state only, NO url returnTo. ✓
+- ApartmentDashboardPage:
+  - useLocation imported (line 2), location = useLocation() in scope (line 89). ✓
+  - safeReturnTo (443-450): reads ?returnTo, single decodeURIComponent, guard rejects
+    '//' and '/\' (line 448). ✓
+  - back arrow reads safeReturnTo FIRST (505) before the navState branches
+    (from==='unit-home' 507, navState?.buildingId 509, else). ✓
+  - TWO task-open sites: 606 (list row) and 854 (blocking row), both with the BARE
+    returnTo '/projects/${projectId}/units/${unitId}/defects'. ✓
+  - QC jump (539-540) already uses encodeURIComponent(location.pathname+location.search)
+    — confirms PART 2's approach is the established in-file pattern. ✓
+No divergences.
 
 ------------------------------------------------------------------
-PART 2 — NewDefectModal.js : decouple + offline-aware errors
+PART 1 — BuildingDefectsPage.js : put the origin in the URL
 ------------------------------------------------------------------
-2.1  loadCompanies: Promise.all -> Promise.allSettled. Set companies/members independently
-     (normalizeList(compRes.value) / normalizeList(memRes.value)). A memberships miss can no
-     longer blank companies. (allSettled never rejects -> no .catch needed; .finally kept.)
-2.2  Added module-level _isOfflineFail(reason) = navigator.onLine === false || !reason?.response.
-     - companies toast fires ONLY if compRes rejected AND !_isOfflineFail (a real online failure).
-       A memberships-only failure -> NO toast, companies still show, assignee picker just empty.
-     - Same _isOfflineFail guard added to the buildings/floors/units .catch toasts (they are
-       cached so normally succeed; this silences the noise on a transient offline miss).
-2.3  Empty-state copy: when companies empty AND loadError.companies (offline miss, no cache),
-     the block now reads "רשימת החברות תיטען כשתחזור הרשת" + "אפשר ליצור ליקוי גם ללא שיוך קבלן"
-     (no "+הוסף חברה" CTA, no implication of zero companies). The plain "אין חברות בפרויקט"
-     (with the add-company CTA) is preserved for the genuine online-empty case.
-2.4  Company stays OPTIONAL — no validate() / required-field change.
+At the unit-defects navigation (was line 575), the bare navigate is replaced with a
+block that also appends an encoded ?returnTo of the BUILDING-defects path, keeping the
+existing state for first-visit / other readers:
+  const origin = encodeURIComponent(`/projects/${projectId}/buildings/${buildingId}/defects`);
+  navigate(`/projects/${projectId}/units/${unit.id}/defects?returnTo=${origin}`,
+    { state: { from: 'building-defects', buildingId } });
+=> the unit-defects URL now carries ?returnTo=<building-defects> from the start; the
+back arrow's existing safeReturnTo already honours it.
 
 ------------------------------------------------------------------
-PART 3 — offlinePrefetch.js : warm companies once/project
+PART 2 — ApartmentDashboardPage.js : preserve the URL across the task round-trip
 ------------------------------------------------------------------
-- Imported projectCompanyService.
-- After the floor-run/units warms (once per floor prefetch, NOT per unit), derive
-  projectId = floorRun?.run?.project_id ?? floorRun?.project_id ?? null and, if present,
-  await projectCompanyService.list(projectId). Wrapped in try/catch -> strictly best-effort;
-  a failure or missing projectId NEVER aborts the floor prefetch. Cached PII-trimmed by PART 1.
+At BOTH task-open sites (606 list, 854 blocking) the task's returnTo changes from the
+BARE unit-defects path to the CURRENT full URL:
+  navigate(`/tasks/${task.id}`, { state: { returnTo: location.pathname + location.search } });
+=> the ?returnTo=<building-defects> rides along and survives the bounce through the task
+page. TaskDetailPage's back -> /units/{unitId}/defects?returnTo=<building-defects> ->
+ApartmentDashboardPage mounts WITH the ?returnTo -> safeReturnTo sends the user to the
+building defects. Chain fixed. (location.pathname+location.search is always an in-app
+path -> the existing //, /\ guard passes it.)
 
 ------------------------------------------------------------------
 DO NOT TOUCH — honored
 ------------------------------------------------------------------
-- ❌ /projects/{id}/memberships NEVER cached (B1 PII) — confirmed absent from _OFFLINE_CACHEABLE.
-- ❌ company/assignee NOT made required.
-- ❌ online behavior unchanged (full company data online; a REAL online failure still toasts).
-- ❌ PII deny-list + other whitelist entries unchanged.
-- ❌ everything gated on FEATURES.OFFLINE_MODE; no backend, no native, no new dependency.
+- ❌ Back-arrow fallback branches (unit-home -> unit page; navState?.buildingId ->
+  building defects; else -> unit page) UNCHANGED — still the fallback for entries with
+  NO ?returnTo (e.g. opened from the unit home). Verified safeReturnTo branch is first
+  and untouched.
+- ❌ TaskDetailPage — unchanged (still navigates to state.returnTo; we only change WHAT
+  returnTo it is handed).
+- ❌ safeReturnTo decoder + open-redirect guard — reused as-is.
+- ❌ No backend, no flag, no new dependency, no other navigate() call touched
+  (the QC jump at 539 is pre-existing and untouched).
 
 ------------------------------------------------------------------
 VERIFICATION
 ------------------------------------------------------------------
-V1 (build): CRA `CI=true npm run build` NOT run here — the dev container SIGTERMs the build
-   (exit 143) while the workflows run, and per the standing rule the agent does not restart
-   workflows. Substituted @babel/core (preset-react) transform of ALL THREE changed files -> OK.
-V2 (static, confirmed by grep):
-   - api.js: _OFFLINE_COMPANIES_RE defined (46) + in whitelist (56); _trimForCache maps to
-     {id,name,trade} dropping contact_* (78-85); the sole cache write uses _trimForCache (164).
-     The only contact_email left (1308) is PRE-EXISTING unrelated billing code.
-   - NewDefectModal.js: allSettled (139) with normalizeList(compRes.value) (144); _isOfflineFail
-     (28) gates the companies toast (151) and the buildings/floors/units toasts (209/219/229);
-     offline empty-state copy gated on loadError.companies (922-925).
-   - offlinePrefetch.js: projectCompanyService imported (14); projectId derived from floorRun
-     (82) and warmed best-effort (83).
-   - memberships NOT in the whitelist (grep confirmed).
-V2b ⭐ PII-AT-REST (how to exercise): online open a project so companies cache, go offline,
-   inspect IndexedDB "brikops-offline" companies entry -> only {id,name,trade}, NO
-   contact_name/contact_phone/contact_phone_raw/contact_email. (Enforced by _trimForCache;
-   runtime confirmation needs a device + DevTools.)
-V3 ⭐ THE FIX (device, OFFLINE_DEFECT_CREATE on): online open project (companies cache, or rely
-   on prefetch) -> airplane -> "ליקוי חדש" -> companies list shows from cache, NO
-   "שגיאה בטעינת חברות" toast, NO "אין חברות"; fill category+title+photo -> "צור ליקוי" -> queued.
-   (Assignee/person picker may be empty offline — expected; memberships uncached.)
-V4 Never-cached offline: a project whose companies were never loaded online -> the block reads
-   the friendly "תיטען כשתחזור הרשת" copy, NO red error, and the defect is STILL creatable with
-   no company. (Logic: allSettled compRes rejects offline -> _isOfflineFail true -> no toast,
-   loadError.companies set -> friendly copy.)
-V5 Online unchanged: companies + members load as today (full data); a REAL online failure
-   (has reason.response) -> _isOfflineFail false -> still toasts.
-V6 Memberships-miss isolation: offline, companies show even though memberships failed (allSettled
-   sets companies from compRes.value regardless of memRes) — no blank, no toast.
+V1 (build): CRA `CI=true npm run build` NOT run here — the dev container SIGTERMs the
+   build (exit 143) while workflows run, and per the standing rule the agent does not
+   restart workflows. Substituted @babel/core (preset-react) transform of BOTH changed
+   files -> OK (both parse).
+V2 (static, grep-confirmed):
+   - BuildingDefectsPage: unit-defects navigate now includes ?returnTo=${origin} with
+     origin = encodeURIComponent(.../buildings/${buildingId}/defects) (576-577); state kept.
+   - ApartmentDashboardPage: BOTH task-opens (606, 854) use
+     `location.pathname + location.search`; NO bare unit-defects returnTo string remains
+     (grep "no bare returnTo remains").
+   - Back-arrow: `if (safeReturnTo) { navigate(safeReturnTo); return; }` first (505),
+     navState branches unchanged (507/509).
+V3 ⭐ THE REPRO (device/web): /buildings/{bid}/defects -> tap unit -> its defects ->
+   tap a defect /tasks/{id} -> back -> unit defects -> back AGAIN -> lands on the BUILDING
+   defects /buildings/{bid}/defects (NOT the unit page, NOT the building page). The exact
+   reported chain is gone.
+   ⭐ NESTED-returnTo / DOUBLE-ENCODE CHECK: PART 1 sets ?returnTo=<encodeURIComponent(
+   building-defects)> on the unit-defects URL; PART 2 carries location.pathname+
+   location.search (which already CONTAINS that encoded ?returnTo=%2F…) as the task's
+   returnTo — passed RAW, NOT re-encoded. So on the way back React Router decodes the
+   ?returnTo value exactly ONCE (safeReturnTo's single decodeURIComponent) -> the final
+   landing URL is the CLEAN /projects/{pid}/buildings/{bid}/defects, NOT %2Fdefects /
+   %252F, NOT a 404. (Confirm in the address bar/network on device.)
+V4 First-visit (without opening a task): building defects -> unit defects -> back ->
+   building defects (now via ?returnTo; previously via navState — both ok).
+V5 Other origins unaffected: open a unit's defects from the unit home -> back -> unit
+   home (navState 'unit-home' fallback, no ?returnTo) — unchanged.
+V6 Refresh-safe: on the unit defects with ?returnTo in the URL, hard-refresh -> back
+   still goes to building defects (URL param survives; router state would not).
 
-NOT verified here (needs device + primed cache): runtime V2b/V3/V4. Logic reviewed statically;
-recommend Zahi exercise V2b (PII-at-rest) + V3 post-deploy.
-
-------------------------------------------------------------------
-FOLLOW-UP (logged, NOT this batch)
-------------------------------------------------------------------
-GET /projects/{id}/companies returns FULL company docs WITH personal contact PII
-(contact_name/phone/email) on EVERY request — not just offline — while the global /companies
-route was PII-sanitized in CRIT-2 (2026-04-22). This batch trims CLIENT-SIDE before caching;
-a cleaner long-term fix is to sanitize the project route SERVER-SIDE (business fields, or PII
-only to roles that need it). Backend change -> separate batch. Flag to security review.
+NOT verified here (needs device/web): runtime V3-V6. Logic reviewed statically; recommend
+Zahi exercise V3 (incl. the clean-decoded landing URL) post-deploy.
 
 ------------------------------------------------------------------
 COMMIT MESSAGE (written to .local/.commit_message)
 ------------------------------------------------------------------
-fix(offline): new-defect modal works offline — cache companies (PII-trimmed), allSettled, quiet errors
+fix(nav): defects back-chain returns to building defects, not unit/building page
 
 ROLLBACK:
-  Fastest: FEATURES.OFFLINE_MODE=false.
-  Targeted: git revert 46e8c10 -- frontend/src/services/api.js \
-    frontend/src/components/NewDefectModal.js frontend/src/services/offlinePrefetch.js
+  git revert aae8c2d -- frontend/src/pages/BuildingDefectsPage.js \
+    frontend/src/pages/ApartmentDashboardPage.js
+  ./deploy.sh --prod (OTA)
 
 FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

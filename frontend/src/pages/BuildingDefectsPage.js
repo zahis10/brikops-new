@@ -572,7 +572,10 @@ const BuildingDefectsPage = () => {
                             return (
                               <div key={unit.id} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-slate-50 transition-colors group relative">
                                 <button
-                                  onClick={() => navigate(`/projects/${projectId}/units/${unit.id}/defects`, { state: { from: 'building-defects', buildingId } })}
+                                  onClick={() => {
+                                    const origin = encodeURIComponent(`/projects/${projectId}/buildings/${buildingId}/defects`);
+                                    navigate(`/projects/${projectId}/units/${unit.id}/defects?returnTo=${origin}`, { state: { from: 'building-defects', buildingId } });
+                                  }}
                                   className="flex flex-col items-center gap-1 active:scale-95"
                                 >
                                   <div className="relative">

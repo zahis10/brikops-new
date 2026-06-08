@@ -603,7 +603,7 @@ const ApartmentDashboardPage = () => {
                       key={task.id}
                       onClick={() => {
                         if (task._pendingUpload) { toast.info('הליקוי ממתין לשליחה — יישלח כשתחזור הרשת'); return; }
-                        navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/units/${unitId}/defects` } });
+                        navigate(`/tasks/${task.id}`, { state: { returnTo: location.pathname + location.search } });
                       }}
                       className="w-full bg-red-50 rounded-lg p-2.5 text-right hover:bg-red-100 transition-colors"
                     >
@@ -851,7 +851,7 @@ const ApartmentDashboardPage = () => {
                   key={task.id}
                   onClick={() => {
                     if (task._pendingUpload) { toast.info('הליקוי ממתין לשליחה — יישלח כשתחזור הרשת'); return; }
-                    navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/units/${unitId}/defects` } });
+                    navigate(`/tasks/${task.id}`, { state: { returnTo: location.pathname + location.search } });
                   }}
                   className="w-full bg-white rounded-xl border border-slate-200 p-3.5 text-right hover:shadow-md transition-shadow active:bg-slate-50"
                 >
