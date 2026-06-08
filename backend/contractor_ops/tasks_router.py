@@ -92,7 +92,30 @@ async def create_task(task: TaskCreate, user: dict = Depends(require_roles('proj
             task.floor_id = unit_doc['floor_id']
         if not task.building_id and unit_doc.get('building_id'):
             task.building_id = unit_doc['building_id']
-    task_id = str(uuid.uuid4())
+    # BATCH 5 (offline-defect-create): accept a CLIENT-provided id so a defect
+    # created offline keeps the same id once it syncs (photos reference the final
+    # id from the start — no temp-id remap). Auth + project/building/floor/unit
+    # validation above run FIRST and are UNCHANGED — the client id is only the PK,
+    # it grants no access. Idempotent: a sync retry with the same id returns the
+    # existing task (never a duplicate). Absent id → unchanged server-minted path.
+    client_id = (task.id or '').strip() if getattr(task, 'id', None) else ''
+    if client_id:
+        try:
+            uuid.UUID(client_id)
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=400, detail={'error_code': 'INVALID_ID', 'message': 'id must be a UUID'})
+        existing = await db.tasks.find_one({'id': client_id}, {'_id': 0})
+        if existing:
+            # Scoped idempotency: only an existing task in the SAME project the
+            # caller just passed + access-checked is returned. A guessed id from
+            # another project → generic 409 (existence-only leak; v4 UUIDs are not
+            # enumerable). NEVER update_one — a replay must not mutate an existing task.
+            if existing.get('project_id') != pid:
+                raise HTTPException(status_code=409, detail={'error_code': 'ID_CONFLICT', 'message': 'id already used'})
+            return existing
+        task_id = client_id
+    else:
+        task_id = str(uuid.uuid4())
     ts = _now()
     if task.assignee_id:
         logger.warning(f"[CREATE-TASK] rejected assignee_id on create: {task.assignee_id!r} user={user['id']} project={pid} role={user.get('role','?')}")

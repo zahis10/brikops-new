@@ -15,7 +15,11 @@ const STORE = 'qc_item_updates';
 // BATCH 3b: photo blobs accumulate (one record per photo, auto client key) —
 // SEPARATE store in the SAME DB so a v1→v2 upgrade keeps queued marks intact.
 const PHOTO_STORE = 'qc_photo_uploads';
-const DB_VERSION = 2;
+// BATCH 5: offline defect-create records (create payload + photos + assign), one
+// per client-minted task id — SEPARATE store again so the v2→v3 upgrade keeps the
+// 3a marks + 3b photos intact. Ships at DEPLOY #1 even with the feature dormant.
+const DEFECT_STORE = 'defect_creates';
+const DB_VERSION = 3;
 
 let _dbPromise = null;
 
@@ -48,6 +52,12 @@ function _openDb() {
       // BATCH 3b: ONLY add the photo store (guarded), never recreate the above.
       if (!db.objectStoreNames.contains(PHOTO_STORE)) {
         db.createObjectStore(PHOTO_STORE, { keyPath: 'key' });
+      }
+      // BATCH 5: guarded defect-create store. MUST be created on the v2→v3 upgrade
+      // so it exists app-wide even with the feature dormant — the live drain reads
+      // it on every flush and a missing store would throw and break 3a/3b sync.
+      if (!db.objectStoreNames.contains(DEFECT_STORE)) {
+        db.createObjectStore(DEFECT_STORE, { keyPath: 'key' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -341,5 +351,133 @@ export async function photoOutboxCount() {
     });
   } catch (_) {
     return 0;
+  }
+}
+
+// ===========================================================================
+// BATCH 5 — offline defect-create outbox.
+// One record per client-minted task id:
+//   { key, payload (taskData incl. id, company_id only — NEVER assignee_id),
+//     photos: [{ name, blob }], assign: { company_id?, assignee_id? },
+//     unitId, ts, failed }
+// ⭐ EVERY getter is FAIL-SOFT → [] (a missing/just-upgraded store must NEVER
+// throw — the live drain reads this on every flush, and a throw would break the
+// 3a/3b marks+photos sync already shipped in prod).
+// ===========================================================================
+
+function _defectStore(db, mode) {
+  return db.transaction(DEFECT_STORE, mode).objectStore(DEFECT_STORE);
+}
+
+function _getAllDefectsRaw(db) {
+  return new Promise((resolve) => {
+    try {
+      const req = _defectStore(db, 'readonly').getAll();
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+      req.onerror = () => resolve([]);
+    } catch (_) {
+      resolve([]);
+    }
+  });
+}
+
+// Enqueue one defect-create (payload + photo blobs + assign). `record.key` is the
+// client-minted task UUID. Returns the key (or null on a fail-soft no-op).
+export async function enqueueDefectCreate(record) {
+  if (!record || !record.key) return null;
+  try {
+    const db = await _openDb();
+    if (!db) return null;
+    const toStore = {
+      key: record.key,
+      payload: record.payload || {},
+      photos: Array.isArray(record.photos) ? record.photos : [],
+      assign: record.assign || null,
+      unitId: record.unitId || (record.payload && record.payload.unit_id) || null,
+      ts: Date.now(),
+      failed: false,
+    };
+    await new Promise((resolve) => {
+      try {
+        const req = _defectStore(db, 'readwrite').put(toStore);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+    return record.key;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Every pending defect-create, for the sync engine. FAIL-SOFT → [].
+export async function getAllDefectCreates() {
+  try {
+    const db = await _openDb();
+    if (!db) return [];
+    return await _getAllDefectsRaw(db);
+  } catch (_) {
+    return [];
+  }
+}
+
+// Pending defect-creates for one unit (to hydrate the unit defect list). → [].
+export async function getDefectCreatesForUnit(unitId) {
+  if (!unitId) return [];
+  try {
+    const db = await _openDb();
+    if (!db) return [];
+    const all = await _getAllDefectsRaw(db);
+    return all.filter((rec) => rec && rec.unitId === unitId);
+  } catch (_) {
+    return [];
+  }
+}
+
+export async function removeDefectCreate(key) {
+  if (!key) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const req = _defectStore(db, 'readwrite').delete(key);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+export async function markDefectCreateFailed(key) {
+  if (!key) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const store = _defectStore(db, 'readwrite');
+        const getReq = store.get(key);
+        getReq.onsuccess = () => {
+          const rec = getReq.result;
+          if (!rec) { resolve(); return; }
+          rec.failed = true;
+          const putReq = store.put(rec);
+          putReq.onsuccess = () => resolve();
+          putReq.onerror = () => resolve();
+        };
+        getReq.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
   }
 }

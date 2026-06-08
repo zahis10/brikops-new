@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { unitService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -16,6 +16,7 @@ import Breadcrumbs from '../components/Breadcrumbs';
 import TaskCardSkeleton from '../components/TaskCardSkeleton';
 import { arraysEqualAsSets } from '../utils/filterHelpers';
 import { FEATURES } from '../config/features';
+import { getDefectCreatesForUnit } from '../services/offlineOutbox';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2,
   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
@@ -143,11 +144,45 @@ const ApartmentDashboardPage = () => {
     }
   }, [unitId]);
 
+  const pendingUrlsRef = useRef([]);
+
   const loadTasks = useCallback(async () => {
     try {
       setTasksLoading(true);
       const data = await unitService.getTasks(unitId);
-      setTasks(Array.isArray(data) ? data : []);
+      let merged = Array.isArray(data) ? data : [];
+
+      // BATCH 5 — prepend not-yet-synced offline defect-creates so the user sees
+      // their queued defect immediately. Gated on BOTH flags ⇒ inert while dormant.
+      // getDefectCreatesForUnit is fail-soft → [] (never throws). Dedup by id: once
+      // a queued defect syncs it appears in the server list, so we drop the local
+      // copy whose key already exists server-side (no flash of a duplicate row).
+      if (FEATURES.OFFLINE_MODE && FEATURES.OFFLINE_DEFECT_CREATE) {
+        pendingUrlsRef.current.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} });
+        pendingUrlsRef.current = [];
+        const serverIds = new Set(merged.map(t => t && t.id));
+        const pending = await getDefectCreatesForUnit(unitId);
+        const synthesized = pending
+          .filter(rec => rec && rec.key && !serverIds.has(rec.key))
+          .map(rec => {
+            const firstBlob = Array.isArray(rec.photos) && rec.photos[0] && rec.photos[0].blob;
+            let imageUrl = '';
+            if (firstBlob) {
+              try { imageUrl = URL.createObjectURL(firstBlob); pendingUrlsRef.current.push(imageUrl); } catch (_) {}
+            }
+            return {
+              ...(rec.payload || {}),
+              id: rec.key,
+              status: 'open',
+              created_at: rec.ts ? new Date(rec.ts).toISOString() : null,
+              image_url: imageUrl,
+              _pendingUpload: true,
+            };
+          });
+        merged = [...synthesized, ...merged];
+      }
+
+      setTasks(merged);
     } catch (err) {
       toast.error('שגיאה בטעינת ליקויים');
       console.error(err);
@@ -155,6 +190,21 @@ const ApartmentDashboardPage = () => {
       setTasksLoading(false);
     }
   }, [unitId]);
+
+  // Revoke any synthesized pending blob URLs on unmount (no leak).
+  useEffect(() => () => {
+    pendingUrlsRef.current.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} });
+    pendingUrlsRef.current = [];
+  }, []);
+
+  // BATCH 5 — when the outbox drains (defect synced), reload so the local pending
+  // row is replaced by the real server task. Inert while the feature is dormant.
+  useEffect(() => {
+    if (!FEATURES.OFFLINE_MODE || !FEATURES.OFFLINE_DEFECT_CREATE) return undefined;
+    const onSynced = () => { loadTasks(); };
+    window.addEventListener('brikops:outbox-synced', onSynced);
+    return () => window.removeEventListener('brikops:outbox-synced', onSynced);
+  }, [loadTasks]);
 
   useEffect(() => {
     if (flagChecked) {
@@ -551,12 +601,19 @@ const ApartmentDashboardPage = () => {
                   return (
                     <button
                       key={task.id}
-                      onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/units/${unitId}/defects` } })}
+                      onClick={() => {
+                        if (task._pendingUpload) { toast.info('הליקוי ממתין לשליחה — יישלח כשתחזור הרשת'); return; }
+                        navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/units/${unitId}/defects` } });
+                      }}
                       className="w-full bg-red-50 rounded-lg p-2.5 text-right hover:bg-red-100 transition-colors"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-xs font-medium text-slate-800 truncate">{task.title}</span>
-                        <StatusPill status={task.status} label={statusInfo.label} />
+                        {task._pendingUpload ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 border border-amber-200 whitespace-nowrap flex-shrink-0">ממתין לשליחה</span>
+                        ) : (
+                          <StatusPill status={task.status} label={statusInfo.label} />
+                        )}
                       </div>
                     </button>
                   );
@@ -792,7 +849,10 @@ const ApartmentDashboardPage = () => {
               return (
                 <button
                   key={task.id}
-                  onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/units/${unitId}/defects` } })}
+                  onClick={() => {
+                    if (task._pendingUpload) { toast.info('הליקוי ממתין לשליחה — יישלח כשתחזור הרשת'); return; }
+                    navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/units/${unitId}/defects` } });
+                  }}
                   className="w-full bg-white rounded-xl border border-slate-200 p-3.5 text-right hover:shadow-md transition-shadow active:bg-slate-50"
                 >
                   <div className="flex items-start gap-3">
@@ -808,7 +868,11 @@ const ApartmentDashboardPage = () => {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
                         <h3 className="text-sm font-semibold text-slate-800 truncate">{task.title}</h3>
-                        <StatusPill status={task.status} label={statusInfo.label} />
+                        {task._pendingUpload ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 border border-amber-200 whitespace-nowrap flex-shrink-0">ממתין לשליחה</span>
+                        ) : (
+                          <StatusPill status={task.status} label={statusInfo.label} />
+                        )}
                       </div>
                       <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                         <CategoryPill>{tCategory(task.category)}</CategoryPill>

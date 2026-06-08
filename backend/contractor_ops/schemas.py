@@ -306,6 +306,7 @@ class Task(BaseModel):
 
 
 class TaskCreate(BaseModel):
+    id: Optional[str] = None
     project_id: str
     building_id: str
     floor_id: str

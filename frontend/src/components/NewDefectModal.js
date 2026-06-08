@@ -19,6 +19,7 @@ import QuickAddCompanyModal from './QuickAddCompanyModal';
 import DocumentScannerButton from './DocumentScannerButton';
 import { FEATURES } from '../config/features';
 import { saveDefectDraft, loadDefectDraft, clearDefectDraft } from '../utils/defectDraft';
+import { enqueueDefectCreate } from '../services/offlineOutbox';
 
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
@@ -644,6 +645,44 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
       const { taskService } = await import('../services/api');
 
+      // BATCH 5 — offline defect-create. Gated on BOTH flags, so while
+      // OFFLINE_DEFECT_CREATE is dormant this whole block is dead code and the
+      // online path below is byte-for-byte unchanged in prod. The task id is
+      // minted CLIENT-side (valid UUID) so queued photos reference the FINAL id
+      // and the idempotent backend accepts the same id on sync (no temp-id remap,
+      // no dup on retry). payload carries company_id ONLY — NEVER assignee_id
+      // (create rejects assignee_id with 400 ⇒ would wedge the queue forever);
+      // the contractor assign is replayed separately from `assign`.
+      const mintId = () => {
+        if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+          const r = (Math.random() * 16) | 0;
+          const v = c === 'x' ? r : (r & 0x3) | 0x8;
+          return v.toString(16);
+        });
+      };
+      const saveOffline = async (clientId) => {
+        const isContactFallback = assigneeId === '__company_contact__';
+        const effectiveAssigneeId = isContactFallback ? null : assigneeId;
+        await enqueueDefectCreate({
+          key: clientId,
+          payload: { ...taskData, id: clientId },
+          photos: images.map(img => ({ name: img.name, blob: img.file })),
+          assign: { company_id: companyId || null, assignee_id: effectiveAssigneeId || null },
+          unitId,
+        });
+        clearDefectDraft();
+        toast.success('הליקוי נשמר במכשיר — יישלח כשתחזור הרשת');
+        images.forEach(img => { try { URL.revokeObjectURL(img.preview); } catch (_) {} });
+        onSuccess?.(clientId);
+      };
+
+      // Proactive: known-offline ⇒ skip the network entirely and queue now.
+      if (FEATURES.OFFLINE_MODE && FEATURES.OFFLINE_DEFECT_CREATE && navigator.onLine === false) {
+        await saveOffline(mintId());
+        return;
+      }
+
       let task;
       try {
         task = await Promise.race([
@@ -653,6 +692,13 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         setCreatedTaskId(task.id);
       } catch (err) {
         console.error('Step 1 FAILED: create task', err);
+        // Reactive: a TRUE network failure (no err.response) while online-flagged
+        // ⇒ queue instead of erroring. A real server 4xx/5xx (err.response set)
+        // falls through to today's toast — bad data must NOT be silently queued.
+        if (FEATURES.OFFLINE_MODE && FEATURES.OFFLINE_DEFECT_CREATE && !err.response) {
+          await saveOffline(mintId());
+          return;
+        }
         const detail = err.response?.data?.detail;
         const msg = typeof detail === 'string' ? detail : (typeof detail === 'object' && detail?.message ? detail.message : err.message || 'שגיאה ביצירת הליקוי');
         toast.error(msg);

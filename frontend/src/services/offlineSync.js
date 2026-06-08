@@ -11,10 +11,11 @@
 //     bad data being silently lost).
 
 import { FEATURES } from '../config/features';
-import { qcService } from './api';
+import { qcService, taskService } from './api';
 import {
   getAllQcUpdates, removeQcUpdate, markQcUpdateFailed, outboxCount,
   getAllPhotos, removePhoto, markPhotoFailed,
+  getAllDefectCreates, removeDefectCreate, markDefectCreateFailed,
 } from './offlineOutbox';
 
 const _CONCURRENCY = 3;
@@ -35,6 +36,7 @@ export async function flushOutbox() {
   let synced = 0;
   let failed = 0;
   const syncedRunIds = new Set();
+  const syncedUnitIds = new Set();
 
   try {
     const ops = await getAllQcUpdates();
@@ -87,16 +89,54 @@ export async function flushOutbox() {
         }
       }));
     }
+
+    // BATCH 5 — drain queued defect-creates. SHIPS LIVE but no-ops while the
+    // store is empty (the enqueue is flag-gated; nothing is queued until
+    // OFFLINE_DEFECT_CREATE is on). getAllDefectCreates is fail-soft → [] for a
+    // missing/just-upgraded store, so this NEVER breaks the marks+photos drains.
+    // SEQUENTIAL per defect (create → photos → assign) so a create network-fail
+    // throws BEFORE the photo loop (no POST to a non-existent id), and the record
+    // is removed ONLY after all three succeed (idempotent backend makes a
+    // partial-success retry safe — create returns the existing task, no dup).
+    const defectOps = await getAllDefectCreates();
+    for (let i = 0; i < defectOps.length; i += _CONCURRENCY) {
+      const chunk = defectOps.slice(i, i + _CONCURRENCY);
+      await Promise.all(chunk.map(async (op) => {
+        if (!op || !op.key || !op.payload) return;
+        try {
+          await taskService.create(op.payload);
+          const photos = Array.isArray(op.photos) ? op.photos : [];
+          for (const ph of photos) {
+            if (ph && ph.blob) await taskService.uploadAttachment(op.key, ph.blob);
+          }
+          if (op.assign && op.assign.company_id) {
+            await taskService.assign(op.key, op.assign);
+          }
+          // RESOLVED ⇒ full 2xx ⇒ THE ONLY removeDefectCreate call site.
+          await removeDefectCreate(op.key);
+          synced += 1;
+          if (op.unitId) syncedUnitIds.add(op.unitId);
+        } catch (error) {
+          if (!error || !error.response) {
+            // Network failure — KEEP, retried on the next flush.
+          } else {
+            // Server REJECTED (4xx/5xx) — flag + KEEP, never silently drop.
+            await markDefectCreateFailed(op.key);
+            failed += 1;
+          }
+        }
+      }));
+    }
   } catch (_) {
     /* sync must never throw */
   } finally {
     _flushing = false;
   }
 
-  if (syncedRunIds.size > 0 && typeof window !== 'undefined') {
+  if ((syncedRunIds.size > 0 || syncedUnitIds.size > 0) && typeof window !== 'undefined') {
     try {
       window.dispatchEvent(new CustomEvent('brikops:outbox-synced', {
-        detail: { runIds: Array.from(syncedRunIds), failed },
+        detail: { runIds: Array.from(syncedRunIds), unitIds: Array.from(syncedUnitIds), failed },
       }));
     } catch (_) { /* event dispatch must never throw */ }
   }
