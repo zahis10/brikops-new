@@ -21,6 +21,13 @@ import { FEATURES } from '../config/features';
 import { saveDefectDraft, loadDefectDraft, clearDefectDraft } from '../utils/defectDraft';
 import { enqueueDefectCreate } from '../services/offlineOutbox';
 
+// A load failure that is EXPECTED while offline (so we must NOT toast a red
+// error): the device is offline, OR the rejection has no HTTP response (network
+// failure / transport). A real server error online (has reason.response) still
+// toasts. Mirrors api.js's transient classification.
+const _isOfflineFail = (reason) =>
+  (typeof navigator !== 'undefined' && navigator.onLine === false) || !reason?.response;
+
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
   if (data && Array.isArray(data.items)) return data.items;
@@ -125,15 +132,25 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     if (!pid) return;
     setLoading(l => ({ ...l, companies: true }));
     setLoadError(e => ({ ...e, companies: false }));
-    Promise.all([
+    // allSettled (NOT Promise.all): a memberships failure (memberships is NOT
+    // cached — personal PII) must NEVER blank the now-cacheable companies list.
+    // compRes.value / memRes.value are the unwrapped data arrays the services
+    // resolve to (response.data), matching the old destructured-.then shape.
+    Promise.allSettled([
       projectCompanyService.list(pid),
       projectService.getMemberships(pid),
     ])
-      .then(([compData, memData]) => {
-        setCompanies(normalizeList(compData));
-        setProjectMembers(normalizeList(memData));
+      .then(([compRes, memRes]) => {
+        if (compRes.status === 'fulfilled') setCompanies(normalizeList(compRes.value));
+        if (memRes.status === 'fulfilled') setProjectMembers(normalizeList(memRes.value));
+        // Only the COMPANIES load failing is user-visible. A memberships-only
+        // miss → companies still show, assignee picker just empty, NO toast.
+        if (compRes.status === 'rejected') {
+          console.error('Failed to load companies:', compRes.reason);
+          setLoadError(e => ({ ...e, companies: true }));
+          if (!_isOfflineFail(compRes.reason)) toast.error('שגיאה בטעינת חברות');
+        }
       })
-      .catch(err => { console.error('Failed to load companies/members:', err); toast.error('שגיאה בטעינת חברות'); setLoadError(e => ({ ...e, companies: true })); })
       .finally(() => setLoading(l => ({ ...l, companies: false })));
   }, []);
 
@@ -189,7 +206,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setLoadError(e => ({ ...e, buildings: false }));
     projectService.getBuildings(pid)
       .then(data => { setBuildings(normalizeList(data)); })
-      .catch(err => { console.error('Failed to load buildings:', err); toast.error('שגיאה בטעינת בניינים'); setLoadError(e => ({ ...e, buildings: true })); })
+      .catch(err => { console.error('Failed to load buildings:', err); if (!_isOfflineFail(err)) toast.error('שגיאה בטעינת בניינים'); setLoadError(e => ({ ...e, buildings: true })); })
       .finally(() => setLoading(l => ({ ...l, buildings: false })));
   }, []);
 
@@ -199,7 +216,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setLoadError(e => ({ ...e, floors: false }));
     buildingService.getFloors(bid)
       .then(data => { setFloors(normalizeList(data)); })
-      .catch(err => { console.error('Failed to load floors:', err); toast.error('שגיאה בטעינת קומות'); setLoadError(e => ({ ...e, floors: true })); })
+      .catch(err => { console.error('Failed to load floors:', err); if (!_isOfflineFail(err)) toast.error('שגיאה בטעינת קומות'); setLoadError(e => ({ ...e, floors: true })); })
       .finally(() => setLoading(l => ({ ...l, floors: false })));
   }, []);
 
@@ -209,7 +226,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setLoadError(e => ({ ...e, units: false }));
     floorService.getUnits(fid)
       .then(data => { setUnits(normalizeList(data)); })
-      .catch(err => { console.error('Failed to load units:', err); toast.error('שגיאה בטעינת דירות'); setLoadError(e => ({ ...e, units: true })); })
+      .catch(err => { console.error('Failed to load units:', err); if (!_isOfflineFail(err)) toast.error('שגיאה בטעינת דירות'); setLoadError(e => ({ ...e, units: true })); })
       .finally(() => setLoading(l => ({ ...l, units: false })));
   }, []);
 
@@ -902,7 +919,13 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           <div className="bg-slate-50 rounded-lg p-4 space-y-3">
             <h3 className="text-sm font-semibold text-slate-600 text-right">שיוך קבלן</h3>
             <p className="text-[11px] text-slate-400 text-right">ניתן לשייך קבלן מאוחר יותר</p>
-            {companies.length === 0 && !loading.companies ? (
+            {companies.length === 0 && !loading.companies && loadError.companies ? (
+              // Offline miss (no cache yet) — don't imply there are zero companies.
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center space-y-2">
+                <p className="text-sm text-amber-800 font-medium">רשימת החברות תיטען כשתחזור הרשת</p>
+                <p className="text-xs text-amber-600">אפשר ליצור ליקוי גם ללא שיוך קבלן.</p>
+              </div>
+            ) : companies.length === 0 && !loading.companies ? (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center space-y-2">
                 <p className="text-sm text-amber-800 font-medium">אין חברות בפרויקט</p>
                 <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה.</p>

@@ -11,7 +11,7 @@
 // (concurrency ~3), resilient (one unit failing does NOT abort the rest),
 // reports progress. Never throws.
 
-import { qcService, unitService } from './api';
+import { qcService, unitService, projectCompanyService } from './api';
 import { FEATURES } from '../config/features';
 
 const _CONCURRENCY = 3;
@@ -71,6 +71,16 @@ export async function prefetchFloorForOffline(floorId, { onProgress } = {}) {
   try {
     const frid = _runId(floorRun);
     if (frid) await qcService.getRun(frid);                  // floor stage items
+  } catch (_) { /* best-effort */ }
+
+  // Warm the project's contractor companies ONCE so the New-Defect modal's picker
+  // works offline even if the user never opened the modal online. projectId is not
+  // passed to this floor-scoped prefetch — derive it from the floor run we already
+  // fetched (run.project_id). Cached PII-trimmed by api.js _trimForCache. Strictly
+  // best-effort: a failure (or missing projectId) must NEVER abort the floor warm.
+  try {
+    const projectId = floorRun?.run?.project_id ?? floorRun?.project_id ?? null;
+    if (projectId) await projectCompanyService.list(projectId);
   } catch (_) { /* best-effort */ }
 
   const unitIds = _unitIdsFromStatus(unitsStatus);

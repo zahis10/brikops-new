@@ -40,6 +40,10 @@ export const setPaywallCallback = (cb) => { _paywallCallback = cb; };
 // Field-read GET paths safe to cache for offline VIEWING (text only).
 // EXCLUDES auth/billing/admin/invites/PII by omission. Tested against
 // the URL path. The DENY list below overrides this allow list.
+// Project contractor-companies. Cached so the New-Defect modal's picker works
+// offline — but WRITTEN PII-TRIMMED to {id,name,trade} (see _trimForCache); the
+// raw endpoint returns personal contact PII that must NEVER hit device storage.
+const _OFFLINE_COMPANIES_RE = /\/api\/projects\/[^/]+\/companies(\?|$)/;
 const _OFFLINE_CACHEABLE = [
   /\/api\/projects(\?|$)/,                 // project list
   /\/api\/projects\/[^/]+(\?|$)/,          // project detail
@@ -49,6 +53,7 @@ const _OFFLINE_CACHEABLE = [
   /\/api\/units\/[^/]+(\/tasks)?(\?|$)/,
   /\/api\/tasks\/[^/]+(\?|$)/,             // defect detail
   /\/api\/qc\//,                           // QC reads (runs/units/stages/meta)
+  _OFFLINE_COMPANIES_RE,                   // contractor companies — cached PII-TRIMMED
 ];
 // PII deny list — overrides the broad qc allow above. team-contacts
 // carries phones; approvers carries names. Checked FIRST so these
@@ -61,6 +66,20 @@ function _isOfflineCacheable(url) {
   if (!url) return false;
   if (_OFFLINE_PII_DENY.some(re => re.test(url))) return false;
   return _OFFLINE_CACHEABLE.some(re => re.test(url));
+}
+// Shape what gets WRITTEN to the offline cache (NOT what the online request
+// returns). The project-companies endpoint returns FULL docs with personal
+// contact PII (contact_name / contact_phone / contact_phone_raw / contact_email)
+// — the same PII pentest CRIT-2 (2026-04-22) stripped from the GLOBAL /companies
+// route but the project-scoped route still ships. We persist ONLY the business
+// fields {id,name,trade} (enough to pick a contractor) so NO personal PII ever
+// lands in device IndexedDB. URL-SPECIFIC: every other cached GET keeps its full
+// body — do NOT generalize this trim.
+function _trimForCache(url, data) {
+  if (url && _OFFLINE_COMPANIES_RE.test(url) && Array.isArray(data)) {
+    return data.map(c => ({ id: c?.id, name: c?.name, trade: c?.trade }));
+  }
+  return data;
 }
 function _isNetworkError(error) {
   // No response object => transport/network failure (offline, DNS, timeout).
@@ -142,7 +161,7 @@ axios.interceptors.response.use(
         // fire-and-forget — must not block or alter the online response.
         // Skip when the response itself came from the offline cache (request
         // interceptor adapter), so an offline read isn't redundantly re-written.
-        cachePutRead(_cacheKey(response.config), response.data);
+        cachePutRead(_cacheKey(response.config), _trimForCache(response.config?.url, response.data));
       }
     } catch (_) { /* cache must never affect the online path */ }
     return response;

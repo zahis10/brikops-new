@@ -1,147 +1,151 @@
-BATCH ratelimit-resilience — survive a 429 burst (serve cache on 429/503, sync backoff + coalesce)
+BATCH offline-newdefect-modal — New-Defect modal usable offline (cache companies PII-trimmed,
+allSettled, quiet offline errors)
 =================================================================================================
-Branch: staging  |  Rollback SHA: 6577911  |  Status: CODE COMPLETE
+Branch: staging  |  Rollback SHA: 46e8c10  |  Status: CODE COMPLETE
 FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency.
-Gated on FEATURES.OFFLINE_MODE (already on in prod). Server rate limit UNCHANGED.
+Gated on FEATURES.OFFLINE_MODE. Online responses UNCHANGED. memberships still NEVER cached.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Files changed: 2 frontend = 2 total (0 backend)
-  EDIT: frontend/src/services/api.js          (serve cache on 429/503)
-  EDIT: frontend/src/services/offlineSync.js  (429 backoff + coalesce triggers)
+Files changed: 3 frontend = 3 total (0 backend)
+  EDIT: frontend/src/services/api.js              (companies cacheable, PII-TRIMMED before write)
+  EDIT: frontend/src/components/NewDefectModal.js (Promise.all -> allSettled + offline-aware toasts + copy)
+  EDIT: frontend/src/services/offlinePrefetch.js  (warm companies once/project)
 
 ------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT (verified against HEAD 6577911)
+STEP 0 — PRE-FLIGHT (verified against HEAD 46e8c10)
 ------------------------------------------------------------------
-0.1 api.js — BATCH 1/2c shape confirmed:
-  - request interceptor (line ~86): serves cache when navigator.onLine === false
-    for a cacheable GET (instant-read, swaps adapter).
-  - response SUCCESS (line ~118): caches cacheable GET bodies (fire-and-forget).
-  - response ERROR (pre-edit line ~160): served cache ONLY on _isNetworkError
-    (!error.response) for a cacheable GET. 402 paywall (line ~145) + request_id
-    logging (line ~151) present and UNCHANGED.
-  Pre-edit cache-fallback block (the one this batch widens):
-      if (FEATURES.OFFLINE_MODE && _isNetworkError(error)
-          && error.config?.method === 'get' && _isOfflineCacheable(error.config?.url)) {
-        const cached = await cacheGetRead(_cacheKey(error.config));
-        if (cached != null) return { data: cached, status: 200,
-          statusText: 'OK (offline-cache)', headers:{}, config: error.config,
-          __fromOfflineCache: true };
-      }
+0.1 whitelist + companies path:
+  - projectCompanyService.list(pid) -> GET /api/projects/{id}/companies (api.js:539-543),
+    resolves to response.data (an array).
+  - /companies was NOT in _OFFLINE_CACHEABLE; memberships denied via _OFFLINE_PII_DENY.
+  ⭐⭐ PII GATE RESULT — response shape of GET /projects/{id}/companies
+     (companies_router.py:83-88) returns project_companies docs with projection {'_id':0}
+     = ALL fields. Per the create doc (companies_router.py:68-77) each company carries:
+       id, project_id, name, trade            <- business
+       contact_name, contact_phone (phone_e164), contact_phone_raw, contact_email  <- PERSONAL PII
+     The GLOBAL /companies route (companies_router.py:31-40) was deliberately PII-stripped
+     to {id,name,trade} for pentest CRIT-2 (2026-04-22); the PROJECT-scoped route was not.
+     => A raw whitelist add would write personal PII to device IndexedDB. STOPPED & reported.
+     Zahi chose OPTION (b): cache PII-TRIMMED to {id,name,trade} client-side. Implemented below.
 
-0.2 offlineSync.js — confirmed flushOutbox guards (OFFLINE_MODE / _isOnline /
-  _flushing re-entrancy) + 3 drains (marks -> photos -> defect-creates), each
-  2xx-only remove / network-KEEP / 4xx-5xx markFailed+KEEP. Triggers in
-  startOutboxSync: online, visibilitychange, 30s setInterval, Capacitor
-  appStateChange, startup flush. Pre-edit triggers all called flushOutbox()
-  directly.
+0.2 loadCompanies + shape gate:
+  - Old: Promise.all([projectCompanyService.list(pid), projectService.getMemberships(pid)])
+      .then(([compData, memData]) => setCompanies(normalizeList(compData)); setProjectMembers(normalizeList(memData)))
+      .catch(...toast.error('שגיאה בטעינת חברות')...)
+    => a memberships rejection rejected the whole Promise.all -> companies blank even if cached.
+  - SHAPE GATE: BOTH services resolve to response.data (arrays): getMemberships api.js:248,
+    projectCompanyService.list api.js:542. => allSettled rewrite uses normalizeList(compRes.value)
+    DIRECTLY (NOT .value.data) — identical shape to the old destructured .then. CONFIRMED.
+  - buildings/floors/units loaders each toast.error(...) in .catch (NewDefectModal.js:192/202/212).
 
-------------------------------------------------------------------
-PART 1 — api.js : serve cache on 429/503  [FIX 1]
-------------------------------------------------------------------
-- Added helper (after _isNetworkError):
-    function _isTransient(error) {
-      return _isNetworkError(error)
-        || error?.response?.status === 429
-        || error?.response?.status === 503;
-    }
-  EXACTLY {network, 429, 503}. Deliberately NOT `status >= 500` (would wrongly
-  include 500/502/504) and NOT any other 4xx.
-- Response ERROR handler: cache-fallback trigger changed `_isNetworkError(error)`
-  -> `_isTransient(error)` (same cacheable-GET + cache-hit conditions). On a hit
-  the synthetic 200 now carries statusText 'OK (cache; was <429|503|offline>)'.
-- NO cache hit on a 429/503 -> falls through to the normal Promise.reject(error)
-  (today's behavior; we never fabricate data).
-- UNCHANGED: 402 paywall, request_id logging, the online success cache-write, the
-  request-interceptor instant-read path. 401/403/404/409/422 are NOT transient ->
-  never served from cache (reach today's handling).
+0.3 offlinePrefetch.js — prefetchFloorForOffline(floorId) is FLOOR-scoped (only floorId +
+  run/units data). projectId not passed in -> derived from floorRun (run carries project_id,
+  qc_router.py:983; floor-run route returns the run).
 
 ------------------------------------------------------------------
-PART 2 — offlineSync.js : 429 backoff + coalesce  [FIX 2 + FIX 3]
+PART 1 — api.js : cache companies PII-TRIMMED  [option (b)]
 ------------------------------------------------------------------
-FIX 2 (backoff):
-- Module state: `let _backoffUntil = 0;` + `const _BACKOFF_MS = 60000;` and a
-  helper `_isTransientStatus(error)` = status === 429 || 503 (EXACTLY {429,503}).
-- flushOutbox top guard (after OFFLINE_MODE/_isOnline/_flushing):
-    if (Date.now() < _backoffUntil) return { synced:0, failed:0 };   // cooldown
-- `let hitBackoff = false;` per flush. In ALL THREE drains' catch, classification
-  is now:
-    transient (429/503)  -> _backoffUntil = now + 60s; hitBackoff = true; KEEP
-                            (NO markFailed — transient, not a rejection).
-    network (!response)  -> KEEP, retried next flush (unchanged).
-    other 4xx/5xx        -> markFailed + KEEP (unchanged).
-- After each drain's chunk loop: `if (hitBackoff) break;`. The photos drain and
-  the defect-create drain are each wrapped in `if (!hitBackoff) { ... }`. So a 429
-  in the marks drain ABORTS the ENTIRE flush (photos + creates do not run this
-  cycle) — they hit the SAME rate-limited user. Everything resumes after the 60s
-  cooldown via the top guard. removeQcUpdate / removePhoto / removeDefectCreate
-  stay 2xx-only (unchanged). Nothing is ever dropped on any error.
+- Added named regex const _OFFLINE_COMPANIES_RE = /\/api\/projects\/[^/]+\/companies(\?|$)/
+  and pushed it into _OFFLINE_CACHEABLE (so the cache layer considers the endpoint).
+- Added _trimForCache(url, data): when url matches _OFFLINE_COMPANIES_RE AND data is an array,
+  maps each company to {id, name, trade} ONLY — DROPS contact_name / contact_phone /
+  contact_phone_raw / contact_email. Any other url -> data returned UNCHANGED (URL-specific;
+  qc/units/tasks keep full bodies).
+- The ONLY cache-write site (success handler) now writes
+  cachePutRead(_cacheKey(response.config), _trimForCache(response.config?.url, response.data)).
+  => trimming applies ONLY to what is WRITTEN to cache; the ONLINE response (response.data)
+  is untouched — the modal online still receives full company data as today.
+- PII deny-list + memberships exclusion UNCHANGED. Mirrors CRIT-2.
 
-FIX 3 (coalesce):
-- Added scheduleFlush(): coalesces calls within 1500ms (single setTimeout guarded
-  by _flushTimer) -> one flushOutbox().
-- Triggers now call scheduleFlush() instead of flushOutbox() directly:
-    online event, visibilitychange (visible+online), Capacitor appStateChange
-    (isActive), and the startup flush.
-- The 30s safety-net interval STILL calls flushOutbox() directly (already paced).
+------------------------------------------------------------------
+PART 2 — NewDefectModal.js : decouple + offline-aware errors
+------------------------------------------------------------------
+2.1  loadCompanies: Promise.all -> Promise.allSettled. Set companies/members independently
+     (normalizeList(compRes.value) / normalizeList(memRes.value)). A memberships miss can no
+     longer blank companies. (allSettled never rejects -> no .catch needed; .finally kept.)
+2.2  Added module-level _isOfflineFail(reason) = navigator.onLine === false || !reason?.response.
+     - companies toast fires ONLY if compRes rejected AND !_isOfflineFail (a real online failure).
+       A memberships-only failure -> NO toast, companies still show, assignee picker just empty.
+     - Same _isOfflineFail guard added to the buildings/floors/units .catch toasts (they are
+       cached so normally succeed; this silences the noise on a transient offline miss).
+2.3  Empty-state copy: when companies empty AND loadError.companies (offline miss, no cache),
+     the block now reads "רשימת החברות תיטען כשתחזור הרשת" + "אפשר ליצור ליקוי גם ללא שיוך קבלן"
+     (no "+הוסף חברה" CTA, no implication of zero companies). The plain "אין חברות בפרויקט"
+     (with the add-company CTA) is preserved for the genuine online-empty case.
+2.4  Company stays OPTIONAL — no validate() / required-field change.
+
+------------------------------------------------------------------
+PART 3 — offlinePrefetch.js : warm companies once/project
+------------------------------------------------------------------
+- Imported projectCompanyService.
+- After the floor-run/units warms (once per floor prefetch, NOT per unit), derive
+  projectId = floorRun?.run?.project_id ?? floorRun?.project_id ?? null and, if present,
+  await projectCompanyService.list(projectId). Wrapped in try/catch -> strictly best-effort;
+  a failure or missing projectId NEVER aborts the floor prefetch. Cached PII-trimmed by PART 1.
 
 ------------------------------------------------------------------
 DO NOT TOUCH — honored
 ------------------------------------------------------------------
-- Server rate limit: untouched (it's a DoS guard).
-- Cache served ONLY on network OR 429/503 — never on 401/403/404/409/422.
-- Outbox items never dropped on 429 — backoff + KEEP + retry; remove sites 2xx-only.
-- Online success path, 402 paywall, request_id logging: unchanged.
-- Everything under FEATURES.OFFLINE_MODE. No backend, no native, no new dep.
+- ❌ /projects/{id}/memberships NEVER cached (B1 PII) — confirmed absent from _OFFLINE_CACHEABLE.
+- ❌ company/assignee NOT made required.
+- ❌ online behavior unchanged (full company data online; a REAL online failure still toasts).
+- ❌ PII deny-list + other whitelist entries unchanged.
+- ❌ everything gated on FEATURES.OFFLINE_MODE; no backend, no native, no new dependency.
 
 ------------------------------------------------------------------
 VERIFICATION
 ------------------------------------------------------------------
-V1 (build): CRA `CI=true npm run build` NOT run here — the dev container SIGTERMs
-   the build (exit 143) while the workflows run, and per the standing rule the
-   agent does not restart workflows. Substituted @babel/core (preset-react)
-   transform of BOTH changed files -> OK (both parse/compile clean).
+V1 (build): CRA `CI=true npm run build` NOT run here — the dev container SIGTERMs the build
+   (exit 143) while the workflows run, and per the standing rule the agent does not restart
+   workflows. Substituted @babel/core (preset-react) transform of ALL THREE changed files -> OK.
 V2 (static, confirmed by grep):
-   - api.js: _isTransient = network || 429 || 503 (lines 74-77); error handler
-     uses _isTransient (line 178); statusText 'OK (cache; was ...)' (line 189).
-     The only `status >= 500` in the file (line 726) is PRE-EXISTING unrelated
-     code (isServerError), NOT _isTransient.
-   - offlineSync.js: _backoffUntil top-guard (line 60); _isTransientStatus in all
-     three drains (lines 85,118,163) each setting 60s backoff + hitBackoff; three
-     `if (hitBackoff) break;` (98,130,175); photos+defect drains gated by
-     `if (!hitBackoff)` (105,143); scheduleFlush wired into online (201),
-     visibility (205), appStateChange (225), startup (230); the 30s interval keeps
-     direct flushOutbox() (216).
-V3 ⭐ PANIC GONE (how to exercise): force a 429 on GET /api/projects (devtools
-   override or trip the limit) -> projects list renders LAST-KNOWN from cache, not
-   an empty "all deleted" screen. Same for a unit/building defects list + QC lists.
-   (Logic verified statically; runtime needs a device + a primed cache.)
-V4 No-cache 429: a 429 on a cacheable GET with no cache yet -> falls through to
-   reject (today's behavior). Confirmed by code path (cached == null -> reject).
-V5 Sync backoff: a 429 during a flush sets _backoffUntil = now+60s and aborts the
-   whole flush; the top guard returns early for 60s (no repeated POSTs), then
-   resumes; items KEPT (no markFailed on transient) -> nothing dropped.
-V6 Coalesce: online/visibility/resume/startup go through scheduleFlush -> one
-   flush within 1500ms instead of 3-4.
-V7 ⭐⭐ STATUS WHITELIST exactly {429,503}: verified _isTransient and
-   _isTransientStatus include ONLY network/429/503. 401 (re-auth), 403 (SECURITY:
-   lost-access leak), 404 (deleted-resource inverse bug), 409/422 (validation) are
-   NOT in the set -> NOT served from cache / NOT backed off -> reach normal handling.
+   - api.js: _OFFLINE_COMPANIES_RE defined (46) + in whitelist (56); _trimForCache maps to
+     {id,name,trade} dropping contact_* (78-85); the sole cache write uses _trimForCache (164).
+     The only contact_email left (1308) is PRE-EXISTING unrelated billing code.
+   - NewDefectModal.js: allSettled (139) with normalizeList(compRes.value) (144); _isOfflineFail
+     (28) gates the companies toast (151) and the buildings/floors/units toasts (209/219/229);
+     offline empty-state copy gated on loadError.companies (922-925).
+   - offlinePrefetch.js: projectCompanyService imported (14); projectId derived from floorRun
+     (82) and warmed best-effort (83).
+   - memberships NOT in the whitelist (grep confirmed).
+V2b ⭐ PII-AT-REST (how to exercise): online open a project so companies cache, go offline,
+   inspect IndexedDB "brikops-offline" companies entry -> only {id,name,trade}, NO
+   contact_name/contact_phone/contact_phone_raw/contact_email. (Enforced by _trimForCache;
+   runtime confirmation needs a device + DevTools.)
+V3 ⭐ THE FIX (device, OFFLINE_DEFECT_CREATE on): online open project (companies cache, or rely
+   on prefetch) -> airplane -> "ליקוי חדש" -> companies list shows from cache, NO
+   "שגיאה בטעינת חברות" toast, NO "אין חברות"; fill category+title+photo -> "צור ליקוי" -> queued.
+   (Assignee/person picker may be empty offline — expected; memberships uncached.)
+V4 Never-cached offline: a project whose companies were never loaded online -> the block reads
+   the friendly "תיטען כשתחזור הרשת" copy, NO red error, and the defect is STILL creatable with
+   no company. (Logic: allSettled compRes rejects offline -> _isOfflineFail true -> no toast,
+   loadError.companies set -> friendly copy.)
+V5 Online unchanged: companies + members load as today (full data); a REAL online failure
+   (has reason.response) -> _isOfflineFail false -> still toasts.
+V6 Memberships-miss isolation: offline, companies show even though memberships failed (allSettled
+   sets companies from compRes.value regardless of memRes) — no blank, no toast.
 
-NOT verified here (needs device + primed cache + live limiter): the runtime V3/V5
-behavior. Logic reviewed; recommend Zahi exercise V3 + V5 post-deploy.
+NOT verified here (needs device + primed cache): runtime V2b/V3/V4. Logic reviewed statically;
+recommend Zahi exercise V2b (PII-at-rest) + V3 post-deploy.
+
+------------------------------------------------------------------
+FOLLOW-UP (logged, NOT this batch)
+------------------------------------------------------------------
+GET /projects/{id}/companies returns FULL company docs WITH personal contact PII
+(contact_name/phone/email) on EVERY request — not just offline — while the global /companies
+route was PII-sanitized in CRIT-2 (2026-04-22). This batch trims CLIENT-SIDE before caching;
+a cleaner long-term fix is to sanitize the project route SERVER-SIDE (business fields, or PII
+only to roles that need it). Backend change -> separate batch. Flag to security review.
 
 ------------------------------------------------------------------
 COMMIT MESSAGE (written to .local/.commit_message)
 ------------------------------------------------------------------
-fix(offline): survive a 429 burst — serve cache on rate-limit, back off + coalesce sync
+fix(offline): new-defect modal works offline — cache companies (PII-trimmed), allSettled, quiet errors
 
 ROLLBACK:
-  Fastest: FEATURES.OFFLINE_MODE=false (disables cache-serve + sync entirely).
-  Targeted: git revert 6577911 -- frontend/src/services/api.js frontend/src/services/offlineSync.js
-
-FOLLOW-UP (logged, NOT this batch): the app fires ~30 GETs per project open —
-close to the per-user limit even in normal use. Long-term: batch the project-open
-loads into fewer calls, and/or give read GETs a higher per-user limit than writes.
+  Fastest: FEATURES.OFFLINE_MODE=false.
+  Targeted: git revert 46e8c10 -- frontend/src/services/api.js \
+    frontend/src/components/NewDefectModal.js frontend/src/services/offlinePrefetch.js
 
 FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
