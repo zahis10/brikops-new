@@ -12,7 +12,10 @@
 
 const DB_NAME = 'brikops-outbox';
 const STORE = 'qc_item_updates';
-const DB_VERSION = 1;
+// BATCH 3b: photo blobs accumulate (one record per photo, auto client key) —
+// SEPARATE store in the SAME DB so a v1→v2 upgrade keeps queued marks intact.
+const PHOTO_STORE = 'qc_photo_uploads';
+const DB_VERSION = 2;
 
 let _dbPromise = null;
 
@@ -37,8 +40,14 @@ function _openDb() {
     }
     req.onupgradeneeded = () => {
       const db = req.result;
+      // Leave qc_item_updates UNTOUCHED — a v1 user upgrading with queued marks
+      // must keep them (this guard is true on upgrade ⇒ no recreate, no clear).
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: 'key' });
+      }
+      // BATCH 3b: ONLY add the photo store (guarded), never recreate the above.
+      if (!db.objectStoreNames.contains(PHOTO_STORE)) {
+        db.createObjectStore(PHOTO_STORE, { keyPath: 'key' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -50,6 +59,22 @@ function _openDb() {
 
 function _store(db, mode) {
   return db.transaction(STORE, mode).objectStore(STORE);
+}
+
+function _photoStore(db, mode) {
+  return db.transaction(PHOTO_STORE, mode).objectStore(PHOTO_STORE);
+}
+
+function _getAllPhotosRaw(db) {
+  return new Promise((resolve) => {
+    try {
+      const req = _photoStore(db, 'readonly').getAll();
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+      req.onerror = () => resolve([]);
+    } catch (_) {
+      resolve([]);
+    }
+  });
 }
 
 function _getAllRaw(db) {
@@ -177,6 +202,137 @@ export async function outboxCount() {
     return await new Promise((resolve) => {
       try {
         const req = _store(db, 'readonly').count();
+        req.onsuccess = () => resolve(typeof req.result === 'number' ? req.result : 0);
+        req.onerror = () => resolve(0);
+      } catch (_) {
+        resolve(0);
+      }
+    });
+  } catch (_) {
+    return 0;
+  }
+}
+
+// ===========================================================================
+// BATCH 3b — photo blob outbox (store PHOTO_STORE). Photos ACCUMULATE: every
+// enqueuePhoto is a NEW auto key (never overwrite) so two photos on one item
+// are two records. Stores the SAME compressed File the upload path uses.
+// ===========================================================================
+
+function _photoKey() {
+  return `p_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Enqueue one compressed photo blob. Returns the generated key (or null).
+export async function enqueuePhoto(runId, itemId, file) {
+  if (!runId || !itemId || !file) return null;
+  try {
+    const db = await _openDb();
+    if (!db) return null;
+    const key = _photoKey();
+    const record = {
+      key,
+      runId,
+      itemId,
+      blob: file,
+      name: file.name || '',
+      ts: Date.now(),
+      failed: false,
+    };
+    await new Promise((resolve) => {
+      try {
+        const req = _photoStore(db, 'readwrite').put(record);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+    return key;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Pending photos for one run (to hydrate item.photos on load).
+// → [{ key, itemId, blob, name, ts, failed }]
+export async function getPhotosForRun(runId) {
+  if (!runId) return [];
+  try {
+    const db = await _openDb();
+    if (!db) return [];
+    const all = await _getAllPhotosRaw(db);
+    return all.filter((rec) => rec && rec.runId === runId && rec.itemId);
+  } catch (_) {
+    return [];
+  }
+}
+
+// Every pending photo, for the sync engine.
+// → [{ key, runId, itemId, blob, name, ts, failed }]
+export async function getAllPhotos() {
+  try {
+    const db = await _openDb();
+    if (!db) return [];
+    return await _getAllPhotosRaw(db);
+  } catch (_) {
+    return [];
+  }
+}
+
+export async function removePhoto(key) {
+  if (!key) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const req = _photoStore(db, 'readwrite').delete(key);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+export async function markPhotoFailed(key) {
+  if (!key) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const store = _photoStore(db, 'readwrite');
+        const getReq = store.get(key);
+        getReq.onsuccess = () => {
+          const rec = getReq.result;
+          if (!rec) { resolve(); return; }
+          rec.failed = true;
+          const putReq = store.put(rec);
+          putReq.onsuccess = () => resolve();
+          putReq.onerror = () => resolve();
+        };
+        getReq.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+export async function photoOutboxCount() {
+  try {
+    const db = await _openDb();
+    if (!db) return 0;
+    return await new Promise((resolve) => {
+      try {
+        const req = _photoStore(db, 'readonly').count();
         req.onsuccess = () => resolve(typeof req.result === 'number' ? req.result : 0);
         req.onerror = () => resolve(0);
       } catch (_) {

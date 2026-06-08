@@ -12,7 +12,10 @@
 
 import { FEATURES } from '../config/features';
 import { qcService } from './api';
-import { getAllQcUpdates, removeQcUpdate, markQcUpdateFailed, outboxCount } from './offlineOutbox';
+import {
+  getAllQcUpdates, removeQcUpdate, markQcUpdateFailed, outboxCount,
+  getAllPhotos, removePhoto, markPhotoFailed,
+} from './offlineOutbox';
 
 const _CONCURRENCY = 3;
 
@@ -35,7 +38,6 @@ export async function flushOutbox() {
 
   try {
     const ops = await getAllQcUpdates();
-    if (!ops.length) return { synced: 0, failed: 0 };
 
     // Throttle: process in chunks of _CONCURRENCY so we never fire the whole
     // backlog at once (a basement worker may have dozens of queued marks).
@@ -60,13 +62,38 @@ export async function flushOutbox() {
         }
       }));
     }
+
+    // BATCH 3b — drain queued photo blobs with the IDENTICAL data-loss policy.
+    // Runs even when there are no pending marks (photos can outlive the marks).
+    const photoOps = await getAllPhotos();
+    for (let i = 0; i < photoOps.length; i += _CONCURRENCY) {
+      const chunk = photoOps.slice(i, i + _CONCURRENCY);
+      await Promise.all(chunk.map(async (op) => {
+        if (!op || !op.key || !op.runId || !op.itemId || !op.blob) return;
+        try {
+          await qcService.uploadPhoto(op.runId, op.itemId, op.blob);
+          // RESOLVED ⇒ 2xx ⇒ the server has it ⇒ THE ONLY removePhoto call site.
+          await removePhoto(op.key);
+          synced += 1;
+          syncedRunIds.add(op.runId);
+        } catch (error) {
+          if (!error || !error.response) {
+            // Network failure — KEEP, retried on the next flush.
+          } else {
+            // Server REJECTED (4xx/5xx) — flag + KEEP, never silently drop.
+            await markPhotoFailed(op.key);
+            failed += 1;
+          }
+        }
+      }));
+    }
   } catch (_) {
     /* sync must never throw */
   } finally {
     _flushing = false;
   }
 
-  if (synced > 0 && typeof window !== 'undefined') {
+  if (syncedRunIds.size > 0 && typeof window !== 'undefined') {
     try {
       window.dispatchEvent(new CustomEvent('brikops:outbox-synced', {
         detail: { runIds: Array.from(syncedRunIds), failed },

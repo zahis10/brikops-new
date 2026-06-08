@@ -15,7 +15,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { compressImage } from '../utils/imageCompress';
 import { FEATURES } from '../config/features';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
-import { enqueueQcUpdate, getQcUpdatesForRun } from '../services/offlineOutbox';
+import { enqueueQcUpdate, getQcUpdatesForRun, enqueuePhoto, getPhotosForRun } from '../services/offlineOutbox';
 import { flushOutbox } from '../services/offlineSync';
 
 const PhotoAnnotation = React.lazy(() => import('../components/PhotoAnnotation'));
@@ -76,17 +76,27 @@ const TIMELINE_ICONS = {
 };
 
 const PhotoThumbnail = ({ photo, isPM, onOpen }) => {
-  const src = photo.url?.startsWith('http') ? photo.url : `${BACKEND_URL}${photo.url}`;
+  const isPending = !!photo._pendingUpload;
+  // Pending photos hold a local blob: URL — never prefix it with BACKEND_URL.
+  const src = (isPending || photo.url?.startsWith('blob:') || photo.url?.startsWith('http'))
+    ? photo.url
+    : `${BACKEND_URL}${photo.url}`;
   const actorName = resolveActorName(photo.uploaded_by_name);
   return (
     <div className="inline-block">
       <button
         type="button"
         onClick={() => onOpen && onOpen(src)}
-        className="block p-0 bg-transparent border-0 cursor-pointer"
+        className="relative block p-0 bg-transparent border-0 cursor-pointer"
         aria-label="הגדל תמונה"
       >
-        <img src={src} alt="" className="w-14 h-14 rounded-lg object-cover border border-slate-200 hover:border-amber-400 transition-all" />
+        <img src={src} alt="" className={`w-14 h-14 rounded-lg object-cover border transition-all ${isPending ? 'border-blue-300 opacity-90' : 'border-slate-200 hover:border-amber-400'}`} />
+        {isPending && (
+          <span className="absolute -top-1 -right-1 inline-flex items-center gap-0.5 text-[9px] font-medium px-1 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200">
+            <Clock className="w-2.5 h-2.5" />
+            ממתין
+          </span>
+        )}
       </button>
       {(actorName || photo.uploaded_at) && (
         <p className="text-xs text-slate-600 mt-1 max-w-[160px] leading-normal" dir="rtl">
@@ -863,6 +873,10 @@ export default function StageDetailPage() {
     return () => clearInterval(iv);
   }, [lastSavedAt]);
 
+  // BATCH 3b: object URLs for pending (un-synced) photos kept alive for display.
+  // Revoked at the top of the next load() (after server data lands) and on unmount.
+  const pendingPhotoUrlsRef = useRef([]);
+
   const load = useCallback(async () => {
     try {
       setLoading(true);
@@ -890,6 +904,45 @@ export default function StageDetailPage() {
             setQueuedItemIds(new Set());
           }
         } catch (_) { /* outbox must never break load */ }
+
+        // BATCH 3b: hydrate queued offline PHOTOS so they survive an app
+        // restart, satisfy the required-photo rule offline, and show "ממתין".
+        try {
+          // Revoke object URLs from a previous load before re-creating fresh ones.
+          for (const u of pendingPhotoUrlsRef.current) { try { URL.revokeObjectURL(u); } catch (_) {} }
+          pendingPhotoUrlsRef.current = [];
+          const pendingPhotos = await getPhotosForRun(runId);
+          if (pendingPhotos.length) {
+            const byItem = {};
+            for (const p of pendingPhotos) {
+              if (!p || !p.itemId || !p.blob) continue;
+              const objUrl = URL.createObjectURL(p.blob);
+              pendingPhotoUrlsRef.current.push(objUrl);
+              (byItem[p.itemId] = byItem[p.itemId] || []).push({
+                id: p.key,
+                url: objUrl,
+                _pendingUpload: true,
+                uploaded_by_name: user?.full_name || user?.name || '',
+                uploaded_at: p.ts ? new Date(p.ts).toISOString() : new Date().toISOString(),
+              });
+            }
+            setRunData(prev => {
+              if (!prev) return prev;
+              const stages = prev.stages.map(s => ({
+                ...s,
+                items: s.items.map(item => {
+                  const add = byItem[item.id];
+                  if (!add || !add.length) return item;
+                  const existing = item.photos || [];
+                  const existingIds = new Set(existing.map(ph => ph.id));
+                  const merged = [...existing, ...add.filter(ph => !existingIds.has(ph.id))];
+                  return { ...item, photos: merged };
+                }),
+              }));
+              return { ...prev, stages };
+            });
+          }
+        } catch (_) { /* outbox must never break load */ }
       }
     } catch (err) {
       if (err.response?.status === 403) {
@@ -900,7 +953,7 @@ export default function StageDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [runId]);
+  }, [runId, user]);
 
   // BATCH 3a: when the sync engine confirms queued writes for this run reached
   // the server, clear the local "ממתין" state and reload so the rows show the
@@ -931,6 +984,12 @@ export default function StageDetailPage() {
     window.addEventListener('brikops:outbox-synced', onSynced);
     return () => window.removeEventListener('brikops:outbox-synced', onSynced);
   }, [runId, load]);
+
+  // BATCH 3b: revoke any pending-photo object URLs on unmount (no blob-URL leak).
+  useEffect(() => () => {
+    for (const u of pendingPhotoUrlsRef.current) { try { URL.revokeObjectURL(u); } catch (_) {} }
+    pendingPhotoUrlsRef.current = [];
+  }, []);
 
   const softLoadGeneration = useRef(0);
 
@@ -1320,9 +1379,56 @@ export default function StageDetailPage() {
       return { ...prev, stages: updatedStages };
     });
 
+    const currentUserName = user?.full_name || user?.name || 'אתה';
     let successCount = 0;
+    let queuedCount = 0;
     let failedIds = [];
+
+    // BATCH 3b: move an optimistic photo from "uploading" → "queued" (ממתין),
+    // tag its item.photos entry _pendingUpload, and keep its blob URL alive.
+    const markPhotoQueued = (entry, key) => {
+      pendingPhotoUrlsRef.current.push(entry.blobUrl);
+      setUploadingItems(prev => {
+        const cur = prev[itemId];
+        if (!cur) return prev;
+        return {
+          ...prev,
+          [itemId]: {
+            ...cur,
+            files: cur.files.map(f => f.client_id === entry.clientId ? { ...f, status: 'queued' } : f),
+          },
+        };
+      });
+      setRunData(prev => {
+        if (!prev) return prev;
+        const updatedStages = prev.stages.map(s => {
+          if (s.id !== stageId) return s;
+          return {
+            ...s,
+            items: s.items.map(item => {
+              if (item.id !== itemId) return item;
+              return {
+                ...item,
+                photos: (item.photos || []).map(p =>
+                  p.id === entry.clientId
+                    ? { ...p, id: key || p.id, _pendingUpload: true, uploaded_by_name: currentUserName }
+                    : p),
+              };
+            }),
+          };
+        });
+        return { ...prev, stages: updatedStages };
+      });
+    };
+
     for (const entry of tempEntries) {
+      // ⭐ PROACTIVE: known offline → enqueue ONCE, NEVER attempt the POST.
+      if (FEATURES.OFFLINE_MODE && navigator.onLine === false) {
+        const key = await enqueuePhoto(runId, itemId, entry.file);
+        markPhotoQueued(entry, key);
+        queuedCount++;
+        continue; // ⭐ skip the POST + the revoke (blob URL kept for display)
+      }
       try {
         await qcService.uploadPhoto(runId, itemId, entry.file);
         successCount++;
@@ -1338,28 +1444,38 @@ export default function StageDetailPage() {
             },
           };
         });
+        URL.revokeObjectURL(entry.blobUrl);
       } catch (err) {
-        failedIds.push(entry.clientId);
-        const errorCode = !err.response ? 'network' : (err.response?.status || 'unknown');
-        setUploadingItems(prev => {
-          const cur = prev[itemId];
-          if (!cur) return prev;
-          return {
-            ...prev,
-            [itemId]: {
-              ...cur,
-              failed: cur.failed + 1,
-              files: cur.files.map(f => f.client_id === entry.clientId ? { ...f, status: 'failed', error_code: errorCode } : f),
-            },
-          };
-        });
-        if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
-          toast.error('הזמן הקצוב להעלאה עבר. נסה שוב');
-        } else if (!err.response) {
-          toast.error('בעיית תקשורת. בדוק חיבור לאינטרנט');
+        if (FEATURES.OFFLINE_MODE && !err.response) {
+          // ⭐ REACTIVE: WebView "false online" — the POST actually network-failed.
+          // navigator.onLine was true ⇒ the proactive branch was skipped ⇒ no dup.
+          const key = await enqueuePhoto(runId, itemId, entry.file);
+          markPhotoQueued(entry, key);
+          queuedCount++;
+          // do NOT revoke (kept for display), do NOT add to failedIds.
+        } else {
+          failedIds.push(entry.clientId);
+          const errorCode = !err.response ? 'network' : (err.response?.status || 'unknown');
+          setUploadingItems(prev => {
+            const cur = prev[itemId];
+            if (!cur) return prev;
+            return {
+              ...prev,
+              [itemId]: {
+                ...cur,
+                failed: cur.failed + 1,
+                files: cur.files.map(f => f.client_id === entry.clientId ? { ...f, status: 'failed', error_code: errorCode } : f),
+              },
+            };
+          });
+          if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
+            toast.error('הזמן הקצוב להעלאה עבר. נסה שוב');
+          } else if (!err.response) {
+            toast.error('בעיית תקשורת. בדוק חיבור לאינטרנט');
+          }
+          URL.revokeObjectURL(entry.blobUrl);
         }
       }
-      URL.revokeObjectURL(entry.blobUrl);
     }
 
     if (failedIds.length > 0) {
@@ -1382,7 +1498,14 @@ export default function StageDetailPage() {
       });
       toast.error(`${failedIds.length} תמונות נכשלו בהעלאה`);
     }
-    if (successCount > 0) {
+    if (queuedCount > 0) {
+      toast.success(queuedCount === 1
+        ? 'צילום נשמר במכשיר — יישלח כשתחזור הרשת'
+        : 'הצילומים נשמרו במכשיר — יישלחו כשתחזור הרשת');
+    }
+    // Skip the server-replace softLoad when any photo was queued — getRun would
+    // drop the optimistic pending photos that are not on the server yet.
+    if (successCount > 0 && queuedCount === 0) {
       toast.success(successCount === 1 ? 'תמונה הועלתה' : `${successCount} תמונות הועלו`);
       const scrollY = window.scrollY;
       const gen = ++softLoadGeneration.current;

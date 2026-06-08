@@ -1,153 +1,130 @@
-================================================================================
-BATCH offline-entry-sync-reliability  (Offline 3a-bis)
-(A) offline entry after app-kill   (B) sync retry + more triggers
-(C) queued-mark attribution        — 3 field findings from Zahi's 3a device test
-================================================================================
-Date:          2026-06-07     Branch: staging (NOT main)
-FRONTEND-ONLY — Capgo OTA, NO native, NO ship.sh, NO backend, NO new dependency.
-All gated on FEATURES.OFFLINE_MODE. Flag OFF = today's behavior byte-for-byte.
-
-ROLLBACK SHA (pre-change HEAD): e037a49
-  Restore with:  git reset --hard e037a49   (Zahi runs git — agent does not)
-
-Files changed: 3 frontend = 3 total (0 backend)
-  EDIT frontend/src/contexts/AuthContext.js   (A offline entry + B.2 auth-flush)
-  EDIT frontend/src/services/offlineSync.js   (B.1 interval + B.4 resume)
-  EDIT frontend/src/pages/StageDetailPage.js  (B.3 stage-open flush + C name)
-
---------------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT (verified outputs)
---------------------------------------------------------------------------------
-0.1 AuthContext bootstrap shape CONFIRMED:
-    - success path: setUser(userData) + brikops_last_uid / cacheClearAll hygiene
-      (BATCH 1) at lines ~117-124.
-    - catch: `if (_isAuthError(error))` → full logout (setToken/​setUser null,
-      removeItem token, clear cookie); ELSE (network) → setNetworkError(true) +
-      RETRY_DELAY_MS(5000) retry timer that re-calls fetchCurrentUser(true) only
-      if the saved token still matches.
-    - _isAuthError = 401 || 403, EXCEPT 403 pending_deletion (returns false).
-    - SEPARATE mid-session 401 interceptor (lines ~82-100) clears token + cookie
-      and redirects /login (skips /auth/* urls).
-    - /auth/me is NOT in any read-cache (BATCH 1 V7 guard) — confirmed:
-      offlineCache.js has NO auth/​/me whitelist entry at all.
-0.2 offlineSync triggers (HEAD before): online event + visibilitychange(visible)
-    + one startup flush; _started idempotency guard; outboxCount available from
-    offlineOutbox (line 173).
-0.3 StageDetailPage: attribution line renders resolveActorName(item.
-    updated_by_name) when currentStatus!=='pending' (was ~line 266); component
-    ALREADY reads `const { user } = useAuth();` — clean source for the logged-in
-    display name (user.full_name || user.name). queuedItemIds + localState exist.
-0.4 @capacitor/app present in package.json ("^7") — B.4 uses it via dynamic
-    import, NO new dependency added.
-No divergence from the spec's assumptions.
-
---------------------------------------------------------------------------------
-PART A — AuthContext.js : OFFLINE ENTRY (lockout fix)
---------------------------------------------------------------------------------
-SHANNON-GRADE LINE (held): the snapshot NEVER overrides a real auth rejection.
-It is read ONLY in the NETWORK branch (`else` of `_isAuthError`, plus an explicit
-`&& !_isAuthError(error)` guard). A 401/403 logs out exactly as today. NO new
-credential is stored — the JWT already lives in localStorage; this adds only the
-user PROFILE for boot, with the SAME hygiene as the BATCH 1 cache.
-
-A.1 STORE — success path, right after the brikops_last_uid hygiene block (gated
-    FEATURES.OFFLINE_MODE): localStorage.setItem('brikops_offline_user',
-    JSON.stringify(userData)) in try/catch (never breaks login). Never logged.
-A.2 USE — network bootstrap failure (the else branch): if FEATURES.OFFLINE_MODE
-    && !_isAuthError(error) && a stored snapshot + token exist && snap.id →
-    setUser(snap); enteredOffline=true. Then setNetworkError(!enteredOffline)
-    (entered ⇒ no blocking retry screen). The EXISTING retry timer scheduling is
-    UNCHANGED → background revalidation: fresh userData replaces the snapshot, or
-    a 401/403 triggers today's full logout, even mid-offline-session.
-A.3 CLEAR — snapshot removed at EVERY session-end (the same 4 places the token /
-    cache are cleared): logout(), the _isAuthError catch branch, the mid-session
-    401 interceptor, and the brikops_last_uid user-change block (different user
-    ⇒ drop prior identity before the new snapshot is written).
-A.4 UNTOUCHED: read-cache whitelist (/auth stays non-cacheable), _isAuthError
-    logic, retry-loop timing (RETRY_DELAY_MS), x-new-token rotation.
-
---------------------------------------------------------------------------------
-PART B — offlineSync.js (+ AuthContext flush + StageDetailPage flush) : SYNC
---------------------------------------------------------------------------------
-B.1 RETRY INTERVAL — startOutboxSync(): setInterval 30_000ms; no-op if flag off
-    or offline; else `if ((await outboxCount()) > 0) flushOutbox()`. Cheap count,
-    flush only on backlog ⇒ a stranded op never waits longer than ~30s online
-    (the FINDING B fix).
-B.2 FLUSH AFTER AUTH — AuthContext success path: flushOutbox().catch(()=>{}) when
-    flag on. Bootstrap/​revalidation success is a stronger "network usable" signal
-    than navigator.onLine. (import { flushOutbox } from '../services/offlineSync';
-    no cycle — offlineSync imports only ./api + ./offlineOutbox + ./config; api.js
-    does NOT import AuthContext, verified.)
-B.3 FLUSH ON STAGE OPEN — StageDetailPage load() hydrate: after queuedItemIds set
-    non-empty AND navigator.onLine !== false → fire-and-forget flushOutbox().
-B.4 CAPACITOR RESUME — startOutboxSync(): dynamic import('@capacitor/app') in
-    try/catch → App.addListener('appStateChange', ({isActive}) => isActive &&
-    flushOutbox()). Belt-and-suspenders for iOS; JS-only on an already-installed
-    plugin (still OTA). Absent-plugin → .catch no-op (would skip, not crash).
-POLICY UNTOUCHED: flushOutbox success/​error path is byte-for-byte — removeQcUpdate
-    ONLY on 2xx-resolve (line 49); network(!error.response) KEEP; 4xx/5xx
-    markQcUpdateFailed + KEEP. Only TRIGGERS were added around it.
-
---------------------------------------------------------------------------------
-PART C — StageDetailPage.js : queued-mark attribution
---------------------------------------------------------------------------------
-When the displayed status comes from the LOCAL overlay (localState?.status set =
-isLocalMark), attribution renders the logged-in user's display name
-(currentUserName = user.full_name || user.name || 'אתה') instead of the stale
-server item.updated_by_name (which is empty pre-sync → "משתמש לא ידוע"). Layout
-unchanged; the stale server timestamp is suppressed for a local mark
-(!isLocalMark && item.updated_at). currentUserName passed as a new StageItemRow
-prop. Items WITHOUT a local override are unchanged (still resolveActorName +
-server time).
-
---------------------------------------------------------------------------------
-VERIFY
---------------------------------------------------------------------------------
-V1 build — `cd frontend && CI=true npm run build`:
-   ❗ Full CRACO build again SIGTERM'd by the container (exit -1/143, empty log) —
-     the documented exit143 case, made worse by the two running workflows holding
-     memory; workflows NOT restarted (Zahi protocol). FALLBACK (pre-agreed):
-     @babel/parser parsed all 3 changed files → OK / OK / OK. No new unused
-     imports (FEATURES + flushOutbox used in AuthContext; outboxCount used in
-     offlineSync; flushOutbox + currentUserName used in StageDetailPage).
-     ⇒ Zahi: run the real CI build locally to confirm the ESLint gate.
-
-V2 static (all PASS):
-   - snapshot READ only inside the network branch (`!_isAuthError`).        ✓
-   - snapshot CLEARED in logout + auth-error + 401-interceptor + user-change
-     (4 removeItem sites) + STORE on success + READ on network-fail.        ✓
-   - /auth NOT whitelisted anywhere (offlineCache has no auth/​/me entry).    ✓
-   - B.1 interval + B.2 auth-flush + B.3 stage-flush + B.4 resume present.   ✓
-   - flushOutbox success/error policy untouched (removeQcUpdate only 2xx).   ✓
-   - no import cycle (api.js does not import AuthContext).                   ✓
-   - @capacitor/app NOT added as a new dep (already "^7").                   ✓
-
-V3 flag OFF (by code path): no snapshot stored (A.1 gated), never read (A.2
-   gated), no 30s interval / no auth-flush / no stage-flush / no resume listener
-   (all gated) ⇒ bootstrap + save exactly as today.
-
-DEVICE TESTS V4–V8 (for Zahi on-device — cannot be run here):
-   V4 ⭐ OFFLINE ENTRY: airplane → KILL app → relaunch STILL OFFLINE → you get IN
-      (no retry screen), see cached floors, can mark + save (queued), offline
-      banner shows. (The lockout is gone.)
-   V5 ⭐ REVALIDATION + SECURITY: from V4 restore network → session revalidates
-      (fresh user replaces snapshot) + queued marks sync. THEN revoke the session
-      server-side (or expired token) → relaunch offline → you still get in →
-      restore network → you are LOGGED OUT as today (401 beats the snapshot).
-   V6 ⭐ RETRY (FINDING B regression): airplane → mark+save (queued) → turn
-      airplane OFF with the app OPEN/foreground and DO NOTHING → within ~30s the
-      "ממתין" clears itself (no bg/fg needed). Confirm on a 2nd device the server
-      has it.
-   V7 LOGOUT HYGIENE: logout → snapshot + cache cleared → next offline cold-launch
-      does NOT enter (shows normal login — nobody is logged in).
-   V8 ATTRIBUTION (FINDING C): a queued/unsaved mark shows YOUR name, not
-      "משתמש לא ידוע"; after sync it shows the server attribution as before.
-
---------------------------------------------------------------------------------
-COMMIT MESSAGE (also in .local/.commit_message)
---------------------------------------------------------------------------------
-fix(offline): 3a-bis — offline entry after app-kill, sync retry/triggers, queued-mark name
-
---------------------------------------------------------------------------------
+BATCH 3b — OFFLINE QC PHOTOS (outbox + sync + UI)
+=================================================
+Branch: staging  |  Rollback SHA: 0a80172  |  Status: CODE COMPLETE — UNVERIFIED-BY-BUILD
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================
+
+------------------------------------------------------------------
+STEP 0 — PRE-FLIGHT GREPS (proof of isolation & call-site counts)
+------------------------------------------------------------------
+$ grep -n DB_VERSION src/services/offlineOutbox.js
+  18:const DB_VERSION = 2;        # bumped 1 -> 2 (was 1)
+  36: ...indexedDB.open(DB_NAME, DB_VERSION)
+
+$ grep -rn qc_photo_uploads src/
+  src/services/offlineOutbox.js:17:const PHOTO_STORE = 'qc_photo_uploads';
+  # photo store lives ONLY in the outbox DB ('brikops-outbox').
+
+$ grep -n "DB_NAME" src/services/offlineCache.js
+  7:const DB_NAME = 'brikops-offline';   # read-cache DB is a SEPARATE db — untouched.
+
+$ grep -c "await enqueuePhoto" src/pages/StageDetailPage.js
+  2                                # exactly two enqueue sites (proactive + reactive)
+
+$ grep -rn removePhoto src/services/
+  offlineSync.js:76: await removePhoto(op.key);   # ONLY removePhoto call site = 2xx path
+  offlineOutbox.js:283: export async function removePhoto(key)
+
+$ grep -n revokeObjectURL src/pages/StageDetailPage.js
+  912  load() top: revoke previous pending blob URLs before re-hydrate
+  990  unmount cleanup effect
+  1447 online success (UNCHANGED online path — immediate revoke)
+  1476 real-fail (non-offline) path — immediate revoke
+
+------------------------------------------------------------------
+WHAT THIS BATCH DOES
+------------------------------------------------------------------
+Adds offline capture + background sync for QC item PHOTOS, mirroring the
+3a marks/notes outbox. When the device is offline (or the WebView reports a
+false-online and the POST network-fails), the photo is written to an
+IndexedDB outbox and shown immediately with a blue "ממתין" (pending) chip.
+A background drain uploads queued photos when the network returns, then the
+run reloads and the chip is replaced by the server (S3) image.
+
+------------------------------------------------------------------
+EDIT 1 — frontend/src/services/offlineOutbox.js
+------------------------------------------------------------------
+- DB_VERSION 1 -> 2.
+- onupgradeneeded: added guarded creation of PHOTO_STORE 'qc_photo_uploads'
+  (auto key). The existing 'qc_item_updates' store from 3a is left UNTOUCHED.
+- New helpers/exports:
+    enqueuePhoto(runId,itemId,file)   -> auto key p_<ts>_<rand>, returns key
+    getPhotosForRun(runId)            -> pending photos for a run
+    getAllPhotos()                    -> all pending photos (drain source)
+    removePhoto(key)                  -> delete one (called ONLY on 2xx)
+    markPhotoFailed(key)              -> bump attempt/last_error, KEEP row
+    photoOutboxCount()                -> count (exposed; not wired to UI yet)
+  Photos ACCUMULATE (unique auto keys) — no overwrite/dedup of distinct shots.
+
+------------------------------------------------------------------
+EDIT 2 — frontend/src/services/offlineSync.js
+------------------------------------------------------------------
+- Imported getAllPhotos/removePhoto/markPhotoFailed.
+- Removed the early `if (!ops.length) return` so photos still drain when there
+  are zero queued marks.
+- Added a photo drain loop (throttle 3 at a time):
+    * 2xx                -> removePhoto(key)   (ONLY delete site)
+    * !err.response      -> KEEP (still offline) — no state change
+    * 4xx/5xx response   -> markPhotoFailed(key) + KEEP (do not lose the photo)
+- 'brikops:outbox-synced' now fires when syncedRunIds.size > 0 (marks OR photos);
+  synced runIds include photo runIds so the open run reloads after a photo drain.
+
+------------------------------------------------------------------
+EDIT 3 — frontend/src/pages/StageDetailPage.js
+------------------------------------------------------------------
+- Imports: enqueuePhoto, getPhotosForRun (Clock already imported).
+- pendingPhotoUrlsRef: tracks live blob: object URLs for queued photos.
+- load(): revoke previous pending blob URLs, then hydrate getPhotosForRun()
+  into item.photos as {id:key, url:objectURL, _pendingUpload:true,
+  uploaded_by_name:<current user>} (dedup by id). load() deps now [runId, user]
+  (user is referenced for the pending uploader name — keeps exhaustive-deps
+  satisfied under CI=true).
+- Unmount effect: revoke any remaining pending blob URLs (no leak).
+- handleUploadPhotos loop reworked (mutually exclusive, no double-enqueue):
+    * PROACTIVE  navigator.onLine===false -> enqueuePhoto + markPhotoQueued +
+      `continue` (never POST, never revoke the blob).
+    * REACTIVE   catch && !err.response   -> enqueuePhoto + markPhotoQueued
+      (not added to failedIds, blob kept).
+    * ONLINE success path UNCHANGED (immediate revoke).
+    * real failure (has response, non-offline) -> existing fail path + revoke.
+  markPhotoQueued(entry,key): pushes blobUrl to ref, sets file status 'queued',
+  rewrites the optimistic item.photos entry (id->key, _pendingUpload:true,
+  uploaded_by_name:currentUserName = user?.full_name||user?.name||'אתה').
+- softLoad guard: `if (successCount>0 && queuedCount===0)` — the server-replace
+  getRun is skipped when anything was queued, so optimistic pending photos are
+  not dropped. Added queued toast "צילום נשמר במכשיר — יישלח כשתחזור הרשת".
+- PhotoThumbnail: blob/_pendingUpload URLs are used as-is (never prefixed with
+  BACKEND_URL); pending thumbs get a blue Clock "ממתין" chip.
+
+------------------------------------------------------------------
+REQUIRED-PHOTO RULE (spec 3.3) — NO CHANGE NEEDED
+------------------------------------------------------------------
+Pending photos live inside item.photos, so the existing
+`required_photo && photos.length === 0` guard passes for queued photos.
+
+------------------------------------------------------------------
+ISOLATION / DO-NOT-TOUCH HONORED
+------------------------------------------------------------------
+- 3a 'qc_item_updates' store + marks/notes offline branches: untouched.
+- Read-cache DB 'brikops-offline': untouched (separate DB from outbox).
+- Online photo-upload happy path: byte-for-byte unchanged (immediate revoke).
+- removePhoto is reachable from exactly one place (sync 2xx).
+
+------------------------------------------------------------------
+VERIFICATION PERFORMED (build fallback)
+------------------------------------------------------------------
+CRA `CI=true npm run build` is NOT run here: the dev container repeatedly
+SIGTERMs the build (exit 143) while the workflows are running, and per the
+standing rule the agent does NOT restart workflows. Fallback used:
+  * @babel/parser (sourceType:module, jsx) parses ALL 3 changed files: OK.
+  * Static greps above confirm: DB_VERSION=2, single removePhoto site,
+    exactly 2 enqueue sites, 4 expected revoke sites, photo store isolated
+    to the outbox DB.
+  * Manual exhaustive-deps review: load() deps updated to [runId, user]; the
+    new unmount effect only touches a ref (no deps needed).
+NOTE: global eslint is v9 (flat config) and cannot read CRA's v8 .eslintrc,
+so a standalone lint pass is not available in this environment.
+
+ACTION FOR ZAHI: run the real `CI=true npm run build` (or ship.sh) on a clean
+container to confirm the production lint gate, then deploy.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
