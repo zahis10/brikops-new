@@ -426,3 +426,9 @@ id = "GAiVjaYNnh_i155_hnIYT"
 uri = "file://.local/plans/defects-backnav-origin-plan.md"
 type = "text"
 title = "תוכנית BATCH defects-backnav-origin (לעיון, טרם יישום)"
+
+[[outputs]]
+id = "q5AEFwkiC9OyXF8ceyqRM"
+uri = "file://.local/plans/offline-handover-read-4a-plan.md"
+type = "text"
+title = "תוכנית BATCH offline-handover-read-4a (לעיון, טרם יישום)"
