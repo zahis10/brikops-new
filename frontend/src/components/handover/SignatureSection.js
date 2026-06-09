@@ -323,7 +323,13 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
             ) : (
               canSign(key) ? (
                 <button
-                  onClick={() => setSigningRole(key)}
+                  onClick={() => {
+                    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+                      toast('חתימה זמינה רק כשיש חיבור לאינטרנט', { icon: 'ℹ️' });
+                      return;
+                    }
+                    setSigningRole(key);
+                  }}
                   className="w-full flex items-center justify-center gap-2 py-2.5 bg-amber-500 text-white rounded-lg
                     text-sm font-bold hover:bg-amber-600 active:scale-[0.98]"
                 >

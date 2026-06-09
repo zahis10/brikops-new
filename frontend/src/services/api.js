@@ -44,6 +44,10 @@ export const setPaywallCallback = (cb) => { _paywallCallback = cb; };
 // offline — but WRITTEN PII-TRIMMED to {id,name,trade} (see _trimForCache); the
 // raw endpoint returns personal contact PII that must NEVER hit device storage.
 const _OFFLINE_COMPANIES_RE = /\/api\/projects\/[^/]+\/companies(\?|$)/;
+// handover protocol DETAIL — single protocol, id is TERMINAL (sub-resources /sections,/items,/signatures,/pdf do NOT match)
+const _OFFLINE_HANDOVER_PROTOCOL_RE = /\/api\/projects\/[^/]+\/handover\/protocols\/[^/]+(\?|$)/;
+// handover protocol LIST — `/handover/protocols` or `/handover/protocols?unit_id=…` (no trailing /{id})
+const _OFFLINE_HANDOVER_LIST_RE = /\/api\/projects\/[^/]+\/handover\/protocols(\?|$)/;
 const _OFFLINE_CACHEABLE = [
   /\/api\/projects(\?|$)/,                 // project list
   /\/api\/projects\/[^/]+(\?|$)/,          // project detail
@@ -54,6 +58,9 @@ const _OFFLINE_CACHEABLE = [
   /\/api\/tasks\/[^/]+(\?|$)/,             // defect detail
   /\/api\/qc\//,                           // QC reads (runs/units/stages/meta)
   _OFFLINE_COMPANIES_RE,                   // contractor companies — cached PII-TRIMMED
+  _OFFLINE_HANDOVER_PROTOCOL_RE,           // handover protocol detail (PII-trimmed)
+  _OFFLINE_HANDOVER_LIST_RE,               // handover protocol list  (PII-trimmed)
+  /\/api\/projects\/[^/]+\/handover\/(overview|summary)(\?|$)/, // overview + summary (no tenant PII)
 ];
 // PII deny list — overrides the broad qc allow above. team-contacts
 // carries phones; approvers carries names. Checked FIRST so these
@@ -75,9 +82,48 @@ function _isOfflineCacheable(url) {
 // fields {id,name,trade} (enough to pick a contractor) so NO personal PII ever
 // lands in device IndexedDB. URL-SPECIFIC: every other cached GET keeps its full
 // body — do NOT generalize this trim.
+// Strip government-ID PII from a handover protocol before it is cached on-device.
+// A protocol carries ת"ז PII in TWO places: tenants[] (id_number / id_photo_url /
+// id_photo_display_url / phone / email) and signatures[role].id_number (the SIGNER's
+// ת"ז). None may EVER land in device IndexedDB (lost/stolen-device identity leak).
+// Returns a NEW object; the original (the live online response) is untouched. Names
+// (tenant name, signer_name/typed_name/signed_at/image_key) and the checklist/
+// structure/meters/snapshot are KEPT.
+function _stripProtocolPII(p) {
+  if (!p || typeof p !== 'object') return p;
+  const out = { ...p };
+  if (Array.isArray(p.tenants)) {
+    out.tenants = p.tenants.map(t => {
+      if (!t || typeof t !== 'object') return t;
+      const { id_number, phone, email, id_photo_url, id_photo_display_url, ...rest } = t;
+      return rest;                       // keep name + any other non-PII field
+    });
+  }
+  if (p.signatures && typeof p.signatures === 'object') {
+    const sigs = {};
+    for (const [role, s] of Object.entries(p.signatures)) {
+      if (s && typeof s === 'object') {
+        const { id_number, ...rest } = s; // drop signer ת"ז; keep signer_name/typed_name/signed_at/image_key
+        sigs[role] = rest;
+      } else {
+        sigs[role] = s;
+      }
+    }
+    out.signatures = sigs;
+  }
+  return out;
+}
 function _trimForCache(url, data) {
   if (url && _OFFLINE_COMPANIES_RE.test(url) && Array.isArray(data)) {
     return data.map(c => ({ id: c?.id, name: c?.name, trade: c?.trade }));
+  }
+  // handover protocol DETAIL (single object) — strip tenant + signer ת"ז before cache.
+  if (url && _OFFLINE_HANDOVER_PROTOCOL_RE.test(url) && data && typeof data === 'object') {
+    return _stripProtocolPII(data);
+  }
+  // handover protocol LIST (array of protocols) — same trim per item.
+  if (url && _OFFLINE_HANDOVER_LIST_RE.test(url) && Array.isArray(data)) {
+    return data.map(_stripProtocolPII);
   }
   return data;
 }

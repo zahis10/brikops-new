@@ -1,132 +1,164 @@
-BATCH defects-backnav-origin — fix the broken "back" chain from a unit's defects
-(building-defects → unit-defects → task → back loses the origin)
+BATCH offline-handover-read-4a — view a handover protocol OFFLINE
+(read-through cache + tenant/signer government-ID PII trim + online-only gates for ID-photo / sign / PDF)
 =================================================================================================
-Branch: staging  |  Rollback SHA: aae8c2d  |  Severity: P2 (prod nav bug)  |  Status: CODE COMPLETE
-FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency.
-NOT flag-gated (navigation correctness fix, no behavior toggle). Reuses the existing
-?returnTo URL-param pattern (#531) + the existing open-redirect guard.
+Branch: staging  |  Rollback SHA: b967560  |  Severity: Feature (offline arc, step 4a)  |  Status: CODE COMPLETE
+FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency, no new flag.
+Rides the EXISTING FEATURES.OFFLINE_MODE-gated read-cache interceptor (same machinery as companies).
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Files changed: 2 frontend = 2 total (0 backend)
-  EDIT: frontend/src/pages/BuildingDefectsPage.js     (origin -> URL ?returnTo)
-  EDIT: frontend/src/pages/ApartmentDashboardPage.js  (preserve URL on task open, BOTH sites)
+Files changed: 4 frontend = 4 total (0 backend)
+  EDIT: frontend/src/services/api.js                          (whitelist x3 + _stripProtocolPII + 2 trim branches)
+  EDIT: frontend/src/components/handover/HandoverTenantForm.js (ID-photo upload online gate)
+  EDIT: frontend/src/components/handover/SignatureSection.js   (sign online gate)
+  EDIT: frontend/src/pages/HandoverProtocolPage.js             (PDF download online gate)
+
+SCOPE: 4a makes a protocol opened online RE-VIEWABLE offline (detail + list + overview + summary),
+with tenant AND signer government-ID (ת"ז) PII stripped before any write to device IndexedDB, plus
+3 friendly Hebrew "online only" gates. 4a is NOT offline capture/outbox (4b) and NOT auto-prefetch (4a-bis).
 
 ------------------------------------------------------------------
-THE BUG (Zahi, prod, exact URLs)
+⭐ DIVERGENCE FROM SPEC (resolved, lighter — no scope creep)
 ------------------------------------------------------------------
-Open a defect /tasks/{taskId} -> back to the unit's defects
-/projects/{pid}/units/{unitId}/defects -> back AGAIN -> went to
-/projects/{pid}/units/{unitId} then /projects/{pid}/buildings/{bid},
-INSTEAD of /projects/{pid}/buildings/{bid}/defects (the BUILDING defects, the origin).
-
-ROOT CAUSE: the origin lived in ROUTER STATE only, wiped across the task round-trip.
-- BuildingDefectsPage opened unit-defects with state:{from:'building-defects', buildingId}
-  but no URL returnTo.
-- ApartmentDashboardPage's task-open passed a BARE returnTo (/units/{unitId}/defects),
-  dropping the origin. TaskDetailPage's back -> fresh navigation with EMPTY state ->
-  buildingId gone -> back-arrow fell to the else fallback -> unit page -> building page.
-FIX: carry the origin in the URL (survives the round-trip) via the existing ?returnTo param.
+The spec's STEP 0.4 assumed toast = react-hot-toast and said "if toast is NOT imported in
+SignatureSection, ADD `import toast from 'react-hot-toast'`". ACTUAL: all THREE gate files already
+import `{ toast } from 'sonner'` (HandoverTenantForm:3, SignatureSection:3, HandoverProtocolPage:4).
+=> NO import added anywhere; react-hot-toast NOT introduced. The spec's gate calls work as-is with
+sonner: `toast('msg')` and `toast('msg', { icon: 'ℹ️' })` are both valid sonner signatures. Reported
+to Zahi pre-implementation; approved by "תתחיל".
 
 ------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT (verified against HEAD aae8c2d)
+STEP 0 — PRE-FLIGHT (verified against HEAD b967560)
 ------------------------------------------------------------------
-grep confirmed all anchor sites:
-- BuildingDefectsPage:575 — navigate('.../units/${unit.id}/defects',
-  { state:{from:'building-defects', buildingId} }) — router state only, NO url returnTo. ✓
-- ApartmentDashboardPage:
-  - useLocation imported (line 2), location = useLocation() in scope (line 89). ✓
-  - safeReturnTo (443-450): reads ?returnTo, single decodeURIComponent, guard rejects
-    '//' and '/\' (line 448). ✓
-  - back arrow reads safeReturnTo FIRST (505) before the navState branches
-    (from==='unit-home' 507, navState?.buildingId 509, else). ✓
-  - TWO task-open sites: 606 (list row) and 854 (blocking row), both with the BARE
-    returnTo '/projects/${projectId}/units/${unitId}/defects'. ✓
-  - QC jump (539-540) already uses encodeURIComponent(location.pathname+location.search)
-    — confirms PART 2's approach is the established in-file pattern. ✓
-No divergences.
+0.1 api.js anchors: _OFFLINE_COMPANIES_RE (49), _OFFLINE_CACHEABLE array (54-67),
+    _isOfflineCacheable(url) doing _OFFLINE_CACHEABLE.some(re=>re.test(url)) (65-69 pre-edit /
+    now shifted), function _trimForCache(url,data) (119), cache write
+    cachePutRead(_cacheKey(response.config), _trimForCache(response.config?.url, response.data)). ✓
+0.2 OFFLINE_MODE guard (success handler, was ~155-165) — PASTED:
+      try {
+        if (
+          FEATURES.OFFLINE_MODE &&
+          !response.__fromOfflineCache &&
+          response.config?.method === 'get' &&
+          _isOfflineCacheable(response.config?.url)
+        ) {
+          cachePutRead(_cacheKey(response.config), _trimForCache(response.config?.url, response.data));
+        }
+      } catch (_) { /* cache must never affect the online path */ }
+      return response;   // <-- returns RAW response; trimmed copy is cache-only
+    => the cache write is behind FEATURES.OFFLINE_MODE (no new flag) and the handler returns the
+    untouched `response`. ✓
+0.3 callers (api.js): getProtocol GET /handover/protocols/{id} (1756-7); listProtocols GET
+    /handover/protocols(?qs) (1741-8); getOverview GET /handover/overview via axios params (1810-1);
+    getSummary GET /handover/summary (1806-7). HandoverTabPage (unit handover tab) lists via
+    listProtocols and navigates to the detail -> LIST is on the offline nav path -> must be cached. ✓
+0.4 gate sites: handleIdPhotoUpload = async (idx, file) (was 14); onClick={() => setSigningRole(key)}
+    (was 326); handleDownloadPdf = async () (was 318, with `if (!protocol.locked)` next). toast
+    import = sonner in all three (see DIVERGENCE). ✓
+0.5 tenant PII (HandoverTenantForm EMPTY_TENANT, line 7):
+    { name, id_number, phone, email, id_photo_url, id_photo_display_url } -> STRIP 5
+    {id_number,phone,email,id_photo_url,id_photo_display_url}, KEEP name. ✓
+0.6 signer PII: per spec signatures[role].id_number (signer ת"ז) is persisted; STRIP id_number,
+    KEEP signer_name/typed_name/signed_at/image_key. snapshot = names only (no PII) -> no trim. ✓
+No divergences other than the toast library noted above.
 
 ------------------------------------------------------------------
-PART 1 — BuildingDefectsPage.js : put the origin in the URL
+PART 1 — api.js : make detail + list + overview + summary cacheable
 ------------------------------------------------------------------
-At the unit-defects navigation (was line 575), the bare navigate is replaced with a
-block that also appends an encoded ?returnTo of the BUILDING-defects path, keeping the
-existing state for first-visit / other readers:
-  const origin = encodeURIComponent(`/projects/${projectId}/buildings/${buildingId}/defects`);
-  navigate(`/projects/${projectId}/units/${unit.id}/defects?returnTo=${origin}`,
-    { state: { from: 'building-defects', buildingId } });
-=> the unit-defects URL now carries ?returnTo=<building-defects> from the start; the
-back arrow's existing safeReturnTo already honours it.
+- Added two DISJOINT named regexes above _OFFLINE_CACHEABLE:
+    _OFFLINE_HANDOVER_PROTOCOL_RE = /…\/handover\/protocols\/[^/]+(\?|$)/   (detail; id TERMINAL —
+      sub-resources /sections,/items,/signatures,/pdf do NOT match)
+    _OFFLINE_HANDOVER_LIST_RE     = /…\/handover\/protocols(\?|$)/          (list)
+- Added 3 entries to _OFFLINE_CACHEABLE: detail RE, list RE, and
+  /…\/handover\/(overview|summary)(\?|$)/. Existing entries (companies, qc, etc.) unchanged.
 
 ------------------------------------------------------------------
-PART 2 — ApartmentDashboardPage.js : preserve the URL across the task round-trip
+PART 2 — api.js : strip government-ID PII before caching a protocol
 ------------------------------------------------------------------
-At BOTH task-open sites (606 list, 854 blocking) the task's returnTo changes from the
-BARE unit-defects path to the CURRENT full URL:
-  navigate(`/tasks/${task.id}`, { state: { returnTo: location.pathname + location.search } });
-=> the ?returnTo=<building-defects> rides along and survives the bounce through the task
-page. TaskDetailPage's back -> /units/{unitId}/defects?returnTo=<building-defects> ->
-ApartmentDashboardPage mounts WITH the ?returnTo -> safeReturnTo sends the user to the
-building defects. Chain fixed. (location.pathname+location.search is always an in-app
-path -> the existing //, /\ guard passes it.)
+- Added _stripProtocolPII(p): returns a NEW object ({ ...p }); maps tenants[] dropping
+  {id_number,phone,email,id_photo_url,id_photo_display_url} (keeps name + rest); rebuilds
+  signatures{} dropping each signer's {id_number} (keeps signer_name/typed_name/signed_at/image_key).
+  Non-object inputs returned as-is. snapshot left intact (no PII).
+- _trimForCache: companies branch UNCHANGED; added DETAIL branch (single object ->
+  _stripProtocolPII(data)) and LIST branch (array -> data.map(_stripProtocolPII)).
+- GUARANTEE: _trimForCache runs ONLY at the cache-write arg; every spread builds NEW objects for the
+  cache; the online response (response.data) is returned untouched -> the live in-memory protocol the
+  user edits online keeps full tenant + signer data.
+
+------------------------------------------------------------------
+PART 3 — three OFFLINE GATES (sonner toast, friendly Hebrew, return early)
+------------------------------------------------------------------
+3.1 HandoverTenantForm.handleIdPhotoUpload — FIRST statement: navigator.onLine===false ->
+    toast('העלאת צילום ת"ז זמינה רק כשיש חיבור לאינטרנט, מטעמי אבטחת מידע', {icon:'ℹ️'}); return.
+    Single chokepoint — camera + gallery both call this handler.
+3.2 SignatureSection sign button onClick wrapped: navigator.onLine===false ->
+    toast('חתימה זמינה רק כשיש חיבור לאינטרנט', {icon:'ℹ️'}); return; else setSigningRole(key).
+    (toast already imported from sonner — no import added.)
+3.3 HandoverProtocolPage.handleDownloadPdf — FIRST statement (BEFORE `if (!protocol.locked)`):
+    navigator.onLine===false -> toast('הורדת PDF זמינה רק כשיש חיבור לאינטרנט'); return.
+    PDF ENTRY POINTS (confirmed): handleDownloadPdf is the user-initiated download handler, wired to
+    BOTH download buttons (onClick={handleDownloadPdf} at 494 and 674) and to the share-fallback
+    (handleSharePdf calls handleDownloadPdf when !navigator.share, ~344) — all covered by the one gate.
+    The SILENT background prefetch getPdfBlob (useEffect on mount/update, ~141/154) is NOT gated
+    (it already .catch(()=>{}) fails quietly) — correct per spec. handleSharePdf's own Web-Share path
+    (~350) is a DIFFERENT action (share, not download) and out of 4a scope; offline it either falls
+    into the gated download (no navigator.share) or fails reactively.
 
 ------------------------------------------------------------------
 DO NOT TOUCH — honored
 ------------------------------------------------------------------
-- ❌ Back-arrow fallback branches (unit-home -> unit page; navState?.buildingId ->
-  building defects; else -> unit page) UNCHANGED — still the fallback for entries with
-  NO ?returnTo (e.g. opened from the unit home). Verified safeReturnTo branch is first
-  and untouched.
-- ❌ TaskDetailPage — unchanged (still navigates to state.returnTo; we only change WHAT
-  returnTo it is handed).
-- ❌ safeReturnTo decoder + open-redirect guard — reused as-is.
-- ❌ No backend, no flag, no new dependency, no other navigate() call touched
-  (the QC jump at 539 is pre-existing and untouched).
+- ❌ NO offline write-queue/outbox for handover (4b) — no PUT/PATCH/POST changed except the 3 read gates.
+- ❌ NO prefetch/auto-warm of protocols (4a-bis).
+- ❌ Did NOT cache handover TEMPLATE / legal-sections (out of scope).
+- ❌ companies branch of _trimForCache UNCHANGED.
+- ❌ Online response path UNCHANGED — only the cache-write arg is trimmed; detail + list online
+  responses keep full tenant + signer data.
+- ❌ NO new FEATURES flag (rides OFFLINE_MODE). No backend, no new dependency, no native.
 
 ------------------------------------------------------------------
 VERIFICATION
 ------------------------------------------------------------------
-V1 (build): CRA `CI=true npm run build` NOT run here — the dev container SIGTERMs the
-   build (exit 143) while workflows run, and per the standing rule the agent does not
-   restart workflows. Substituted @babel/core (preset-react) transform of BOTH changed
-   files -> OK (both parse).
+V1 (build): CRA `CI=true npm run build` NOT run here — the dev container SIGTERMs the build (exit 143)
+   while workflows run, and per the standing rule the agent does not restart workflows. Substituted
+   @babel/core (preset-react) transform of ALL FOUR changed files -> OK (all parse). Real build at
+   Zahi's ./deploy.sh --stag.
 V2 (static, grep-confirmed):
-   - BuildingDefectsPage: unit-defects navigate now includes ?returnTo=${origin} with
-     origin = encodeURIComponent(.../buildings/${buildingId}/defects) (576-577); state kept.
-   - ApartmentDashboardPage: BOTH task-opens (606, 854) use
-     `location.pathname + location.search`; NO bare unit-defects returnTo string remains
-     (grep "no bare returnTo remains").
-   - Back-arrow: `if (safeReturnTo) { navigate(safeReturnTo); return; }` first (505),
-     navState branches unchanged (507/509).
-V3 ⭐ THE REPRO (device/web): /buildings/{bid}/defects -> tap unit -> its defects ->
-   tap a defect /tasks/{id} -> back -> unit defects -> back AGAIN -> lands on the BUILDING
-   defects /buildings/{bid}/defects (NOT the unit page, NOT the building page). The exact
-   reported chain is gone.
-   ⭐ NESTED-returnTo / DOUBLE-ENCODE CHECK: PART 1 sets ?returnTo=<encodeURIComponent(
-   building-defects)> on the unit-defects URL; PART 2 carries location.pathname+
-   location.search (which already CONTAINS that encoded ?returnTo=%2F…) as the task's
-   returnTo — passed RAW, NOT re-encoded. So on the way back React Router decodes the
-   ?returnTo value exactly ONCE (safeReturnTo's single decodeURIComponent) -> the final
-   landing URL is the CLEAN /projects/{pid}/buildings/{bid}/defects, NOT %2Fdefects /
-   %252F, NOT a 404. (Confirm in the address bar/network on device.)
-V4 First-visit (without opening a task): building defects -> unit defects -> back ->
-   building defects (now via ?returnTo; previously via navState — both ok).
-V5 Other origins unaffected: open a unit's defects from the unit home -> back -> unit
-   home (navState 'unit-home' fallback, no ?returnTo) — unchanged.
-V6 Refresh-safe: on the unit defects with ?returnTo in the URL, hard-refresh -> back
-   still goes to building defects (URL param survives; router state would not).
+   - api.js: _OFFLINE_HANDOVER_PROTOCOL_RE (48) + _OFFLINE_HANDOVER_LIST_RE (50) defined; all THREE
+     new whitelist entries present (detail 61, list 62, overview|summary 63); _stripProtocolPII (92)
+     called from the detail branch (121-122) and the list branch data.map(_stripProtocolPII) (125-126);
+     companies branch unchanged.
+   - REGEX DISJOINTNESS (node-tested): detail URL '/api/projects/p1/handover/protocols/pr1' ->
+     DETAIL=true, LIST=false; list URL '/api/projects/p1/handover/protocols?unit_id=u1' ->
+     DETAIL=false, LIST=true. Each trims under exactly one branch (and DETAIL is checked first anyway).
+   - 3 gate sites each have `navigator.onLine === false` + toast + return
+     (HandoverTenantForm:15, SignatureSection:327, HandoverProtocolPage:319).
+V3 ⭐ PII-AT-REST (device/browser): (a) ONLINE open a protocol with a tenant ID number + ID photo AND
+   ≥1 signature (signatures.{role}.id_number populated). (b) Inspect IndexedDB read-cache: cached DETAIL
+   -> tenants[] have NO id_number/phone/email/id_photo_url/id_photo_display_url (only name + non-PII);
+   signatures.{role} have NO id_number (signer_name/signed_at may remain). (b2) cached LIST (?unit_id=
+   key) -> same: no tenant/signer id_number at rest. (c) the LIVE online form still shows full tenant
+   data + signer ID where the UI shows it (online response not mutated).
+V4 OFFLINE VIEW: with the protocol cached (V3a), airplane -> (i) unit handover TAB list renders from
+   cache (status, not blank); (ii) protocol detail renders from cache (checklist/meters/structure/
+   tenant name); ID-photo thumbnail absent (URL stripped) — no crash.
+V5 OFFLINE GATES: offline -> ID-photo "צלם"/"העלה" -> "...רק כשיש חיבור לאינטרנט, מטעמי אבטחת מידע",
+   upload does not proceed; "חתום" -> "חתימה זמינה רק כשיש חיבור לאינטרנט"; PDF download ->
+   "הורדת PDF זמינה רק כשיש חיבור לאינטרנט". Online: all three behave exactly as before.
+V6 ONLINE UNCHANGED: detail/overview/summary load as before; ID-photo upload, signing, PDF all work.
 
-NOT verified here (needs device/web): runtime V3-V6. Logic reviewed statically; recommend
-Zahi exercise V3 (incl. the clean-decoded landing URL) post-deploy.
+NOT verified here (needs device + DevTools): runtime V3-V6 (esp. V3 IndexedDB PII-at-rest inspection).
+Logic reviewed statically; recommend Zahi exercise V3 (tenant AND signer ת"ז absent at rest) post-deploy.
 
 ------------------------------------------------------------------
 COMMIT MESSAGE (written to .local/.commit_message)
 ------------------------------------------------------------------
-fix(nav): defects back-chain returns to building defects, not unit/building page
+feat(handover): view protocol offline, government-ID PII stripped from cache
 
 ROLLBACK:
-  git revert aae8c2d -- frontend/src/pages/BuildingDefectsPage.js \
-    frontend/src/pages/ApartmentDashboardPage.js
-  ./deploy.sh --prod (OTA)
+  Fastest: FEATURES.OFFLINE_MODE=false.
+  Targeted: git revert b967560 -- frontend/src/services/api.js \
+    frontend/src/components/handover/HandoverTenantForm.js \
+    frontend/src/components/handover/SignatureSection.js \
+    frontend/src/pages/HandoverProtocolPage.js
 
-FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency.
+FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency, no new flag.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

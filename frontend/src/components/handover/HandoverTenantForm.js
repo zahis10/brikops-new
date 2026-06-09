@@ -12,6 +12,10 @@ const HandoverTenantForm = ({ protocol, projectId, isSigned, onUpdated }) => {
   const [uploadingIdx, setUploadingIdx] = useState(null);
 
   const handleIdPhotoUpload = async (idx, file) => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      toast('העלאת צילום ת"ז זמינה רק כשיש חיבור לאינטרנט, מטעמי אבטחת מידע', { icon: 'ℹ️' });
+      return;
+    }
     if (!file) return;
     if (file.size > 8 * 1024 * 1024) {
       toast.error('גודל הקובץ חורג מ-8MB');
