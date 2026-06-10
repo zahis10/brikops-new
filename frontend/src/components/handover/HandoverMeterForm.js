@@ -5,28 +5,40 @@ import { t } from '../../i18n';
 import { Loader2, Camera } from 'lucide-react';
 import { compressImage } from '../../utils/imageCompress';
 import { FEATURES } from '../../config/features';
-import { enqueueHandoverForm, getHandoverFormUpdate } from '../../services/offlineOutbox';
+import { enqueueHandoverForm, getHandoverFormUpdate, enqueueMeterPhoto, getMeterPhoto } from '../../services/offlineOutbox';
 
-const MeterCard = ({ type, label, icon, borderColor, meters, isSigned, projectId, protocolId, onChange, onPhotoUploaded }) => {
+const MeterCard = ({ type, label, icon, borderColor, meters, isSigned, projectId, protocolId, onChange, onPhotoUploaded, onPhotoQueued }) => {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const photoUrl = meters[type]?.display_url || null;
 
   const handlePhoto = async (e) => {
-    // Meter photo is a multipart upload — online only for now (photos = 4c).
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      toast('צילום מונה זמין רק כשיש חיבור לאינטרנט — יתמך אופליין בשלב הבא', { icon: 'ℹ️' });
-      return;
-    }
     const file = e.target.files?.[0];
     if (!file || isSigned) return;
+    let compressed = null;
     try {
       setUploading(true);
-      const compressed = await compressImage(file);
+      compressed = await compressImage(file);
+      // BATCH 4c — meter photos are NOT PII (a utility dial). OFFLINE: queue the
+      // compressed blob (latest-wins per meter) and preview locally. The blob drains
+      // AFTER the form so the deterministic photo_url subfield write survives.
+      if (FEATURES.OFFLINE_MODE && navigator.onLine === false) {
+        await enqueueMeterPhoto(projectId, protocolId, type, compressed);
+        onPhotoQueued?.(type, URL.createObjectURL(compressed));
+        toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
+        return;
+      }
       const result = await handoverService.uploadMeterPhoto(projectId, protocolId, type, compressed);
       onPhotoUploaded?.(type, result);
       toast.success('תמונה הועלתה');
     } catch (err) {
+      // REACTIVE: network-failed mid-upload (went offline) — queue instead of error.
+      if (FEATURES.OFFLINE_MODE && compressed && (!err || !err.response)) {
+        await enqueueMeterPhoto(projectId, protocolId, type, compressed);
+        onPhotoQueued?.(type, URL.createObjectURL(compressed));
+        toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
+        return;
+      }
       console.error(err);
       toast.error('שגיאה בהעלאת תמונה');
     } finally {
@@ -77,6 +89,15 @@ const HandoverMeterForm = ({ protocol, projectId, isSigned, onUpdated }) => {
   const [meters, setMeters] = useState({ water: { reading: null, photo_url: null }, electricity: { reading: null, photo_url: null } });
   const [saving, setSaving] = useState(false);
   const [queued, setQueued] = useState(false);
+  // BATCH 4c — track object URLs created for queued meter-photo previews so we can
+  // revoke them on unmount / replacement (no leak — 3b discipline). Keyed by type.
+  const objectUrlsRef = useRef({});
+
+  const _trackObjectUrl = useCallback((type, url) => {
+    const prev = objectUrlsRef.current[type];
+    if (prev && prev !== url) { try { URL.revokeObjectURL(prev); } catch (_) { /* noop */ } }
+    objectUrlsRef.current[type] = url;
+  }, []);
 
   useEffect(() => {
     if (protocol?.meters) {
@@ -88,8 +109,24 @@ const HandoverMeterForm = ({ protocol, projectId, isSigned, onUpdated }) => {
       getHandoverFormUpdate(protocol.id, 'meters').then((rec) => {
         if (rec && rec.value) { setMeters(rec.value); setQueued(true); }
       }).catch(() => {});
+      // BATCH 4c — hydrate queued meter photos (blob → object URL preview).
+      ['water', 'electricity'].forEach((type) => {
+        getMeterPhoto(protocol.id, type).then((rec) => {
+          if (rec && rec.blob) {
+            const url = URL.createObjectURL(rec.blob);
+            _trackObjectUrl(type, url);
+            setMeters((prev) => ({ ...prev, [type]: { ...prev[type], display_url: url } }));
+            setQueued(true);
+          }
+        }).catch(() => {});
+      });
     }
-  }, [protocol]);
+  }, [protocol, _trackObjectUrl]);
+
+  // Revoke any queued-preview object URLs on unmount.
+  useEffect(() => () => {
+    Object.values(objectUrlsRef.current).forEach((u) => { try { URL.revokeObjectURL(u); } catch (_) { /* noop */ } });
+  }, []);
 
   const handleChange = (type, field, value) => {
     setMeters(prev => ({
@@ -105,6 +142,19 @@ const HandoverMeterForm = ({ protocol, projectId, isSigned, onUpdated }) => {
     }));
     onUpdated?.();
   }, [onUpdated]);
+
+  // BATCH 4c — meter photo queued offline. Set ONLY display_url for the local
+  // preview; leave photo_url untouched (the server assigns it at sync, and the
+  // photos-LAST drain order keeps that fresh value safe). Do NOT call onUpdated()
+  // — a parent reload would re-fetch the cached protocol and drop the preview.
+  const handlePhotoQueued = useCallback((type, objectUrl) => {
+    _trackObjectUrl(type, objectUrl);
+    setMeters(prev => ({
+      ...prev,
+      [type]: { ...prev[type], display_url: objectUrl },
+    }));
+    setQueued(true);
+  }, [_trackObjectUrl]);
 
   const handleSave = useCallback(async () => {
     if (isSigned || saving) return;
@@ -143,14 +193,14 @@ const HandoverMeterForm = ({ protocol, projectId, isSigned, onUpdated }) => {
         borderColor="border-sky-300 text-sky-600"
         meters={meters} isSigned={isSigned}
         projectId={projectId} protocolId={protocol?.id}
-        onChange={handleChange} onPhotoUploaded={handlePhotoUploaded}
+        onChange={handleChange} onPhotoUploaded={handlePhotoUploaded} onPhotoQueued={handlePhotoQueued}
       />
       <MeterCard
         type="electricity" label={t('handover', 'electricityReading')} icon="⚡"
         borderColor="border-amber-300 text-amber-600"
         meters={meters} isSigned={isSigned}
         projectId={projectId} protocolId={protocol?.id}
-        onChange={handleChange} onPhotoUploaded={handlePhotoUploaded}
+        onChange={handleChange} onPhotoUploaded={handlePhotoUploaded} onPhotoQueued={handlePhotoQueued}
       />
 
       {!isSigned && (

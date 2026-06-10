@@ -16,8 +16,9 @@ import {
   getAllQcUpdates, removeQcUpdate, markQcUpdateFailed, outboxCount,
   getAllPhotos, removePhoto, markPhotoFailed,
   getAllDefectCreates, removeDefectCreate, markDefectCreateFailed,
-  getAllHandoverItems, removeHandoverItem, markHandoverItemFailed,
+  getAllHandoverItems, removeHandoverItem, markHandoverItemFailed, replaceHandoverItemPhotos,
   getAllHandoverForms, removeHandoverForm, markHandoverFormFailed,
+  getAllMeterPhotos, removeMeterPhoto, markMeterPhotoFailed,
 } from './offlineOutbox';
 
 const _CONCURRENCY = 3;
@@ -190,8 +191,29 @@ export async function flushOutbox() {
         await Promise.all(chunk.map(async (op) => {
           if (!op || !op.protocolId || !op.sectionId || !op.itemId) return;
           try {
-            await handoverService.updateItem(op.projectId, op.protocolId, op.sectionId, op.itemId, op.payload || {});
-            // RESOLVED ⇒ 2xx ⇒ THE ONLY removeHandoverItem call site.
+            const result = await handoverService.updateItem(op.projectId, op.protocolId, op.sectionId, op.itemId, op.payload || {});
+            // BATCH 4c — handover-defect photos ride the record (photos:[{ blob }]).
+            // SEQUENTIAL after the mark (BATCH 5 pattern): upload each to the defect
+            // the mark just created/reused. INCREMENTAL de-queue — re-put the record
+            // without each uploaded blob so a mid-loop failure resumes from the
+            // REMAINING photos only (updateItem replay reuses the same defect ⇒ no
+            // dup defect, no dup upload).
+            const itemPhotos = Array.isArray(op.photos) ? op.photos.filter((p) => p && p.blob) : [];
+            if (itemPhotos.length > 0) {
+              if (!result || !result.defect_id) {
+                // Anomaly: a defective payload returned no defect_id — surface + KEEP.
+                await markHandoverItemFailed(op.protocolId, op.sectionId, op.itemId);
+                failed += 1;
+                return;
+              }
+              let remaining = itemPhotos.slice();
+              for (const ph of itemPhotos) {
+                await taskService.uploadAttachment(result.defect_id, ph.blob);
+                remaining = remaining.slice(1);
+                await replaceHandoverItemPhotos(op.protocolId, op.sectionId, op.itemId, remaining);
+              }
+            }
+            // RESOLVED ⇒ 2xx (mark + all photos) ⇒ THE ONLY removeHandoverItem call site.
             await removeHandoverItem(op.protocolId, op.sectionId, op.itemId);
             synced += 1;
             syncedProtocolIds.add(op.protocolId);
@@ -235,6 +257,41 @@ export async function flushOutbox() {
             } else {
               // Server REJECTED (real 4xx/5xx) — flag + KEEP, never silently drop.
               await markHandoverFormFailed(op.protocolId, op.field);
+              failed += 1;
+            }
+          }
+        }));
+        if (hitBackoff) break;
+      }
+    }
+
+    // BATCH 4c — drain queued METER PHOTOS. ⚠ MUST run AFTER the forms drain:
+    // upload_meter_photo $sets ONLY meters.{type}.photo_url (a subfield) while the
+    // 4b form op $sets the WHOLE meters object from a possibly-stale offline snapshot
+    // — so photos-LAST guarantees the fresh photo_url survives (forms-after-photos
+    // would clobber it). Same data-loss policy; the deterministic S3 key makes a
+    // replay overwrite the same object (idempotent).
+    if (!hitBackoff) {
+      const meterPhotoOps = await getAllMeterPhotos();
+      for (let i = 0; i < meterPhotoOps.length; i += _CONCURRENCY) {
+        const chunk = meterPhotoOps.slice(i, i + _CONCURRENCY);
+        await Promise.all(chunk.map(async (op) => {
+          if (!op || !op.protocolId || !op.type || !op.blob) return;
+          try {
+            await handoverService.uploadMeterPhoto(op.projectId, op.protocolId, op.type, op.blob);
+            // RESOLVED ⇒ 2xx ⇒ THE ONLY removeMeterPhoto call site.
+            await removeMeterPhoto(op.protocolId, op.type);
+            synced += 1;
+            syncedProtocolIds.add(op.protocolId);
+          } catch (error) {
+            if (_isTransientStatus(error)) {
+              _backoffUntil = Date.now() + _BACKOFF_MS;
+              hitBackoff = true;
+            } else if (!error || !error.response) {
+              // Network failure — KEEP, retried on the next flush.
+            } else {
+              // Server REJECTED (real 4xx/5xx) — flag + KEEP, never silently drop.
+              await markMeterPhotoFailed(op.protocolId, op.type);
               failed += 1;
             }
           }

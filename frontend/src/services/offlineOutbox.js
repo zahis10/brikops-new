@@ -26,7 +26,14 @@ const DEFECT_STORE = 'defect_creates';
 // ⛔ tenants are NEVER written here (ת"ז/phone/email) — enqueueHandoverForm hard-guards the field.
 const HANDOVER_ITEM_STORE = 'handover_item_updates';
 const HANDOVER_FORM_STORE = 'handover_form_updates';
-const DB_VERSION = 4;
+// BATCH 4c: offline handover PHOTOS. One new store in the SAME DB so the v4→v5
+// upgrade keeps the 3a marks + 3b photos + 5 defect-creates + 4b handover stores
+// intact. handover_meter_photos — one blob per meter, keyed `${protocolId}::${type}`
+// (last-write-wins). Handover-defect photos ride the handover_item_updates records
+// (photos[] per record) — no store of their own.
+// ⛔ tenant ID-photos are NEVER stored here (PII — a government-ID image; 4a rule).
+const METER_PHOTO_STORE = 'handover_meter_photos';
+const DB_VERSION = 5;
 
 let _dbPromise = null;
 
@@ -74,6 +81,12 @@ function _openDb() {
       }
       if (!db.objectStoreNames.contains(HANDOVER_FORM_STORE)) {
         db.createObjectStore(HANDOVER_FORM_STORE, { keyPath: 'key' });
+      }
+      // BATCH 4c: guarded meter-photo store. Created on the v4→v5 upgrade so it
+      // exists app-wide; the live drain + outboxCount read it on every flush and a
+      // missing store would throw and break the 3a/3b/5/4b sync already in prod.
+      if (!db.objectStoreNames.contains(METER_PHOTO_STORE)) {
+        db.createObjectStore(METER_PHOTO_STORE, { keyPath: 'key' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -240,7 +253,7 @@ export async function outboxCount() {
   try {
     const db = await _openDb();
     if (!db) return 0;
-    const names = [STORE, PHOTO_STORE, DEFECT_STORE, HANDOVER_ITEM_STORE, HANDOVER_FORM_STORE];
+    const names = [STORE, PHOTO_STORE, DEFECT_STORE, HANDOVER_ITEM_STORE, HANDOVER_FORM_STORE, METER_PHOTO_STORE];
     const counts = await Promise.all(names.map((n) => _countStore(db, n)));
     return counts.reduce((a, b) => a + b, 0);
   } catch (_) {
@@ -559,8 +572,13 @@ function _handoverFormKey(protocolId, field) {
 
 // payload = the EXACT body the online updateItem call sends
 // (status / notes / description / severity / photos:[] / photos_pending_count / skip_photo_reason).
+// BATCH 4c: optional `photos` = array of File blobs (the SAME compressed files the
+// online path uploads) stored as photos:[{ blob }] on the record — the drain replays
+// updateItem then uploads them to the returned defect_id. Existing 5-arg callers are
+// untouched (photos defaults [] ⇒ record carries photos:[]).
+// ⛔ NEVER a tenant photo here (ת"ז) — only handover-defect photos ride this record.
 // Overwrites any existing op for (protocolId,sectionId,itemId) — local last-write-wins.
-export async function enqueueHandoverItem(projectId, protocolId, sectionId, itemId, payload) {
+export async function enqueueHandoverItem(projectId, protocolId, sectionId, itemId, payload, photos = []) {
   if (!protocolId || !sectionId || !itemId) return;
   try {
     const db = await _openDb();
@@ -572,6 +590,7 @@ export async function enqueueHandoverItem(projectId, protocolId, sectionId, item
       sectionId,
       itemId,
       payload: payload || {},
+      photos: (Array.isArray(photos) ? photos : []).filter(Boolean).map((blob) => ({ blob })),
       queuedAt: Date.now(),
       failed: false,
     };
@@ -645,6 +664,38 @@ export async function markHandoverItemFailed(protocolId, sectionId, itemId) {
           const rec = getReq.result;
           if (!rec) { resolve(); return; }
           rec.failed = true;
+          const putReq = store.put(rec);
+          putReq.onsuccess = () => resolve();
+          putReq.onerror = () => resolve();
+        };
+        getReq.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+// BATCH 4c — incremental photo de-queue for the handover-item drain. After each
+// photo 2xx the drain re-puts the record with the uploaded blob removed, so a
+// mid-loop failure resumes from the REMAINING photos only (updateItem replay
+// reuses the same defect — no dup defect, no dup upload). `photos` = remaining
+// [{ blob }]. Used ONLY by the drain's incremental step.
+export async function replaceHandoverItemPhotos(protocolId, sectionId, itemId, photos) {
+  if (!protocolId || !sectionId || !itemId) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const store = _handoverItemStore(db, 'readwrite');
+        const getReq = store.get(_handoverItemKey(protocolId, sectionId, itemId));
+        getReq.onsuccess = () => {
+          const rec = getReq.result;
+          if (!rec) { resolve(); return; }
+          rec.photos = Array.isArray(photos) ? photos : [];
           const putReq = store.put(rec);
           putReq.onsuccess = () => resolve();
           putReq.onerror = () => resolve();
@@ -749,6 +800,141 @@ export async function markHandoverFormFailed(protocolId, field) {
       try {
         const store = _handoverFormStore(db, 'readwrite');
         const getReq = store.get(_handoverFormKey(protocolId, field));
+        getReq.onsuccess = () => {
+          const rec = getReq.result;
+          if (!rec) { resolve(); return; }
+          rec.failed = true;
+          const putReq = store.put(rec);
+          putReq.onsuccess = () => resolve();
+          putReq.onerror = () => resolve();
+        };
+        getReq.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+// ===========================================================================
+// BATCH 4c — meter-photo blob outbox (store METER_PHOTO_STORE). One record per
+// (protocol, meter type), key `${protocolId}::${type}` — OVERWRITE per key so the
+// LATEST photo of a meter wins (same as an online re-photograph). The backend
+// upload_meter_photo $sets ONLY meters.{type}.photo_url (a subfield) using a
+// DETERMINISTIC S3 key, so a replay overwrites the same object — idempotent.
+// ⛔ tenant ID-photos are NEVER queued here (PII — a government-ID image; 4a rule).
+// ===========================================================================
+
+function _meterPhotoStore(db, mode) {
+  return db.transaction(METER_PHOTO_STORE, mode).objectStore(METER_PHOTO_STORE);
+}
+
+function _meterPhotoKey(protocolId, type) {
+  return `${protocolId}::${type}`;
+}
+
+function _getAllMeterPhotosRaw(db) {
+  return new Promise((resolve) => {
+    try {
+      const req = _meterPhotoStore(db, 'readonly').getAll();
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+      req.onerror = () => resolve([]);
+    } catch (_) {
+      resolve([]);
+    }
+  });
+}
+
+// blob = the COMPRESSED File (output of compressImage). Overwrites per (protocol,type).
+export async function enqueueMeterPhoto(projectId, protocolId, type, blob) {
+  if (!protocolId || (type !== 'water' && type !== 'electricity') || !blob) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    const record = {
+      key: _meterPhotoKey(protocolId, type),
+      projectId,
+      protocolId,
+      type,
+      blob,
+      queuedAt: Date.now(),
+      failed: false,
+    };
+    await new Promise((resolve) => {
+      try {
+        const req = _meterPhotoStore(db, 'readwrite').put(record);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+// Pending meter photo for one (protocol, type) — to hydrate the preview. → record | null.
+export async function getMeterPhoto(protocolId, type) {
+  if (!protocolId || !type) return null;
+  try {
+    const db = await _openDb();
+    if (!db) return null;
+    return await new Promise((resolve) => {
+      try {
+        const req = _meterPhotoStore(db, 'readonly').get(_meterPhotoKey(protocolId, type));
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
+// Every pending meter photo, for the sync engine.
+export async function getAllMeterPhotos() {
+  try {
+    const db = await _openDb();
+    if (!db) return [];
+    return await _getAllMeterPhotosRaw(db);
+  } catch (_) {
+    return [];
+  }
+}
+
+export async function removeMeterPhoto(protocolId, type) {
+  if (!protocolId || !type) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const req = _meterPhotoStore(db, 'readwrite').delete(_meterPhotoKey(protocolId, type));
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+export async function markMeterPhotoFailed(protocolId, type) {
+  if (!protocolId || !type) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const store = _meterPhotoStore(db, 'readwrite');
+        const getReq = store.get(_meterPhotoKey(protocolId, type));
         getReq.onsuccess = () => {
           const rec = getReq.result;
           if (!rec) { resolve(); return; }

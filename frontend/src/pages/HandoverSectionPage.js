@@ -593,27 +593,25 @@ const HandoverSectionPage = () => {
       return;
     }
 
-    // OFFLINE capture for defects/partials. Photos can't upload offline yet (4c),
-    // so a defect WITH staged photos is blocked (sheet stays open); a defect with
-    // NO photos requires a skip-reason ('defective' — the server counts ONLY body
-    // photos, so an existing-photos-only payload would 400 on replay). 'partial'
-    // has no photo rule and queues freely.
+    // OFFLINE capture for defects/partials. BATCH 4c — defects WITH staged photos
+    // now queue too: the blobs ride the item record (photos arg) and the drain
+    // uploads them to the defect after the mark. photos_pending_count satisfies the
+    // server's has_photos rule, so WITH photos no skip-reason is needed (matches
+    // online). Only a 'defective' with ZERO photos still requires a skip-reason.
     if (FEATURES.OFFLINE_MODE && navigator.onLine === false) {
-      if (photos.length > 0) {
-        toast('צילום ליקוי זמין רק כשיש חיבור לאינטרנט — יתמך אופליין בשלב הבא', { icon: 'ℹ️' });
-        return;
-      }
-      if (status === 'defective' && !skipPhotoReason.trim()) {
-        toast('כדי לשמור ליקוי ללא חיבור יש לצרף סיבה לאי-צילום', { icon: 'ℹ️' });
+      if (status === 'defective' && photos.length === 0 && !skipPhotoReason.trim()) {
+        toast('כדי לשמור ליקוי ללא תמונות וללא חיבור יש לצרף סיבה לאי-צילום', { icon: 'ℹ️' });
         return;
       }
       enqueueHandoverItem(projectId, protocolId, sectionId, activeItem.item_id, {
         status, description: description.trim(), severity,
-        photos: [], photos_pending_count: 0, skip_photo_reason: skipPhotoReason.trim() || null,
-      });
+        photos: [], photos_pending_count: photos.length, skip_photo_reason: skipPhotoReason.trim() || null,
+      }, photos.map(p => p.file));
       updateItemLocally(activeItem.item_id, { status, description: description.trim(), severity });
       setQueuedItemIds(prev => { const next = new Set(prev); next.add(activeItem.item_id); return next; });
       originalItemRef.current = { status, description: description.trim(), severity, notes };
+      // Blobs are queued — the staged previews are no longer needed.
+      photos.forEach(img => URL.revokeObjectURL(img.preview));
       toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
       advanceAfterSave(activeItem.item_id);
       return;
@@ -672,21 +670,24 @@ const HandoverSectionPage = () => {
       photos.forEach(img => URL.revokeObjectURL(img.preview));
       advanceAfterSave(activeItem.item_id);
     } catch (err) {
-      // REACTIVE: network-failed mid-save (went offline) with NO staged photos →
-      // capture instead of error (a defect WITH photos keeps today's error path,
-      // since the photo upload can't be deferred yet — 4c).
-      if (FEATURES.OFFLINE_MODE && photos.length === 0 && (!err || !err.response)) {
-        if (status === 'defective' && !skipPhotoReason.trim()) {
-          toast('כדי לשמור ליקוי ללא חיבור יש לצרף סיבה לאי-צילום', { icon: 'ℹ️' });
+      // REACTIVE: network-failed mid-save (went offline) → capture instead of error.
+      // BATCH 4c — defects WITH staged photos queue too (blobs ride the record);
+      // updateItem threw so nothing was created server-side, so the whole mark +
+      // its photos are queued. Only a zero-photos 'defective' needs a skip-reason.
+      if (FEATURES.OFFLINE_MODE && (!err || !err.response)) {
+        if (status === 'defective' && photos.length === 0 && !skipPhotoReason.trim()) {
+          toast('כדי לשמור ליקוי ללא תמונות וללא חיבור יש לצרף סיבה לאי-צילום', { icon: 'ℹ️' });
           return;
         }
         enqueueHandoverItem(projectId, protocolId, sectionId, activeItem.item_id, {
           status, description: description.trim(), severity,
-          photos: [], photos_pending_count: 0, skip_photo_reason: skipPhotoReason.trim() || null,
-        });
+          photos: [], photos_pending_count: photos.length, skip_photo_reason: skipPhotoReason.trim() || null,
+        }, photos.map(p => p.file));
         updateItemLocally(activeItem.item_id, { status, description: description.trim(), severity });
         setQueuedItemIds(prev => { const next = new Set(prev); next.add(activeItem.item_id); return next; });
         originalItemRef.current = { status, description: description.trim(), severity, notes };
+        // Blobs are queued — the staged previews are no longer needed.
+        photos.forEach(img => URL.revokeObjectURL(img.preview));
         toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
         advanceAfterSave(activeItem.item_id);
         return;
