@@ -432,3 +432,9 @@ id = "q5AEFwkiC9OyXF8ceyqRM"
 uri = "file://.local/plans/offline-handover-read-4a-plan.md"
 type = "text"
 title = "תוכנית BATCH offline-handover-read-4a (לעיון, טרם יישום)"
+
+[[outputs]]
+id = "4gNkl1ZQdkj5c2MqW0zfA"
+uri = "file://.local/plans/offline-handover-capture-4b-plan.md"
+type = "text"
+title = "תוכנית BATCH offline-handover-capture-4b (לעיון, טרם יישום)"
