@@ -1,171 +1,127 @@
 ================================================================
-BATCH offline-handover-capture-4b — REVIEW (capture a handover OFFLINE)
-FRONTEND-ONLY — Capgo OTA — NO native / backend / new-dependency / new-flag — rides FEATURES.OFFLINE_MODE
+BATCH 4b — REVIEW FIX 1: outboxCount() counts ALL pending stores
+FRONTEND-ONLY — Capgo OTA — no new dependency / no flag change
 Branch: staging
 ================================================================
 
-ROLLBACK SHA (HEAD before edits) : 98854bc
-SCOPE                            : 7 frontend files, write-side of the handover offline arc.
-                                   Mirrors QC 3a (StageDetailPage): same outbox DB, same sync engine,
-                                   same data-loss policy, same toast wording. Toasts = sonner ONLY.
+DATE  : 2026-06-10
+FILE  : 1 — frontend/src/services/offlineOutbox.js (outboxCount + new _countStore)
 
 ----------------------------------------------------------------
-STEP 0 — PRE-FLIGHT (read-only, confirmed against HEAD 98854bc)
+WHY
 ----------------------------------------------------------------
-0.1 offlineOutbox.js — DB_NAME 'brikops-outbox'; existing stores qc_item_updates / qc_photo_uploads /
-    defect_creates; DB_VERSION was 3; onupgradeneeded guarded with objectStoreNames.contains();
-    key separator `::` (reused for new keys). ✓
-0.2 offlineSync.js — flushOutbox; _CONCURRENCY=3; _backoffUntil/_BACKOFF_MS=60000; _isTransientStatus;
-    syncedRunIds/syncedUnitIds; drains qc-items → photos(!hitBackoff) → defects(!hitBackoff);
-    dispatch detail {runIds,unitIds,failed}. New drains APPEND after defects, each gated !hitBackoff. ✓
-0.3 HandoverSectionPage.js — updateItemLocally; validate (defective photo rule
-    photos.length===0 && existingPhotos.length===0 && !skipPhotoReason.trim()); handleSimpleStatusSave;
-    handleSaveDefectAndAdvance (updateItem then upload only if defectId && photos>0);
-    handleMarkAllOk/NotRelevant/ResetSection over PRE-FILTERED lists (uncheckedItems / uncheckedItems /
-    resettableItems[excludes defect_id]); originalItemRef; advanceAfterSave; hasUnsavedChanges; loadProtocol.
-    FEATURES + offlineOutbox + offlineSync were NOT imported → added. ✓
-0.4 Forms — PropertyForm.handleSave→updateProtocol{property_details}; MeterForm.handleSave→updateProtocol{meters},
-    MeterCard.handlePhoto→uploadMeterPhoto; TenantForm.handleSave→updateProtocol{tenants}. All import sonner. ✓
-0.5 HandoverProtocolPage.handleSharePdf — first stmt was `if(!protocol.locked)`; navigator.share path
-    bypassed the 4a download gate. ✓
-0.6 Backend (verify, NOT edited) — update_protocol → _check_not_locked → per-field $set over
-    (property_details,tenants,meters,delivered_items,general_notes,signature_labels); queuing {property_details}
-    and {meters} as SEPARATE ops is safe (independent last-write-wins). update_item reuses existing non-terminal
-    defect → replay never duplicates. _check_not_locked → replay vs since-signed protocol returns 4xx →
-    markFailed+keep surfaces it (never silent-drop). ✓
-0.7 HandoverItemModal.js — no external importer (dead code) → NOT touched. ✓
+offlineSync's 30s safety-net retry (startOutboxSync, offlineSync.js ~288 — the
+3a-bis stranded-sync fix, device-proven) gates on `outboxCount() > 0`. The old
+outboxCount() counted ONLY qc_item_updates, so a handover-only backlog (item
+marks / property+meter forms — the NORMAL handover walk) never tripped the 30s
+retry; queued work sat "ממתין" until a sparser trigger fired. The fix also closes
+the same latent gap for photos-only and defect-create-only backlogs.
 
 ----------------------------------------------------------------
-THE 7-FILE CHANGE SET
+STEP 0 (confirmed)
 ----------------------------------------------------------------
-1. frontend/src/services/offlineOutbox.js
-   - DB_VERSION 3 → 4.
-   - Added stores HANDOVER_ITEM_STORE='handover_item_updates', HANDOVER_FORM_STORE='handover_form_updates'
-     via two GUARDED `if(!contains()) createObjectStore({keyPath:'key'})` blocks. Existing 3 stores untouched.
-   - ITEM key `${protocolId}::${sectionId}::${itemId}`; record {key,projectId,protocolId,sectionId,itemId,
-     payload,queuedAt,failed}. payload = exact online body (status/notes/description/severity/photos:[]/
-     photos_pending_count/skip_photo_reason).
-   - FORM key `${protocolId}::${field}`; record {key,projectId,protocolId,field,value,queuedAt,failed}.
-     ⛔ PII HARD GUARD — first line of enqueueHandoverForm:
-        if (field !== 'property_details' && field !== 'meters') return;   // tenants NEVER on device (ת"ז)
-   - New fns (all fail-soft try/catch → null/[]/no-op, mirror the qc set 1:1):
-       enqueueHandoverItem / getHandoverItemsForProtocol / getAllHandoverItems / removeHandoverItem /
-       markHandoverItemFailed
-       enqueueHandoverForm / getHandoverFormUpdate / getAllHandoverForms / removeHandoverForm /
-       markHandoverFormFailed
-
-2. frontend/src/services/offlineSync.js
-   - Imported the new outbox fns + handoverService; added `const syncedProtocolIds = new Set();`.
-   - Drain A (handover items, gated !hitBackoff, chunked _CONCURRENCY):
-       handoverService.updateItem(projectId,protocolId,sectionId,itemId,payload)
-       2xx → removeHandoverItem (THE ONLY call site) + synced++ + syncedProtocolIds.add
-       transient → _backoffUntil/hitBackoff ; network(!err.response) → keep ; real 4xx/5xx → markHandoverItemFailed
-   - Drain B (handover forms, gated !hitBackoff):
-       handoverService.updateProtocol(projectId,protocolId,{[field]:value})
-       2xx → removeHandoverForm (THE ONLY call site) + synced++ + syncedProtocolIds.add ; same policy otherwise
-   - dispatch extended additively: condition `|| syncedProtocolIds.size>0`; detail adds
-     `protocolIds: Array.from(syncedProtocolIds)`. Event name unchanged: 'brikops:outbox-synced'.
-
-3. frontend/src/pages/HandoverSectionPage.js
-   - 3.0 imports: FEATURES; enqueueHandoverItem, getHandoverItemsForProtocol; flushOutbox.
-   - 3.1 state queuedItemIds (Set) + "ממתין לשליחה" amber chip on each item row AND in the open-sheet header.
-   - 3.2 handleSimpleStatusSave: shared captureOffline() — PROACTIVE (navigator.onLine===false) and REACTIVE
-     (catch, !err.response) both enqueue {status,notes} + updateItemLocally + originalItemRef + queued add +
-     toast.success('נשמר במכשיר — יישלח כשתחזור הרשת') + flash/advance. Mutually exclusive (no double enqueue).
-   - 3.3 handleSaveDefectAndAdvance: after validate() passes, before network —
-       offline + photos.length>0  → friendly ℹ️ toast, sheet stays open (photos = 4c), NO enqueue.
-       offline + status==='defective' && !skipPhotoReason.trim() → friendly ℹ️ toast, keep sheet, NO enqueue
-         (server counts ONLY body photos for 'defective' → existing-photos-only would 400 on replay).
-       otherwise → enqueue {photos:[],photos_pending_count:0,skip_photo_reason} + updateItemLocally{status,
-         description,severity} + queued + toast + originalItemRef + advance. 'partial' queues with no photo check.
-       REACTIVE catch: only when photos.length===0 && !err.response (same skip-reason guard); a defect WITH
-       staged photos keeps today's error path.
-   - 3.4 batch handlers (MarkAllOk / MarkAllNotRelevant / ResetSection): proactive branch + reactive catch each
-     loop enqueueHandoverItem over the SAME pre-filtered list, updateItemLocally each, add-all to queued,
-     toast.success(`${n} פריטים נשמרו במכשיר — יישלחו כשתחזור הרשת`), mirror online side-effects
-     (completion banner for ok/NR ; sectionCompletionShown.delete + setShowCompletionBanner(false) for reset).
-     REACTIVE replaces the loadProtocol() rollback.
-   - 3.5 HYDRATE (hydrateQueued, flag-gated, fail-soft): getHandoverItemsForProtocol → keep rec.sectionId===
-     sectionId → updateItemLocally(status/notes/description/severity) + rebuild queuedItemIds. Runs after load
-     and on section switch.
-   - 3.6 SYNC: on mount, if online & FEATURES.OFFLINE_MODE → flushOutbox().catch(()=>{}). Listen
-     'brikops:outbox-synced' → if detail.protocolIds includes this protocol: V9 guard (open sheet &&
-     hasUnsavedChanges() → SKIP reload) else loadProtocol() (which re-fires the hydrate effect).
-
-4. frontend/src/components/handover/HandoverPropertyForm.js
-   - handleSave: proactive + reactive(!err.response) → enqueueHandoverForm(...,'property_details',values) +
-     toast.success('נשמר במכשיר…'); offline path does NOT call onUpdated() (parent reload would reset values).
-   - HYDRATE in the protocol useEffect after setValues: getHandoverFormUpdate(protocol.id,'property_details')
-     → setValues(rec.value) + "ממתין לשליחה" note near the save button.
-
-5. frontend/src/components/handover/HandoverMeterForm.js
-   - handleSave: identical pattern with field 'meters' + meters state; offline path does NOT call onUpdated().
-   - MeterCard.handlePhoto FIRST stmt: navigator.onLine===false → ℹ️ toast
-     ('צילום מונה זמין רק כשיש חיבור לאינטרנט — יתמך אופליין בשלב הבא'); return. (photo upload = 4c)
-   - HYDRATE meters via getHandoverFormUpdate(protocol.id,'meters') + "ממתין לשליחה" note.
-
-6. frontend/src/components/handover/HandoverTenantForm.js  (PII — online-only, NEVER outbox)
-   - handleSave FIRST stmt (before validation): navigator.onLine===false → ℹ️ toast
-     ('שמירת פרטי דייר זמינה רק כשיש חיבור לאינטרנט, מטעמי אבטחת מידע'); return. NO enqueue, NO outbox EVER.
-     4a ID-photo gate stays.
-
-7. frontend/src/pages/HandoverProtocolPage.js
-   - handleSharePdf FIRST stmt (before `if(!protocol.locked)`): navigator.onLine===false →
-     toast('שיתוף PDF זמין רק כשיש חיבור לאינטרנט'); return. Closes the navigator.share chokepoint left from 4a.
+- outboxCount export: offlineOutbox.js (was ~224).
+- outboxCount usage in offlineSync.js: import (line 16) + single caller (line 288). ✓
+- Five store constants present: STORE(14), PHOTO_STORE(17), DEFECT_STORE(21),
+  HANDOVER_ITEM_STORE(27), HANDOVER_FORM_STORE(28). ✓
 
 ----------------------------------------------------------------
-V1 — BABEL PARSE (CRA build SIGTERMs in container → @babel/core preset-react; workflows NEVER restarted)
+CHANGE — offlineOutbox.js ONLY
 ----------------------------------------------------------------
-PARSE OK   src/services/offlineOutbox.js
-PARSE OK   src/services/offlineSync.js
-PARSE OK   src/pages/HandoverSectionPage.js
-PARSE OK   src/components/handover/HandoverPropertyForm.js
-PARSE OK   src/components/handover/HandoverMeterForm.js
-PARSE OK   src/components/handover/HandoverTenantForm.js
-PARSE OK   src/pages/HandoverProtocolPage.js
+Added a fail-soft per-store counter whose try/catch wraps the db.transaction()
+call itself (IndexedDB throws NotFoundError SYNCHRONOUSLY when a store is missing
+on a device still running an older DB version — mirrors the _getAllHandoverItemsRaw
+pattern), then summed all five stores in outboxCount() (same signature, same export,
+caller untouched).
+
+  function _countStore(db, storeName) {
+    return new Promise((resolve) => {
+      try {
+        const req = db.transaction(storeName, 'readonly').objectStore(storeName).count();
+        req.onsuccess = () => resolve(typeof req.result === 'number' ? req.result : 0);
+        req.onerror = () => resolve(0);
+      } catch (_) {
+        resolve(0); // store missing (old DB version) → transaction() throws synchronously
+      }
+    });
+  }
+
+  export async function outboxCount() {
+    try {
+      const db = await _openDb();
+      if (!db) return 0;
+      const names = [STORE, PHOTO_STORE, DEFECT_STORE, HANDOVER_ITEM_STORE, HANDOVER_FORM_STORE];
+      const counts = await Promise.all(names.map((n) => _countStore(db, n)));
+      return counts.reduce((a, b) => a + b, 0);
+    } catch (_) {
+      return 0;
+    }
+  }
 
 ----------------------------------------------------------------
-V2 — STATIC GREPS
+DIFF
 ----------------------------------------------------------------
-- DB_VERSION = 4 .......................................... PASS (offlineOutbox.js:29)
-- both new stores GUARDED by objectStoreNames.contains() .. PASS (HANDOVER_ITEM_STORE:72-73, HANDOVER_FORM_STORE:75-76)
-- removeHandoverItem — EXACTLY ONE call site (sync 2xx) ... PASS (offlineSync.js:195; only other hit = export decl)
-- removeHandoverForm — EXACTLY ONE call site (sync 2xx) ... PASS (offlineSync.js:226; only other hit = export decl)
-- enqueueHandoverForm PII field guard present ............. PASS (offlineOutbox.js:656)
-- no `tenants` string in outbox/sync except guard+comments  PASS (only comment lines + the guard itself)
-- syncedProtocolIds + dispatch protocolIds (additive) ..... PASS (offlineSync.js:70,197,228,251,257)
-- sync event name matches listener ....................... PASS ('brikops:outbox-synced' dispatch:253 / listener:336-337)
+diff --git a/frontend/src/services/offlineOutbox.js b/frontend/src/services/offlineOutbox.js
+@@ export async function markQcUpdateFailed(runId, itemId) {
+   }
+ }
+ 
++// Fail-soft per-store counter. The try/catch MUST wrap the db.transaction() call
++// itself: IndexedDB throws NotFoundError SYNCHRONOUSLY when the store is missing
++// (device still on an older DB version). Mirrors the _getAllHandoverItemsRaw pattern.
++function _countStore(db, storeName) {
++  return new Promise((resolve) => {
++    try {
++      const req = db.transaction(storeName, 'readonly').objectStore(storeName).count();
++      req.onsuccess = () => resolve(typeof req.result === 'number' ? req.result : 0);
++      req.onerror = () => resolve(0);
++    } catch (_) {
++      resolve(0); // store missing (old DB version) → transaction() throws synchronously
++    }
++  });
++}
++
+ export async function outboxCount() {
+   try {
+     const db = await _openDb();
+     if (!db) return 0;
+-    return await new Promise((resolve) => {
+-      try {
+-        const req = _store(db, 'readonly').count();
+-        req.onsuccess = () => resolve(typeof req.result === 'number' ? req.result : 0);
+-        req.onerror = () => resolve(0);
+-      } catch (_) {
+-        resolve(0);
+-      }
+-    });
++    const names = [STORE, PHOTO_STORE, DEFECT_STORE, HANDOVER_ITEM_STORE, HANDOVER_FORM_STORE];
++    const counts = await Promise.all(names.map((n) => _countStore(db, n)));
++    return counts.reduce((a, b) => a + b, 0);
+   } catch (_) {
+     return 0;
+   }
 
 ----------------------------------------------------------------
-V3–V10 — HOW EXERCISED (runtime checks need a device + DevTools → reviewed statically, flagged for Zahi)
+DO NOT (honored)
 ----------------------------------------------------------------
-V3 ⭐ PII-AT-REST (make-or-break): enqueueHandoverForm hard-guards field to property_details|meters ONLY;
-   tenant form is online-gated with NO enqueue path. Static greps confirm no tenant/ת"ז/phone/email is ever
-   written to IndexedDB. RUNTIME (Zahi): offline-save property+meters+marks → records exist & contain no
-   id_number/phone/email; tenant form offline → toast, nothing written.
-V4 marks E2E + NEGATIVE stuck-4xx guard: defective with existing-photos-only AND no skip reason is NOT
-   enqueued (proactive + reactive both early-return with friendly toast) → no record that would 400 forever.
-V5 defect replay = exactly one defect: backend update_item reuses the existing non-terminal defect; LWW key
-   means a double-flush replays the same single record. (Runtime: double flush → one defect.)
-V6 defect + staged photos offline → friendly ℹ️ block, sheet intact, NO enqueue (photos = 4c).
-V7 batch offline pre-filtered: loops use the SAME uncheckedItems / resettableItems lists as the online call.
-V8 forms E2E + hydrate + meter-photo gate: property/meters offline-save + hydrate-on-reload; meter photo
-   online-gated.
-V9 unsaved-protection: sync listener SKIPS reload when a sheet is open with hasUnsavedChanges().
-V10 online unchanged + share gate + 429 backoff: online paths byte-identical except added branches; new drains
-   honor the existing _backoffUntil gate; share-PDF now blocked offline.
+- outboxCount signature & caller (offlineSync.js ~288) unchanged. ✓
+- No other function / drain / store / DB_VERSION touched. ✓
+- No new flag / dependency. ✓
 
 ----------------------------------------------------------------
-DO NOT TOUCH (honored)
+VERIFY
 ----------------------------------------------------------------
-tenants → outbox (never); backend; photo queueing (4c); existing qc/photo/defect stores+drains (byte-identical);
-HandoverItemModal.js (dead); delivered_items/general_notes/legal_text/tenant-notes/signature_labels
-(online-reactive); 4a gates+cache/PII-trim; no new flag/dependency/react-hot-toast.
+V1 babel parse offlineOutbox.js ........................... PASS (PARSE OK)
+V2 git grep outboxCount → exactly the export (offlineOutbox.js:239) + the import
+   (offlineSync.js:16) + the single caller (offlineSync.js:288); store name
+   strings match the five constants; _countStore = one definition + one use ... PASS
+V3 (runtime, Zahi device, fold into the 4b device pass): queue ONLY handover marks
+   offline → reconnect → synced within ~30s without backgrounding the app ....... PENDING (device)
 
 ----------------------------------------------------------------
 COMMIT MESSAGE (also written to .local/.commit_message)
 ----------------------------------------------------------------
-feat(handover): offline capture for handover protocols (batch 4b, frontend-only)
+fix(offline): outboxCount counts all pending stores so the 30s retry covers handover/photos/defect backlogs
 
 ================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

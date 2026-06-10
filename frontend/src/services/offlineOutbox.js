@@ -221,19 +221,28 @@ export async function markQcUpdateFailed(runId, itemId) {
   }
 }
 
+// Fail-soft per-store counter. The try/catch MUST wrap the db.transaction() call
+// itself: IndexedDB throws NotFoundError SYNCHRONOUSLY when the store is missing
+// (device still on an older DB version). Mirrors the _getAllHandoverItemsRaw pattern.
+function _countStore(db, storeName) {
+  return new Promise((resolve) => {
+    try {
+      const req = db.transaction(storeName, 'readonly').objectStore(storeName).count();
+      req.onsuccess = () => resolve(typeof req.result === 'number' ? req.result : 0);
+      req.onerror = () => resolve(0);
+    } catch (_) {
+      resolve(0); // store missing (old DB version) → transaction() throws synchronously
+    }
+  });
+}
+
 export async function outboxCount() {
   try {
     const db = await _openDb();
     if (!db) return 0;
-    return await new Promise((resolve) => {
-      try {
-        const req = _store(db, 'readonly').count();
-        req.onsuccess = () => resolve(typeof req.result === 'number' ? req.result : 0);
-        req.onerror = () => resolve(0);
-      } catch (_) {
-        resolve(0);
-      }
-    });
+    const names = [STORE, PHOTO_STORE, DEFECT_STORE, HANDOVER_ITEM_STORE, HANDOVER_FORM_STORE];
+    const counts = await Promise.all(names.map((n) => _countStore(db, n)));
+    return counts.reduce((a, b) => a + b, 0);
   } catch (_) {
     return 0;
   }
