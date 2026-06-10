@@ -438,3 +438,9 @@ id = "4gNkl1ZQdkj5c2MqW0zfA"
 uri = "file://.local/plans/offline-handover-capture-4b-plan.md"
 type = "text"
 title = "תוכנית BATCH offline-handover-capture-4b (לעיון, טרם יישום)"
+
+[[outputs]]
+id = "OJG_H9BOLoTLg5TRI0boQ"
+uri = "file://.local/plans/offline-handover-photos-4c-plan.md"
+type = "text"
+title = "BATCH 4c — תוכנית תמונות אופליין (מעודכנת)"
