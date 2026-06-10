@@ -84,6 +84,12 @@ const HandoverTenantForm = ({ protocol, projectId, isSigned, onUpdated }) => {
 
   const handleSave = useCallback(async () => {
     if (isSigned || saving) return;
+    // ONLINE-ONLY: tenant data carries ת"ז/phone/email — NEVER write it to the
+    // device outbox (4a/4b PII rule). Friendly gate instead of an offline save.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      toast('שמירת פרטי דייר זמינה רק כשיש חיבור לאינטרנט, מטעמי אבטחת מידע', { icon: 'ℹ️' });
+      return;
+    }
     for (let i = 0; i < tenants.length; i++) {
       const phone = (tenants[i].phone || '').trim();
       if (phone && (!/^\d+$/.test(phone) || phone.length < 10)) {

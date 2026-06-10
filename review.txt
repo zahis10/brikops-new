@@ -1,164 +1,172 @@
-BATCH offline-handover-read-4a — view a handover protocol OFFLINE
-(read-through cache + tenant/signer government-ID PII trim + online-only gates for ID-photo / sign / PDF)
-=================================================================================================
-Branch: staging  |  Rollback SHA: b967560  |  Severity: Feature (offline arc, step 4a)  |  Status: CODE COMPLETE
-FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency, no new flag.
-Rides the EXISTING FEATURES.OFFLINE_MODE-gated read-cache interceptor (same machinery as companies).
+================================================================
+BATCH offline-handover-capture-4b — REVIEW (capture a handover OFFLINE)
+FRONTEND-ONLY — Capgo OTA — NO native / backend / new-dependency / new-flag — rides FEATURES.OFFLINE_MODE
+Branch: staging
+================================================================
+
+ROLLBACK SHA (HEAD before edits) : 98854bc
+SCOPE                            : 7 frontend files, write-side of the handover offline arc.
+                                   Mirrors QC 3a (StageDetailPage): same outbox DB, same sync engine,
+                                   same data-loss policy, same toast wording. Toasts = sonner ONLY.
+
+----------------------------------------------------------------
+STEP 0 — PRE-FLIGHT (read-only, confirmed against HEAD 98854bc)
+----------------------------------------------------------------
+0.1 offlineOutbox.js — DB_NAME 'brikops-outbox'; existing stores qc_item_updates / qc_photo_uploads /
+    defect_creates; DB_VERSION was 3; onupgradeneeded guarded with objectStoreNames.contains();
+    key separator `::` (reused for new keys). ✓
+0.2 offlineSync.js — flushOutbox; _CONCURRENCY=3; _backoffUntil/_BACKOFF_MS=60000; _isTransientStatus;
+    syncedRunIds/syncedUnitIds; drains qc-items → photos(!hitBackoff) → defects(!hitBackoff);
+    dispatch detail {runIds,unitIds,failed}. New drains APPEND after defects, each gated !hitBackoff. ✓
+0.3 HandoverSectionPage.js — updateItemLocally; validate (defective photo rule
+    photos.length===0 && existingPhotos.length===0 && !skipPhotoReason.trim()); handleSimpleStatusSave;
+    handleSaveDefectAndAdvance (updateItem then upload only if defectId && photos>0);
+    handleMarkAllOk/NotRelevant/ResetSection over PRE-FILTERED lists (uncheckedItems / uncheckedItems /
+    resettableItems[excludes defect_id]); originalItemRef; advanceAfterSave; hasUnsavedChanges; loadProtocol.
+    FEATURES + offlineOutbox + offlineSync were NOT imported → added. ✓
+0.4 Forms — PropertyForm.handleSave→updateProtocol{property_details}; MeterForm.handleSave→updateProtocol{meters},
+    MeterCard.handlePhoto→uploadMeterPhoto; TenantForm.handleSave→updateProtocol{tenants}. All import sonner. ✓
+0.5 HandoverProtocolPage.handleSharePdf — first stmt was `if(!protocol.locked)`; navigator.share path
+    bypassed the 4a download gate. ✓
+0.6 Backend (verify, NOT edited) — update_protocol → _check_not_locked → per-field $set over
+    (property_details,tenants,meters,delivered_items,general_notes,signature_labels); queuing {property_details}
+    and {meters} as SEPARATE ops is safe (independent last-write-wins). update_item reuses existing non-terminal
+    defect → replay never duplicates. _check_not_locked → replay vs since-signed protocol returns 4xx →
+    markFailed+keep surfaces it (never silent-drop). ✓
+0.7 HandoverItemModal.js — no external importer (dead code) → NOT touched. ✓
+
+----------------------------------------------------------------
+THE 7-FILE CHANGE SET
+----------------------------------------------------------------
+1. frontend/src/services/offlineOutbox.js
+   - DB_VERSION 3 → 4.
+   - Added stores HANDOVER_ITEM_STORE='handover_item_updates', HANDOVER_FORM_STORE='handover_form_updates'
+     via two GUARDED `if(!contains()) createObjectStore({keyPath:'key'})` blocks. Existing 3 stores untouched.
+   - ITEM key `${protocolId}::${sectionId}::${itemId}`; record {key,projectId,protocolId,sectionId,itemId,
+     payload,queuedAt,failed}. payload = exact online body (status/notes/description/severity/photos:[]/
+     photos_pending_count/skip_photo_reason).
+   - FORM key `${protocolId}::${field}`; record {key,projectId,protocolId,field,value,queuedAt,failed}.
+     ⛔ PII HARD GUARD — first line of enqueueHandoverForm:
+        if (field !== 'property_details' && field !== 'meters') return;   // tenants NEVER on device (ת"ז)
+   - New fns (all fail-soft try/catch → null/[]/no-op, mirror the qc set 1:1):
+       enqueueHandoverItem / getHandoverItemsForProtocol / getAllHandoverItems / removeHandoverItem /
+       markHandoverItemFailed
+       enqueueHandoverForm / getHandoverFormUpdate / getAllHandoverForms / removeHandoverForm /
+       markHandoverFormFailed
+
+2. frontend/src/services/offlineSync.js
+   - Imported the new outbox fns + handoverService; added `const syncedProtocolIds = new Set();`.
+   - Drain A (handover items, gated !hitBackoff, chunked _CONCURRENCY):
+       handoverService.updateItem(projectId,protocolId,sectionId,itemId,payload)
+       2xx → removeHandoverItem (THE ONLY call site) + synced++ + syncedProtocolIds.add
+       transient → _backoffUntil/hitBackoff ; network(!err.response) → keep ; real 4xx/5xx → markHandoverItemFailed
+   - Drain B (handover forms, gated !hitBackoff):
+       handoverService.updateProtocol(projectId,protocolId,{[field]:value})
+       2xx → removeHandoverForm (THE ONLY call site) + synced++ + syncedProtocolIds.add ; same policy otherwise
+   - dispatch extended additively: condition `|| syncedProtocolIds.size>0`; detail adds
+     `protocolIds: Array.from(syncedProtocolIds)`. Event name unchanged: 'brikops:outbox-synced'.
+
+3. frontend/src/pages/HandoverSectionPage.js
+   - 3.0 imports: FEATURES; enqueueHandoverItem, getHandoverItemsForProtocol; flushOutbox.
+   - 3.1 state queuedItemIds (Set) + "ממתין לשליחה" amber chip on each item row AND in the open-sheet header.
+   - 3.2 handleSimpleStatusSave: shared captureOffline() — PROACTIVE (navigator.onLine===false) and REACTIVE
+     (catch, !err.response) both enqueue {status,notes} + updateItemLocally + originalItemRef + queued add +
+     toast.success('נשמר במכשיר — יישלח כשתחזור הרשת') + flash/advance. Mutually exclusive (no double enqueue).
+   - 3.3 handleSaveDefectAndAdvance: after validate() passes, before network —
+       offline + photos.length>0  → friendly ℹ️ toast, sheet stays open (photos = 4c), NO enqueue.
+       offline + status==='defective' && !skipPhotoReason.trim() → friendly ℹ️ toast, keep sheet, NO enqueue
+         (server counts ONLY body photos for 'defective' → existing-photos-only would 400 on replay).
+       otherwise → enqueue {photos:[],photos_pending_count:0,skip_photo_reason} + updateItemLocally{status,
+         description,severity} + queued + toast + originalItemRef + advance. 'partial' queues with no photo check.
+       REACTIVE catch: only when photos.length===0 && !err.response (same skip-reason guard); a defect WITH
+       staged photos keeps today's error path.
+   - 3.4 batch handlers (MarkAllOk / MarkAllNotRelevant / ResetSection): proactive branch + reactive catch each
+     loop enqueueHandoverItem over the SAME pre-filtered list, updateItemLocally each, add-all to queued,
+     toast.success(`${n} פריטים נשמרו במכשיר — יישלחו כשתחזור הרשת`), mirror online side-effects
+     (completion banner for ok/NR ; sectionCompletionShown.delete + setShowCompletionBanner(false) for reset).
+     REACTIVE replaces the loadProtocol() rollback.
+   - 3.5 HYDRATE (hydrateQueued, flag-gated, fail-soft): getHandoverItemsForProtocol → keep rec.sectionId===
+     sectionId → updateItemLocally(status/notes/description/severity) + rebuild queuedItemIds. Runs after load
+     and on section switch.
+   - 3.6 SYNC: on mount, if online & FEATURES.OFFLINE_MODE → flushOutbox().catch(()=>{}). Listen
+     'brikops:outbox-synced' → if detail.protocolIds includes this protocol: V9 guard (open sheet &&
+     hasUnsavedChanges() → SKIP reload) else loadProtocol() (which re-fires the hydrate effect).
+
+4. frontend/src/components/handover/HandoverPropertyForm.js
+   - handleSave: proactive + reactive(!err.response) → enqueueHandoverForm(...,'property_details',values) +
+     toast.success('נשמר במכשיר…'); offline path does NOT call onUpdated() (parent reload would reset values).
+   - HYDRATE in the protocol useEffect after setValues: getHandoverFormUpdate(protocol.id,'property_details')
+     → setValues(rec.value) + "ממתין לשליחה" note near the save button.
+
+5. frontend/src/components/handover/HandoverMeterForm.js
+   - handleSave: identical pattern with field 'meters' + meters state; offline path does NOT call onUpdated().
+   - MeterCard.handlePhoto FIRST stmt: navigator.onLine===false → ℹ️ toast
+     ('צילום מונה זמין רק כשיש חיבור לאינטרנט — יתמך אופליין בשלב הבא'); return. (photo upload = 4c)
+   - HYDRATE meters via getHandoverFormUpdate(protocol.id,'meters') + "ממתין לשליחה" note.
+
+6. frontend/src/components/handover/HandoverTenantForm.js  (PII — online-only, NEVER outbox)
+   - handleSave FIRST stmt (before validation): navigator.onLine===false → ℹ️ toast
+     ('שמירת פרטי דייר זמינה רק כשיש חיבור לאינטרנט, מטעמי אבטחת מידע'); return. NO enqueue, NO outbox EVER.
+     4a ID-photo gate stays.
+
+7. frontend/src/pages/HandoverProtocolPage.js
+   - handleSharePdf FIRST stmt (before `if(!protocol.locked)`): navigator.onLine===false →
+     toast('שיתוף PDF זמין רק כשיש חיבור לאינטרנט'); return. Closes the navigator.share chokepoint left from 4a.
+
+----------------------------------------------------------------
+V1 — BABEL PARSE (CRA build SIGTERMs in container → @babel/core preset-react; workflows NEVER restarted)
+----------------------------------------------------------------
+PARSE OK   src/services/offlineOutbox.js
+PARSE OK   src/services/offlineSync.js
+PARSE OK   src/pages/HandoverSectionPage.js
+PARSE OK   src/components/handover/HandoverPropertyForm.js
+PARSE OK   src/components/handover/HandoverMeterForm.js
+PARSE OK   src/components/handover/HandoverTenantForm.js
+PARSE OK   src/pages/HandoverProtocolPage.js
+
+----------------------------------------------------------------
+V2 — STATIC GREPS
+----------------------------------------------------------------
+- DB_VERSION = 4 .......................................... PASS (offlineOutbox.js:29)
+- both new stores GUARDED by objectStoreNames.contains() .. PASS (HANDOVER_ITEM_STORE:72-73, HANDOVER_FORM_STORE:75-76)
+- removeHandoverItem — EXACTLY ONE call site (sync 2xx) ... PASS (offlineSync.js:195; only other hit = export decl)
+- removeHandoverForm — EXACTLY ONE call site (sync 2xx) ... PASS (offlineSync.js:226; only other hit = export decl)
+- enqueueHandoverForm PII field guard present ............. PASS (offlineOutbox.js:656)
+- no `tenants` string in outbox/sync except guard+comments  PASS (only comment lines + the guard itself)
+- syncedProtocolIds + dispatch protocolIds (additive) ..... PASS (offlineSync.js:70,197,228,251,257)
+- sync event name matches listener ....................... PASS ('brikops:outbox-synced' dispatch:253 / listener:336-337)
+
+----------------------------------------------------------------
+V3–V10 — HOW EXERCISED (runtime checks need a device + DevTools → reviewed statically, flagged for Zahi)
+----------------------------------------------------------------
+V3 ⭐ PII-AT-REST (make-or-break): enqueueHandoverForm hard-guards field to property_details|meters ONLY;
+   tenant form is online-gated with NO enqueue path. Static greps confirm no tenant/ת"ז/phone/email is ever
+   written to IndexedDB. RUNTIME (Zahi): offline-save property+meters+marks → records exist & contain no
+   id_number/phone/email; tenant form offline → toast, nothing written.
+V4 marks E2E + NEGATIVE stuck-4xx guard: defective with existing-photos-only AND no skip reason is NOT
+   enqueued (proactive + reactive both early-return with friendly toast) → no record that would 400 forever.
+V5 defect replay = exactly one defect: backend update_item reuses the existing non-terminal defect; LWW key
+   means a double-flush replays the same single record. (Runtime: double flush → one defect.)
+V6 defect + staged photos offline → friendly ℹ️ block, sheet intact, NO enqueue (photos = 4c).
+V7 batch offline pre-filtered: loops use the SAME uncheckedItems / resettableItems lists as the online call.
+V8 forms E2E + hydrate + meter-photo gate: property/meters offline-save + hydrate-on-reload; meter photo
+   online-gated.
+V9 unsaved-protection: sync listener SKIPS reload when a sheet is open with hasUnsavedChanges().
+V10 online unchanged + share gate + 429 backoff: online paths byte-identical except added branches; new drains
+   honor the existing _backoffUntil gate; share-PDF now blocked offline.
+
+----------------------------------------------------------------
+DO NOT TOUCH (honored)
+----------------------------------------------------------------
+tenants → outbox (never); backend; photo queueing (4c); existing qc/photo/defect stores+drains (byte-identical);
+HandoverItemModal.js (dead); delivered_items/general_notes/legal_text/tenant-notes/signature_labels
+(online-reactive); 4a gates+cache/PII-trim; no new flag/dependency/react-hot-toast.
+
+----------------------------------------------------------------
+COMMIT MESSAGE (also written to .local/.commit_message)
+----------------------------------------------------------------
+feat(handover): offline capture for handover protocols (batch 4b, frontend-only)
+
+================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-
-Files changed: 4 frontend = 4 total (0 backend)
-  EDIT: frontend/src/services/api.js                          (whitelist x3 + _stripProtocolPII + 2 trim branches)
-  EDIT: frontend/src/components/handover/HandoverTenantForm.js (ID-photo upload online gate)
-  EDIT: frontend/src/components/handover/SignatureSection.js   (sign online gate)
-  EDIT: frontend/src/pages/HandoverProtocolPage.js             (PDF download online gate)
-
-SCOPE: 4a makes a protocol opened online RE-VIEWABLE offline (detail + list + overview + summary),
-with tenant AND signer government-ID (ת"ז) PII stripped before any write to device IndexedDB, plus
-3 friendly Hebrew "online only" gates. 4a is NOT offline capture/outbox (4b) and NOT auto-prefetch (4a-bis).
-
-------------------------------------------------------------------
-⭐ DIVERGENCE FROM SPEC (resolved, lighter — no scope creep)
-------------------------------------------------------------------
-The spec's STEP 0.4 assumed toast = react-hot-toast and said "if toast is NOT imported in
-SignatureSection, ADD `import toast from 'react-hot-toast'`". ACTUAL: all THREE gate files already
-import `{ toast } from 'sonner'` (HandoverTenantForm:3, SignatureSection:3, HandoverProtocolPage:4).
-=> NO import added anywhere; react-hot-toast NOT introduced. The spec's gate calls work as-is with
-sonner: `toast('msg')` and `toast('msg', { icon: 'ℹ️' })` are both valid sonner signatures. Reported
-to Zahi pre-implementation; approved by "תתחיל".
-
-------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT (verified against HEAD b967560)
-------------------------------------------------------------------
-0.1 api.js anchors: _OFFLINE_COMPANIES_RE (49), _OFFLINE_CACHEABLE array (54-67),
-    _isOfflineCacheable(url) doing _OFFLINE_CACHEABLE.some(re=>re.test(url)) (65-69 pre-edit /
-    now shifted), function _trimForCache(url,data) (119), cache write
-    cachePutRead(_cacheKey(response.config), _trimForCache(response.config?.url, response.data)). ✓
-0.2 OFFLINE_MODE guard (success handler, was ~155-165) — PASTED:
-      try {
-        if (
-          FEATURES.OFFLINE_MODE &&
-          !response.__fromOfflineCache &&
-          response.config?.method === 'get' &&
-          _isOfflineCacheable(response.config?.url)
-        ) {
-          cachePutRead(_cacheKey(response.config), _trimForCache(response.config?.url, response.data));
-        }
-      } catch (_) { /* cache must never affect the online path */ }
-      return response;   // <-- returns RAW response; trimmed copy is cache-only
-    => the cache write is behind FEATURES.OFFLINE_MODE (no new flag) and the handler returns the
-    untouched `response`. ✓
-0.3 callers (api.js): getProtocol GET /handover/protocols/{id} (1756-7); listProtocols GET
-    /handover/protocols(?qs) (1741-8); getOverview GET /handover/overview via axios params (1810-1);
-    getSummary GET /handover/summary (1806-7). HandoverTabPage (unit handover tab) lists via
-    listProtocols and navigates to the detail -> LIST is on the offline nav path -> must be cached. ✓
-0.4 gate sites: handleIdPhotoUpload = async (idx, file) (was 14); onClick={() => setSigningRole(key)}
-    (was 326); handleDownloadPdf = async () (was 318, with `if (!protocol.locked)` next). toast
-    import = sonner in all three (see DIVERGENCE). ✓
-0.5 tenant PII (HandoverTenantForm EMPTY_TENANT, line 7):
-    { name, id_number, phone, email, id_photo_url, id_photo_display_url } -> STRIP 5
-    {id_number,phone,email,id_photo_url,id_photo_display_url}, KEEP name. ✓
-0.6 signer PII: per spec signatures[role].id_number (signer ת"ז) is persisted; STRIP id_number,
-    KEEP signer_name/typed_name/signed_at/image_key. snapshot = names only (no PII) -> no trim. ✓
-No divergences other than the toast library noted above.
-
-------------------------------------------------------------------
-PART 1 — api.js : make detail + list + overview + summary cacheable
-------------------------------------------------------------------
-- Added two DISJOINT named regexes above _OFFLINE_CACHEABLE:
-    _OFFLINE_HANDOVER_PROTOCOL_RE = /…\/handover\/protocols\/[^/]+(\?|$)/   (detail; id TERMINAL —
-      sub-resources /sections,/items,/signatures,/pdf do NOT match)
-    _OFFLINE_HANDOVER_LIST_RE     = /…\/handover\/protocols(\?|$)/          (list)
-- Added 3 entries to _OFFLINE_CACHEABLE: detail RE, list RE, and
-  /…\/handover\/(overview|summary)(\?|$)/. Existing entries (companies, qc, etc.) unchanged.
-
-------------------------------------------------------------------
-PART 2 — api.js : strip government-ID PII before caching a protocol
-------------------------------------------------------------------
-- Added _stripProtocolPII(p): returns a NEW object ({ ...p }); maps tenants[] dropping
-  {id_number,phone,email,id_photo_url,id_photo_display_url} (keeps name + rest); rebuilds
-  signatures{} dropping each signer's {id_number} (keeps signer_name/typed_name/signed_at/image_key).
-  Non-object inputs returned as-is. snapshot left intact (no PII).
-- _trimForCache: companies branch UNCHANGED; added DETAIL branch (single object ->
-  _stripProtocolPII(data)) and LIST branch (array -> data.map(_stripProtocolPII)).
-- GUARANTEE: _trimForCache runs ONLY at the cache-write arg; every spread builds NEW objects for the
-  cache; the online response (response.data) is returned untouched -> the live in-memory protocol the
-  user edits online keeps full tenant + signer data.
-
-------------------------------------------------------------------
-PART 3 — three OFFLINE GATES (sonner toast, friendly Hebrew, return early)
-------------------------------------------------------------------
-3.1 HandoverTenantForm.handleIdPhotoUpload — FIRST statement: navigator.onLine===false ->
-    toast('העלאת צילום ת"ז זמינה רק כשיש חיבור לאינטרנט, מטעמי אבטחת מידע', {icon:'ℹ️'}); return.
-    Single chokepoint — camera + gallery both call this handler.
-3.2 SignatureSection sign button onClick wrapped: navigator.onLine===false ->
-    toast('חתימה זמינה רק כשיש חיבור לאינטרנט', {icon:'ℹ️'}); return; else setSigningRole(key).
-    (toast already imported from sonner — no import added.)
-3.3 HandoverProtocolPage.handleDownloadPdf — FIRST statement (BEFORE `if (!protocol.locked)`):
-    navigator.onLine===false -> toast('הורדת PDF זמינה רק כשיש חיבור לאינטרנט'); return.
-    PDF ENTRY POINTS (confirmed): handleDownloadPdf is the user-initiated download handler, wired to
-    BOTH download buttons (onClick={handleDownloadPdf} at 494 and 674) and to the share-fallback
-    (handleSharePdf calls handleDownloadPdf when !navigator.share, ~344) — all covered by the one gate.
-    The SILENT background prefetch getPdfBlob (useEffect on mount/update, ~141/154) is NOT gated
-    (it already .catch(()=>{}) fails quietly) — correct per spec. handleSharePdf's own Web-Share path
-    (~350) is a DIFFERENT action (share, not download) and out of 4a scope; offline it either falls
-    into the gated download (no navigator.share) or fails reactively.
-
-------------------------------------------------------------------
-DO NOT TOUCH — honored
-------------------------------------------------------------------
-- ❌ NO offline write-queue/outbox for handover (4b) — no PUT/PATCH/POST changed except the 3 read gates.
-- ❌ NO prefetch/auto-warm of protocols (4a-bis).
-- ❌ Did NOT cache handover TEMPLATE / legal-sections (out of scope).
-- ❌ companies branch of _trimForCache UNCHANGED.
-- ❌ Online response path UNCHANGED — only the cache-write arg is trimmed; detail + list online
-  responses keep full tenant + signer data.
-- ❌ NO new FEATURES flag (rides OFFLINE_MODE). No backend, no new dependency, no native.
-
-------------------------------------------------------------------
-VERIFICATION
-------------------------------------------------------------------
-V1 (build): CRA `CI=true npm run build` NOT run here — the dev container SIGTERMs the build (exit 143)
-   while workflows run, and per the standing rule the agent does not restart workflows. Substituted
-   @babel/core (preset-react) transform of ALL FOUR changed files -> OK (all parse). Real build at
-   Zahi's ./deploy.sh --stag.
-V2 (static, grep-confirmed):
-   - api.js: _OFFLINE_HANDOVER_PROTOCOL_RE (48) + _OFFLINE_HANDOVER_LIST_RE (50) defined; all THREE
-     new whitelist entries present (detail 61, list 62, overview|summary 63); _stripProtocolPII (92)
-     called from the detail branch (121-122) and the list branch data.map(_stripProtocolPII) (125-126);
-     companies branch unchanged.
-   - REGEX DISJOINTNESS (node-tested): detail URL '/api/projects/p1/handover/protocols/pr1' ->
-     DETAIL=true, LIST=false; list URL '/api/projects/p1/handover/protocols?unit_id=u1' ->
-     DETAIL=false, LIST=true. Each trims under exactly one branch (and DETAIL is checked first anyway).
-   - 3 gate sites each have `navigator.onLine === false` + toast + return
-     (HandoverTenantForm:15, SignatureSection:327, HandoverProtocolPage:319).
-V3 ⭐ PII-AT-REST (device/browser): (a) ONLINE open a protocol with a tenant ID number + ID photo AND
-   ≥1 signature (signatures.{role}.id_number populated). (b) Inspect IndexedDB read-cache: cached DETAIL
-   -> tenants[] have NO id_number/phone/email/id_photo_url/id_photo_display_url (only name + non-PII);
-   signatures.{role} have NO id_number (signer_name/signed_at may remain). (b2) cached LIST (?unit_id=
-   key) -> same: no tenant/signer id_number at rest. (c) the LIVE online form still shows full tenant
-   data + signer ID where the UI shows it (online response not mutated).
-V4 OFFLINE VIEW: with the protocol cached (V3a), airplane -> (i) unit handover TAB list renders from
-   cache (status, not blank); (ii) protocol detail renders from cache (checklist/meters/structure/
-   tenant name); ID-photo thumbnail absent (URL stripped) — no crash.
-V5 OFFLINE GATES: offline -> ID-photo "צלם"/"העלה" -> "...רק כשיש חיבור לאינטרנט, מטעמי אבטחת מידע",
-   upload does not proceed; "חתום" -> "חתימה זמינה רק כשיש חיבור לאינטרנט"; PDF download ->
-   "הורדת PDF זמינה רק כשיש חיבור לאינטרנט". Online: all three behave exactly as before.
-V6 ONLINE UNCHANGED: detail/overview/summary load as before; ID-photo upload, signing, PDF all work.
-
-NOT verified here (needs device + DevTools): runtime V3-V6 (esp. V3 IndexedDB PII-at-rest inspection).
-Logic reviewed statically; recommend Zahi exercise V3 (tenant AND signer ת"ז absent at rest) post-deploy.
-
-------------------------------------------------------------------
-COMMIT MESSAGE (written to .local/.commit_message)
-------------------------------------------------------------------
-feat(handover): view protocol offline, government-ID PII stripped from cache
-
-ROLLBACK:
-  Fastest: FEATURES.OFFLINE_MODE=false.
-  Targeted: git revert b967560 -- frontend/src/services/api.js \
-    frontend/src/components/handover/HandoverTenantForm.js \
-    frontend/src/components/handover/SignatureSection.js \
-    frontend/src/pages/HandoverProtocolPage.js
-
-FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency, no new flag.
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================

@@ -11,11 +11,13 @@
 //     bad data being silently lost).
 
 import { FEATURES } from '../config/features';
-import { qcService, taskService } from './api';
+import { qcService, taskService, handoverService } from './api';
 import {
   getAllQcUpdates, removeQcUpdate, markQcUpdateFailed, outboxCount,
   getAllPhotos, removePhoto, markPhotoFailed,
   getAllDefectCreates, removeDefectCreate, markDefectCreateFailed,
+  getAllHandoverItems, removeHandoverItem, markHandoverItemFailed,
+  getAllHandoverForms, removeHandoverForm, markHandoverFormFailed,
 } from './offlineOutbox';
 
 const _CONCURRENCY = 3;
@@ -65,6 +67,7 @@ export async function flushOutbox() {
   let hitBackoff = false;  // a 429/503 in ANY drain aborts the WHOLE flush
   const syncedRunIds = new Set();
   const syncedUnitIds = new Set();
+  const syncedProtocolIds = new Set();
 
   try {
     const ops = await getAllQcUpdates();
@@ -175,16 +178,85 @@ export async function flushOutbox() {
         if (hitBackoff) break;
       }
     }
+
+    // BATCH 4b — drain queued handover ITEM marks. IDENTICAL data-loss policy as
+    // the qc drain (remove on 2xx only; network keep; transient backoff; real
+    // 4xx/5xx markFailed+keep — a protocol locked since the mark surfaces here,
+    // never silently dropped). Skipped if a transient already tripped backoff.
+    if (!hitBackoff) {
+      const itemOps = await getAllHandoverItems();
+      for (let i = 0; i < itemOps.length; i += _CONCURRENCY) {
+        const chunk = itemOps.slice(i, i + _CONCURRENCY);
+        await Promise.all(chunk.map(async (op) => {
+          if (!op || !op.protocolId || !op.sectionId || !op.itemId) return;
+          try {
+            await handoverService.updateItem(op.projectId, op.protocolId, op.sectionId, op.itemId, op.payload || {});
+            // RESOLVED ⇒ 2xx ⇒ THE ONLY removeHandoverItem call site.
+            await removeHandoverItem(op.protocolId, op.sectionId, op.itemId);
+            synced += 1;
+            syncedProtocolIds.add(op.protocolId);
+          } catch (error) {
+            if (_isTransientStatus(error)) {
+              _backoffUntil = Date.now() + _BACKOFF_MS;
+              hitBackoff = true;
+            } else if (!error || !error.response) {
+              // Network failure — KEEP, retried on the next flush.
+            } else {
+              // Server REJECTED (real 4xx/5xx) — flag + KEEP, never silently drop.
+              await markHandoverItemFailed(op.protocolId, op.sectionId, op.itemId);
+              failed += 1;
+            }
+          }
+        }));
+        if (hitBackoff) break;
+      }
+    }
+
+    // BATCH 4b — drain queued handover FORM updates (property_details / meters
+    // only — tenants are never enqueued). Same policy via updateProtocol.
+    if (!hitBackoff) {
+      const formOps = await getAllHandoverForms();
+      for (let i = 0; i < formOps.length; i += _CONCURRENCY) {
+        const chunk = formOps.slice(i, i + _CONCURRENCY);
+        await Promise.all(chunk.map(async (op) => {
+          if (!op || !op.protocolId || !op.field) return;
+          try {
+            await handoverService.updateProtocol(op.projectId, op.protocolId, { [op.field]: op.value });
+            // RESOLVED ⇒ 2xx ⇒ THE ONLY removeHandoverForm call site.
+            await removeHandoverForm(op.protocolId, op.field);
+            synced += 1;
+            syncedProtocolIds.add(op.protocolId);
+          } catch (error) {
+            if (_isTransientStatus(error)) {
+              _backoffUntil = Date.now() + _BACKOFF_MS;
+              hitBackoff = true;
+            } else if (!error || !error.response) {
+              // Network failure — KEEP, retried on the next flush.
+            } else {
+              // Server REJECTED (real 4xx/5xx) — flag + KEEP, never silently drop.
+              await markHandoverFormFailed(op.protocolId, op.field);
+              failed += 1;
+            }
+          }
+        }));
+        if (hitBackoff) break;
+      }
+    }
   } catch (_) {
     /* sync must never throw */
   } finally {
     _flushing = false;
   }
 
-  if ((syncedRunIds.size > 0 || syncedUnitIds.size > 0) && typeof window !== 'undefined') {
+  if ((syncedRunIds.size > 0 || syncedUnitIds.size > 0 || syncedProtocolIds.size > 0) && typeof window !== 'undefined') {
     try {
       window.dispatchEvent(new CustomEvent('brikops:outbox-synced', {
-        detail: { runIds: Array.from(syncedRunIds), unitIds: Array.from(syncedUnitIds), failed },
+        detail: {
+          runIds: Array.from(syncedRunIds),
+          unitIds: Array.from(syncedUnitIds),
+          protocolIds: Array.from(syncedProtocolIds),
+          failed,
+        },
       }));
     } catch (_) { /* event dispatch must never throw */ }
   }

@@ -4,6 +4,9 @@ import { handoverService, taskService } from '../services/api';
 import { toast } from 'sonner';
 import { t } from '../i18n';
 import { compressImage } from '../utils/imageCompress';
+import { FEATURES } from '../config/features';
+import { enqueueHandoverItem, getHandoverItemsForProtocol } from '../services/offlineOutbox';
+import { flushOutbox } from '../services/offlineSync';
 import {
   ArrowRight, ArrowLeft, Loader2, CheckCircle2, AlertTriangle, CircleDot,
   MinusCircle, Circle, Bug, Camera, ImagePlus, ChevronLeft, ChevronRight,
@@ -71,6 +74,8 @@ const HandoverSectionPage = () => {
   const [isNarrow, setIsNarrow] = useState(window.innerWidth < 400);
 
   const [pendingFile, setPendingFile] = useState(null);
+  // BATCH 4b: item ids captured offline & awaiting sync (drives the "ממתין לשליחה" chip).
+  const [queuedItemIds, setQueuedItemIds] = useState(() => new Set());
 
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
@@ -289,6 +294,49 @@ const HandoverSectionPage = () => {
     });
   }, [sectionId]);
 
+  // BATCH 4b — HYDRATE marks captured offline so they survive a reload (fail-soft).
+  const hydrateQueued = useCallback(async () => {
+    if (!FEATURES.OFFLINE_MODE || !protocolId) return;
+    try {
+      const recs = await getHandoverItemsForProtocol(protocolId);
+      const mine = (recs || []).filter(r => r && r.sectionId === sectionId && r.itemId);
+      if (mine.length === 0) { setQueuedItemIds(new Set()); return; }
+      mine.forEach((r) => {
+        const p = r.payload || {};
+        const upd = {};
+        if (p.status !== undefined) upd.status = p.status;
+        if (p.notes !== undefined) upd.notes = p.notes;
+        if (p.description !== undefined) upd.description = p.description;
+        if (p.severity !== undefined) upd.severity = p.severity;
+        updateItemLocally(r.itemId, upd);
+      });
+      setQueuedItemIds(new Set(mine.map(r => r.itemId)));
+    } catch (_) { /* hydrate must never throw */ }
+  }, [protocolId, sectionId, updateItemLocally]);
+
+  // Run hydrate once the protocol has loaded (and on section switch).
+  useEffect(() => {
+    if (!loading && protocol?.id) hydrateQueued();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, protocol?.id, sectionId]);
+
+  // BATCH 4b — flush on mount if a backlog exists & we are online; reload when a
+  // sync lands for THIS protocol. V9: never wipe an open sheet mid-edit.
+  useEffect(() => {
+    if (!FEATURES.OFFLINE_MODE) return;
+    if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+      flushOutbox().catch(() => {});
+    }
+    const onSynced = (e) => {
+      const ids = e?.detail?.protocolIds;
+      if (!Array.isArray(ids) || !ids.includes(protocolId)) return;
+      if (activeItemId && hasUnsavedChanges()) return;  // V9 — protect unsaved work
+      loadProtocol();  // re-fires the hydrate effect via the loading toggle
+    };
+    window.addEventListener('brikops:outbox-synced', onSynced);
+    return () => window.removeEventListener('brikops:outbox-synced', onSynced);
+  }, [protocolId, activeItemId, hasUnsavedChanges, loadProtocol]);
+
   const findNextUnchecked = useCallback((afterIndex) => {
     for (let i = afterIndex + 1; i < items.length; i++) {
       if (!items[i].status || items[i].status === 'not_checked') return items[i].item_id;
@@ -469,6 +517,32 @@ const HandoverSectionPage = () => {
 
   const handleSimpleStatusSave = useCallback(async (newStatus) => {
     if (isSigned || saving || !activeItem) return;
+
+    // Shared offline-capture path — mirrors the online success side-effects but
+    // queues the mark instead of hitting the network.
+    const captureOffline = () => {
+      enqueueHandoverItem(projectId, protocolId, sectionId, activeItem.item_id, { status: newStatus, notes });
+      updateItemLocally(activeItem.item_id, { status: newStatus });
+      originalItemRef.current = { ...originalItemRef.current, status: newStatus, notes };
+      setQueuedItemIds(prev => { const next = new Set(prev); next.add(activeItem.item_id); return next; });
+      if (newStatus === 'not_checked') {
+        sectionCompletionShown.current.delete(sectionId);
+        setShowCompletionBanner(false);
+      }
+      toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
+      setTimeout(() => {
+        setFlashStatus(null);
+        advanceAfterSave(activeItem.item_id);
+      }, 400);
+    };
+
+    // PROACTIVE: already offline → capture, no network attempt.
+    if (FEATURES.OFFLINE_MODE && navigator.onLine === false) {
+      setFlashStatus(newStatus);
+      captureOffline();
+      return;
+    }
+
     try {
       setSaving(true);
       setFlashStatus(newStatus);
@@ -493,6 +567,11 @@ const HandoverSectionPage = () => {
         advanceAfterSave(activeItem.item_id);
       }, 400);
     } catch (err) {
+      // REACTIVE: network-failed mid-save (went offline) → capture instead of error.
+      if (FEATURES.OFFLINE_MODE && (!err || !err.response)) {
+        captureOffline();
+        return;
+      }
       console.error(err);
       setFlashStatus(null);
       toast.error(t('handover', 'updateError'));
@@ -511,6 +590,32 @@ const HandoverSectionPage = () => {
         const firstError = sheetContentRef.current.querySelector('[data-error="true"]');
         firstError?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
+      return;
+    }
+
+    // OFFLINE capture for defects/partials. Photos can't upload offline yet (4c),
+    // so a defect WITH staged photos is blocked (sheet stays open); a defect with
+    // NO photos requires a skip-reason ('defective' — the server counts ONLY body
+    // photos, so an existing-photos-only payload would 400 on replay). 'partial'
+    // has no photo rule and queues freely.
+    if (FEATURES.OFFLINE_MODE && navigator.onLine === false) {
+      if (photos.length > 0) {
+        toast('צילום ליקוי זמין רק כשיש חיבור לאינטרנט — יתמך אופליין בשלב הבא', { icon: 'ℹ️' });
+        return;
+      }
+      if (status === 'defective' && !skipPhotoReason.trim()) {
+        toast('כדי לשמור ליקוי ללא חיבור יש לצרף סיבה לאי-צילום', { icon: 'ℹ️' });
+        return;
+      }
+      enqueueHandoverItem(projectId, protocolId, sectionId, activeItem.item_id, {
+        status, description: description.trim(), severity,
+        photos: [], photos_pending_count: 0, skip_photo_reason: skipPhotoReason.trim() || null,
+      });
+      updateItemLocally(activeItem.item_id, { status, description: description.trim(), severity });
+      setQueuedItemIds(prev => { const next = new Set(prev); next.add(activeItem.item_id); return next; });
+      originalItemRef.current = { status, description: description.trim(), severity, notes };
+      toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
+      advanceAfterSave(activeItem.item_id);
       return;
     }
 
@@ -567,6 +672,25 @@ const HandoverSectionPage = () => {
       photos.forEach(img => URL.revokeObjectURL(img.preview));
       advanceAfterSave(activeItem.item_id);
     } catch (err) {
+      // REACTIVE: network-failed mid-save (went offline) with NO staged photos →
+      // capture instead of error (a defect WITH photos keeps today's error path,
+      // since the photo upload can't be deferred yet — 4c).
+      if (FEATURES.OFFLINE_MODE && photos.length === 0 && (!err || !err.response)) {
+        if (status === 'defective' && !skipPhotoReason.trim()) {
+          toast('כדי לשמור ליקוי ללא חיבור יש לצרף סיבה לאי-צילום', { icon: 'ℹ️' });
+          return;
+        }
+        enqueueHandoverItem(projectId, protocolId, sectionId, activeItem.item_id, {
+          status, description: description.trim(), severity,
+          photos: [], photos_pending_count: 0, skip_photo_reason: skipPhotoReason.trim() || null,
+        });
+        updateItemLocally(activeItem.item_id, { status, description: description.trim(), severity });
+        setQueuedItemIds(prev => { const next = new Set(prev); next.add(activeItem.item_id); return next; });
+        originalItemRef.current = { status, description: description.trim(), severity, notes };
+        toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
+        advanceAfterSave(activeItem.item_id);
+        return;
+      }
       console.error(err);
       const detail = err.response?.data?.detail;
       toast.error(typeof detail === 'string' ? detail : t('handover', 'updateError'));
@@ -614,6 +738,22 @@ const HandoverSectionPage = () => {
   const handleMarkAllOk = useCallback(async () => {
     setShowBatchConfirm(null);
     if (uncheckedItems.length === 0 || isSigned) return;
+
+    // Offline batch capture — same pre-filtered target list as the online call.
+    const captureBatch = () => {
+      uncheckedItems.forEach((itm) => {
+        enqueueHandoverItem(projectId, protocolId, sectionId, itm.item_id, { status: 'ok' });
+        updateItemLocally(itm.item_id, { status: 'ok' });
+      });
+      setQueuedItemIds(prev => { const next = new Set(prev); uncheckedItems.forEach(i => next.add(i.item_id)); return next; });
+      toast.success(`${uncheckedItems.length} פריטים נשמרו במכשיר — יישלחו כשתחזור הרשת`);
+      triggerCompletionBanner();
+    };
+
+    if (FEATURES.OFFLINE_MODE && navigator.onLine === false) {
+      captureBatch();
+      return;
+    }
     try {
       setMarkingAll(true);
       const data = await handoverService.batchUpdateItems(projectId, protocolId, sectionId, {
@@ -629,17 +769,37 @@ const HandoverSectionPage = () => {
         triggerCompletionBanner();
       }
     } catch (err) {
+      // REACTIVE: network-failed → capture instead of rolling back via loadProtocol().
+      if (FEATURES.OFFLINE_MODE && (!err || !err.response)) {
+        captureBatch();
+        return;
+      }
       console.error(err);
       toast.error(t('handover', 'updateError'));
       await loadProtocol();
     } finally {
       setMarkingAll(false);
     }
-  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, triggerCompletionBanner]);
+  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, triggerCompletionBanner, updateItemLocally]);
 
   const handleMarkAllNotRelevant = useCallback(async () => {
     setShowBatchConfirm(null);
     if (uncheckedItems.length === 0 || isSigned) return;
+
+    const captureBatch = () => {
+      uncheckedItems.forEach((itm) => {
+        enqueueHandoverItem(projectId, protocolId, sectionId, itm.item_id, { status: 'not_relevant' });
+        updateItemLocally(itm.item_id, { status: 'not_relevant' });
+      });
+      setQueuedItemIds(prev => { const next = new Set(prev); uncheckedItems.forEach(i => next.add(i.item_id)); return next; });
+      toast.success(`${uncheckedItems.length} פריטים נשמרו במכשיר — יישלחו כשתחזור הרשת`);
+      triggerCompletionBanner();
+    };
+
+    if (FEATURES.OFFLINE_MODE && navigator.onLine === false) {
+      captureBatch();
+      return;
+    }
     try {
       setMarkingAll(true);
       const data = await handoverService.batchUpdateItems(projectId, protocolId, sectionId, {
@@ -655,17 +815,37 @@ const HandoverSectionPage = () => {
         triggerCompletionBanner();
       }
     } catch (err) {
+      if (FEATURES.OFFLINE_MODE && (!err || !err.response)) {
+        captureBatch();
+        return;
+      }
       console.error(err);
       toast.error(t('handover', 'updateError'));
       await loadProtocol();
     } finally {
       setMarkingAll(false);
     }
-  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, triggerCompletionBanner]);
+  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, triggerCompletionBanner, updateItemLocally]);
 
   const handleResetSection = useCallback(async () => {
     setShowBatchConfirm(null);
     if (resettableItems.length === 0 || isSigned) return;
+
+    const captureBatch = () => {
+      resettableItems.forEach((itm) => {
+        enqueueHandoverItem(projectId, protocolId, sectionId, itm.item_id, { status: 'not_checked' });
+        updateItemLocally(itm.item_id, { status: 'not_checked' });
+      });
+      setQueuedItemIds(prev => { const next = new Set(prev); resettableItems.forEach(i => next.add(i.item_id)); return next; });
+      sectionCompletionShown.current.delete(sectionId);
+      setShowCompletionBanner(false);
+      toast.success(`${resettableItems.length} פריטים נשמרו במכשיר — יישלחו כשתחזור הרשת`);
+    };
+
+    if (FEATURES.OFFLINE_MODE && navigator.onLine === false) {
+      captureBatch();
+      return;
+    }
     try {
       setMarkingAll(true);
       const data = await handoverService.batchUpdateItems(projectId, protocolId, sectionId, {
@@ -680,13 +860,17 @@ const HandoverSectionPage = () => {
         : 'הסקשן אופס בהצלחה';
       toast.success(msg);
     } catch (err) {
+      if (FEATURES.OFFLINE_MODE && (!err || !err.response)) {
+        captureBatch();
+        return;
+      }
       console.error(err);
       toast.error(t('handover', 'updateError'));
       await loadProtocol();
     } finally {
       setMarkingAll(false);
     }
-  }, [resettableItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol]);
+  }, [resettableItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, updateItemLocally]);
 
   const navigateItem = useCallback((direction) => {
     if (!activeItem) return;
@@ -965,6 +1149,11 @@ const HandoverSectionPage = () => {
                     </span>
                   )}
                   {item.photos?.length > 0 && <Camera className="w-3 h-3 text-slate-400" />}
+                  {queuedItemIds.has(item.item_id) && (
+                    <span className="text-[10px] text-amber-700 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded font-medium">
+                      ממתין לשליחה
+                    </span>
+                  )}
                 </div>
               </div>
             </button>
@@ -1012,7 +1201,14 @@ const HandoverSectionPage = () => {
                   <X className="w-4 h-4 text-slate-400" />
                 </button>
                 <div className="flex-1 min-w-0 text-right mr-1">
-                  <h3 className="text-sm font-bold text-slate-800 truncate">{activeItem.name}</h3>
+                  <h3 className="text-sm font-bold text-slate-800 truncate flex items-center justify-end gap-1.5">
+                    {queuedItemIds.has(activeItem.item_id) && (
+                      <span className="text-[10px] text-amber-700 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded font-medium flex-shrink-0">
+                        ממתין לשליחה
+                      </span>
+                    )}
+                    <span className="truncate">{activeItem.name}</span>
+                  </h3>
                   <p className="text-[11px] text-slate-500">
                     {activeItem.trade && <>{activeItem.trade} · </>}
                     {activeIndex + 1}/{totalCount} ({uncheckedCount} ממתינים)

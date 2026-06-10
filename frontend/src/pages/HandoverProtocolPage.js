@@ -336,6 +336,10 @@ const HandoverProtocolPage = () => {
   };
 
   const handleSharePdf = async () => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      toast('שיתוף PDF זמין רק כשיש חיבור לאינטרנט');
+      return;
+    }
     if (!protocol.locked) {
       toast.error('ניתן להוריד PDF רק לפרוטוקול חתום');
       return;

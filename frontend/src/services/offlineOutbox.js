@@ -19,7 +19,14 @@ const PHOTO_STORE = 'qc_photo_uploads';
 // per client-minted task id — SEPARATE store again so the v2→v3 upgrade keeps the
 // 3a marks + 3b photos intact. Ships at DEPLOY #1 even with the feature dormant.
 const DEFECT_STORE = 'defect_creates';
-const DB_VERSION = 3;
+// BATCH 4b: offline handover capture. TWO new stores in the SAME DB so the v3→v4
+// upgrade keeps the 3a marks + 3b photos + 5 defect-creates intact.
+//   handover_item_updates — per-item marks, keyed `${protocolId}::${sectionId}::${itemId}` (last-write-wins)
+//   handover_form_updates — property_details + meters ONLY, keyed `${protocolId}::${field}`
+// ⛔ tenants are NEVER written here (ת"ז/phone/email) — enqueueHandoverForm hard-guards the field.
+const HANDOVER_ITEM_STORE = 'handover_item_updates';
+const HANDOVER_FORM_STORE = 'handover_form_updates';
+const DB_VERSION = 4;
 
 let _dbPromise = null;
 
@@ -58,6 +65,15 @@ function _openDb() {
       // it on every flush and a missing store would throw and break 3a/3b sync.
       if (!db.objectStoreNames.contains(DEFECT_STORE)) {
         db.createObjectStore(DEFECT_STORE, { keyPath: 'key' });
+      }
+      // BATCH 4b: guarded handover stores. Created on the v3→v4 upgrade so they
+      // exist app-wide; the live drains read them on every flush and a missing
+      // store would throw and break the 3a/3b/5 sync already shipped in prod.
+      if (!db.objectStoreNames.contains(HANDOVER_ITEM_STORE)) {
+        db.createObjectStore(HANDOVER_ITEM_STORE, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(HANDOVER_FORM_STORE)) {
+        db.createObjectStore(HANDOVER_FORM_STORE, { keyPath: 'key' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -464,6 +480,266 @@ export async function markDefectCreateFailed(key) {
       try {
         const store = _defectStore(db, 'readwrite');
         const getReq = store.get(key);
+        getReq.onsuccess = () => {
+          const rec = getReq.result;
+          if (!rec) { resolve(); return; }
+          rec.failed = true;
+          const putReq = store.put(rec);
+          putReq.onsuccess = () => resolve();
+          putReq.onerror = () => resolve();
+        };
+        getReq.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+// ===========================================================================
+// BATCH 4b — offline handover capture.
+// (A) handover_item_updates — per-item marks, key `${protocolId}::${sectionId}::${itemId}`,
+//     OVERWRITE per key (last-write-wins, like the qc store).
+// (B) handover_form_updates — property_details + meters ONLY, key `${protocolId}::${field}`.
+//     ⛔ tenants are NEVER written here (ת"ז/phone/email) — hard-guarded in enqueueHandoverForm.
+// EVERY getter is FAIL-SOFT → []/null so the live drains never throw on a
+// missing/just-upgraded store (would break the 3a/3b/5 sync already in prod).
+// ===========================================================================
+
+function _handoverItemStore(db, mode) {
+  return db.transaction(HANDOVER_ITEM_STORE, mode).objectStore(HANDOVER_ITEM_STORE);
+}
+
+function _handoverFormStore(db, mode) {
+  return db.transaction(HANDOVER_FORM_STORE, mode).objectStore(HANDOVER_FORM_STORE);
+}
+
+function _getAllHandoverItemsRaw(db) {
+  return new Promise((resolve) => {
+    try {
+      const req = _handoverItemStore(db, 'readonly').getAll();
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+      req.onerror = () => resolve([]);
+    } catch (_) {
+      resolve([]);
+    }
+  });
+}
+
+function _getAllHandoverFormsRaw(db) {
+  return new Promise((resolve) => {
+    try {
+      const req = _handoverFormStore(db, 'readonly').getAll();
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+      req.onerror = () => resolve([]);
+    } catch (_) {
+      resolve([]);
+    }
+  });
+}
+
+function _handoverItemKey(protocolId, sectionId, itemId) {
+  return `${protocolId}::${sectionId}::${itemId}`;
+}
+
+function _handoverFormKey(protocolId, field) {
+  return `${protocolId}::${field}`;
+}
+
+// payload = the EXACT body the online updateItem call sends
+// (status / notes / description / severity / photos:[] / photos_pending_count / skip_photo_reason).
+// Overwrites any existing op for (protocolId,sectionId,itemId) — local last-write-wins.
+export async function enqueueHandoverItem(projectId, protocolId, sectionId, itemId, payload) {
+  if (!protocolId || !sectionId || !itemId) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    const record = {
+      key: _handoverItemKey(protocolId, sectionId, itemId),
+      projectId,
+      protocolId,
+      sectionId,
+      itemId,
+      payload: payload || {},
+      queuedAt: Date.now(),
+      failed: false,
+    };
+    await new Promise((resolve) => {
+      try {
+        const req = _handoverItemStore(db, 'readwrite').put(record);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+// Pending item marks for one protocol (to hydrate the section on load). → [].
+export async function getHandoverItemsForProtocol(protocolId) {
+  if (!protocolId) return [];
+  try {
+    const db = await _openDb();
+    if (!db) return [];
+    const all = await _getAllHandoverItemsRaw(db);
+    return all.filter((rec) => rec && rec.protocolId === protocolId && rec.itemId);
+  } catch (_) {
+    return [];
+  }
+}
+
+// Every pending handover item mark, for the sync engine.
+export async function getAllHandoverItems() {
+  try {
+    const db = await _openDb();
+    if (!db) return [];
+    return await _getAllHandoverItemsRaw(db);
+  } catch (_) {
+    return [];
+  }
+}
+
+export async function removeHandoverItem(protocolId, sectionId, itemId) {
+  if (!protocolId || !sectionId || !itemId) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const req = _handoverItemStore(db, 'readwrite').delete(_handoverItemKey(protocolId, sectionId, itemId));
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+export async function markHandoverItemFailed(protocolId, sectionId, itemId) {
+  if (!protocolId || !sectionId || !itemId) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const store = _handoverItemStore(db, 'readwrite');
+        const getReq = store.get(_handoverItemKey(protocolId, sectionId, itemId));
+        getReq.onsuccess = () => {
+          const rec = getReq.result;
+          if (!rec) { resolve(); return; }
+          rec.failed = true;
+          const putReq = store.put(rec);
+          putReq.onsuccess = () => resolve();
+          putReq.onerror = () => resolve();
+        };
+        getReq.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+// ⛔ PII HARD GUARD: only property_details + meters may ever be written to the
+// device. tenants carry ת"ז/phone/email and must NEVER land in IndexedDB (4a rule).
+export async function enqueueHandoverForm(projectId, protocolId, field, value) {
+  if (field !== 'property_details' && field !== 'meters') return;  // tenants NEVER stored on device (ת"ז)
+  if (!protocolId || !field) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    const record = {
+      key: _handoverFormKey(protocolId, field),
+      projectId,
+      protocolId,
+      field,
+      value,
+      queuedAt: Date.now(),
+      failed: false,
+    };
+    await new Promise((resolve) => {
+      try {
+        const req = _handoverFormStore(db, 'readwrite').put(record);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+// Pending form value for one (protocol, field) — to hydrate the form. → record | null.
+export async function getHandoverFormUpdate(protocolId, field) {
+  if (!protocolId || !field) return null;
+  try {
+    const db = await _openDb();
+    if (!db) return null;
+    return await new Promise((resolve) => {
+      try {
+        const req = _handoverFormStore(db, 'readonly').get(_handoverFormKey(protocolId, field));
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
+// Every pending handover form update, for the sync engine.
+export async function getAllHandoverForms() {
+  try {
+    const db = await _openDb();
+    if (!db) return [];
+    return await _getAllHandoverFormsRaw(db);
+  } catch (_) {
+    return [];
+  }
+}
+
+export async function removeHandoverForm(protocolId, field) {
+  if (!protocolId || !field) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const req = _handoverFormStore(db, 'readwrite').delete(_handoverFormKey(protocolId, field));
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {
+    /* outbox must never throw */
+  }
+}
+
+export async function markHandoverFormFailed(protocolId, field) {
+  if (!protocolId || !field) return;
+  try {
+    const db = await _openDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const store = _handoverFormStore(db, 'readwrite');
+        const getReq = store.get(_handoverFormKey(protocolId, field));
         getReq.onsuccess = () => {
           const rec = getReq.result;
           if (!rec) { resolve(); return; }

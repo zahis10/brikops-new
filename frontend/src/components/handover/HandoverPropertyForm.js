@@ -3,6 +3,8 @@ import { handoverService } from '../../services/api';
 import { toast } from 'sonner';
 import { t } from '../../i18n';
 import { Loader2 } from 'lucide-react';
+import { FEATURES } from '../../config/features';
+import { enqueueHandoverForm, getHandoverFormUpdate } from '../../services/offlineOutbox';
 
 const HARDCODED_FIELDS = [
   { key: 'rooms', label: t('handover', 'rooms'), type: 'number' },
@@ -18,6 +20,7 @@ const HARDCODED_FIELDS = [
 const HandoverPropertyForm = ({ protocol, projectId, isSigned, onUpdated }) => {
   const [values, setValues] = useState({});
   const [saving, setSaving] = useState(false);
+  const [queued, setQueued] = useState(false);
 
   const fields = useMemo(() => {
     const schema = protocol?.property_fields_schema;
@@ -29,10 +32,25 @@ const HandoverPropertyForm = ({ protocol, projectId, isSigned, onUpdated }) => {
 
   useEffect(() => {
     setValues(protocol?.property_details || {});
+    setQueued(false);
+    // HYDRATE: a value captured offline outlives a reload — restore it (fail-soft).
+    if (FEATURES.OFFLINE_MODE && protocol?.id) {
+      getHandoverFormUpdate(protocol.id, 'property_details').then((rec) => {
+        if (rec && rec.value) { setValues(rec.value); setQueued(true); }
+      }).catch(() => {});
+    }
   }, [protocol]);
 
   const handleSave = useCallback(async () => {
     if (isSigned || saving) return;
+    // PROACTIVE offline capture → outbox. DO NOT call onUpdated() (the parent
+    // reload would re-fetch the cached protocol and reset values via the effect).
+    if (FEATURES.OFFLINE_MODE && navigator.onLine === false) {
+      await enqueueHandoverForm(projectId, protocol.id, 'property_details', values);
+      setQueued(true);
+      toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
+      return;
+    }
     try {
       setSaving(true);
       await handoverService.updateProtocol(projectId, protocol.id, {
@@ -41,6 +59,13 @@ const HandoverPropertyForm = ({ protocol, projectId, isSigned, onUpdated }) => {
       toast.success(t('handover', 'saved'));
       onUpdated?.();
     } catch (err) {
+      // REACTIVE: the request network-failed (offline mid-save) — capture instead of error.
+      if (FEATURES.OFFLINE_MODE && (!err || !err.response)) {
+        await enqueueHandoverForm(projectId, protocol.id, 'property_details', values);
+        setQueued(true);
+        toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
+        return;
+      }
       console.error(err);
       toast.error(t('handover', 'updateError'));
     } finally {
@@ -71,15 +96,20 @@ const HandoverPropertyForm = ({ protocol, projectId, isSigned, onUpdated }) => {
         ))}
       </div>
       {!isSigned && (
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full flex items-center justify-center gap-2 py-2 bg-purple-600 text-white rounded-lg
-            text-sm font-medium hover:bg-purple-700 active:scale-[0.98] disabled:opacity-50"
-        >
-          {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-          {saving ? t('handover', 'saving') : t('handover', 'save')}
-        </button>
+        <>
+          {queued && (
+            <p className="text-[11px] text-amber-600 text-center">ממתין לשליחה</p>
+          )}
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="w-full flex items-center justify-center gap-2 py-2 bg-purple-600 text-white rounded-lg
+              text-sm font-medium hover:bg-purple-700 active:scale-[0.98] disabled:opacity-50"
+          >
+            {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            {saving ? t('handover', 'saving') : t('handover', 'save')}
+          </button>
+        </>
       )}
     </div>
   );

@@ -4,6 +4,8 @@ import { toast } from 'sonner';
 import { t } from '../../i18n';
 import { Loader2, Camera } from 'lucide-react';
 import { compressImage } from '../../utils/imageCompress';
+import { FEATURES } from '../../config/features';
+import { enqueueHandoverForm, getHandoverFormUpdate } from '../../services/offlineOutbox';
 
 const MeterCard = ({ type, label, icon, borderColor, meters, isSigned, projectId, protocolId, onChange, onPhotoUploaded }) => {
   const fileRef = useRef(null);
@@ -11,6 +13,11 @@ const MeterCard = ({ type, label, icon, borderColor, meters, isSigned, projectId
   const photoUrl = meters[type]?.display_url || null;
 
   const handlePhoto = async (e) => {
+    // Meter photo is a multipart upload — online only for now (photos = 4c).
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      toast('צילום מונה זמין רק כשיש חיבור לאינטרנט — יתמך אופליין בשלב הבא', { icon: 'ℹ️' });
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file || isSigned) return;
     try {
@@ -69,10 +76,18 @@ const MeterCard = ({ type, label, icon, borderColor, meters, isSigned, projectId
 const HandoverMeterForm = ({ protocol, projectId, isSigned, onUpdated }) => {
   const [meters, setMeters] = useState({ water: { reading: null, photo_url: null }, electricity: { reading: null, photo_url: null } });
   const [saving, setSaving] = useState(false);
+  const [queued, setQueued] = useState(false);
 
   useEffect(() => {
     if (protocol?.meters) {
       setMeters(protocol.meters);
+    }
+    setQueued(false);
+    // HYDRATE: meter readings captured offline outlive a reload (fail-soft).
+    if (FEATURES.OFFLINE_MODE && protocol?.id) {
+      getHandoverFormUpdate(protocol.id, 'meters').then((rec) => {
+        if (rec && rec.value) { setMeters(rec.value); setQueued(true); }
+      }).catch(() => {});
     }
   }, [protocol]);
 
@@ -93,12 +108,27 @@ const HandoverMeterForm = ({ protocol, projectId, isSigned, onUpdated }) => {
 
   const handleSave = useCallback(async () => {
     if (isSigned || saving) return;
+    // PROACTIVE offline capture → outbox. DO NOT call onUpdated() (parent reload
+    // would re-fetch the cached protocol and reset meters via the effect).
+    if (FEATURES.OFFLINE_MODE && navigator.onLine === false) {
+      await enqueueHandoverForm(projectId, protocol.id, 'meters', meters);
+      setQueued(true);
+      toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
+      return;
+    }
     try {
       setSaving(true);
       await handoverService.updateProtocol(projectId, protocol.id, { meters });
       toast.success(t('handover', 'saved'));
       onUpdated?.();
     } catch (err) {
+      // REACTIVE: network-failed mid-save (offline) — capture instead of error.
+      if (FEATURES.OFFLINE_MODE && (!err || !err.response)) {
+        await enqueueHandoverForm(projectId, protocol.id, 'meters', meters);
+        setQueued(true);
+        toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
+        return;
+      }
       console.error(err);
       toast.error(t('handover', 'updateError'));
     } finally {
@@ -124,15 +154,20 @@ const HandoverMeterForm = ({ protocol, projectId, isSigned, onUpdated }) => {
       />
 
       {!isSigned && (
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full flex items-center justify-center gap-2 py-2 bg-purple-600 text-white rounded-lg
-            text-sm font-medium hover:bg-purple-700 active:scale-[0.98] disabled:opacity-50"
-        >
-          {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-          {saving ? t('handover', 'saving') : t('handover', 'save')}
-        </button>
+        <>
+          {queued && (
+            <p className="text-[11px] text-amber-600 text-center">ממתין לשליחה</p>
+          )}
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="w-full flex items-center justify-center gap-2 py-2 bg-purple-600 text-white rounded-lg
+              text-sm font-medium hover:bg-purple-700 active:scale-[0.98] disabled:opacity-50"
+          >
+            {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            {saving ? t('handover', 'saving') : t('handover', 'save')}
+          </button>
+        </>
       )}
     </div>
   );
