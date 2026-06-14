@@ -444,3 +444,9 @@ id = "OJG_H9BOLoTLg5TRI0boQ"
 uri = "file://.local/plans/offline-handover-photos-4c-plan.md"
 type = "text"
 title = "BATCH 4c — תוכנית תמונות אופליין (מעודכנת)"
+
+[[outputs]]
+id = "f2KbtHdsZnKyBpn-kZf3y"
+uri = "file://.local/plans/offline-handover-photos-4c-fix1-plan.md"
+type = "text"
+title = "BATCH 4c — FIX 1 תוכנית (display_url leak)"
