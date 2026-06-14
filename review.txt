@@ -1,102 +1,86 @@
 ================================================================================
-BATCH 4c — OFFLINE HANDOVER PHOTOS (meter photos + handover-defect photos)
+BATCH 4c — FIX 1: never persist session-local display_url (broken meter previews)
 FRONTEND-ONLY · rides FEATURES.OFFLINE_MODE · Capgo OTA
 ================================================================================
 
-ROLLBACK SHA (HEAD before these edits): 8494535
-Branch: staging (per standing rule). git diff = exactly 4 frontend files, 0 backend.
+ROLLBACK SHA (HEAD before FIX 1 code edits): bd992f11
+  (4c functionality merged at be321b69; bd992f11 added only the FIX 1 plan file.)
+Branch: staging. git diff = exactly 2 frontend files, 0 backend.
 
 --------------------------------------------------------------------------------
-STEP 0 — pre-flight (verified, no divergences)
+ROOT CAUSE
 --------------------------------------------------------------------------------
-Backend facts re-confirmed against backend/contractor_ops/handover_router.py:
-  • update_item (~1428): returns { defect_created, defect_id, ... }. Reuses an
-    existing NON-terminal defect (1443-1456) and handles the DuplicateKeyError
-    race → replay is IDEMPOTENT (no duplicate defect on re-run).
-  • update_item has_photos rule (1384): satisfied by photos_pending_count > 0, so
-    a defective-with-photos payload replays WITHOUT a skip reason.
-  • upload_meter_photo (2457): deterministic S3 key
-    handover/{project}/{protocol}/meter_{type}.{ext} (2499) → replay overwrites the
-    SAME object. $sets ONLY meters.{type}.photo_url subfield (2506).
-  • tenant id-photo is a SEPARATE endpoint/key (tenant_{idx}_id, 2562) — never
-    touched here; ID photos stay online-only forever (PII / 4a rule).
+A blob: object URL is valid ONLY inside the document that created it. 4c stores one
+in meters[type].display_url for the offline preview (display-only, correct), but
+handleSave persisted the WHOLE meters object verbatim — so display_url:"blob:…"
+leaked into handover_form_updates AND onto the server. After an app restart the 4b
+form-hydrate (setMeters(rec.value)) reinstated the DEAD blob URL → broken image
+(device tests 1+2; test 1's water meter broke via test 2's form save — one save
+snapshots both meters). The server could also serve it: get_protocol regenerates
+display_url ONLY when photo_url is truthy (~1138), so a not-yet-drained meter
+returned the dead string verbatim.
+Pre-existing latent bug, also fixed: even ONLINE, handleSave always sent a stale
+display_url (presigned URL) to the server.
 
 --------------------------------------------------------------------------------
-CHANGE SET — 4 files
+STEP 0 — verified (read-only)
 --------------------------------------------------------------------------------
-1) frontend/src/services/offlineOutbox.js
-   • New store METER_PHOTO_STORE='handover_meter_photos'; DB_VERSION 4→5; guarded
-     createObjectStore in onupgradeneeded (existing 3a/3b/5/4b stores untouched).
-   • outboxCount names array now 6 stores (incl METER_PHOTO_STORE).
-   • enqueueHandoverItem gained optional 6th arg photos=[] → stored photos:[{blob}].
-     Existing 5-arg callers unchanged (photos:[]).
-   • replaceHandoverItemPhotos(protocolId,sectionId,itemId,photos) — incremental
-     de-queue helper for the drain.
-   • Meter-photo API: enqueueMeterPhoto / getMeterPhoto / getAllMeterPhotos /
-     removeMeterPhoto / markMeterPhotoFailed. Key `${protocolId}::${type}`,
-     latest-wins per meter. type guarded to water|electricity. All fail-soft.
+- display_url in HandoverMeterForm: render(orig 13), photo-hydrate(orig 118),
+  handlePhotoUploaded(orig 141), handlePhotoQueued(orig 154) — PLUS the 3 handleSave
+  sends at orig 164/171/177 (THE LEAK).
+- offlineSync.js form drain sent { [op.field]: op.value } verbatim (orig 246).
+- backend get_protocol photo_url→display_url regen (~1138) — context only, NOT edited.
+
+--------------------------------------------------------------------------------
+CHANGE SET — 2 files
+--------------------------------------------------------------------------------
+1) frontend/src/components/handover/HandoverMeterForm.js
+   • New module-level _stripDisplayUrls(m): returns water+electricity sub-objects with
+     display_url removed (preserves other keys; tolerant of non-object/undefined).
+   • handleSave: const payload = _stripDisplayUrls(meters) once after the guard; used
+     in ALL THREE sends — proactive-offline enqueue, online updateProtocol, reactive-
+     offline enqueue. Local `meters` STATE keeps display_url (preview untouched).
+   • 4b form-hydrate (meters branch): setMeters(rec.value) → merge that takes
+     readings/photo_url from the stripped record but PRESERVES the live display_url.
+     The 4c photo-hydrate after it still sets a FRESH objectURL from the queued blob.
 
 2) frontend/src/services/offlineSync.js
-   • Item drain: after updateItem success, if op.photos.length>0 → if no
-     result.defect_id markHandoverItemFailed+failed (anomaly, KEEP); else upload
-     each blob to result.defect_id via taskService.uploadAttachment with
-     replaceHandoverItemPhotos(remaining) after each 2xx. removeHandoverItem stays
-     the ONLY call site, on FULL success only.
-   • New meter-photo drain APPENDED AFTER the forms drain, gated !hitBackoff,
-     chunked _CONCURRENCY=3: handoverService.uploadMeterPhoto → removeMeterPhoto on
-     2xx; transient→backoff, network→KEEP, real 4xx/5xx→markMeterPhotoFailed+KEEP.
-   • ⚠ DRAIN ORDER is load-bearing: items → forms → METER PHOTOS LAST. The 4b form
-     op $sets the whole meters object from a possibly-stale snapshot; photos-last
-     guarantees the fresh photo_url subfield survives.
-
-3) frontend/src/pages/HandoverSectionPage.js
-   • PROACTIVE + REACTIVE offline branches: defects WITH staged photos now queue
-     (photos.map(p=>p.file) as 6th arg; payload photos_pending_count=photos.length).
-     Zero-photos 'defective' still needs a skip reason. Staged previews revoked.
-   • Deleted the 4b "צילום ליקוי...בשלב הבא" deferral toast (gone from all of src/).
-
-4) frontend/src/components/handover/HandoverMeterForm.js
-   • MeterCard.handlePhoto: removed the 4a online-gate; compress once (let
-     compressed), OFFLINE→enqueueMeterPhoto+onPhotoQueued(preview)+toast; REACTIVE
-     catch (!err.response && compressed) queues too.
-   • Parent: onPhotoQueued wired to both cards; handlePhotoQueued sets ONLY
-     display_url (NOT photo_url) + setQueued(true); objectUrlsRef tracks preview
-     URLs, revoked on replace + on unmount; hydrate in protocol useEffect via
-     getMeterPhoto for water+electricity.
-   • HandoverTenantForm.js NOT TOUCHED (4a PII gate intact — verified clean).
+   • Forms drain: before updateProtocol, if op.field==='meters' strip display_url from
+     each meter sub-object and send the cleaned value. Legacy records queued before
+     this fix drain clean. (removeHandoverForm stays the only call site, on 2xx.)
 
 --------------------------------------------------------------------------------
 VERIFICATION
 --------------------------------------------------------------------------------
 V1 — babel parse (NO workflow restart; @babel/core transformFileSync, preset-react):
-   PARSE OK  src/services/offlineOutbox.js
-   PARSE OK  src/services/offlineSync.js
-   PARSE OK  src/pages/HandoverSectionPage.js
    PARSE OK  src/components/handover/HandoverMeterForm.js
+   PARSE OK  src/services/offlineSync.js
 
 V2 — greps (all pass):
-   • DB_VERSION = 5 ✓
-   • METER_PHOTO_STORE guarded contains()+createObjectStore ✓
-   • outboxCount names array = 6 stores incl METER_PHOTO_STORE ✓
-   • removeMeterPhoto — exactly ONE call site (offlineSync:283) ✓
-   • removeHandoverItem — exactly ONE call site (offlineSync:217) ✓
-   • drain order items(188) → forms(240) → meterphotos(275) ✓
-   • HandoverTenantForm — no photo enqueue (PII gate intact) ✓
-   • no "בשלב הבא" deferral toast remains anywhere in src/ ✓
-   • api.uploadMeterPhoto(projectId,protocolId,meterType,file) matches the call ✓
-   • taskService.uploadAttachment + handoverService imports present in sync ✓
+   • HandoverMeterForm display_url appears only in: comment, _stripDisplayUrls,
+     render(photoUrl), photo-hydrate, handlePhotoUploaded, handlePhotoQueued —
+     NEVER inside an enqueueHandoverForm/updateProtocol payload ✓
+   • all 3 persisted sends use `payload` (stripped): enqueue(194), updateProtocol(201),
+     enqueue(207); const payload = _stripDisplayUrls(meters)(190) ✓
+   • form-hydrate uses _stripDisplayUrls merge (130) ✓
+   • offlineSync forms drain meters guard present (247-254), sends cleaned value (257) ✓
 
-V3-V9 — DEVICE NOTES (manual, on a real device — cannot run headless here):
-   V3  Offline meter photo → preview shows, "נשמר במכשיר" toast, badge counts it.
-   V4  Reload while offline → meter preview re-hydrates from blob (getMeterPhoto).
-   V5  Back online → meter photo uploads, photo_url set, blob removed from store.
-   V6  Offline defective + 2 photos (no skip reason) → queues; back online → defect
-       created once, both photos attached, record removed (no dup on a 2nd flush).
-   V7  Partial photo failure mid-loop → remaining photos re-queued, replay reuses
-       the same defect (no dup defect / dup upload).
-   V8  Queue a meters FORM offline + a meter PHOTO offline → after sync the photo
-       survives (photos-last drain order; form snapshot can't clobber photo_url).
-   V9  Tenant ID-photo offline → still blocked/online-only (PII), nothing queued.
+V3-V5 — DEVICE NOTES (manual, on a real device — re-run of the failed tests):
+   V3  Airplane → photograph water meter AND edit electricity reading → save form →
+       kill app → reopen offline → BOTH previews render (photo from blob-hydrate; no
+       dead blob: from the form record) → reconnect → ≤30s → server has photo +
+       reading; DB meters.*.display_url is NOT a blob: string.
+   V4  The previously-broken protocol now shows both meter photos after a reload
+       (GET regenerates display_url from photo_url).
+   V5  Online unchanged: photograph + save online behaves as before (server now
+       receives meters WITHOUT display_url — it regenerates it anyway).
+
+--------------------------------------------------------------------------------
+DATA HEALING (no migration)
+--------------------------------------------------------------------------------
+Already-poisoned server rows self-heal: both meters have photo_url set, and
+get_protocol regenerates display_url whenever photo_url is truthy → the dead string
+is shadowed on every GET. The one re-save in VERIFY also overwrites the field.
 
 --------------------------------------------------------------------------------
 SCOPE
@@ -107,26 +91,23 @@ no new feature flag (rides existing FEATURES.OFFLINE_MODE).
 --------------------------------------------------------------------------------
 COMMIT MESSAGE (also written to .local/.commit_message)
 --------------------------------------------------------------------------------
-feat(handover): offline photos — meters + defect photos via blob queue (batch 4c)
+fix(handover): never persist session-local display_url — broken meter previews
 
-Final step of the offline arc. Meter photos queue as compressed blobs in a new
-handover_meter_photos store (DB_VERSION 5, latest-wins per meter) and drain
-AFTER the form drain — upload_meter_photo $sets only the photo_url subfield,
-so photos-last guarantees a queued meters-form snapshot can never clobber a
-fresh photo. Handover-defect photos ride the 4b item records (photos[] per
-record): the drain replays updateItem (idempotent defect reuse), uploads the
-blobs to the returned defect_id with incremental de-queue (a partial failure
-resumes from the remaining photos — no duplicates), and removes the record
-only on full success. Defective-with-photos offline is now allowed
-(photos_pending_count satisfies the server rule); zero-photos defective still
-requires a skip reason. Tenant ID-photo remains online-gated forever (PII).
-Frontend-only; rides OFFLINE_MODE; Capgo OTA.
+display_url is derived display state (often a blob: object URL valid only in
+the creating document). The meters form persisted it into the offline outbox
+and the server, so after an app restart the stored URL was dead → broken
+previews (device tests 1+2). handleSave now strips display_url from every
+persisted payload (outbox + server, online included — closing a pre-existing
+latent bug of storing stale presigned URLs); the 4b form-hydrate merges the
+queued value while preserving the live preview; the form drain strips legacy
+queued records. Server data self-heals: get_protocol regenerates display_url
+from photo_url on every GET.
 
 --------------------------------------------------------------------------------
 ROLLBACK
 --------------------------------------------------------------------------------
-git revert <sha> — 4 files. ./deploy.sh --prod (OTA). A device already on
-DB_VERSION 5 keeps the extra (empty) store after revert — harmless (3b/4b precedent).
+git revert <sha> — 2 files. ./deploy.sh --prod (OTA). No schema / no DB_VERSION
+change, so revert is clean.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

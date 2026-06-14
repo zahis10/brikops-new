@@ -243,7 +243,15 @@ export async function flushOutbox() {
         await Promise.all(chunk.map(async (op) => {
           if (!op || !op.protocolId || !op.field) return;
           try {
-            await handoverService.updateProtocol(op.projectId, op.protocolId, { [op.field]: op.value });
+            let value = op.value;
+            if (op.field === 'meters' && value && typeof value === 'object') {
+              // FIX 1 — legacy 4c records may carry a session-dead blob: display_url;
+              // never send display_url to the server (regenerated per-GET from photo_url).
+              value = Object.fromEntries(Object.entries(value).map(([k, v]) =>
+                (v && typeof v === 'object') ? [k, (({ display_url, ...rest }) => rest)(v)] : [k, v]
+              ));
+            }
+            await handoverService.updateProtocol(op.projectId, op.protocolId, { [op.field]: value });
             // RESOLVED ⇒ 2xx ⇒ THE ONLY removeHandoverForm call site.
             await removeHandoverForm(op.protocolId, op.field);
             synced += 1;

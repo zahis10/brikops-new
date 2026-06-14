@@ -7,6 +7,22 @@ import { compressImage } from '../../utils/imageCompress';
 import { FEATURES } from '../../config/features';
 import { enqueueHandoverForm, getHandoverFormUpdate, enqueueMeterPhoto, getMeterPhoto } from '../../services/offlineOutbox';
 
+// FIX 1 — display_url is session-local derived state (often a blob: object URL,
+// valid ONLY in the document that created it). It must NEVER be persisted — not to
+// the outbox, not to the server (get_protocol regenerates it per-GET from photo_url).
+function _stripDisplayUrls(m) {
+  const out = {};
+  for (const t of ['water', 'electricity']) {
+    if (m && m[t] && typeof m[t] === 'object') {
+      const { display_url, ...rest } = m[t];
+      out[t] = rest;
+    } else if (m && m[t] !== undefined) {
+      out[t] = m[t];
+    }
+  }
+  return out;
+}
+
 const MeterCard = ({ type, label, icon, borderColor, meters, isSigned, projectId, protocolId, onChange, onPhotoUploaded, onPhotoQueued }) => {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
@@ -107,7 +123,18 @@ const HandoverMeterForm = ({ protocol, projectId, isSigned, onUpdated }) => {
     // HYDRATE: meter readings captured offline outlive a reload (fail-soft).
     if (FEATURES.OFFLINE_MODE && protocol?.id) {
       getHandoverFormUpdate(protocol.id, 'meters').then((rec) => {
-        if (rec && rec.value) { setMeters(rec.value); setQueued(true); }
+        if (rec && rec.value) {
+          // FIX 1 — merge readings/photo_url from the queued record but PRESERVE the
+          // live display_url (a fresh blob preview); never reinstate a dead blob URL.
+          setMeters((prev) => {
+            const v = _stripDisplayUrls(rec.value);
+            return {
+              water: { ...prev.water, ...(v.water || {}) },
+              electricity: { ...prev.electricity, ...(v.electricity || {}) },
+            };
+          });
+          setQueued(true);
+        }
       }).catch(() => {});
       // BATCH 4c — hydrate queued meter photos (blob → object URL preview).
       ['water', 'electricity'].forEach((type) => {
@@ -158,23 +185,26 @@ const HandoverMeterForm = ({ protocol, projectId, isSigned, onUpdated }) => {
 
   const handleSave = useCallback(async () => {
     if (isSigned || saving) return;
+    // FIX 1 — strip display_url from EVERY persisted payload (outbox + server). The
+    // local `meters` state keeps it for the on-screen preview; it is never stored.
+    const payload = _stripDisplayUrls(meters);
     // PROACTIVE offline capture → outbox. DO NOT call onUpdated() (parent reload
     // would re-fetch the cached protocol and reset meters via the effect).
     if (FEATURES.OFFLINE_MODE && navigator.onLine === false) {
-      await enqueueHandoverForm(projectId, protocol.id, 'meters', meters);
+      await enqueueHandoverForm(projectId, protocol.id, 'meters', payload);
       setQueued(true);
       toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
       return;
     }
     try {
       setSaving(true);
-      await handoverService.updateProtocol(projectId, protocol.id, { meters });
+      await handoverService.updateProtocol(projectId, protocol.id, { meters: payload });
       toast.success(t('handover', 'saved'));
       onUpdated?.();
     } catch (err) {
       // REACTIVE: network-failed mid-save (offline) — capture instead of error.
       if (FEATURES.OFFLINE_MODE && (!err || !err.response)) {
-        await enqueueHandoverForm(projectId, protocol.id, 'meters', meters);
+        await enqueueHandoverForm(projectId, protocol.id, 'meters', payload);
         setQueued(true);
         toast.success('נשמר במכשיר — יישלח כשתחזור הרשת');
         return;
