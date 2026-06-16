@@ -482,6 +482,44 @@ export const safetyService = {
     );
     return response.data;
   },
+
+  // ---- create / edit (batch safety-p2-1) — backend POST/PATCH already shipped ----
+
+  async createWorker(projectId, payload) {
+    const r = await axios.post(
+      `${API}/safety/${projectId}/workers`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+
+  async updateWorker(projectId, workerId, payload) {
+    const r = await axios.patch(
+      `${API}/safety/${projectId}/workers/${workerId}`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+
+  async createDocument(projectId, payload) {
+    const r = await axios.post(
+      `${API}/safety/${projectId}/documents`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+
+  async updateDocument(projectId, documentId, payload) {
+    const r = await axios.patch(
+      `${API}/safety/${projectId}/documents/${documentId}`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
 };
 
 export const buildingService = {

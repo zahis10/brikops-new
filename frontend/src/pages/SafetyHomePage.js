@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
-  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter,
+  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter, Plus, Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
@@ -18,14 +18,18 @@ import SafetyKpiCard from '../components/safety/SafetyKpiCard';
 import SafetyFilterSheet, { countActiveFilters, EMPTY_FILTER } from '../components/safety/SafetyFilterSheet';
 import SafetyExportMenu from '../components/safety/SafetyExportMenu';
 import SafetyBulkActionBar from '../components/safety/SafetyBulkActionBar';
+import SafetyWorkerForm from '../components/safety/SafetyWorkerForm';
+import SafetyDocumentForm from '../components/safety/SafetyDocumentForm';
+import { SEVERITY_HE, DOC_STATUS_HE } from '../components/safety/safetyLabels';
 
-const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה' };
+// Writers = the two project roles the safety backend accepts for create/edit
+// (safety_router.py SAFETY_WRITERS). The "+"/edit affordances gate on these.
+const SAFETY_WRITERS = ['project_manager', 'management_team'];
 const SEVERITY_COLOR = {
   '1': 'bg-blue-100 text-blue-800',
   '2': 'bg-amber-100 text-amber-800',
   '3': 'bg-red-100 text-red-800',
 };
-const DOC_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', resolved: 'נפתר', verified: 'אומת' };
 const TASK_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', completed: 'הושלם', cancelled: 'בוטל' };
 
 export default function SafetyHomePage() {
@@ -50,6 +54,10 @@ export default function SafetyHomePage() {
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [users, setUsers] = useState([]);
+
+  // Batch safety-p2-1 — create/edit modal state (one pair per entity).
+  const [docForm, setDocForm] = useState({ open: false, record: null });
+  const [workerForm, setWorkerForm] = useState({ open: false, record: null });
 
   // Skip the filter useEffect's initial run — main useEffect's Promise.all
   // already fetched documents. The ref flips to false after the first real run.
@@ -195,6 +203,7 @@ export default function SafetyHomePage() {
 
   const activeFilterCount = countActiveFilters(filter);
   const hasActiveFilter = activeFilterCount > 0;
+  const isWriter = SAFETY_WRITERS.includes(project?.my_role);
 
   const docItems = docs.items || [];
   const allSelected = docItems.length > 0 && docItems.every((d) => selectedIds.has(d.id));
@@ -237,6 +246,43 @@ export default function SafetyHomePage() {
     setFilter((f) => ({ ...f }));
   };
 
+  // After a create/edit — reload the affected list + the score (a defect changes
+  // the score; a worker can change the "untrained" count). Best-effort: a refresh
+  // failure does not undo the save (the toast already confirmed it).
+  const buildDocParams = () => {
+    const params = { limit: 50 };
+    Object.entries(filter).forEach(([k, v]) => {
+      if (v != null && v !== '') params[k] = v;
+    });
+    return params;
+  };
+
+  const reloadDocuments = async () => {
+    try {
+      const [docsResp, scoreResp] = await Promise.all([
+        safetyService.listDocuments(projectId, buildDocParams()),
+        safetyService.getScore(projectId, true).catch(() => null),
+      ]);
+      setDocs(docsResp || { items: [], total: 0 });
+      if (scoreResp) setScoreData(scoreResp);
+    } catch (e) {
+      toast.error('שגיאה ברענון רשימת הליקויים');
+    }
+  };
+
+  const reloadWorkers = async () => {
+    try {
+      const [workersResp, scoreResp] = await Promise.all([
+        safetyService.listWorkers(projectId, { limit: 50 }),
+        safetyService.getScore(projectId, true).catch(() => null),
+      ]);
+      setWorkers(workersResp || { items: [], total: 0 });
+      if (scoreResp) setScoreData(scoreResp);
+    } catch (e) {
+      toast.error('שגיאה ברענון רשימת העובדים');
+    }
+  };
+
   return (
     <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
       <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-2 sticky top-0 z-20">
@@ -252,6 +298,20 @@ export default function SafetyHomePage() {
           <h1 className="text-lg font-bold text-slate-900 truncate">בטיחות</h1>
           {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
         </div>
+
+        {isWriter && activeTab !== 'tasks' && (
+          <button
+            type="button"
+            onClick={() => {
+              if (activeTab === 'workers') setWorkerForm({ open: true, record: null });
+              else setDocForm({ open: true, record: null });
+            }}
+            className="px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1 min-h-[44px]"
+          >
+            <Plus className="w-4 h-4" />
+            הוסף
+          </button>
+        )}
 
         <SafetyExportMenu
           projectId={projectId}
@@ -373,13 +433,19 @@ export default function SafetyHomePage() {
                 allSelected={allSelected}
                 hasActiveFilter={hasActiveFilter}
                 onClearFilter={clearFilter}
+                isWriter={isWriter}
+                onEdit={(d) => setDocForm({ open: true, record: d })}
               />
             </TabsContent>
             <TabsContent value="tasks" className="p-0 m-0">
               <TasksList items={tasks.items} />
             </TabsContent>
             <TabsContent value="workers" className="p-0 m-0">
-              <WorkersList items={workers.items} />
+              <WorkersList
+                items={workers.items}
+                isWriter={isWriter}
+                onEdit={(w) => setWorkerForm({ open: true, record: w })}
+              />
             </TabsContent>
           </Tabs>
         </Card>
@@ -393,6 +459,22 @@ export default function SafetyHomePage() {
         onClear={clearFilter}
         companies={companies}
         users={users}
+      />
+
+      <SafetyDocumentForm
+        projectId={projectId}
+        document={docForm.record}
+        open={docForm.open}
+        onClose={() => setDocForm({ open: false, record: null })}
+        onSaved={reloadDocuments}
+      />
+
+      <SafetyWorkerForm
+        projectId={projectId}
+        worker={workerForm.record}
+        open={workerForm.open}
+        onClose={() => setWorkerForm({ open: false, record: null })}
+        onSaved={reloadWorkers}
       />
 
       {activeTab === 'documents' && selectedIds.size > 0 && (
@@ -446,7 +528,7 @@ function BreakdownBar({ label, value = 0, max = 1, color }) {
 
 function DocumentsList({
   items, selectedIds, onToggle, onSelectAll, allSelected,
-  hasActiveFilter, onClearFilter,
+  hasActiveFilter, onClearFilter, isWriter, onEdit,
 }) {
   if (!items?.length) {
     return (
@@ -510,6 +592,16 @@ function DocumentsList({
             <time className="text-xs text-slate-400 shrink-0">
               {(d.found_at || '').slice(0, 10)}
             </time>
+            {isWriter && (
+              <button
+                type="button"
+                aria-label="ערוך ליקוי"
+                onClick={(e) => { e.stopPropagation(); onEdit(d); }}
+                className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+            )}
           </li>
         ))}
       </ul>
@@ -548,7 +640,7 @@ function TasksList({ items }) {
   );
 }
 
-function WorkersList({ items }) {
+function WorkersList({ items, isWriter, onEdit }) {
   if (!items?.length) return <EmptyState icon={Users} text="אין עובדים רשומים" />;
   return (
     <ul className="divide-y divide-slate-100">
@@ -563,6 +655,16 @@ function WorkersList({ items }) {
               {w.profession || 'ללא מקצוע'}{w.phone && ` · ${w.phone}`}
             </p>
           </div>
+          {isWriter && (
+            <button
+              type="button"
+              aria-label="ערוך עובד"
+              onClick={(e) => { e.stopPropagation(); onEdit(w); }}
+              className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+          )}
         </li>
       ))}
     </ul>

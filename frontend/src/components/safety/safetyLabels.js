@@ -1,0 +1,22 @@
+// Shared Hebrew label maps for the Safety module — single source of truth so the
+// list badges (SafetyHomePage) and the create/edit forms never drift (CLAUDE.md).
+
+// 10 regulatory safety categories (schemas.py SafetyCategory).
+export const CATEGORY_HE = {
+  scaffolding: 'פיגומים',
+  heights: 'עבודה בגובה',
+  electrical_safety: 'בטיחות חשמל',
+  lifting: 'הרמה וציוד',
+  excavation: 'חפירות',
+  fire_safety: 'אש ובטיחות אש',
+  ppe: 'ציוד מגן אישי',
+  site_housekeeping: 'סדר וניקיון',
+  hazardous_materials: 'חומרים מסוכנים',
+  other: 'אחר',
+};
+
+// Severity 1-3 (schemas.py SafetySeverity).
+export const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה' };
+
+// Safety document status (schemas.py SafetyDocumentStatus).
+export const DOC_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', resolved: 'נפתר', verified: 'אומת' };
