@@ -1,156 +1,122 @@
 ================================================================================
-BATCH safety-p2-1 — Safety: Create/Edit modals (Workers + Defects)
-FRONTEND-ONLY · Capgo OTA · rides ENABLE_SAFETY_MODULE
+BATCH safety-p2-2 — Safety defect "אחראי" (assignee) = live project team picker
+FRONTEND-ONLY · Capgo OTA · no backend · no new dependency · no new flag
 ================================================================================
 
-ROLLBACK SHA (HEAD before edit): 5b3a17d
-Branch (per spec): staging. git diff = exactly 6 frontend files, 0 backend.
+ROLLBACK SHA (HEAD before edit): 9c6f866
+Branch (per spec): staging. git diff = exactly 1 frontend file, 0 backend.
 (Local working clone reports branch "main" — Zahi owns all git/branch handling.)
 
 --------------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT OUTPUTS (read-only; all confirmed)
+STEP 0 — PRE-FLIGHT OUTPUTS (read-only; all confirmed, no divergence)
 --------------------------------------------------------------------------------
-0.1 Backend endpoints (NOT edited):
-    189: POST  /{project_id}/workers
-    270: PATCH /{project_id}/workers/{worker_id}
-    533: POST  /{project_id}/documents
-    641: PATCH /{project_id}/documents/{document_id}
-    SAFETY_WRITERS = ("project_manager", "management_team")   (safety_router.py:48)
-    Request models match the spec EXACTLY:
-      SafetyWorkerCreate (170): company_id?, company_name?, full_name(req 2-120),
-                                id_number?, profession?, phone?, notes?
-      SafetyWorkerUpdate (180): full_name?, id_number?, profession?, phone?, notes?, company_id?
-                                (NO company_name on update — form sends company_name on CREATE only)
-      SafetyDocumentCreate (504): category(req), severity(req), title(req 2-200),
-                                  found_at(req str), description?, location?, company_id?,
-                                  profession?, assignee_id?, photo_urls[], attachment_urls[]
-      SafetyDocumentUpdate (518): + status?, + resolved_at? (all optional)
-    Enums (schemas.py): SafetyCategory 10 (682), SafetySeverity "1"/"2"/"3" (696),
-                        SafetyDocumentStatus open/in_progress/resolved/verified (703).
-0.2 safetyService (api.js:366): had getScore/listDocuments/listTasks/listWorkers/
-    listTrainings/listIncidents/deleteDocument; did NOT have create/update → added 4.
-0.3 SafetyHomePage anchors: project state(35), activeTab(43,'documents'), header
-    export+filter row, Tabs, TabsContent documents/tasks/workers, DocumentsList,
-    WorkersList. Main load = useEffect Promise.all (score+docs+tasks+workers).
-    Documents also refetch via a filter-driven effect.
-0.4 Writer-role source = project.my_role (loaded via projectService.get, stored at
-    state 35). ⚠ The page did NOT gate writes by role before this batch — bulk-delete
-    shows on selection, not role. New const SAFETY_WRITERS=['project_manager',
-    'management_team'] mirrors the backend; isWriter = SAFETY_WRITERS.includes(my_role).
-    No new role source invented.
-0.5 Company picker = projectCompanyService.list(projectId) (api.js:603) → {id,name}.
-    Reused in both forms (same source NewDefectModal uses).
-0.6 ⚠ DIVERGENCE: SEVERITY_HE / DOC_STATUS_HE existed locally in SafetyHomePage, but
-    NO CATEGORY_HE existed anywhere (the list never rendered category). Per STEP 0.6,
-    created shared frontend/src/components/safety/safetyLabels.js (CATEGORY_HE [new] +
-    SEVERITY_HE + DOC_STATUS_HE), imported in BOTH SafetyHomePage (local copies removed)
-    and SafetyDocumentForm — no duplication. SEVERITY_COLOR + TASK_STATUS_HE stay local
-    (forms don't need them). → 6 files total (the +1 the spec explicitly permits).
+0.1 Backend already supports assignee_id (NOT edited):
+    safety_router.py: SafetyDocumentCreate.assignee_id (513), SafetyDocumentUpdate.assignee_id (527),
+      stored verbatim on create (560), list filter param (606), index project_id+assignee_id (1902),
+      Excel/PDF export resolves it via db.users user_map (1583).
+    schemas.py: SafetyDocument.assignee_id annotated "# user id" (766), + 788.
+    ⇒ assignee_id MUST be a project-member USER id. Confirmed. ZERO backend change needed.
+
+0.2 Memberships service + row shape:
+    api.js:310 projectService.getMemberships(projectId) — cached, GET /projects/{id}/memberships.
+    Rows built by _enrich_memberships (router.py:602): each row carries user_id, user_name
+      (← db.users.name), role (membership role; falls back to user.role at 666-667), plus the
+      stored membership-doc fields (incl. `status` WHEN present), company_id / user_company_id
+      (contractor-only), org_role, is_org_owner.
+    Role values project_manager / management_team are valid project roles
+      (router.py PLAN_UPLOAD_ROLES = ('project_manager','management_team'), 690).
+    `status` is NOT guaranteed on every membership doc → the spec's guard
+      (m.status === 'accepted' || !m.status) is the correct fail-soft filter (keeps legacy
+      rows with no status while still excluding pending).
+    NewDefectModal.js precedent: normalizeList + Promise.allSettled([companies, memberships]),
+      then filters m.role === 'contractor' and maps { value: m.user_id, label: m.user_name }.
+
+0.3 SafetyDocumentForm anchors:
+    State title/category/severity/foundAt/status/location/description/companyId/companies/
+      submitting (was 22-31). Init effect pre-fills from `document` (33-43). Company-load effect
+      used projectCompanyService.list with an INLINE shape guard
+      `Array.isArray(res) ? res : (res?.items || [])` — there is NO normalizeList helper in this
+      file (so we reuse the same inline style, we did NOT import NewDefectModal's local helper).
+    handleSubmit builds `payload`; status added only on edit. Company rendered via Radix <Select>.
+    ⚠ projectService was NOT imported (only safetyService, projectCompanyService) → ADDED the import.
 
 --------------------------------------------------------------------------------
-CHANGE SET — 6 files (0 backend)
+CHANGE SET — 1 file (0 backend)
 --------------------------------------------------------------------------------
-1) frontend/src/services/api.js
-   safetyService += createWorker / updateWorker / createDocument / updateDocument
-   (axios post/patch + getAuthHeader, return r.data). No uploadSafetyFile (photos=1b).
-   All existing methods byte-unchanged.
-
-2) frontend/src/components/safety/safetyLabels.js  — NEW (STEP 0.6 shared map)
-   CATEGORY_HE (10), SEVERITY_HE, DOC_STATUS_HE.
-
-3) frontend/src/components/safety/SafetyFormModal.js  — NEW shared shell
-   shadcn Dialog with modal={false} (MANDATORY), dir="rtl", <form> wrapper,
-   scrollable body, footer שמור (submit, spinner+disabled while submitting) + ביטול.
-   onInteractOutside/onPointerDownOutside preventDefault (don't lose input on stray tap).
-   No entity logic.
-
-4) frontend/src/components/safety/SafetyWorkerForm.js  — NEW (create+edit)
-   Fields: full_name(req 2-120, client-validated), profession, phone, company
-   (Radix Select → company_id; CREATE adds a "+ חברה חדשה" option → free-text
-   company_name), id_number (write-only: blank on edit, sent only if typed; stored
-   hash never shown), notes. 2xx → toast 'עובד נוסף'/'עובד עודכן' → onSaved → onClose.
-   Error → toast(server detail || 'שמירה נכשלה').
-
-5) frontend/src/components/safety/SafetyDocumentForm.js  — NEW (create+edit)
-   Fields: title(req 2-200), category (Radix Select, 10 CATEGORY_HE), severity
-   (Radix Select "1"/"2"/"3" SEVERITY_HE), found_at (date, req, default today),
-   location, description, company (Radix Select → company_id). EDIT-only: status
-   (Radix Select, DOC_STATUS_HE). Always sends photo_urls:[] + attachment_urls:[]
-   (photos=1b). Client-validates title/category/severity/found_at. 2xx →
-   'ליקוי נוסף'/'ליקוי עודכן' → onSaved → onClose.
-
-6) frontend/src/pages/SafetyHomePage.js
-   - Imports both forms + safetyLabels; removed local SEVERITY_HE/DOC_STATUS_HE.
-   - SAFETY_WRITERS const; isWriter = SAFETY_WRITERS.includes(project?.my_role).
-   - State: docForm{open,record}, workerForm{open,record}.
-   - Header "+ הוסף" (writer-gated, hidden on tasks tab): workers→worker create,
-     documents→doc create.
-   - Per-row pencil (writer-gated) in DocumentsList + WorkersList → edit mode;
-     stopPropagation so it never toggles the doc checkbox/selection.
-   - reloadDocuments / reloadWorkers re-fetch the list + getScore(projectId, true)
-     after save. bulk-delete/filter/export/score/KPI untouched.
+frontend/src/components/safety/SafetyDocumentForm.js
+  1) import: added projectService to the '../../services/api' import.
+  2) state: assigneeId ('') + members ([]).
+  3) load effect: company-only effect → Promise.allSettled([projectCompanyService.list,
+     projectService.getMemberships]) — fail-soft: a memberships failure never blanks companies.
+     Members filtered to (role === 'project_manager' || role === 'management_team') &&
+     (status === 'accepted' || !status). Same inline array-shape guard as companies; `cancelled`
+     cleanup guard retained.
+  4) init effect: setAssigneeId(document?.assignee_id || '') (pre-fills on edit).
+  5) render: new "אחראי" Radix <Select> placed AFTER the company field; "__none__" → "ללא אחראי"
+     clear option; maps members → <SelectItem value={user_id}>{user_name || 'חבר צוות'}</SelectItem>.
+     Optional (no validation); empty members ⇒ only "ללא אחראי" (no crash).
+  6) payload: added assignee_id: assigneeId || null (sent on BOTH create AND edit).
+  Nothing else touched — company/category/severity/status/title/description/location, the worker
+  form, the list/score/filter/export all byte-unchanged.
 
 --------------------------------------------------------------------------------
 VERIFICATION
 --------------------------------------------------------------------------------
 V1 — babel parse (NO workflow restart — CRA SIGTERMs; real build at Zahi's ./deploy.sh --stag):
-   PARSE OK  src/services/api.js
-   PARSE OK  src/components/safety/safetyLabels.js
-   PARSE OK  src/components/safety/SafetyFormModal.js
-   PARSE OK  src/components/safety/SafetyWorkerForm.js
    PARSE OK  src/components/safety/SafetyDocumentForm.js
-   PARSE OK  src/pages/SafetyHomePage.js
 
 V2 — static greps (all pass):
-   • safetyService has createWorker(488)/updateWorker(497)/createDocument(506)/updateDocument(515) ✓
-   • SafetyFormModal: <Dialog ... modal={false}> (17) ✓
-   • both forms import Radix Select from '../ui/select' and use <Select>/<SelectTrigger> ✓
-   • NO native <select> in any new safety file ✓
-   • writer-gating: header (302) + DocumentsList pencil (595) + WorkersList pencil (658) ✓
-   • onSaved={reloadDocuments}(469)/onSaved={reloadWorkers}(477); getScore(projectId,true) at 264/277 ✓
-   • SafetyHomePage imports SEVERITY_HE/DOC_STATUS_HE from safetyLabels (23); local copies removed ✓
+   • state: assigneeId (31) + members (32) ✓
+   • projectService imported (3) and used in load effect (54) ✓
+   • load effect: Promise.allSettled (52) + getMemberships (54) + role filter (66) + status guard (67) ✓
+   • assignee Radix Select: placeholder "בחר אחראי" (182), "ללא אחראי" none-option (184),
+     members.map (185) ✓
+   • payload: assignee_id: assigneeId || null (93) ✓
+   • NO native <select> in the file ✓
+   • NO cascade logic (no company_id===companyId / user_company_id / contractor filtering) ✓
 
 V3-V9 — how exercised (manual, on a real device against staging after Zahi deploys):
-   V3 ADD WORKER: as project_manager → workers tab → "+ הוסף" → שם מלא + מקצוע → שמור →
-      toast 'עובד נוסף' → worker appears immediately (reloadWorkers, no manual refresh).
-   V4 EDIT WORKER: pencil on a worker row → change מקצוע → שמור → 'עובד עודכן' → row updates.
-   V5 ADD DEFECT: documents tab → "+ הוסף" → כותרת + קטגוריה + חומרה + תאריך גילוי → שמור →
-      'ליקוי נוסף' → appears in ליקויים; score gauge updates (getScore refresh fired). No photo field.
-   V6 EDIT DEFECT: pencil on a document row → change חומרה + סטטוס → שמור → row reflects it.
-   V7 RBAC: as a non-writer (owner/member without writer role) → no "+" and no pencil; if the
-      API is forced it returns 403 and the form shows toast(server detail) — no crash.
-   V8 REGRESSION: filter sheet, bulk-select+bulk-delete, export menu, KPI cards, empty states
-      behave as before; the doc checkbox is unaffected by the pencil (stopPropagation).
-   V9 Mobile WebView: modal opens/scrolls; Radix Selects open correctly (no native-select escape);
-      no pointer-events:none lock after closing mid-animation (modal={false}).
+   V3 ⭐ ADD DEFECT WITH ASSIGNEE: documents tab → "+ הוסף" → title+category+severity+date →
+      open "אחראי" → list shows the project's project_manager/management_team members ONLY
+      (NOT contractors, NOT the manual safety workers) → pick one → save → defect created with
+      that assignee_id (a real user id).
+   V4 EDIT: open a defect that already has an assignee → picker pre-filled with that person;
+      change it / choose "ללא אחראי" → save → persists (assignee_id updated / nulled).
+   V5 EMPTY / FAIL-SOFT: project with no management members → picker shows only "ללא אחראי",
+      form still saves (assignee_id null). If memberships request fails → companies + the rest
+      of the form still load and save (allSettled).
+   V6 EXPORT sanity: a defect assigned to a member → Excel/PDF "אחראי" column shows that member's
+      name — the export's db.users user_map already resolves the user_id. No code change; just confirm.
+   V7 REGRESSION: title/category/severity/status/company/found_at/location/description all behave
+      exactly as before; status still edit-only; modal={false} behaviour unchanged.
 
 --------------------------------------------------------------------------------
 SCOPE / DO-NOT honored
 --------------------------------------------------------------------------------
-FRONTEND-ONLY — Capgo OTA, no ship.sh, no backend, no new dependency, no new flag.
-No photo/file upload (photo_urls:[]) · no Tasks/Trainings/Incidents forms · no
-defect-vs-documentation split · no Safety Tours · score/KPI/filter/bulk-delete/export
-left intact · modal={false} only · Radix Select only (no native select, no window.confirm)
-· id_number never displayed/sent as hash · no QC/handover edits.
+FRONTEND-ONLY — Capgo OTA, no backend, no new dependency, no new flag.
+No company→person cascade (assignee list is FLAT — internal team has no company) · contractors,
+viewers and the manual safety workers (laborers) intentionally excluded · placeholder-company
+picker bug NOT touched (separate batch) · Radix Select only (no native <select>) · company field,
+category/severity/status, worker form, list/score/filter/export all left intact.
 
 --------------------------------------------------------------------------------
 COMMIT MESSAGE (also written to .local/.commit_message)
 --------------------------------------------------------------------------------
-feat(safety): create/edit modals for workers + defects (phase 2 step 1)
+feat(safety): assign a safety defect to a responsible team member (אחראי)
 
-The Safety page was read-only — closed-beta PMs could not add or edit anything.
-Adds a shared Radix modal (modal=false) + Worker and Defect create/edit forms wired
-to the EXISTING safety backend (POST/PATCH already shipped in Phase 1); adds writer-
-gated "+" buttons and per-row edit on the workers and documents tabs, refreshing the
-list + score after save. Text fields only — photo upload is batch 1b (needs a backend
-display-url regeneration touch to avoid presigned-URL expiry). Frontend-only; rides
-ENABLE_SAFETY_MODULE; Capgo OTA. Tasks/trainings/incidents forms, the documentation
-split, and Safety Tours are later batches.
+Adds an "אחראי" picker to the safety defect form = the project's internal team
+(project_manager + management_team members), read LIVE via getMemberships — so the
+team appears automatically with no re-entry and stays current. assignee_id is sent
+on create + edit; the backend already accepts it (a user id) and the export already
+resolves it from db.users — zero backend change. Flat list (internal staff have no
+contractor company, so no company→person cascade); contractors/viewers and the
+manual safety workers (laborers) are intentionally excluded. Frontend-only; Capgo OTA.
 
 --------------------------------------------------------------------------------
 ROLLBACK
 --------------------------------------------------------------------------------
-git revert <sha> — 6 frontend files. ./deploy.sh --prod (OTA). No backend / no DB / no flag.
+git revert <sha> -- frontend/src/components/safety/SafetyDocumentForm.js
+./deploy.sh --prod (OTA). No backend / no DB / no flag.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { safetyService, projectCompanyService } from '../../services/api';
+import { safetyService, projectCompanyService, projectService } from '../../services/api';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
@@ -28,6 +28,8 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
   const [description, setDescription] = useState('');
   const [companyId, setCompanyId] = useState('');
   const [companies, setCompanies] = useState([]);
+  const [assigneeId, setAssigneeId] = useState('');
+  const [members, setMembers] = useState([]);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -40,18 +42,33 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
     setLocation(document?.location || '');
     setDescription(document?.description || '');
     setCompanyId(document?.company_id || '');
+    setAssigneeId(document?.assignee_id || '');
   }, [open, document]);
 
   useEffect(() => {
     if (!open || !projectId) return;
     let cancelled = false;
-    projectCompanyService.list(projectId)
-      .then((res) => {
-        if (cancelled) return;
-        const list = Array.isArray(res) ? res : (res?.items || []);
+    // Fail-soft: a memberships failure must never blank the companies picker (mirror NewDefectModal).
+    Promise.allSettled([
+      projectCompanyService.list(projectId),
+      projectService.getMemberships(projectId),
+    ]).then(([compRes, memRes]) => {
+      if (cancelled) return;
+      if (compRes.status === 'fulfilled') {
+        const cv = compRes.value;
+        const list = Array.isArray(cv) ? cv : (cv?.items || []);
         setCompanies(list.map((c) => ({ id: c.id, name: c.name || c.id })));
-      })
-      .catch(() => { /* picker stays empty — not fatal */ });
+      }
+      if (memRes.status === 'fulfilled') {
+        const mv = memRes.value;
+        const mlist = Array.isArray(mv) ? mv : (mv?.items || []);
+        const mgmt = mlist.filter((m) =>
+          (m.role === 'project_manager' || m.role === 'management_team') &&
+          (m.status === 'accepted' || !m.status)
+        );
+        setMembers(mgmt);
+      }
+    });
     return () => { cancelled = true; };
   }, [open, projectId]);
 
@@ -73,6 +90,7 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
       location: location.trim() || null,
       description: description.trim() || null,
       company_id: companyId || null,
+      assignee_id: assigneeId || null,
       photo_urls: [],
       attachment_urls: [],
     };
@@ -149,6 +167,23 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
           <SelectContent>
             {companies.map((c) => (
               <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>אחראי</Label>
+        <Select
+          value={assigneeId || '__none__'}
+          onValueChange={(v) => setAssigneeId(v === '__none__' ? '' : v)}
+          dir="rtl"
+        >
+          <SelectTrigger><SelectValue placeholder="בחר אחראי" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">ללא אחראי</SelectItem>
+            {members.map((m) => (
+              <SelectItem key={m.user_id} value={m.user_id}>{m.user_name || 'חבר צוות'}</SelectItem>
             ))}
           </SelectContent>
         </Select>
