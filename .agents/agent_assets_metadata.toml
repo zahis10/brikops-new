@@ -462,3 +462,9 @@ id = "3Zl-9KLz5NVVl5z-JbkjX"
 uri = "file://.local/plans/safety-p2-2-plan.md"
 type = "text"
 title = "BATCH safety-p2-2 — תוכנית מלאה (אחראי / assignee picker)"
+
+[[outputs]]
+id = "t-UaNDQQ44BDTQLzmHFHr"
+uri = "file://.local/plans/safety-p2-2-fix1-plan.md"
+type = "text"
+title = "BATCH safety-p2-2 FIX 1+2 — תוכנית (assignee status filter + תווית כפתור)"
