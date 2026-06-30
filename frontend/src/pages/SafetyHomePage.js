@@ -309,7 +309,7 @@ export default function SafetyHomePage() {
             className="px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1 min-h-[44px]"
           >
             <Plus className="w-4 h-4" />
-            הוסף
+            {activeTab === 'workers' ? 'הוסף עובד' : 'הוסף ליקוי'}
           </button>
         )}
 

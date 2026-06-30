@@ -64,7 +64,7 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
         const mlist = Array.isArray(mv) ? mv : (mv?.items || []);
         const mgmt = mlist.filter((m) =>
           (m.role === 'project_manager' || m.role === 'management_team') &&
-          (m.status === 'accepted' || !m.status)
+          (m.status !== 'pending')
         );
         setMembers(mgmt);
       }

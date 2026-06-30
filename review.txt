@@ -1,121 +1,102 @@
 ================================================================================
-BATCH safety-p2-2 — Safety defect "אחראי" (assignee) = live project team picker
+BATCH safety-p2-2 — FIX 1+2: assignee picker empty (status filter) + "+ הוסף" label
 FRONTEND-ONLY · Capgo OTA · no backend · no new dependency · no new flag
 ================================================================================
 
-ROLLBACK SHA (HEAD before edit): 9c6f866
-Branch (per spec): staging. git diff = exactly 1 frontend file, 0 backend.
+ROLLBACK SHA (HEAD before edit): 9f38591
+Branch (per spec): staging. git diff = exactly 2 frontend files, 0 backend.
 (Local working clone reports branch "main" — Zahi owns all git/branch handling.)
 
 --------------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT OUTPUTS (read-only; all confirmed, no divergence)
+STEP 0 — PRE-FLIGHT OUTPUTS (read-only; confirmed, no divergence)
 --------------------------------------------------------------------------------
-0.1 Backend already supports assignee_id (NOT edited):
-    safety_router.py: SafetyDocumentCreate.assignee_id (513), SafetyDocumentUpdate.assignee_id (527),
-      stored verbatim on create (560), list filter param (606), index project_id+assignee_id (1902),
-      Excel/PDF export resolves it via db.users user_map (1583).
-    schemas.py: SafetyDocument.assignee_id annotated "# user id" (766), + 788.
-    ⇒ assignee_id MUST be a project-member USER id. Confirmed. ZERO backend change needed.
-
-0.2 Memberships service + row shape:
-    api.js:310 projectService.getMemberships(projectId) — cached, GET /projects/{id}/memberships.
-    Rows built by _enrich_memberships (router.py:602): each row carries user_id, user_name
-      (← db.users.name), role (membership role; falls back to user.role at 666-667), plus the
-      stored membership-doc fields (incl. `status` WHEN present), company_id / user_company_id
-      (contractor-only), org_role, is_org_owner.
-    Role values project_manager / management_team are valid project roles
-      (router.py PLAN_UPLOAD_ROLES = ('project_manager','management_team'), 690).
-    `status` is NOT guaranteed on every membership doc → the spec's guard
-      (m.status === 'accepted' || !m.status) is the correct fail-soft filter (keeps legacy
-      rows with no status while still excluding pending).
-    NewDefectModal.js precedent: normalizeList + Promise.allSettled([companies, memberships]),
-      then filters m.role === 'contractor' and maps { value: m.user_id, label: m.user_name }.
-
-0.3 SafetyDocumentForm anchors:
-    State title/category/severity/foundAt/status/location/description/companyId/companies/
-      submitting (was 22-31). Init effect pre-fills from `document` (33-43). Company-load effect
-      used projectCompanyService.list with an INLINE shape guard
-      `Array.isArray(res) ? res : (res?.items || [])` — there is NO normalizeList helper in this
-      file (so we reuse the same inline style, we did NOT import NewDefectModal's local helper).
-    handleSubmit builds `payload`; status added only on edit. Company rendered via Radix <Select>.
-    ⚠ projectService was NOT imported (only safetyService, projectCompanyService) → ADDED the import.
+0.1 SafetyDocumentForm.js filter (at HEAD), lines 66-67:
+      (m.role === 'project_manager' || m.role === 'management_team') &&
+      (m.status === 'accepted' || !m.status)
+    — exactly as the spec expects.
+0.2 SafetyHomePage.js add-button (at HEAD):
+      302: {isWriter && activeTab !== 'tasks' && (
+      306:   if (activeTab === 'workers') setWorkerForm({ open: true, record: null });
+      307:   else setDocForm({ open: true, record: null });
+      312:   הוסף            ← hardcoded text node
+    — writer-gated, onClick branches by tab, label hardcoded. Matches spec.
 
 --------------------------------------------------------------------------------
-CHANGE SET — 1 file (0 backend)
+ROOT CAUSE (verified on origin/staging)
 --------------------------------------------------------------------------------
-frontend/src/components/safety/SafetyDocumentForm.js
-  1) import: added projectService to the '../../services/api' import.
-  2) state: assigneeId ('') + members ([]).
-  3) load effect: company-only effect → Promise.allSettled([projectCompanyService.list,
-     projectService.getMemberships]) — fail-soft: a memberships failure never blanks companies.
-     Members filtered to (role === 'project_manager' || role === 'management_team') &&
-     (status === 'accepted' || !status). Same inline array-shape guard as companies; `cancelled`
-     cleanup guard retained.
-  4) init effect: setAssigneeId(document?.assignee_id || '') (pre-fills on edit).
-  5) render: new "אחראי" Radix <Select> placed AFTER the company field; "__none__" → "ללא אחראי"
-     clear option; maps members → <SelectItem value={user_id}>{user_name || 'חבר צוות'}</SelectItem>.
-     Optional (no validation); empty members ⇒ only "ללא אחראי" (no crash).
-  6) payload: added assignee_id: assigneeId || null (sent on BOTH create AND edit).
-  Nothing else touched — company/category/severity/status/title/description/location, the worker
-  form, the list/score/filter/export all byte-unchanged.
+FIX #2 — assignee ("אחראי") picker always empty (only "ללא אחראי"):
+  The guard (m.status === 'accepted' || !m.status) excludes members whose status is
+  'active'. demo_seed.py:357 seeds memberships with status:'active' → EXCLUDED, so the
+  demo project's PM ("מנהל פרויקט (דמו)") + management_team ("צוות ניהולי (דמו)") never
+  appeared. Real invite-accepted members have NO status field (those passed). Pending
+  invites carry status:'pending' (invites_router:208) and MUST stay excluded.
+  Correct guard = exclude ONLY pending: m.status !== 'pending' (passes active/accepted/none).
+FIX #1 — the "+ הוסף" button text was hardcoded "הוסף" on every tab → ambiguous; onClick
+  already branches on activeTab, only the label needed to name the entity.
+
+--------------------------------------------------------------------------------
+CHANGE SET — 2 files (0 backend)
+--------------------------------------------------------------------------------
+1) frontend/src/components/safety/SafetyDocumentForm.js  (FIX #2)
+   member filter status condition (line 67):
+     - (m.status === 'accepted' || !m.status)
+     + (m.status !== 'pending')
+   Net filter: (m.role === 'project_manager' || m.role === 'management_team') && (m.status !== 'pending')
+   Role filter byte-unchanged; only the status condition changed.
+
+2) frontend/src/pages/SafetyHomePage.js  (FIX #1)
+   add-button label (line 312):
+     - הוסף
+     + {activeTab === 'workers' ? 'הוסף עובד' : 'הוסף ליקוי'}
+   <Plus /> icon, the isWriter && activeTab !== 'tasks' gate, and the onClick branch UNCHANGED.
 
 --------------------------------------------------------------------------------
 VERIFICATION
 --------------------------------------------------------------------------------
 V1 — babel parse (NO workflow restart — CRA SIGTERMs; real build at Zahi's ./deploy.sh --stag):
    PARSE OK  src/components/safety/SafetyDocumentForm.js
+   PARSE OK  src/pages/SafetyHomePage.js
 
 V2 — static greps (all pass):
-   • state: assigneeId (31) + members (32) ✓
-   • projectService imported (3) and used in load effect (54) ✓
-   • load effect: Promise.allSettled (52) + getMemberships (54) + role filter (66) + status guard (67) ✓
-   • assignee Radix Select: placeholder "בחר אחראי" (182), "ללא אחראי" none-option (184),
-     members.map (185) ✓
-   • payload: assignee_id: assigneeId || null (93) ✓
-   • NO native <select> in the file ✓
-   • NO cascade logic (no company_id===companyId / user_company_id / contractor filtering) ✓
+   • SafetyDocumentForm filter now (m.status !== 'pending') at line 67; NO `=== 'accepted'` remains ✓
+   • role filter intact: (m.role === 'project_manager' || m.role === 'management_team') (66) ✓
+   • SafetyHomePage label = {activeTab === 'workers' ? 'הוסף עובד' : 'הוסף ליקוי'} (312) ✓
+   • gate + onClick unchanged: isWriter && activeTab !== 'tasks' (302); setWorkerForm/setDocForm
+     branch (306-307) ✓
 
-V3-V9 — how exercised (manual, on a real device against staging after Zahi deploys):
-   V3 ⭐ ADD DEFECT WITH ASSIGNEE: documents tab → "+ הוסף" → title+category+severity+date →
-      open "אחראי" → list shows the project's project_manager/management_team members ONLY
-      (NOT contractors, NOT the manual safety workers) → pick one → save → defect created with
-      that assignee_id (a real user id).
-   V4 EDIT: open a defect that already has an assignee → picker pre-filled with that person;
-      change it / choose "ללא אחראי" → save → persists (assignee_id updated / nulled).
-   V5 EMPTY / FAIL-SOFT: project with no management members → picker shows only "ללא אחראי",
-      form still saves (assignee_id null). If memberships request fails → companies + the rest
-      of the form still load and save (allSettled).
-   V6 EXPORT sanity: a defect assigned to a member → Excel/PDF "אחראי" column shows that member's
-      name — the export's db.users user_map already resolves the user_id. No code change; just confirm.
-   V7 REGRESSION: title/category/severity/status/company/found_at/location/description all behave
-      exactly as before; status still edit-only; modal={false} behaviour unchanged.
+V3-V5 — how exercised (manual, on a real device against staging after Zahi deploys):
+   V3 ⭐ ASSIGNEE NOW POPULATED (demo project, make-or-break): documents tab → "+ הוסף ליקוי" →
+      open "אחראי" → dropdown NOW lists the project's PM + management_team members
+      ("מנהל פרויקט (דמו)", "צוות ניהולי (דמו)") — NOT the contractor, NOT the viewer, NOT pending
+      invites → pick one → save → defect carries that assignee_id.
+   V4 BUTTON LABEL: ליקויים tab → "הוסף ליקוי"; עובדים tab → "הוסף עובד"; משימות tab → still no button.
+   V5 REGRESSION: a real (non-demo) project whose members have no status field still shows them
+      (!== 'pending' keeps them); pending invitations never appear in the assignee list.
 
 --------------------------------------------------------------------------------
 SCOPE / DO-NOT honored
 --------------------------------------------------------------------------------
 FRONTEND-ONLY — Capgo OTA, no backend, no new dependency, no new flag.
-No company→person cascade (assignee list is FLAT — internal team has no company) · contractors,
-viewers and the manual safety workers (laborers) intentionally excluded · placeholder-company
-picker bug NOT touched (separate batch) · Radix Select only (no native <select>) · company field,
-category/severity/status, worker form, list/score/filter/export all left intact.
+No backend (demo_seed / invites_router / memberships endpoint untouched) · role filter unchanged
+(project_manager + management_team) · onClick logic, writer gate, tasks-tab exclusion unchanged ·
+no other safety form/field/list/score/filter/export touched · Radix Select only.
 
 --------------------------------------------------------------------------------
 COMMIT MESSAGE (also written to .local/.commit_message)
 --------------------------------------------------------------------------------
-feat(safety): assign a safety defect to a responsible team member (אחראי)
+fix(safety): assignee picker includes active members + name the "+ הוסף" button
 
-Adds an "אחראי" picker to the safety defect form = the project's internal team
-(project_manager + management_team members), read LIVE via getMemberships — so the
-team appears automatically with no re-entry and stays current. assignee_id is sent
-on create + edit; the backend already accepts it (a user id) and the export already
-resolves it from db.users — zero backend change. Flat list (internal staff have no
-contractor company, so no company→person cascade); contractors/viewers and the
-manual safety workers (laborers) are intentionally excluded. Frontend-only; Capgo OTA.
+The assignee picker filtered members to status==='accepted'||no-status, but seeded
+(and 'active'-status) members were excluded, so the dropdown was empty even when the
+project had PM/management_team members. Now excludes only pending invites
+(status!=='pending'), so active/accepted/no-status members all appear. Also makes the
+safety "+ הוסף" button name its entity per tab (הוסף ליקוי / הוסף עובד). Frontend-only.
 
 --------------------------------------------------------------------------------
 ROLLBACK
 --------------------------------------------------------------------------------
-git revert <sha> -- frontend/src/components/safety/SafetyDocumentForm.js
+git revert <sha> -- frontend/src/components/safety/SafetyDocumentForm.js \
+  frontend/src/pages/SafetyHomePage.js
 ./deploy.sh --prod (OTA). No backend / no DB / no flag.
 
 ================================================================================
