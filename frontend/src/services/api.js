@@ -520,6 +520,13 @@ export const safetyService = {
     );
     return r.data;
   },
+
+  async uploadDocumentFile(projectId, file) {
+    const fd = new FormData();
+    fd.append('file', file);
+    const r = await axios.post(`${API}/safety/${projectId}/upload`, fd, { headers: getAuthHeader() });
+    return r.data;   // { url (presigned preview), stored_ref (permanent key), ... }
+  },
 };
 
 export const buildingService = {

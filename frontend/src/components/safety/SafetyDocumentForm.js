@@ -9,13 +9,19 @@ import {
 } from '../ui/select';
 import SafetyFormModal from './SafetyFormModal';
 import { CATEGORY_HE, SEVERITY_HE, DOC_STATUS_HE } from './safetyLabels';
+import { compressImage } from '../../utils/imageCompress';
+import { Camera, X } from 'lucide-react';
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
+const isHttp = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
+
 // Create + edit a safety defect (safety_document). Fields mirror
-// SafetyDocumentCreate / SafetyDocumentUpdate exactly. NO photo upload this
-// batch — we always send photo_urls:[] / attachment_urls:[] (photos = batch 1b,
-// which needs a backend display-url regeneration touch to avoid presigned-URL expiry).
+// SafetyDocumentCreate / SafetyDocumentUpdate exactly. Photos: we upload to
+// /safety/{pid}/upload and persist ONLY the permanent stored_ref key in photo_urls
+// (never the presigned url, which expires). The backend regenerates a parallel
+// photo_display_urls per-GET, which we zip into the edit preview. attachment_urls
+// (PDFs) remain out of scope → always sent as [].
 export default function SafetyDocumentForm({ projectId, document, open, onClose, onSaved }) {
   const isEdit = !!document;
 
@@ -30,6 +36,8 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
   const [companies, setCompanies] = useState([]);
   const [assigneeId, setAssigneeId] = useState('');
   const [members, setMembers] = useState([]);
+  const [photos, setPhotos] = useState([]);   // [{ key: stored_ref, preview: display_url }]
+  const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -43,6 +51,9 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
     setDescription(document?.description || '');
     setCompanyId(document?.company_id || '');
     setAssigneeId(document?.assignee_id || '');
+    const keys = document?.photo_urls || [];
+    const prevs = document?.photo_display_urls || [];
+    setPhotos(keys.map((k, i) => ({ key: k, preview: prevs[i] || null })));
   }, [open, document]);
 
   useEffect(() => {
@@ -72,6 +83,24 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
     return () => { cancelled = true; };
   }, [open, projectId]);
 
+  const handlePhoto = async (file) => {
+    if (!file) return;
+    try {
+      setUploading(true);
+      const compressed = await compressImage(file);
+      const res = await safetyService.uploadDocumentFile(projectId, compressed);
+      if (res?.stored_ref) {
+        setPhotos((prev) => [...prev, { key: res.stored_ref, preview: res.url || null }]);
+      }
+    } catch (e) {
+      toast.error('העלאת תמונה נכשלה');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removePhoto = (idx) => setPhotos((prev) => prev.filter((_, i) => i !== idx));
+
   const handleSubmit = async () => {
     const t = title.trim();
     if (t.length < 2 || t.length > 200) {
@@ -91,7 +120,7 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
       description: description.trim() || null,
       company_id: companyId || null,
       assignee_id: assigneeId || null,
-      photo_urls: [],
+      photo_urls: photos.map((p) => p.key),
       attachment_urls: [],
     };
     if (isEdit) payload.status = status;
@@ -206,6 +235,45 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
       <div className="space-y-1.5">
         <Label htmlFor="sd-desc">תיאור</Label>
         <Textarea id="sd-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>תמונות</Label>
+        <label
+          className={`inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-50 min-h-[44px] ${uploading ? 'opacity-60 pointer-events-none' : ''}`}
+        >
+          <Camera className="w-4 h-4" />
+          {uploading ? 'מעלה…' : 'צרף תמונה'}
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; handlePhoto(f); }}
+          />
+        </label>
+        {photos.length > 0 && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            {photos.map((p, idx) => (
+              <div key={p.key || idx} className="relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200 bg-slate-100">
+                {isHttp(p.preview) ? (
+                  <img src={p.preview} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-slate-400">
+                    <Camera className="w-6 h-6" />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  aria-label="הסר תמונה"
+                  onClick={() => removePhoto(idx)}
+                  className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </SafetyFormModal>
   );

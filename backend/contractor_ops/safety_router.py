@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field
 import io
 import time as _time
 
+from services.object_storage import generate_url
+
 from contractor_ops.router import (
     get_current_user, get_db, _now, _audit,
     _check_project_access, _get_project_role, _get_project_membership,
@@ -613,6 +615,10 @@ async def list_documents(
     total = await db.safety_documents.count_documents(q)
     cursor = db.safety_documents.find(q, {"_id": 0}).sort("found_at", -1).skip(offset).limit(limit)
     items = await cursor.to_list(length=limit)
+    for it in items:
+        it["photo_display_urls"] = [
+            (generate_url(k) if k else k) for k in (it.get("photo_urls") or [])
+        ]
     filters_applied = {k: v for k, v in {
         "category": category.value if category else None,
         "severity": severity.value if severity else None,
@@ -635,6 +641,9 @@ async def get_document(
     doc = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
     if not doc:
         raise HTTPException(status_code=404, detail="document not found")
+    doc["photo_display_urls"] = [
+        (generate_url(k) if k else k) for k in (doc.get("photo_urls") or [])
+    ]
     return SafetyDocument(**doc)
 
 

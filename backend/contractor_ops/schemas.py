@@ -766,6 +766,7 @@ class SafetyDocument(BaseModel):
     assignee_id: Optional[str] = None    # user id
     reporter_id: str                     # user id
     photo_urls: List[str] = []
+    photo_display_urls: Optional[List[str]] = None   # server-computed per-GET; never persisted
     attachment_urls: List[str] = []      # PDF/doc attachments
     found_at: str                        # ISO UTC (when observed)
     resolved_at: Optional[str] = None

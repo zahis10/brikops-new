@@ -1,104 +1,126 @@
-================================================================================
-BATCH safety-p2-2 — FIX 1+2: assignee picker empty (status filter) + "+ הוסף" label
-FRONTEND-ONLY · Capgo OTA · no backend · no new dependency · no new flag
-================================================================================
+========================================================================
+BATCH safety-p2-1b — תמונות לליקויי בטיחות (durable: מפתח נשמר, URL מתחדש per-GET)
+========================================================================
+Branch: staging (Zahi owns git; local clone shows "main")
+Rollback SHA (HEAD before edit): 87ce25b
+Deploy target: BACKEND + FRONTEND — EB Frankfurt + Cloudflare (deploy TOGETHER)
+No native · No new dependency · No new flag
 
-ROLLBACK SHA (HEAD before edit): 9f38591
-Branch (per spec): staging. git diff = exactly 2 frontend files, 0 backend.
-(Local working clone reports branch "main" — Zahi owns all git/branch handling.)
+------------------------------------------------------------------------
+STEP 0 — PRE-FLIGHT (read-only, verified)
+------------------------------------------------------------------------
+0.1 /upload (safety_router ~1824): returns { id, url (PRESIGNED via obj_generate_url),
+    stored_ref (PERMANENT key), filename, content_type, size }. Uses LOCAL alias import
+    `generate_url as obj_generate_url` (1810). Endpoint & response UNCHANGED this batch.
+0.2 Store path: create_document stores payload.photo_urls verbatim (562); update_document
+    model_dump(exclude_unset=True) (656) → photo_urls passes through.
+0.3 GET serializers (injection points): get_document returns SafetyDocument(**doc);
+    list_documents builds items = cursor.to_list(...) then returns dict.
+0.4 generate_url NOT module-level in safety_router pre-batch (only local alias in upload).
+    handover_router:9 has the module-level pattern. object_storage.generate_url (…:95) is
+    SYNC, TTL-cached, fail-soft (returns ref unchanged when falsy/non-s3; s3:// → presigned GET).
+0.5 Schema: SafetyDocument had photo_urls only; photo_display_urls did NOT exist.
+0.6 Frontend: form sent photo_urls:[] / attachment_urls:[]; no compressImage import.
+    compressImage exported at utils/imageCompress.js:84. safetyService had no upload method;
+    taskService.uploadAttachment is the FormData precedent.
+No blocking divergence.
 
---------------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT OUTPUTS (read-only; confirmed, no divergence)
---------------------------------------------------------------------------------
-0.1 SafetyDocumentForm.js filter (at HEAD), lines 66-67:
-      (m.role === 'project_manager' || m.role === 'management_team') &&
-      (m.status === 'accepted' || !m.status)
-    — exactly as the spec expects.
-0.2 SafetyHomePage.js add-button (at HEAD):
-      302: {isWriter && activeTab !== 'tasks' && (
-      306:   if (activeTab === 'workers') setWorkerForm({ open: true, record: null });
-      307:   else setDocForm({ open: true, record: null });
-      312:   הוסף            ← hardcoded text node
-    — writer-gated, onClick branches by tab, label hardcoded. Matches spec.
+------------------------------------------------------------------------
+DIVERGENCE (documented, no conflict)
+------------------------------------------------------------------------
+Added a MODULE-LEVEL `from services.object_storage import generate_url` to safety_router.
+It coexists with the upload fn's local `obj_generate_url` alias — separate names, no clash.
 
---------------------------------------------------------------------------------
-ROOT CAUSE (verified on origin/staging)
---------------------------------------------------------------------------------
-FIX #2 — assignee ("אחראי") picker always empty (only "ללא אחראי"):
-  The guard (m.status === 'accepted' || !m.status) excludes members whose status is
-  'active'. demo_seed.py:357 seeds memberships with status:'active' → EXCLUDED, so the
-  demo project's PM ("מנהל פרויקט (דמו)") + management_team ("צוות ניהולי (דמו)") never
-  appeared. Real invite-accepted members have NO status field (those passed). Pending
-  invites carry status:'pending' (invites_router:208) and MUST stay excluded.
-  Correct guard = exclude ONLY pending: m.status !== 'pending' (passes active/accepted/none).
-FIX #1 — the "+ הוסף" button text was hardcoded "הוסף" on every tab → ambiguous; onClick
-  already branches on activeTab, only the label needed to name the entity.
+------------------------------------------------------------------------
+CHANGES — 4 files
+------------------------------------------------------------------------
+[1] backend/contractor_ops/safety_router.py
+    + line 23: `from services.object_storage import generate_url`  (module-level)
+    + get_document (before return SafetyDocument(**doc)):
+        doc["photo_display_urls"] = [(generate_url(k) if k else k)
+                                     for k in (doc.get("photo_urls") or [])]
+    + list_documents (right after items = await cursor.to_list(length=limit)):
+        for it in items:
+            it["photo_display_urls"] = [(generate_url(k) if k else k)
+                                        for k in (it.get("photo_urls") or [])]
+    (Create/Update models NOT touched — display urls are server-computed, read-only.)
 
---------------------------------------------------------------------------------
-CHANGE SET — 2 files (0 backend)
---------------------------------------------------------------------------------
-1) frontend/src/components/safety/SafetyDocumentForm.js  (FIX #2)
-   member filter status condition (line 67):
-     - (m.status === 'accepted' || !m.status)
-     + (m.status !== 'pending')
-   Net filter: (m.role === 'project_manager' || m.role === 'management_team') && (m.status !== 'pending')
-   Role filter byte-unchanged; only the status condition changed.
+[2] backend/contractor_ops/schemas.py
+    + SafetyDocument, after photo_urls:
+        photo_display_urls: Optional[List[str]] = None   # server-computed per-GET; never persisted
 
-2) frontend/src/pages/SafetyHomePage.js  (FIX #1)
-   add-button label (line 312):
-     - הוסף
-     + {activeTab === 'workers' ? 'הוסף עובד' : 'הוסף ליקוי'}
-   <Plus /> icon, the isWriter && activeTab !== 'tasks' gate, and the onClick branch UNCHANGED.
+[3] frontend/src/services/api.js
+    + safetyService.uploadDocumentFile(projectId, file): FormData POST /safety/{pid}/upload,
+      returns { url (presigned preview), stored_ref (permanent key), ... }.
 
---------------------------------------------------------------------------------
+[4] frontend/src/components/safety/SafetyDocumentForm.js
+    + import { compressImage } from '../../utils/imageCompress'
+    + import { Camera, X } from 'lucide-react'; helper isHttp()
+    + state: photos [{key, preview}], uploading
+    + init effect: zip document.photo_urls (keys) ↔ document.photo_display_urls (previews)
+    + handlePhoto: compressImage → uploadDocumentFile → append {key: res.stored_ref, preview: res.url};
+      toast.error('העלאת תמונה נכשלה') on fail; guarded by uploading
+    + removePhoto(idx)
+    + render: "צרף תמונה" button (Camera icon, accept="image/*", min-h 44px) + thumbnail row
+      (img when preview is http(s); neutral Camera placeholder otherwise) each with "×" remove
+    + payload: photo_urls: photos.map(p => p.key)   (was []). attachment_urls stays [].
+      NEVER sends photo_display_urls.
+
+------------------------------------------------------------------------
+DURABILITY MODEL (make-or-break)
+------------------------------------------------------------------------
+Persisted photo_urls holds ONLY the permanent stored_ref (s3:// key), never a presigned
+https url. Every GET (get_document + list_documents) regenerates a parallel photo_display_urls
+via the fail-soft, TTL-cached generate_url. Presigned expiry is therefore irrelevant — a new
+session / long wait re-reads and gets fresh urls. FE consumes photo_display_urls only for
+preview and always re-submits the keys.
+
+------------------------------------------------------------------------
 VERIFICATION
---------------------------------------------------------------------------------
-V1 — babel parse (NO workflow restart — CRA SIGTERMs; real build at Zahi's ./deploy.sh --stag):
-   PARSE OK  src/components/safety/SafetyDocumentForm.js
-   PARSE OK  src/pages/SafetyHomePage.js
+------------------------------------------------------------------------
+V1 — parse:
+  AST OK safety_router.py · AST OK schemas.py
+  babel PARSE OK api.js · babel PARSE OK SafetyDocumentForm.js
+V2 — greps (all confirmed):
+  module-level `from services.object_storage import generate_url` @23
+  photo_display_urls built in BOTH list_documents (@619) and get_document (@644)
+  schema field photo_display_urls @769
+  safetyService.uploadDocumentFile @524
+  FE payload `photo_urls: photos.map((p) => p.key)` (NOT [])
+  FE photo_display_urls used only for read pre-fill (never in payload/append/post)
 
-V2 — static greps (all pass):
-   • SafetyDocumentForm filter now (m.status !== 'pending') at line 67; NO `=== 'accepted'` remains ✓
-   • role filter intact: (m.role === 'project_manager' || m.role === 'management_team') (66) ✓
-   • SafetyHomePage label = {activeTab === 'workers' ? 'הוסף עובד' : 'הוסף ליקוי'} (312) ✓
-   • gate + onClick unchanged: isWriter && activeTab !== 'tasks' (302); setWorkerForm/setDocForm
-     branch (306-307) ✓
+V3 ⭐ DURABILITY (manual, Zahi to spot-check post-deploy):
+  Create defect w/ photo → save → reload/re-open → photo still renders. DB photo_urls holds
+  an s3:// KEY (not https); GET returns fresh photo_display_urls. New session reload → still
+  renders (regenerated per-GET, immune to presigned expiry).
+V4 — Create w/ 2 photos → list GET returns photo_display_urls; edit pre-fills both; remove one
+  → save → only kept key persists. Fail-soft: preview null/non-http → Camera placeholder, no
+  crash, key still submits.
+V5 — No-photo defect → photo_urls:[], no crash (empty-list guards on both GET paths).
+V6 — Excel + PDF exports untouched (don't read photo_urls) → still succeed.
+V7 — Edit a pre-existing photo-less defect → assignee/company/category/status unchanged.
 
-V3-V5 — how exercised (manual, on a real device against staging after Zahi deploys):
-   V3 ⭐ ASSIGNEE NOW POPULATED (demo project, make-or-break): documents tab → "+ הוסף ליקוי" →
-      open "אחראי" → dropdown NOW lists the project's PM + management_team members
-      ("מנהל פרויקט (דמו)", "צוות ניהולי (דמו)") — NOT the contractor, NOT the viewer, NOT pending
-      invites → pick one → save → defect carries that assignee_id.
-   V4 BUTTON LABEL: ליקויים tab → "הוסף ליקוי"; עובדים tab → "הוסף עובד"; משימות tab → still no button.
-   V5 REGRESSION: a real (non-demo) project whose members have no status field still shows them
-      (!== 'pending' keeps them); pending invitations never appear in the assignee list.
+------------------------------------------------------------------------
+DO NOT TOUCH (honored)
+------------------------------------------------------------------------
+✔ Never stored presigned url — only stored_ref key in photo_urls.
+✔ No photo_display_urls in Create/Update models or FE payload.
+✔ /upload endpoint, exports, worker form, attachment_urls, category/severity/status/
+  assignee/company logic all unchanged.
+FUTURE NOTE (warning, not a change): if defect photos are ever embedded in Excel/PDF export,
+that code MUST call generate_url(key). Exports today don't read photo_urls → untouched.
 
---------------------------------------------------------------------------------
-SCOPE / DO-NOT honored
---------------------------------------------------------------------------------
-FRONTEND-ONLY — Capgo OTA, no backend, no new dependency, no new flag.
-No backend (demo_seed / invites_router / memberships endpoint untouched) · role filter unchanged
-(project_manager + management_team) · onClick logic, writer gate, tasks-tab exclusion unchanged ·
-no other safety form/field/list/score/filter/export touched · Radix Select only.
+------------------------------------------------------------------------
+COMMIT MESSAGE
+------------------------------------------------------------------------
+safety(p2-1b): durable photo upload for safety defects
 
---------------------------------------------------------------------------------
-COMMIT MESSAGE (also written to .local/.commit_message)
---------------------------------------------------------------------------------
-fix(safety): assignee picker includes active members + name the "+ הוסף" button
+- store only permanent stored_ref keys in photo_urls (never presigned urls)
+- regenerate photo_display_urls per-GET in get_document + list_documents (fail-soft)
+- add SafetyDocument.photo_display_urls (server-computed, read-only, not persisted)
+- safetyService.uploadDocumentFile + SafetyDocumentForm photo capture/preview/remove
+- 4 files, no new dependency, no new flag; BACKEND+FRONTEND (EB + Cloudflare)
 
-The assignee picker filtered members to status==='accepted'||no-status, but seeded
-(and 'active'-status) members were excluded, so the dropdown was empty even when the
-project had PM/management_team members. Now excludes only pending invites
-(status!=='pending'), so active/accepted/no-status members all appear. Also makes the
-safety "+ הוסף" button name its entity per tab (הוסף ליקוי / הוסף עובד). Frontend-only.
-
---------------------------------------------------------------------------------
-ROLLBACK
---------------------------------------------------------------------------------
-git revert <sha> -- frontend/src/components/safety/SafetyDocumentForm.js \
-  frontend/src/pages/SafetyHomePage.js
-./deploy.sh --prod (OTA). No backend / no DB / no flag.
-
-================================================================================
+========================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================
+========================================================================
