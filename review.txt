@@ -1,108 +1,80 @@
 ========================================================================
-BATCH safety-p2-1c — פנקס כללי: תיקון פונט מודגש + עיצוב מקצועי + לוגואים
-                       + גיליון "ליקויים" ב‑Excel
+BATCH safety-p2-1c-fix1 — סדר עמודות RTL בכל טבלאות הפנקס
+                          + "מבצע" מציג שמות, לא קטעי UUID
 ========================================================================
 STATUS: ✅ הושלם ואומת מקומית — ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-ROLLBACK SHA (HEAD לפני העבודה): 842b99d
-DEPLOY TARGET: BACKEND — ./deploy.sh (EB Frankfurt + Cloudflare יחד, לא OTA)
-NO new pip dependency · NO new feature flag · 1 logo asset added (fonts/brikops-logo.png)
-FONT FILE: לא הוחלף — Rubik-Bold.ttf נשאר (מסלול fallback ל‑DejaVuSans-Bold, ראה FIX 1)
+ROLLBACK SHA (HEAD לפני העבודה): 0af65f1  (batch 1c)
+DEPLOY TARGET: BACKEND — ./deploy.sh (EB Frankfurt + Cloudflare יחד)
+NO new dependency · NO new asset · NO schema/API change · קובץ backend יחיד
 
-FILES CHANGED (git diff --stat vs 842b99d):
-  backend/contractor_ops/safety_router.py |  42 +++++--
-  backend/services/safety_pdf.py          | 215 +++++++++++++++++++++++-----
-  backend/fonts/brikops-logo.png          |  NEW (99,445 B, עותק של _preview-logo.png)
+FILES CHANGED (git diff --stat vs 0af65f1):
+  backend/services/safety_pdf.py | 18 ++++++++++++++----
+  1 file changed, 14 insertions(+), 4 deletions(-)   ← קובץ אחד בלבד ✅
 
 ========================================================================
 STEP 0 — ממצאי PRE-FLIGHT (read-only)
 ========================================================================
-0.1 שורש הבעיה (P1): backend/fonts/Rubik-Bold.ttf = 47,688 B = subset לטיני בלבד,
-    ללא גליפים עבריים → כל כותרת/טקסט מודגש רונדר כ‑□□□. Rubik-Regular.ttf = 359,804 B
-    (עברית מלאה) — לכן הרגיל תמיד היה תקין.
-0.2 פונט fallback קיים: /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf = 708,920 B,
-    עברית מלאה, קיים גם על EB (בשימוש ב‑pdf_service בפרוד).
-0.3 ⚠️ תגלית מכרעת (הוכחה אמפירית — ראה למטה): reportlab **לא מחליף** שם פונט שכבר
-    נרשם. register(bad) → register(dejavu, שם זהה) ⇒ getFont עדיין מחזיר את הרע (aleph=False).
-    לכן ה‑fallback חייב לבחור את הקובץ *לפני* הרישום, לא register‑then‑fallback.
-0.4 Excel: _gather_export_data כבר מחזיר documents + user_map — לא נדרשה שאילתה חדשה,
-    רק העברת הפרמטרים הקיימים ל‑builder.
-0.5 לוגו BrikOps: _preview-logo.png (99,445 B) בשורש הריפו → הועתק ל‑backend/fonts/
-    (שורש הריפו לא נשלח ל‑EB; fonts/ כן).
+0.1 def _table: hit יחיד בשורה 380 (closure בתוך generate_safety_register) ✅
+0.2 קריאות _table: 9 (8 טבלאות נתונים + audit): שורות 451/473/493/513/535/556/577/596
+    + 632(audit). כולן מעבירות כותרות בסדר לוגי — אף אחת לא הפוכה ידנית מראש ✅
+0.3 actor_id: projection @621 + שורת row עם [:8] @630 ✅
+0.4 generator הרישום (פנקס הקבלנים, חצי שני של הקובץ) בונה טבלאות ללא ה‑closure
+    _table → לא מושפע מהשינוי, לא נגעתי ✅
 
 ========================================================================
-FIX 1 (P1) — ביעור קופסאות הבולד העברי  [safety_pdf.py _register_fonts_once]
+CHANGE 1 — היפוך עמודות מרכזי אחד ב‑_table (~שורה 380)
 ========================================================================
-• בוחר את קובץ ה‑bold *לפני* הרישום: בודק כיסוי עברי (0x05D0) עם reportlab.TTFontFile
-  (זמין תמיד — ללא תלות ב‑fontTools). אם Rubik-Bold חסר עברית → DejaVuSans-Bold;
-  אם אף לא זמין → alias ל‑regular. נרשם פעם אחת תחת השם "Rubik-Bold" כך שאף קוד
-  downstream (שמקודד את השם "Rubik-Bold") לא משתנה.
-• מסלול שנשלח בפועל: DejaVuSans-Bold (כי Rubik-Bold.ttf עדיין subset לטיני).
-  ⚠️ ניסיון למשוך Rubik-Bold עברי מלא מהרשת נכשל (רשת חסומה) — קובץ הפונט לא הוחלף;
-  ה‑fallback דטרמיניסטי ומספיק. אם בעתיד יוטמע Rubik-Bold עברי אמיתי, הקוד יזהה ויעדיף אותו אוטומטית.
-
---- הוכחה אמפירית לתגלית 0.3 (למה הגרסה הראשונה עדיין הראתה קופסאות) ---
-  (A) TTFontFile inspection:  rubik-bold aleph=False | dejavu aleph=True
-  (B) register(bad) ואז register(dejavu) תחת שם זהה →  aleph=False  ← reportlab לא החליף!
-  (C) register(dejavu) תחת שם חדש/נקי →                aleph=True
-  ⇒ אחרי התיקון (בחירה לפני רישום):
-     _register_fonts_once() → "Rubik-Bold lacks Hebrew — using DejaVuSans-Bold"
-     getFont("Rubik-Bold") aleph = True ✅
+• reportlab מציב עמודה 0 בקצה השמאלי; כל ה‑call sites מעבירים בסדר קריאה לוגי,
+  לכן היפכתי כותרות, כל שורה, ורוחבי העמודות פעם אחת בתוך _table → העמודה הלוגית
+  הראשונה מרונדרת בקצה הימני.
+• TableStyle לא שונה (הקואורדינטות סימטריות: ROWBACKGROUNDS/BACKGROUND/GRID על
+  טווחים מלאים) — זברה/כותרת נייבי/repeatRows=1 נשמרו.
+• אף call site לא שונה (כפי שנדרש) — היפוך יחיד ומרכזי מטפל בכל 8 הטבלאות + audit.
 
 ========================================================================
-FIX 2 (P2) — עיצוב מקצועי  [safety_pdf.py] (טיפוגרפיה + לוגואים + צבע בלבד; 9 סקשנים ללא שינוי)
+CHANGE 2 — "מבצע" ב‑audit פותר שמות משתמשים (~שורות 618-637)
 ========================================================================
-פלטה: NAVY #1E293B · ORANGE #F97316 · SLATE_50 #F8FAFC
-• margins: topMargin 1.5→3.0cm, bottomMargin 1.8→2.4cm (פינוי לבאנר ולקרדיט footer).
-• באנר נייבי ~26mm בכל עמוד (דרך _NumberedCanvas): לוגו BrikOps בקצה מוביל (ימין ב‑RTL),
-  לוגו הלקוח (org.logo_url→presigned→bytes→ImageReader) בקצה נגדי — fail-soft אם חסר;
-  wordmark לבן ממורכז "פנקס כללי — בטיחות" בעמוד השער בלבד.
-• שער: כותרת + פרטי פרויקט על פאנל SLATE_50 מעוגל (ROUNDEDCORNERS).
-• כותרות סקשן: קו accent כתום 2pt (HRFlowable) מתחת לכל כותרת, ממוספר כמקודם.
-• טבלאות: כותרת נייבי + טקסט לבן מודגש, פסי זברה (white/SLATE_50), גריד דק SLATE_200,
-  padding 6/6/5/5, repeatRows=1 נשמר.
-• footer: מספרי עמוד נשמרו + שורת קרדיט "נוצר באמצעות BrikOps · brikops.com" (slate-400).
-• תוכן/סדר/פילטרים (deletedAt:None) — ללא שינוי. אין סקשנים/KPI/קופי חדשים.
-
-========================================================================
-FIX 3 (P3) — Excel: גיליון "ליקויים"  [safety_router.py]
-========================================================================
-• _build_safety_excel_3sheet: הרחבת חתימה +documents +user_map (מ‑_gather הקיים);
-  גיליון "ליקויים" חדש נכנס לפני "אירועים". השם נשאר (misnomer קל — עכשיו 4 גיליונות).
-• עמודות: כותרת/קטגוריה/חומרה/סטטוס/תאריך גילוי/מיקום/חברה/אחראי/תיאור
-  (ממפה CATEGORY_HE/SEVERITY_HE/DOC_STATUS_HE + company_map + user_map, כמו הייצוא המסונן).
-  photo_urls לא נכללים (מפתחות S3, לא קריאים — עקבי עם 1b).
-• docstring + _audit meta עודכנו לכלול ספירת documents.
+• מיד אחרי שליפת audit_events: איסוף actor_ids ייחודיים ושאילתת users אחת
+  ({id, name}) ל‑actor_map.
+• שורת ה‑row: actor_map.get(actor_id) → שם אמיתי; נפילה חיננית ל‑actor_id[:8]
+  אם המשתמש לא נמצא; "—" אם אין actor_id כלל.
 
 ========================================================================
 VERIFY
 ========================================================================
-V1 ast.parse: safety_pdf.py OK · safety_router.py OK
-V2 greps: _bold_ok/TTFontFile/DejaVu fallback קיימים; "ליקויים" נכתב; export מעביר documents.
-V2b glyph: Rubik-Bold.ttf aleph=False (⇒ fallback) | DejaVuSans-Bold aleph=True | אחרי fix getFont aleph=True.
-V3 ⭐ MAKE-OR-BREAK: הופק פנקס אמיתי (project test_part3a_aa58107e + ליקוי זמני שהוזרע ונמחק).
-    כל כותרת/כותרת‑טבלה/wordmark/כותרת‑שער = טקסט עברי אמיתי, ללא קופסאות.
-    סקשן 5 מציג ליקוי פתוח קריא. אין חפיפה — הבאנר מפנה את הכותרות בכל עמוד, footer מפנה
-    את השורה האחרונה. צילומי הוכחה: .local/proof/safety-p2-1c_pg1.png + _pg2.png.
-V4 לוגו: באנר עם לוגו BrikOps בכל עמוד; לפרויקט הבדיקה אין org.logo_url → BrikOps בלבד,
-    ללא קריסה (מסלול fail-soft של לוגו הלקוח מאומת).
-V5 Excel: גיליונות = עובדים / הדרכות / ליקויים / אירועים (סדר נכון);
-    שורת ליקוי: 'מעקה חסר | פיגומים | גבוהה | פתוח | 2026-07-02 10:00 | קומה 3 | חברת בנייה בע"מ | מנהל אתר | סכנת נפילה'.
-V6 רגרסיה: הרינדור הראשון (docs=0, ללא לוגו לקוח) הופק ללא שגיאה.
-V7 score / ייצוא מסונן / חתימות endpoints — לא נגעתי.
+V1 ast.parse: parse OK ✅
+V2 greps: reversed(headers) — hit יחיד בתוך _table; actor_map — lookup + row use ✅
+V3 ⭐ פנקס אמיתי (project test_part3a_aa58107e + ליקוי זמני + 2 אירועי audit זמניים
+    [מבצע מוכר + UUID לא מוכר], הוזרעו ונמחקו). מאומת בצילומים:
+      · סקשן 1: "שדה" בקצה הימני, "ערך" משמאלו ✅
+      · סקשן 3: "שם מלא" ימני, "תאריך כניסה" שמאלי ✅
+      · סקשן 4: "עובד" ימני, "תוקף עד" שמאלי ✅
+      · סקשן 5: "כותרת" ימני, "תאריך" שמאלי ✅
+      · סקשן 6/7/8 (סטטיסטי): עמודה לוגית ראשונה ימנית ✅
+      · טבלת audit: "תאריך" בקצה הימני (התלונה המדויקת של זהי), "מבצע" שמאלי ✅
+      · "מבצע" שורה 1 = "מנהל מערכת" (שם אמיתי); שורה 2 = "c76b39ac" (fallback
+        ל‑UUID לא מוכר) ✅
+      · זברה + כותרת נייבי + קווים כתומים — ללא שינוי ✅
+    צילומי הוכחה: .local/proof/safety-p2-1c-fix1_pg1.png (סקשן 1/3/4),
+                  .local/proof/safety-p2-1c-fix1_pg3.png (audit + סטטיסטי).
+V4 empty-state: project ללא נתונים → הופק PDF (110,659B) עם פסקאות "אין...",
+    ללא חריגה ✅
+V5 git diff --stat vs 0af65f1: רק backend/services/safety_pdf.py ✅
 
 ========================================================================
-DIVERGENCES (מתועד)
+DIVERGENCES
 ========================================================================
-1. קובץ הפונט Rubik-Bold.ttf לא הוחלף (משיכת רשת נכשלה) → נשלח מסלול fallback ל‑DejaVuSans-Bold.
-2. הבאנר מצויר בכל העמודים (בחירה עקבית) ולא band-בשער/rule-בפנים — נראה מקצועי יותר ומבטיח פינוי.
-3. קרדיט ה‑footer הוא טקסט בלבד (לוגו רק בבאנר העליון) — למניעת עומס.
-4. מנגנון ה‑font-fix נכון עבור ה‑generator השני (~canvas ב‑safety_pdf) גם כן — נהנה מהתיקון
-   אוטומטית; ה‑layout שלו מחוץ ל‑scope ולא שונה.
+אין. יושם AS IS לפי הספק — היפוך יחיד ב‑_table, actor_map ב‑audit בלבד; לא נגעתי
+ב‑call sites, Excel, cover panel, טבלאות חתימה, banner/canvas, פונטים, לוגואים,
+margins, או generator הרישום.
+הערה: repeatRows נשמר; טבלת העובדים בפרויקט הבדיקה בת שורה אחת ולכן page-break של
+כותרת חוזרת לא נצפה ישירות — המנגנון לא שונה.
 
 ========================================================================
 DEPLOY
 ========================================================================
-BACKEND — EB + Cloudflare (./deploy.sh), no new dependency, no new flag, 1 logo asset added.
+BACKEND — EB + Cloudflare (./deploy.sh), no new dependency, no new asset,
+no schema/API change, 1 backend file.
 ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
 
-commit: fix(safety-pdf): Hebrew-bold font fallback + professional redesign + Excel ליקויים sheet
+commit: fix(safety-pdf): RTL column order for register tables + resolve audit actor names

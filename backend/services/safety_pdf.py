@@ -378,10 +378,13 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     )
 
     def _table(headers, rows, col_widths):
-        data = [[Paragraph(hebrew(h), cell_hdr_white) for h in headers]]
+        # RTL: reportlab lays column 0 LEFTMOST; call sites pass columns in
+        # logical Hebrew reading order, so reverse headers, every row and the
+        # widths ONCE here so the first logical column renders RIGHTMOST.
+        data = [[Paragraph(hebrew(h), cell_hdr_white) for h in reversed(headers)]]
         for r in rows:
-            data.append([Paragraph(hebrew(c), cell) for c in r])
-        t = Table(data, colWidths=col_widths, repeatRows=1)
+            data.append([Paragraph(hebrew(c), cell) for c in reversed(list(r))])
+        t = Table(data, colWidths=list(reversed(col_widths)), repeatRows=1)
         t.setStyle(TableStyle([
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, SLATE_50]),
             ("BACKGROUND", (0, 0), (-1, 0), NAVY),
@@ -620,6 +623,13 @@ async def generate_safety_register(db, project_id: str) -> bytes:
          "payload.project_id": project_id},
         {"_id": 0, "entity_type": 1, "action": 1, "created_at": 1, "actor_id": 1},
     ).sort("created_at", -1).limit(50).to_list(length=50)
+    actor_ids = list({ev.get("actor_id") for ev in audit_events if ev.get("actor_id")})
+    actor_map = {}
+    if actor_ids:
+        for u in await db.users.find(
+            {"id": {"$in": actor_ids}}, {"_id": 0, "id": 1, "name": 1}
+        ).to_list(length=200):
+            actor_map[u["id"]] = u.get("name", "")
     if audit_events:
         rows = []
         for ev in audit_events:
@@ -627,7 +637,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
                 _fmt_date(ev.get("created_at")),
                 ev.get("entity_type", ""),
                 ev.get("action", ""),
-                ev.get("actor_id", "")[:8] if ev.get("actor_id") else "",
+                actor_map.get(ev.get("actor_id"), "") or (ev.get("actor_id", "")[:8] if ev.get("actor_id") else "—"),
             ])
         elems.append(_table(
             ["תאריך", "ישות", "פעולה", "מבצע"],
