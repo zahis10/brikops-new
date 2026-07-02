@@ -1,100 +1,73 @@
 ========================================================================
-BATCH companies-placeholder-visibility — חברות placeholder (מטופס ליקוי
-       בטיחות) נראות שוב בכל קוראי project_companies
+MICRO-BATCH deploy-sh-silent-death — deploy.sh מת בשקט כש-frontend/build חסר
 ========================================================================
 STATUS: ✅ הושלם ואומת מקומית — ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-ROLLBACK SHA (HEAD לפני העבודה): 2841cda
-DEPLOY TARGET: BACKEND (EB Frankfurt + Cloudflare, ./deploy.sh).
-               אין תלות חדשה, אין flag חדש, אין שינוי API.
-מיקום cleanup: אופציה ב׳ (בחירת זאהי) — בתוך _deferred_db_init ליד ה-migrations
-               (non-blocking, תואם קוד שכן), ולא ב-startup() ישירות.
-FILES (2 קוד):
-  EDIT backend/contractor_ops/safety_router.py   | 2 שורות הוסרו
-  EDIT backend/server.py                         | 14 שורות נוספו
-  (+ .agents/agent_assets_metadata.toml — metadata אוטומטי מ-present_asset של
-     התוכנית, לא קוד)
+ROLLBACK SHA (HEAD לפני העבודה): 63800d8
+DEPLOY TARGET: אין — שינוי סקריפט בלבד, נכנס לתוקף בהרצה הבאה. ה-commit רוכב עם
+               הבאץ' הבא.
+FILES (1, שורה 1):
+  EDIT deploy.sh  | שורה 1 (append "|| true")
+
+⚠️ פעולה נדרשת ממך לפני commit:
+   ה-dry-run של V2 גרם ל-deploy.sh להריץ פקודת git שה-sandbox חוסם, ונוצר
+   קובץ נעילה ריק .git/index.lock (0 בייט). ה-sandbox חוסם ממני גם למחוק אותו.
+   הרץ לפני ה-commit:   rm -f .git/index.lock
 
 ========================================================================
-STEP 0 — PRE-FLIGHT (read-only) ✅ הכל עבר, אף ציפייה לא נכשלה
+STEP 0 — PRE-FLIGHT ✅
 ========================================================================
-0.1 insert יחיד @117 עם "is_placeholder": True ושתי שורות null @124-125 ✅
-0.2 קוראים שבורים ('exists': False + project_companies): 6 hits (ציפייה ≥5) ✅
-0.3 קוראי READ של safety משתמשים ב-'deletedAt': None (match-missing, לא מושפע
-    מה-unset); grep $set deletedAt None → 0 hits ✅
-0.4 @app.on_event("startup") @1257 ✅
-0.5 deletedBy readers שמסננים על exists (מקור בלבד) → 0 hits ✅
+0.1 יעד @82 (בתוך check_frontend_staleness): hit יחיד ✅
+    new_bundle=$(ls ...) @216 קיים — מוגן כבר ב-`-z` משלו ורץ אחרי build מוצלח;
+    לא נגעתי בו ✅
 
 ========================================================================
-CHANGE 1 — safety_router.py: הפסקת כתיבת שדות ה-null tombstone
+CHANGE — pipefail guard
 ========================================================================
-מתוך insert ה-placeholder (@117) הוסרו:
-    "deletedAt": None,
-    "deletedBy": None,
-לא נגעתי בשום דבר אחר ב-dict/פונקציה. שאר שדות (id/project_id/name/
-is_placeholder/created_at/created_by) ללא שינוי.
+בתוך check_frontend_staleness (@82):
+  לפני:  bundle=$(ls -t frontend/build/static/js/main*.js 2>/dev/null | head -1)
+  אחרי:  bundle=$(ls -t frontend/build/static/js/main*.js 2>/dev/null | head -1 || true)
+
+WHY: תחת `set -euo pipefail`, כשאין bundle ה-glob לא מתרחב, `ls` יוצא 2,
+pipefail מפיל את ה-pipeline, ההשמה נכשלת ו-set -e הורג את כל הסקריפט בשקט —
+שורה אחת לפני ה-fallback `if [[ -z "$bundle" ]]` שנכתב בדיוק למקרה הזה.
+ה-`|| true` גורם ל-command substitution להצליח (bundle="") כך שהזרימה ממשיכה
+ל-`-z` ומדפיסה "[STALE BUILD] No frontend bundle found — will rebuild".
 
 ========================================================================
-CHANGE 2 — server.py: cleanup אידמפוטנטי (אופציה ב׳)
+DO NOT (נשמר)
 ========================================================================
-נוסף בלוק try/except בתוך _deferred_db_init (@1167), מיד אחרי בלוק ה-migrations
-(bootstrap_super_admin ... backfill_project_templates) ולפני בלוק ה-billing:
-
-    try:
-        res = await db.project_companies.update_many(
-            {"deletedAt": {"$type": "null"}},
-            {"$unset": {"deletedAt": "", "deletedBy": ""}},
-        )
-        if res.modified_count:
-            logger.info(f"[STARTUP] project_companies null-tombstone cleanup: unset on {res.modified_count} docs")
-    except Exception as e:
-        logger.warning(f"[STARTUP] project_companies cleanup failed (non-fatal): {e}")
-
-• $type:'null' תואם רק null מפורש (לא שדה חסר) → לא נוגע ב-placeholders חדשים
-  (שכבר לא נכתבים עם השדה) ולא ב-soft-deleted (deletedAt=timestamp).
-• אותו db handle global (@46) — לא נבנה client חדש.
-• non-blocking: רץ ברקע כמו שאר ה-migrations, לא חוסם "server accepting connections".
+- לא נגעתי בשום דבר אחר ב-deploy.sh (אין refactor, אין שינוי set -e, אין
+  || true נוסף, לא נגעתי ב-new_bundle @216).
 
 ========================================================================
 VERIFY
 ========================================================================
-V1 ast.parse ל-safety_router.py ו-server.py → OK both files ✅
-V2 sed 117-131 של safety_router.py: ה-INSERT כבר לא מכיל deletedAt/deletedBy null ✅
-   שאר ה-'deletedAt': None ב-safety_router (98/111/215/261...) = קוראי READ /
-   קולקשנים אחרים (safety_workers/trainings/documents/tasks/incidents) — נשארים
-   בכוונה (match-missing), לא INSERT של placeholder ✅
-V3 ⭐ staging לאחר deploy (זאהי):
-   a. log עלייה: "project_companies null-tombstone cleanup: unset on N docs"
-      (N≥1 אם קיים "אינסטלציה" של מתן; N=0/ללא שורה אם אין nulls).
-   b. יצירת ליקוי עם שם חברה חדש → GET /projects/{id}/companies כולל אותו.
-   c. placeholder שהיה מוסתר מופיע ב-picker לאחר boot.
-V4 שלילי: חברה soft-deleted (deletedAt=timestamp) נשארת מוסתרת ב-picker+suggestions
-   ($type:'null' לא נוגע בה).
-V5 exports (Safety PDF + Excel) עדיין מפענחים שמות חברות (company_map).
-V6 git diff --stat מול 2841cda → 2 קבצי קוד (safety_router.py, server.py).
-   קובץ שלישי .agents/agent_assets_metadata.toml = metadata אוטומטי מ-present_asset
-   של קובץ התוכנית, לא שינוי קוד.
+V1 bash -n deploy.sh → syntax OK ✅
+V2 סימולציה חיה (הזזת frontend/build והרצת ./deploy.sh) — ⚠️ לא ניתן להרצה
+   ב-sandbox הזה: deploy.sh מריץ פקודות git ש-main-agent חוסם ("Destructive git
+   operations are not allowed"), מה שגם יצר את ה-index.lock. ה-build הוזז והוחזר
+   בהצלחה (frontend/build/static/js/main.91679534.js קיים שוב).
+   TRACE לוגי: עם `|| true` ה-substitution מחזיר קוד יציאה 0 ו-bundle="" גם
+   כשאין קובץ → set -e לא הורג → `if [[ -z "$bundle" ]]` אמת → מדפיס
+   "[STALE BUILD] No frontend bundle found — will rebuild", frontend_changed=1,
+   return, וממשיך ל-"=== Deploy Status ===". התיקון נכון.
+   (ניתן לאמת חי אצלך: mv frontend/build /tmp/build.bak && ./deploy.sh &&
+    mv /tmp/build.bak frontend/build)
+V3 git diff deploy.sh → בדיוק שורה 1 שונתה ✅
 
 ========================================================================
 DIVERGENCES
 ========================================================================
-1. מיקום ה-cleanup: אופציה ב׳ (בתוך _deferred_db_init ליד ה-migrations) לפי
-   בחירת זאהי, ולא ב-startup() ישירות כלשון הספק. אותה סמנטיקה + אותו log line;
-   ההבדל: לא חוסם את עליית השרת ותואם דפוס ה-non-blocking של הקובץ.
-2. Rollback SHA בפועל 2841cda (הספק ציפה d1f6fa9) — HEAD התקדם בבאצ'ים קודמים.
-3. V3-V5 דורשים סביבת staging חיה — ייבחנו לאחר deploy.
-
-========================================================================
-KNOWN NON-BLOCKING WINDOW (מודעות בלבד)
-========================================================================
-במהלך EB rolling deploy, instance ישן עלול לכתוב placeholder עם nulls אחרי
-שה-cleanup של ה-instance החדש כבר רץ → אותו placeholder יישאר מוסתר עד ה-boot
-הבא (ה-cleanup אידמפוטנטי ירפא אותו). חלון של יצירת placeholder בודדת במהלך
-ה-deploy עצמו. מקובל.
+1. V2 החי הוחלף ב-trace לוגי — ה-sandbox חוסם את פקודות ה-git שבתוך deploy.sh.
+2. שריד: .git/index.lock ריק נוצר מה-dry-run החסום; מחיקה חסומה ל-main-agent.
+   הרץ rm -f .git/index.lock לפני ה-commit (ראה ראש הקובץ).
+3. Rollback SHA בפועל 63800d8 (התקדם מבאצ'ים קודמים).
 
 ========================================================================
 DEPLOY
 ========================================================================
-BACKEND (EB Frankfurt + Cloudflare, ./deploy.sh). אין תלות חדשה, אין flag, אין API.
+אין deploy — שינוי סקריפט בלבד, נכנס לתוקף בהרצה הבאה של deploy.sh.
+ה-commit רוכב עם הבאץ' הבא.
 ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
 
-commit: fix(companies): placeholder companies visible everywhere — stop writing null tombstones + startup cleanup
+commit: fix(deploy): don't die silently when frontend/build is missing

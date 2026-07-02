@@ -79,7 +79,7 @@ fi
 
 check_frontend_staleness() {
   local bundle
-  bundle=$(ls -t frontend/build/static/js/main*.js 2>/dev/null | head -1)
+  bundle=$(ls -t frontend/build/static/js/main*.js 2>/dev/null | head -1 || true)
   if [[ -z "$bundle" ]]; then
     echo "[STALE BUILD] No frontend bundle found — will rebuild"
     frontend_changed=1
