@@ -438,6 +438,42 @@ export const safetyService = {
     return r.data;
   },
 
+  async createTraining(projectId, payload) {
+    const r = await axios.post(
+      `${API}/safety/${projectId}/trainings`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+
+  async updateTraining(projectId, trainingId, payload) {
+    const r = await axios.patch(
+      `${API}/safety/${projectId}/trainings/${trainingId}`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+
+  async createIncident(projectId, payload) {
+    const r = await axios.post(
+      `${API}/safety/${projectId}/incidents`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+
+  async updateIncident(projectId, incidentId, payload) {
+    const r = await axios.patch(
+      `${API}/safety/${projectId}/incidents/${incidentId}`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+
   async listWorkers(projectId, params = {}) {
     const response = await axios.get(
       `${API}/safety/${projectId}/workers`,

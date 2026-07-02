@@ -22,7 +22,11 @@ import SafetyWorkerForm from '../components/safety/SafetyWorkerForm';
 import SafetyDocumentForm from '../components/safety/SafetyDocumentForm';
 import SafetyDocumentDetail from '../components/safety/SafetyDocumentDetail';
 import SafetyTaskForm from '../components/safety/SafetyTaskForm';
-import { SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE } from '../components/safety/safetyLabels';
+import SafetyTrainingForm from '../components/safety/SafetyTrainingForm';
+import SafetyIncidentForm from '../components/safety/SafetyIncidentForm';
+import {
+  SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE, INCIDENT_STATUS_HE,
+} from '../components/safety/safetyLabels';
 
 // Writers = the two project roles the safety backend accepts for create/edit
 // (safety_router.py SAFETY_WRITERS). The "+"/edit affordances gate on these.
@@ -42,6 +46,8 @@ export default function SafetyHomePage() {
   const [docs, setDocs] = useState({ items: [], total: 0 });
   const [tasks, setTasks] = useState({ items: [], total: 0 });
   const [workers, setWorkers] = useState({ items: [], total: 0 });
+  const [trainings, setTrainings] = useState({ items: [], total: 0 });
+  const [incidents, setIncidents] = useState({ items: [], total: 0 });
   const [flagOff, setFlagOff] = useState(false);
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -60,6 +66,8 @@ export default function SafetyHomePage() {
   const [docForm, setDocForm] = useState({ open: false, record: null });
   const [workerForm, setWorkerForm] = useState({ open: false, record: null });
   const [taskForm, setTaskForm] = useState({ open: false, record: null });
+  const [trainingForm, setTrainingForm] = useState({ open: false, record: null });
+  const [incidentForm, setIncidentForm] = useState({ open: false, record: null });
   // Batch safety-p2-1d — read-only detail modal (row tap opens it).
   const [detailDoc, setDetailDoc] = useState(null);
 
@@ -81,15 +89,17 @@ export default function SafetyHomePage() {
         if (cancelled) return;
         if (proj) setProject(proj);
 
-        const [scoreResp, docsResp, tasksResp, workersResp] = await Promise.all([
+        const [scoreResp, docsResp, tasksResp, workersResp, trainingsResp, incidentsResp] = await Promise.all([
           safetyService.getScore(projectId).catch((e) => ({ __err: e })),
           safetyService.listDocuments(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
           safetyService.listTasks(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
           safetyService.listWorkers(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+          safetyService.listTrainings(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+          safetyService.listIncidents(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
         ]);
         if (cancelled) return;
 
-        const responses = [scoreResp, docsResp, tasksResp, workersResp];
+        const responses = [scoreResp, docsResp, tasksResp, workersResp, trainingsResp, incidentsResp];
         const has404 = responses.some((r) => r?.__err?.response?.status === 404);
         const has403 = responses.some((r) => r?.__err?.response?.status === 403);
 
@@ -107,6 +117,8 @@ export default function SafetyHomePage() {
         setDocs(docsResp || { items: [], total: 0 });
         setTasks(tasksResp || { items: [], total: 0 });
         setWorkers(workersResp || { items: [], total: 0 });
+        setTrainings(trainingsResp || { items: [], total: 0 });
+        setIncidents(incidentsResp || { items: [], total: 0 });
       } catch (err) {
         if (!cancelled) toast.error('שגיאה בטעינת נתונים');
       } finally {
@@ -296,6 +308,32 @@ export default function SafetyHomePage() {
     }
   };
 
+  const reloadTrainings = async () => {
+    try {
+      const [trainingsResp, scoreResp] = await Promise.all([
+        safetyService.listTrainings(projectId, { limit: 50 }),
+        safetyService.getScore(projectId, true).catch(() => null),
+      ]);
+      setTrainings(trainingsResp || { items: [], total: 0 });
+      if (scoreResp) setScoreData(scoreResp);
+    } catch (e) {
+      toast.error('שגיאה ברענון רשימת ההדרכות');
+    }
+  };
+
+  const reloadIncidents = async () => {
+    try {
+      const [incidentsResp, scoreResp] = await Promise.all([
+        safetyService.listIncidents(projectId, { limit: 50 }),
+        safetyService.getScore(projectId, true).catch(() => null),
+      ]);
+      setIncidents(incidentsResp || { items: [], total: 0 });
+      if (scoreResp) setScoreData(scoreResp);
+    } catch (e) {
+      toast.error('שגיאה ברענון רשימת האירועים');
+    }
+  };
+
   return (
     <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
       <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-2 sticky top-0 z-20">
@@ -318,12 +356,14 @@ export default function SafetyHomePage() {
             onClick={() => {
               if (activeTab === 'workers') setWorkerForm({ open: true, record: null });
               else if (activeTab === 'tasks') setTaskForm({ open: true, record: null });
+              else if (activeTab === 'trainings') setTrainingForm({ open: true, record: null });
+              else if (activeTab === 'incidents') setIncidentForm({ open: true, record: null });
               else setDocForm({ open: true, record: null });
             }}
             className="px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1 min-h-[44px]"
           >
             <Plus className="w-4 h-4" />
-            {{ workers: 'הוסף עובד', tasks: 'הוסף משימה' }[activeTab] || 'הוסף ליקוי'}
+            {{ workers: 'הוסף עובד', tasks: 'הוסף משימה', trainings: 'הוסף הדרכה', incidents: 'הוסף אירוע' }[activeTab] || 'הוסף ליקוי'}
           </button>
         )}
 
@@ -436,6 +476,18 @@ export default function SafetyHomePage() {
               >
                 עובדים ({workers.total})
               </TabsTrigger>
+              <TabsTrigger
+                value="trainings"
+                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
+              >
+                הדרכות ({trainings.total})
+              </TabsTrigger>
+              <TabsTrigger
+                value="incidents"
+                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
+              >
+                אירועים ({incidents.total})
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="documents" className="p-0 m-0">
@@ -464,6 +516,22 @@ export default function SafetyHomePage() {
                 items={workers.items}
                 isWriter={isWriter}
                 onEdit={(w) => setWorkerForm({ open: true, record: w })}
+              />
+            </TabsContent>
+            <TabsContent value="trainings" className="p-0 m-0">
+              <TrainingsList
+                items={trainings.items}
+                workers={workers.items}
+                isWriter={isWriter}
+                onEdit={(t) => setTrainingForm({ open: true, record: t })}
+              />
+            </TabsContent>
+            <TabsContent value="incidents" className="p-0 m-0">
+              <IncidentsList
+                items={incidents.items}
+                workers={workers.items}
+                isWriter={isWriter}
+                onEdit={(i) => setIncidentForm({ open: true, record: i })}
               />
             </TabsContent>
           </Tabs>
@@ -512,6 +580,24 @@ export default function SafetyHomePage() {
         onClose={() => setTaskForm({ open: false, record: null })}
         onSaved={reloadTasks}
         myRole={project?.my_role}
+      />
+
+      <SafetyTrainingForm
+        projectId={projectId}
+        training={trainingForm.record}
+        open={trainingForm.open}
+        onClose={() => setTrainingForm({ open: false, record: null })}
+        onSaved={reloadTrainings}
+        workers={workers.items}
+      />
+
+      <SafetyIncidentForm
+        projectId={projectId}
+        incident={incidentForm.record}
+        open={incidentForm.open}
+        onClose={() => setIncidentForm({ open: false, record: null })}
+        onSaved={reloadIncidents}
+        workers={workers.items}
       />
 
       {activeTab === 'documents' && selectedIds.size > 0 && (
@@ -688,6 +774,9 @@ function TasksList({ items, isWriter, onEdit }) {
             </Badge>
             <div className="flex-1 min-w-0">
               <p className="font-medium text-slate-900 truncate">{tk.title}</p>
+              {tk.description && (
+                <p className="text-xs text-slate-500 truncate mt-0.5">{tk.description}</p>
+              )}
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <Badge className="bg-slate-100 text-slate-700 font-normal">
                   {TASK_STATUS_HE[tk.status] || tk.status}
@@ -735,6 +824,89 @@ function WorkersList({ items, isWriter, onEdit }) {
               type="button"
               aria-label="ערוך עובד"
               onClick={(e) => { e.stopPropagation(); onEdit(w); }}
+              className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TrainingsList({ items, workers, isWriter, onEdit }) {
+  if (!items?.length) return <EmptyState icon={GraduationCap} text="אין הדרכות רשומות" />;
+  const nameById = new Map((workers || []).map((w) => [w.id, w.full_name]));
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <ul className="divide-y divide-slate-100">
+      {items.map((tr) => {
+        const expired = tr.expires_at && tr.expires_at.slice(0, 10) < today;
+        return (
+          <li key={tr.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-slate-900 truncate">{tr.training_type}</p>
+              <p className="text-xs text-slate-500 truncate mt-0.5">
+                {nameById.get(tr.worker_id) || '—'}
+                {tr.instructor_name && ` · מדריך: ${tr.instructor_name}`}
+              </p>
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                <span className="text-xs text-slate-500">{(tr.trained_at || '').slice(0, 10)}</span>
+                {tr.expires_at && (
+                  <span className="text-xs text-slate-500">בתוקף עד {tr.expires_at.slice(0, 10)}</span>
+                )}
+                {expired && <Badge className="bg-red-100 text-red-800">פג תוקף</Badge>}
+              </div>
+            </div>
+            {isWriter && (
+              <button
+                type="button"
+                aria-label="ערוך הדרכה"
+                onClick={(e) => { e.stopPropagation(); onEdit(tr); }}
+                className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function IncidentsList({ items, workers, isWriter, onEdit }) {
+  if (!items?.length) return <EmptyState icon={AlertCircle} text="אין אירועי בטיחות רשומים" />;
+  const nameById = new Map((workers || []).map((w) => [w.id, w.full_name]));
+  return (
+    <ul className="divide-y divide-slate-100">
+      {items.map((inc) => (
+        <li key={inc.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+          <Badge className={SEVERITY_COLOR[inc.severity] || 'bg-slate-100 text-slate-700'}>
+            {SEVERITY_HE[inc.severity] || '—'}
+          </Badge>
+          <div className="flex-1 min-w-0">
+            <p className="font-medium text-slate-900 truncate">
+              {INCIDENT_TYPE_HE[inc.incident_type] || inc.incident_type}
+            </p>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <span className="text-xs text-slate-500">{(inc.occurred_at || '').slice(0, 10)}</span>
+              {inc.location && <span className="text-xs text-slate-500">{inc.location}</span>}
+              {inc.injured_worker_id && (
+                <span className="text-xs text-slate-500">נפגע: {nameById.get(inc.injured_worker_id) || '—'}</span>
+              )}
+              <Badge className="bg-slate-100 text-slate-700 font-normal">
+                {INCIDENT_STATUS_HE[inc.status] || inc.status}
+              </Badge>
+              {inc.reported_to_authority && <Badge className="bg-amber-100 text-amber-800">דווח לרשות</Badge>}
+            </div>
+          </div>
+          {isWriter && (
+            <button
+              type="button"
+              aria-label="ערוך אירוע"
+              onClick={(e) => { e.stopPropagation(); onEdit(inc); }}
               className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
             >
               <Pencil className="w-4 h-4" />

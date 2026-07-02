@@ -136,7 +136,8 @@ export default function SafetyTaskForm({ projectId, task, open, onClose, onSaved
       onSaved?.(result);
       onClose?.();
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'המעבר אינו אפשרי');
+      const d = err?.response?.data?.detail;
+      toast.error(typeof d === 'string' ? d : 'הפעולה נכשלה — רענן את הרשימה ונסה שוב');
     } finally {
       setSubmitting(false);
     }

@@ -23,3 +23,9 @@ export const DOC_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', re
 
 // Safety task status (schemas.py SafetyTaskStatus / safety_pdf.py TASK_STATUS_HE).
 export const TASK_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', completed: 'הושלם', cancelled: 'בוטל' };
+
+// Safety incident type (schemas.py SafetyIncidentType / safety_pdf.py).
+export const INCIDENT_TYPE_HE = { near_miss: 'כמעט-תאונה', injury: 'פציעה', property_damage: 'נזק לרכוש' };
+
+// Safety incident status (display-only; server owns transitions).
+export const INCIDENT_STATUS_HE = { draft: 'טיוטה', reported: 'דווח', closed: 'סגור' };

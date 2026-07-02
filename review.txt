@@ -1,94 +1,87 @@
 ========================================================================
-REVIEW — BATCH safety-p2-2b1 — משימות מתקנות: מודל create + edit
+REVIEW — BATCH safety-p2-2b2 — TRAININGS + INCIDENTS: טאבים + מודלים
 ========================================================================
-Scope: FRONTEND-ONLY · Capgo OTA · אין שינוי backend · אין תלות/flag חדשים
-Rollback SHA (HEAD לפני הבאץ'): 7ee6f4b   (הספק ציפה 63800d8 — התקדם מבאצ'ים קודמים)
-Deploy: FRONTEND (Capgo OTA). ⛔ DO NOT DEPLOY — זאהי מריץ ship.sh/deploy.
+Scope: FRONTEND-ONLY · Capgo OTA · אין שינוי backend · אין תלות חדשה
+Rollback SHA: daa9de0   (ה-commit של 2b1)
+Commit מוצע: feat(safety): trainings & incidents tabs with create/edit modals
+STATUS: מוכן לבדיקה. ⛔ לא deployתי, לא הרצתי git. זאהי מריץ.
+
+⚠️ לפני commit: אם קיים .git/index.lock ריק משיירים — הרץ:  rm -f .git/index.lock
 
 ------------------------------------------------------------------------
-מה נעשה (4 קבצים)
+STEP 0 — PRE-FLIGHT (read-only, בוצע לפני קוד)
 ------------------------------------------------------------------------
-1. frontend/src/services/api.js  (+18)
-   safetyService.createTask(projectId,payload)  → POST  /api/safety/{pid}/tasks
-   safetyService.updateTask(projectId,tid,payload) → PATCH /api/safety/{pid}/tasks/{tid}
-   אותה תבנית axios+getAuthHeader כמו createDocument/updateDocument.
-
-2. frontend/src/components/safety/SafetyTaskForm.js  (חדש)
-   מודל create+edit למשימת בטיחות מתקנת, מראה SafetyDocumentForm 1:1
-   (SafetyFormModal → Radix Dialog modal={false}, header כהה, X, dir=rtl,
-   [&>button]:hidden, sonner, submitting guard).
-   • מושך לבד companies+memberships (Promise.allSettled), members מסוננים
-     role∈{project_manager,management_team} ו-status!==pending (זהה ל"אחראי" בליקוי).
-   • שדות: כותרת*(2-200), חומרה*(SEVERITY_HE), תיאור, אחראי (צוות פנימי בלבד,
-     "ללא אחראי"), חברה ("ללא חברה"), תאריך יעד (date → מחרוזת/null).
-   • EDIT: badge סטטוס נוכחי + Select "עדכון סטטוס" שמראה רק מעברים חוקיים לפי
-     סטטוס נוכחי (mirror שרת): open→בביצוע; in_progress→הושלם; +בוטל רק אם
-     myRole==='project_manager'; completed/cancelled ללא יעדים→ה-Select מוסתר.
-     ברירת מחדל "ללא שינוי".
-   • השלמה ("completed") מציגה Textarea חובה "פעולה מתקנת שבוצעה"; ריק → חסימת
-     submit + toast עברית. corrective_action נשלח רק בהשלמה.
-   • payload PATCH מכיל status רק כשנבחר מעבר (exclude_unset ידידותי).
-
-3. frontend/src/components/safety/safetyLabels.js  (+3)
-   export const TASK_STATUS_HE (open/in_progress/completed/cancelled →
-   פתוח/בביצוע/הושלם/בוטל) — מקור אמת יחיד.
-
-4. frontend/src/pages/SafetyHomePage.js  (+46/-6)
-   • import SafetyTaskForm + TASK_STATUS_HE מ-safetyLabels; הוסר ה-const המקומי הכפול.
-   • state taskForm; reloadTasks() (listTasks limit=50 → setTasks).
-   • כפתור "+" נפתח גם בטאב tasks (writer-gated כמו קודם); label map
-     {workers:'הוסף עובד', tasks:'הוסף משימה'} אחרת 'הוסף ליקוי'.
-   • TasksList קיבל isWriter+onEdit; עיפרון עריכה writer-gated לכל שורה
-     (aria-label="ערוך משימה", stopPropagation).
-   • render <SafetyTaskForm ... myRole={project?.my_role} onSaved={reloadTasks}/>.
+0.1 ✅ לא היו create/update ל-Training|Incident ב-api.js. listTrainings/
+    listIncidents קיימים ושימשו תבנית.
+0.2 ✅ לא היו INCIDENT_TYPE_HE/INCIDENT_STATUS_HE ב-safetyLabels. הוספתי
+    כך שישקפו את safety_pdf.py (near_miss/injury/property_damage;
+    draft/reported/closed).
+0.3 ✅ TabsList כבר overflow-x-auto flex → הוספת 2 טאבים בלי שינוי CSS.
+0.4 ✅ workers.items נושאים full_name → הועברו כ-prop לשני הטפסים ולשתי
+    הרשימות (מיפוי client-side id→שם).
+0.5 ⭐ switch.jsx קיים → Switch שימש ל"דווח לרשות" (payload bool אמיתי).
+0.6 ✅ אין regen display-urls ל-incidents/trainings → תמונות/certificate
+    מחוץ ל-scope (לא נבנה, מצוין ב-DO NOT).
+0.7 ✅ ה-catch הישן ב-SafetyTaskForm הדפיס detail גם כשהוא dict (409) →
+    תוקן ל-guard typeof string (CHANGE 6), הוחל גם בשני הטפסים החדשים.
+0.8/0.9 ✅ occurred_at (datetime-local כמחרוזת) נשלח as-is; reported_to_authority
+    כ-bool. לא נגעתי בשום המרת תאריך אחרת.
 
 ------------------------------------------------------------------------
-BACKEND CONTRACT ששוקף (לא נגעתי בשרת)
+מה נעשה (6 קבצים)
 ------------------------------------------------------------------------
-מעברים (נאכפים בשרת, 409): open→in_progress|cancelled ; in_progress→completed|cancelled ;
-completed→cancelled ; cancelled→(אין). "completed" מחייב corrective_action לא-ריק.
-"cancelled" רק ל-project_manager. ה-UI לעולם לא ישלח מעבר שהשרת יחזיר עליו 409.
+CHANGE 1 — api.js: +createTraining/updateTraining/createIncident/updateIncident
+           (מראה createTask/updateTask, אותו auth header).
+CHANGE 2 — safetyLabels.js: +INCIDENT_TYPE_HE, +INCIDENT_STATUS_HE.
+CHANGE 3 — SafetyTrainingForm.js (חדש): עובד* (Select, disabled בעריכה —
+           ה-Update model בשרת בלי worker_id), סוג הדרכה*, תאריך הדרכה*,
+           בתוקף עד, שם מדריך, משך (דקות→int|null), מיקום.
+CHANGE 4 — SafetyIncidentForm.js (חדש): סוג אירוע*, חומרה*, מועד* (datetime-
+           local as-is), תיאור*, מיקום, עובד נפגע (Select + "ללא נפגע"),
+           Switch "דווח לרשות" → מציג שדה אסמכתא. לא שולח status/witnesses/
+           photos/medical (PATCH exclude_unset משמר).
+CHANGE 5 — SafetyHomePage.js: state + טעינה ראשונית (Promise.all +2) +
+           reloadTrainings/reloadIncidents (כולל getScore refresh) +
+           2 TabsTriggers + 2 TabsContent + TrainingsList + IncidentsList +
+           render 2 הטפסים + מפת "+" + ⭐ שורת description במשימות (בקשת 2b1).
+CHANGE 6 — SafetyTaskForm.js: catch guard typeof d==='string'.
+
+TrainingsList: שם עובד (מיפוי, fallback '—'), סוג (bold), תאריך, בתוקף-עד,
+  badge אדום "פג תוקף" כש-expires_at<today, שם מדריך; עיפרון writer
+  (aria-label="ערוך הדרכה"). Empty: GraduationCap "אין הדרכות רשומות".
+IncidentsList: badge חומרה + סוג, תאריך, מיקום, שם נפגע, badge סטטוס,
+  badge "דווח לרשות"; עיפרון writer (aria-label="ערוך אירוע").
+  Empty: AlertCircle "אין אירועי בטיחות רשומים".
 
 ------------------------------------------------------------------------
-VERIFY שבוצע מקומית
+אימות מקומי
 ------------------------------------------------------------------------
-V1 Babel parse (jsx) — PARSE OK לכל 4 הקבצים.
-V2 greps — createTask/updateTask ב-api; SafetyFormModal+corrective_action+allowedNext
-   ב-TaskForm; 'הוסף משימה' במפת ה-"+"; 'ערוך משימה'+stopPropagation בשורות tasks;
-   export TASK_STATUS_HE מ-safetyLabels; אין const כפול בעמוד. הכל ✅.
-V6 git diff --stat = בדיוק 4 קבצים (3 M + SafetyTaskForm חדש). ✅
+V1 ✅ Babel parse — 6/6 OK.
+V2 ✅ greps: 4 מתודות api; 2 מפות מיוצאות; 2 TabsTriggers + 2 TabsContent;
+   'הוסף הדרכה'+'הוסף אירוע' במפת "+"; disabled={isEdit} בבחירת עובד בהדרכה;
+   typeof d==='string' ב-3 הטפסים; שורת tk.description במשימות; Switch מחובר.
+V6 ✅ git diff --stat = 4 modified + 2 untracked (בדיוק 6 קבצים, אפס דליפה
+   ל-documents/tasks/workers/פילטר/bulk/exports).
 
 ------------------------------------------------------------------------
-VERIFY שדורש staging חי (זאהי, אחרי deploy)
+בדיקות ידניות ל-staging (אחרי deploy אצלך)
 ------------------------------------------------------------------------
-V3 ⭐ יצירת משימה (כותרת+חומרה) → מופיעה עם badge "פתוח"; עריכה: dropdown אחראי
-   מציג רק צוות פנימי; תאריך יעד; פתוח→בביצוע נשמר; בביצוע→הושלם ללא פעולה מתקנת
-   → נחסם client-side עם toast עברית; מילוי → מושלם; "בוטל" זמין רק ל-PM.
-V4 שלילי (server-strict): PATCH ישיר open→completed בלי corrective_action → 409.
-V5 non-writer: אין "+" בטאב tasks ואין עיפרון.
-V6-live רגרסיה: documents/workers + טפסיהם ללא שינוי; bulk/filters ללא נגיעה.
+V3 ⭐ הדרכות: צור הדרכה לעובד → מופיעה; ערוך → בחירת עובד disabled;
+   תאריך "בתוקף עד" בעבר → badge אדום "פג תוקף".
+V4 ⭐ אירועים: צור (סוג/חומרה/מועד/תיאור) → מופיע badge "טיוטה"; Switch
+   "דווח לרשות" → מציג אסמכתא + badge; עובד נפגע נשמר ומוצג.
+V5 non-writer (למשל contractor): אין "+" ואין עיפרון בשני הטאבים.
 
 ------------------------------------------------------------------------
-DECISIONS / DIVERGENCES
+DO NOT (נשמר)
 ------------------------------------------------------------------------
-1. 4 קבצים ולא 3: הכותרת אמרה 3, אך STEP 0.2 + VERIFY V2 מחייבים export של
-   TASK_STATUS_HE מ-safetyLabels.js (היה const מקומי כפול ב-SafetyHomePage).
-   הועבר ל-safetyLabels + הוסר הכפול → מקור אמת יחיד, ספק-עקבי.
-2. SafetyTaskForm מושך members/companies לבד (מראה DocumentForm 1:1) ואינו מקבל
-   אותם כ-props: ה-state `users` בעמוד ממופה {id,name} בלבד וחסר role/status
-   הדרושים לסינון "אחראי". רק myRole מועבר כ-prop. מצמצם שינויים בעמוד + סינון נכון.
-3. Rollback SHA בפועל 7ee6f4b (הספק ציפה 63800d8).
+- אפס backend. אין upload תמונות/certificate (מחוץ ל-scope). אין UI לעריכת
+  status אירוע (badge בלבד). אין witnesses/medical_record_urls.
+- לא נגעתי: documents/tasks/workers logic, פילטר 7-מימדי, bulk, exports, score.
+- Radix בלבד · Dialog modal={false} (דרך SafetyFormModal) · sonner · עברית מלאה.
 
 ------------------------------------------------------------------------
-מגבלות ידועות / מחוץ ל-scope
+DELIVERY
 ------------------------------------------------------------------------
-- ללא UI ל-document_id (קישור לליקוי) ו-verification_photo_urls — לא בבאץ' זה.
-- Trainings + Incidents = באץ' נפרד safety-p2-2b2 (לא הותחל).
-- אין שינוי backend/טאבים/bulk/filters.
-
-------------------------------------------------------------------------
-תזכורת תשתית
-------------------------------------------------------------------------
-⚠️ קיים .git/index.lock ריק משיירים קודמים — הסנדבוקס חוסם ממני rm. לפני commit:
-   rm -f .git/index.lock
+נעצר כאן. אין deploy, אין git, אין mark_task_complete. זאהי מריץ ship.sh/deploy.
 ========================================================================
