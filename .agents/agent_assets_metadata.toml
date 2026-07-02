@@ -474,3 +474,9 @@ id = "qei3kS2V_L027XDQoqnma"
 uri = "file://.local/plans/safety-p2-1b-plan.md"
 type = "text"
 title = "BATCH safety-p2-1b — תוכנית (תמונות לליקויי בטיחות — durable)"
+
+[[outputs]]
+id = "Tk2EqZK6dFpakNVG3pqyX"
+uri = "file://.local/plans/safety-p2-1c-plan.md"
+type = "text"
+title = "BATCH safety-p2-1c — תוכנית (פנקס כללי PDF redesign + לוגואים + Excel ליקויים)"
