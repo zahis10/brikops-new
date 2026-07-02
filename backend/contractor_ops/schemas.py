@@ -745,6 +745,7 @@ class SafetyTraining(BaseModel):
     trained_at: str                      # ISO date
     expires_at: Optional[str] = None     # ISO date; null = no expiry
     certificate_url: Optional[str] = None  # R2/S3 URL if uploaded
+    certificate_display_url: Optional[str] = None  # server-computed per-GET; never persisted
     created_at: str
     created_by: str
     deletedAt: Optional[str] = None
@@ -811,6 +812,7 @@ class SafetyIncident(BaseModel):
     injured_worker_id: Optional[str] = None  # FK → safety_workers.id; null if near-miss
     witnesses: List[str] = []            # worker_ids
     photo_urls: List[str] = []
+    photo_display_urls: Optional[List[str]] = None  # server-computed per-GET; never persisted
     medical_record_urls: List[str] = []  # PHI — encrypted at rest (Part 2)
     reported_to_authority: bool = False
     authority_report_ref: Optional[str] = None

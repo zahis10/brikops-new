@@ -426,6 +426,9 @@ async def list_trainings(
     total = await db.safety_trainings.count_documents(q)
     cursor = db.safety_trainings.find(q, {"_id": 0}).sort("trained_at", -1).skip(offset).limit(limit)
     items = await cursor.to_list(length=limit)
+    for it in items:
+        k = it.get("certificate_url")
+        it["certificate_display_url"] = (generate_url(k) if k else None)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
@@ -440,6 +443,8 @@ async def get_training(
     doc = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
     if not doc:
         raise HTTPException(status_code=404, detail="training not found")
+    k = doc.get("certificate_url")
+    doc["certificate_display_url"] = (generate_url(k) if k else None)
     return SafetyTraining(**doc)
 
 
@@ -1049,6 +1054,10 @@ async def list_incidents(
     total = await db.safety_incidents.count_documents(q)
     cursor = db.safety_incidents.find(q, {"_id": 0}).sort("occurred_at", -1).skip(offset).limit(limit)
     items = await cursor.to_list(length=limit)
+    for it in items:
+        it["photo_display_urls"] = [
+            (generate_url(k) if k else k) for k in (it.get("photo_urls") or [])
+        ]
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
@@ -1063,6 +1072,9 @@ async def get_incident(
     doc = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
     if not doc:
         raise HTTPException(status_code=404, detail="incident not found")
+    doc["photo_display_urls"] = [
+        (generate_url(k) if k else k) for k in (doc.get("photo_urls") or [])
+    ]
     return SafetyIncident(**doc)
 
 

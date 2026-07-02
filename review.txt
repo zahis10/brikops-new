@@ -1,87 +1,75 @@
 ========================================================================
-REVIEW — BATCH safety-p2-2b2 — TRAININGS + INCIDENTS: טאבים + מודלים
+REVIEW — BATCH safety-p2-2c — BACKEND display-url regen ל-
+         TRAINING CERTIFICATES + INCIDENT PHOTOS (השלמת תבנית 1b)
 ========================================================================
-Scope: FRONTEND-ONLY · Capgo OTA · אין שינוי backend · אין תלות חדשה
-Rollback SHA: daa9de0   (ה-commit של 2b1)
-Commit מוצע: feat(safety): trainings & incidents tabs with create/edit modals
-STATUS: מוכן לבדיקה. ⛔ לא deployתי, לא הרצתי git. זאהי מריץ.
-
-⚠️ לפני commit: אם קיים .git/index.lock ריק משיירים — הרץ:  rm -f .git/index.lock
+Scope: BACKEND-ONLY · deploy = EB Frankfurt + Cloudflare יחד (./deploy.sh) ·
+       אין תלות חדשה · אין flag · אין שינוי frontend
+Rollback SHA: 7a6f530   (ה-commit של 2b2)
+Commit מוצע: feat(safety): regenerate display urls for training certificates + incident photos (1b pattern)
+STATUS: ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY. לא הרצתי git, לא deployתי.
 
 ------------------------------------------------------------------------
 STEP 0 — PRE-FLIGHT (read-only, בוצע לפני קוד)
 ------------------------------------------------------------------------
-0.1 ✅ לא היו create/update ל-Training|Incident ב-api.js. listTrainings/
-    listIncidents קיימים ושימשו תבנית.
-0.2 ✅ לא היו INCIDENT_TYPE_HE/INCIDENT_STATUS_HE ב-safetyLabels. הוספתי
-    כך שישקפו את safety_pdf.py (near_miss/injury/property_damage;
-    draft/reported/closed).
-0.3 ✅ TabsList כבר overflow-x-auto flex → הוספת 2 טאבים בלי שינוי CSS.
-0.4 ✅ workers.items נושאים full_name → הועברו כ-prop לשני הטפסים ולשתי
-    הרשימות (מיפוי client-side id→שם).
-0.5 ⭐ switch.jsx קיים → Switch שימש ל"דווח לרשות" (payload bool אמיתי).
-0.6 ✅ אין regen display-urls ל-incidents/trainings → תמונות/certificate
-    מחוץ ל-scope (לא נבנה, מצוין ב-DO NOT).
-0.7 ✅ ה-catch הישן ב-SafetyTaskForm הדפיס detail גם כשהוא dict (409) →
-    תוקן ל-guard typeof string (CHANGE 6), הוחל גם בשני הטפסים החדשים.
-0.8/0.9 ✅ occurred_at (datetime-local כמחרוזת) נשלח as-is; reported_to_authority
-    כ-bool. לא נגעתי בשום המרת תאריך אחרת.
+0.1 ✅ photo_display_urls ב-safety_router היה 2 hits (documents regen של 1b,
+    `generate_url(k) if k else k` על photo_urls) — התבנית שהועתקה מילה-במילה.
+0.2 ✅ `from services.object_storage import generate_url` קיים @23 (module-level).
+0.3 ✅ 4 נקודות injection אותרו: list_trainings to_list/return, get_training
+    return, list_incidents to_list/return, get_incident return.
+0.4 ✅ SafetyTraining היה עם certificate_url בלבד → נוסף certificate_display_url.
+    SafetyIncident היה עם photo_urls בלבד → נוסף photo_display_urls. (השדה
+    photo_display_urls הקיים שייך ל-SafetyDocument, לא לאירוע.) Create/Update
+    models לא נגעתי — השדות response-only.
+0.5 ✅ אין export שמרנדר certificate_url/photo_urls/training_type/incident_type
+    (grep ריק על excel/pdf) → אין שינוי export. אין שימוש בשדות מחוץ ל-
+    router/schemas (רק pyc caches).
 
 ------------------------------------------------------------------------
-מה נעשה (6 קבצים)
+מה נעשה (2 קבצים)
 ------------------------------------------------------------------------
-CHANGE 1 — api.js: +createTraining/updateTraining/createIncident/updateIncident
-           (מראה createTask/updateTask, אותו auth header).
-CHANGE 2 — safetyLabels.js: +INCIDENT_TYPE_HE, +INCIDENT_STATUS_HE.
-CHANGE 3 — SafetyTrainingForm.js (חדש): עובד* (Select, disabled בעריכה —
-           ה-Update model בשרת בלי worker_id), סוג הדרכה*, תאריך הדרכה*,
-           בתוקף עד, שם מדריך, משך (דקות→int|null), מיקום.
-CHANGE 4 — SafetyIncidentForm.js (חדש): סוג אירוע*, חומרה*, מועד* (datetime-
-           local as-is), תיאור*, מיקום, עובד נפגע (Select + "ללא נפגע"),
-           Switch "דווח לרשות" → מציג שדה אסמכתא. לא שולח status/witnesses/
-           photos/medical (PATCH exclude_unset משמר).
-CHANGE 5 — SafetyHomePage.js: state + טעינה ראשונית (Promise.all +2) +
-           reloadTrainings/reloadIncidents (כולל getScore refresh) +
-           2 TabsTriggers + 2 TabsContent + TrainingsList + IncidentsList +
-           render 2 הטפסים + מפת "+" + ⭐ שורת description במשימות (בקשת 2b1).
-CHANGE 6 — SafetyTaskForm.js: catch guard typeof d==='string'.
-
-TrainingsList: שם עובד (מיפוי, fallback '—'), סוג (bold), תאריך, בתוקף-עד,
-  badge אדום "פג תוקף" כש-expires_at<today, שם מדריך; עיפרון writer
-  (aria-label="ערוך הדרכה"). Empty: GraduationCap "אין הדרכות רשומות".
-IncidentsList: badge חומרה + סוג, תאריך, מיקום, שם נפגע, badge סטטוס,
-  badge "דווח לרשות"; עיפרון writer (aria-label="ערוך אירוע").
-  Empty: AlertCircle "אין אירועי בטיחות רשומים".
+CHANGE 1 — schemas.py:
+  · SafetyTraining += certificate_display_url: Optional[str] = None (response-only)
+  · SafetyIncident += photo_display_urls: Optional[List[str]] = None (response-only)
+CHANGE 2 — safety_router.py (4 injection, העתקה מדויקת של תבנית 1b):
+  2a list_trainings — לכל item: certificate_display_url = generate_url(key) if key else None
+  2b get_training   — אותו דבר על doc יחיד
+  2c list_incidents — לכל item: photo_display_urls = [generate_url(k) if k else k ...]
+  2d get_incident   — אותו דבר על doc יחיד
+הבחנה: certificate = מפתח יחיד → None כשריק; photos = list → list ריק כשריק
+(עקבי 1:1 עם regen ה-documents).
 
 ------------------------------------------------------------------------
 אימות מקומי
 ------------------------------------------------------------------------
-V1 ✅ Babel parse — 6/6 OK.
-V2 ✅ greps: 4 מתודות api; 2 מפות מיוצאות; 2 TabsTriggers + 2 TabsContent;
-   'הוסף הדרכה'+'הוסף אירוע' במפת "+"; disabled={isEdit} בבחירת עובד בהדרכה;
-   typeof d==='string' ב-3 הטפסים; שורת tk.description במשימות; Switch מחובר.
-V6 ✅ git diff --stat = 4 modified + 2 untracked (בדיוק 6 קבצים, אפס דליפה
-   ל-documents/tasks/workers/פילטר/bulk/exports).
+V1 ✅ ast.parse — schemas.py + safety_router.py שניהם OK.
+V2 ✅ greps:
+   · certificate_display_url ב-schemas = 1 (SafetyTraining) + ב-router = 2 (2a,2b)
+   · photo_display_urls ב-schemas = SafetyDocument הקיים + SafetyIncident החדש
+   · photo_display_urls ב-router = 4 hits (2 documents קיימים @622/647 +
+     2 incidents חדשים @1058/1075) — בדיוק כצפוי.
+V6 ✅ git diff --stat = בדיוק 2 קבצים (schemas +2, router +12), אפס דליפה
+   ל-documents regen / upload / exports / score.
 
 ------------------------------------------------------------------------
 בדיקות ידניות ל-staging (אחרי deploy אצלך)
 ------------------------------------------------------------------------
-V3 ⭐ הדרכות: צור הדרכה לעובד → מופיעה; ערוך → בחירת עובד disabled;
-   תאריך "בתוקף עד" בעבר → badge אדום "פג תוקף".
-V4 ⭐ אירועים: צור (סוג/חומרה/מועד/תיאור) → מופיע badge "טיוטה"; Switch
-   "דווח לרשות" → מציג אסמכתא + badge; עובד נפגע נשמר ומוצג.
-V5 non-writer (למשל contractor): אין "+" ואין עיפרון בשני הטאבים.
+V3 ⭐ POST /api/safety/{pid}/upload → stored_ref → PATCH training עם
+   certificate_url=stored_ref → GET list+single: certificate_display_url = url
+   חתום (http); certificate_url ב-DB עדיין s3:// (Network tab).
+V4 ⭐ אותו דבר ל-incident עם photo_urls=[stored_ref] → photo_display_urls
+   מחודש ב-list+get.
+V5 ⭐ שלילי: training ללא תעודה → certificate_display_url=null, אין קריסה;
+   incident עם photo_urls ריק → list ריק.
 
 ------------------------------------------------------------------------
 DO NOT (נשמר)
 ------------------------------------------------------------------------
-- אפס backend. אין upload תמונות/certificate (מחוץ ל-scope). אין UI לעריכת
-  status אירוע (badge בלבד). אין witnesses/medical_record_urls.
-- לא נגעתי: documents/tasks/workers logic, פילטר 7-מימדי, bulk, exports, score.
-- Radix בלבד · Dialog modal={false} (דרך SafetyFormModal) · sonner · עברית מלאה.
+- לא שומרים display-urls בשום מקום (אין $set, לא ב-create/update).
+- לא נגעתי ב-regen של documents, ב-/upload, ב-exports, ב-score.
+- אין שינוי frontend (batch הבא). אין שינוי ב-Create/Update models/ולידציה.
 
 ------------------------------------------------------------------------
 DELIVERY
 ------------------------------------------------------------------------
-נעצר כאן. אין deploy, אין git, אין mark_task_complete. זאהי מריץ ship.sh/deploy.
+נעצר כאן. אין deploy, אין git, אין mark_task_complete. זאהי מריץ ship.sh/deploy.sh.
 ========================================================================
