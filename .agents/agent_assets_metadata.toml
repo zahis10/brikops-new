@@ -504,3 +504,9 @@ id = "6q4KyZE2jjVc9IqbQZ_2U"
 uri = "file://.local/proof/safety-p2-1c-fix1_pg3.png"
 type = "image"
 title = "הוכחה V3 — טבלת audit (תאריך מימין, מבצע = שם אמיתי)"
+
+[[outputs]]
+id = "CI5HFIVY5Nkyh5U7C3wkR"
+uri = "file://.local/plans/safety-p2-1d-plan.txt"
+type = "text"
+title = "תוכנית עבודה — safety-p2-1d (thumbnail + detail + כפתור תמונה)"
