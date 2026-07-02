@@ -528,3 +528,9 @@ id = "m73l6e1kk0S-9Osb4qt1A"
 uri = "file://.local/plans/safety-p2-2b2-plan.txt"
 type = "text"
 title = "safety-p2-2b2 — תוכנית לאישור (הדרכות + אירועים)"
+
+[[outputs]]
+id = "YJgErYD_t1yKnoFXwdwys"
+uri = "file://.local/plans/safety-p2-2c-plan.txt"
+type = "text"
+title = "safety-p2-2c — תוכנית לאישור (display-url regen — תעודות + תמונות אירוע)"
