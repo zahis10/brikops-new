@@ -1,80 +1,104 @@
 ========================================================================
-BATCH safety-p2-1c-fix1 — סדר עמודות RTL בכל טבלאות הפנקס
-                          + "מבצע" מציג שמות, לא קטעי UUID
+BATCH safety-p2-1d — thumbnail ברשימת ליקויים + דיטייל קריאה-בלבד
+                      + כפתור "צרף תמונה" בולט
 ========================================================================
 STATUS: ✅ הושלם ואומת מקומית — ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-ROLLBACK SHA (HEAD לפני העבודה): 0af65f1  (batch 1c)
-DEPLOY TARGET: BACKEND — ./deploy.sh (EB Frankfurt + Cloudflare יחד)
-NO new dependency · NO new asset · NO schema/API change · קובץ backend יחיד
-
-FILES CHANGED (git diff --stat vs 0af65f1):
-  backend/services/safety_pdf.py | 18 ++++++++++++++----
-  1 file changed, 14 insertions(+), 4 deletions(-)   ← קובץ אחד בלבד ✅
+ROLLBACK SHA (HEAD לפני העבודה): d1f6fa9
+DEPLOY TARGET: FRONTEND-ONLY — Capgo OTA, no backend, no new dependency, no new flag
+FILES (3):
+  EDIT frontend/src/pages/SafetyHomePage.js                    | 47 +++++++--
+  ADD  frontend/src/components/safety/SafetyDocumentDetail.js  | NEW
+  EDIT frontend/src/components/safety/SafetyDocumentForm.js    |  6 +--
 
 ========================================================================
 STEP 0 — ממצאי PRE-FLIGHT (read-only)
 ========================================================================
-0.1 def _table: hit יחיד בשורה 380 (closure בתוך generate_safety_register) ✅
-0.2 קריאות _table: 9 (8 טבלאות נתונים + audit): שורות 451/473/493/513/535/556/577/596
-    + 632(audit). כולן מעבירות כותרות בסדר לוגי — אף אחת לא הפוכה ידנית מראש ✅
-0.3 actor_id: projection @621 + שורת row עם [:8] @630 ✅
-0.4 generator הרישום (פנקס הקבלנים, חצי שני של הקובץ) בונה טבלאות ללא ה‑closure
-    _table → לא מושפע מהשינוי, לא נגעתי ✅
+0.1 photo_display_urls קיים ב-origin/staging וגם מקומית (2 hits) → 1b נשלח ✅
+0.2 isWriter (@206, SAFETY_WRITERS) שולט על עיפרון העריכה — שימוש חוזר לכפתור
+    "ערוך" בדיטייל ✅
+0.3 זרימת עריכה: onEdit(d) => setDocForm({open:true, record:d}) (@437), מועבר
+    ל-DocumentsList (@436). הדיטייל קורא לאותו setDocForm. (הספק כתב openDocForm —
+    בפועל setDocForm) ✅
+0.4 SafetyFormModal chrome: Dialog modal={false}, [&>button]:hidden,
+    onInteractOutside/onPointerDownOutside preventDefault, DialogClose מ-'../ui/dialog'
+    → שוקף במדויק ✅
+0.5 safetyLabels.js כבר מייצא CATEGORY_HE/SEVERITY_HE/DOC_STATUS_HE → אין הוספה,
+    אין import מ-backend ✅
+    DocRow <li> (@571): hover:bg-slate-50 ללא onClick; checkbox+עיפרון עם stopPropagation ✅
+=> אין divergence.
 
 ========================================================================
-CHANGE 1 — היפוך עמודות מרכזי אחד ב‑_table (~שורה 380)
+PART 1 — SafetyHomePage.js
 ========================================================================
-• reportlab מציב עמודה 0 בקצה השמאלי; כל ה‑call sites מעבירים בסדר קריאה לוגי,
-  לכן היפכתי כותרות, כל שורה, ורוחבי העמודות פעם אחת בתוך _table → העמודה הלוגית
-  הראשונה מרונדרת בקצה הימני.
-• TableStyle לא שונה (הקואורדינטות סימטריות: ROWBACKGROUNDS/BACKGROUND/GRID על
-  טווחים מלאים) — זברה/כותרת נייבי/repeatRows=1 נשמרו.
-• אף call site לא שונה (כפי שנדרש) — היפוך יחיד ומרכזי מטפל בכל 8 הטבלאות + audit.
+• State: detailDoc (useState(null)).
+• import SafetyDocumentDetail + הוספת Camera ל-lucide imports.
+• DocumentsList: prop onOpenDetail; חיווט onOpenDetail={(d)=>setDetailDoc(d)}.
+• DocRow <li>: onClick={()=>onOpenDetail(d)} + role="button" + cursor-pointer.
+  checkbox (@onChange/onClick stopPropagation) והעיפרון (stopPropagation) לא מפעילים דיטייל.
+• רכיב DocThumb חדש: 44x44 (w-11 h-11). קורא d.photo_display_urls?.[0]; onError→
+  state broken→placeholder עם <Camera/>; ללא url→אותו placeholder. אף פעם לא glyph שבור.
+  ממוקם אחרי ה-checkbox, לפני ה-severity badge.
+• רינדור <SafetyDocumentDetail> כאח ל-SafetyDocumentForm: doc/open/onClose/isWriter/
+  companies + onEdit={(d)=>{ setDetailDoc(null); setDocForm({open:true, record:d}); }}.
 
 ========================================================================
-CHANGE 2 — "מבצע" ב‑audit פותר שמות משתמשים (~שורות 618-637)
+PART 2 — SafetyDocumentDetail.js (חדש, קריאה בלבד)
 ========================================================================
-• מיד אחרי שליפת audit_events: איסוף actor_ids ייחודיים ושאילתת users אחת
-  ({id, name}) ל‑actor_map.
-• שורת ה‑row: actor_map.get(actor_id) → שם אמיתי; נפילה חיננית ל‑actor_id[:8]
-  אם המשתמש לא נמצא; "—" אם אין actor_id כלל.
+• Chrome משוקף מ-SafetyFormModal: Dialog modal={false}, header slate-900, X close,
+  dir="rtl", [&>button]:hidden, onInteractOutside/onPointerDownOutside preventDefault.
+• גוף: כותרת גדולה + severity badge צבעוני; grid שדות: קטגוריה (CATEGORY_HE),
+  סטטוס (DOC_STATUS_HE), תאריך גילוי (slice 10), מיקום, חברה (resolve דרך companies
+  prop: id→name||company_name), אחראי (doc.assignee_name — מושמט אם אין, ללא fetch),
+  תיאור (whitespace-pre-wrap). רכיב Field מסתיר שדות ריקים אוטומטית.
+• תמונות: grid מ-doc.photo_display_urls (מסונן isHttp), כל אחת עטופה
+  <a target="_blank" rel="noopener noreferrer"> → full-size בטאב חדש, ללא lightbox dep.
+  מצב ריק: "אין תמונות מצורפות".
+• Footer: "סגור" (DialogClose) + (רק isWriter) "ערוך"→onEdit(doc). Guard: if(!doc) return null.
+• אין network, אין writes.
+
+========================================================================
+PART 3 — SafetyDocumentForm.js
+========================================================================
+• הכפתור "צרף תמונה" → drop-zone מלא-רוחב סגול מקווקו:
+  border-2 border-dashed border-purple-300 bg-purple-50 text-purple-700 ... min-h-[52px].
+  אייקון Camera w-5 h-5, טקסט 'צרף תמונה (מומלץ)' / 'מעלה…', guard uploading נשמר.
+• שורת ה-thumbnails + לוגיקת "×" + ה-<input> המוסתר — ללא שינוי (1b).
 
 ========================================================================
 VERIFY
 ========================================================================
-V1 ast.parse: parse OK ✅
-V2 greps: reversed(headers) — hit יחיד בתוך _table; actor_map — lookup + row use ✅
-V3 ⭐ פנקס אמיתי (project test_part3a_aa58107e + ליקוי זמני + 2 אירועי audit זמניים
-    [מבצע מוכר + UUID לא מוכר], הוזרעו ונמחקו). מאומת בצילומים:
-      · סקשן 1: "שדה" בקצה הימני, "ערך" משמאלו ✅
-      · סקשן 3: "שם מלא" ימני, "תאריך כניסה" שמאלי ✅
-      · סקשן 4: "עובד" ימני, "תוקף עד" שמאלי ✅
-      · סקשן 5: "כותרת" ימני, "תאריך" שמאלי ✅
-      · סקשן 6/7/8 (סטטיסטי): עמודה לוגית ראשונה ימנית ✅
-      · טבלת audit: "תאריך" בקצה הימני (התלונה המדויקת של זהי), "מבצע" שמאלי ✅
-      · "מבצע" שורה 1 = "מנהל מערכת" (שם אמיתי); שורה 2 = "c76b39ac" (fallback
-        ל‑UUID לא מוכר) ✅
-      · זברה + כותרת נייבי + קווים כתומים — ללא שינוי ✅
-    צילומי הוכחה: .local/proof/safety-p2-1c-fix1_pg1.png (סקשן 1/3/4),
-                  .local/proof/safety-p2-1c-fix1_pg3.png (audit + סטטיסטי).
-V4 empty-state: project ללא נתונים → הופק PDF (110,659B) עם פסקאות "אין...",
-    ללא חריגה ✅
-V5 git diff --stat vs 0af65f1: רק backend/services/safety_pdf.py ✅
+V1 Babel parse (@babel/preset-react): OK ל-3 הקבצים ✅
+V2 greps:
+   · SafetyHomePage: onClick={()=>onOpenDetail(d)} (@609);
+     <DocThumb url={d.photo_display_urls?.[0]}/> (@620); onError→setBroken(true) (@552).
+   · SafetyDocumentDetail: Dialog modal={false} + [&>button]:hidden ✅
+   · SafetyDocumentForm: border-dashed border-purple-300 ✅
+V3 THUMBNAIL (trace): DocThumb מרנדר <img> כשיש url תקין; onError מדליק broken→
+   placeholder Camera; ללא url→placeholder. url פג-תוקף נופל ל-placeholder, לא glyph שבור.
+V4 DETAIL (trace): <li onClick=onOpenDetail> פותח את המודל (detailDoc set);
+   checkbox+עיפרון עם stopPropagation לא יפתחו אותו. המודל מציג את כל השדות + תמונות;
+   <a target="_blank"> פותח full-size בטאב חדש; "ערוך" (isWriter) קורא onEdit→
+   סוגר דיטייל + פותח setDocForm עם הליקוי; "סגור"/X סוגרים. non-writer: אין "ערוך".
+V5 FORM BUTTON (trace): הכפתור כעת drop-zone סגול מלא-רוחב בולט; ה-<input> וה-handlePhoto/
+   removePhoto + שורת ה-thumbnails לא שונו → העלאה/preview/הסרה זהים ל-1b.
+V6 REGRESSION: create/edit (setDocForm), delete/bulk (checkbox stopPropagation נשמר),
+   filter/tabs/score — לא נגעתי בלוגיקה שלהם; רק תוספת onClick+thumbnail בשורה.
+V-diff: git diff --stat vs d1f6fa9 = SafetyHomePage.js + SafetyDocumentForm.js;
+   SafetyDocumentDetail.js קובץ חדש (untracked). רק 3 הקבצים ✅
 
 ========================================================================
 DIVERGENCES
 ========================================================================
-אין. יושם AS IS לפי הספק — היפוך יחיד ב‑_table, actor_map ב‑audit בלבד; לא נגעתי
-ב‑call sites, Excel, cover panel, טבלאות חתימה, banner/canvas, פונטים, לוגואים,
-margins, או generator הרישום.
-הערה: repeatRows נשמר; טבלת העובדים בפרויקט הבדיקה בת שורה אחת ולכן page-break של
-כותרת חוזרת לא נצפה ישירות — המנגנון לא שונה.
+1. onEdit בדיטייל קורא setDocForm({open,record}) (השם בפועל) ולא openDocForm שבספק —
+   אותה זרימה בדיוק, שם שונה בלבד.
+2. נוספה שורת "אין תמונות מצורפות" במודל כשאין תמונות (שיפור UX קטן, אין פגיעה בספק).
+3. אימות V3-V6 בוצע כ-trace לוגי + parse/grep (batch frontend OTA, ללא backend);
+   הרינדור החי ייבחן בסביבת ה-staging לאחר deploy.
 
 ========================================================================
 DEPLOY
 ========================================================================
-BACKEND — EB + Cloudflare (./deploy.sh), no new dependency, no new asset,
-no schema/API change, 1 backend file.
+FRONTEND-ONLY — Capgo OTA, no backend, no new dependency, no new flag.
 ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
 
-commit: fix(safety-pdf): RTL column order for register tables + resolve audit actor names
+commit: feat(safety): defect thumbnails + read-only detail view + prominent photo upload

@@ -240,10 +240,10 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
       <div className="space-y-1.5">
         <Label>תמונות</Label>
         <label
-          className={`inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-50 min-h-[44px] ${uploading ? 'opacity-60 pointer-events-none' : ''}`}
+          className={`flex items-center justify-center gap-2 w-full px-4 py-3 rounded-xl border-2 border-dashed border-purple-300 bg-purple-50 text-purple-700 font-medium text-sm cursor-pointer hover:bg-purple-100 active:scale-[0.99] min-h-[52px] transition-colors ${uploading ? 'opacity-60 pointer-events-none' : ''}`}
         >
-          <Camera className="w-4 h-4" />
-          {uploading ? 'מעלה…' : 'צרף תמונה'}
+          <Camera className="w-5 h-5" />
+          {uploading ? 'מעלה…' : 'צרף תמונה (מומלץ)'}
           <input
             type="file"
             accept="image/*"

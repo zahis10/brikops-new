@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
-  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter, Plus, Pencil,
+  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter, Plus, Pencil, Camera,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
@@ -20,6 +20,7 @@ import SafetyExportMenu from '../components/safety/SafetyExportMenu';
 import SafetyBulkActionBar from '../components/safety/SafetyBulkActionBar';
 import SafetyWorkerForm from '../components/safety/SafetyWorkerForm';
 import SafetyDocumentForm from '../components/safety/SafetyDocumentForm';
+import SafetyDocumentDetail from '../components/safety/SafetyDocumentDetail';
 import { SEVERITY_HE, DOC_STATUS_HE } from '../components/safety/safetyLabels';
 
 // Writers = the two project roles the safety backend accepts for create/edit
@@ -58,6 +59,8 @@ export default function SafetyHomePage() {
   // Batch safety-p2-1 — create/edit modal state (one pair per entity).
   const [docForm, setDocForm] = useState({ open: false, record: null });
   const [workerForm, setWorkerForm] = useState({ open: false, record: null });
+  // Batch safety-p2-1d — read-only detail modal (row tap opens it).
+  const [detailDoc, setDetailDoc] = useState(null);
 
   // Skip the filter useEffect's initial run — main useEffect's Promise.all
   // already fetched documents. The ref flips to false after the first real run.
@@ -435,6 +438,7 @@ export default function SafetyHomePage() {
                 onClearFilter={clearFilter}
                 isWriter={isWriter}
                 onEdit={(d) => setDocForm({ open: true, record: d })}
+                onOpenDetail={(d) => setDetailDoc(d)}
               />
             </TabsContent>
             <TabsContent value="tasks" className="p-0 m-0">
@@ -467,6 +471,15 @@ export default function SafetyHomePage() {
         open={docForm.open}
         onClose={() => setDocForm({ open: false, record: null })}
         onSaved={reloadDocuments}
+      />
+
+      <SafetyDocumentDetail
+        doc={detailDoc}
+        open={!!detailDoc}
+        onClose={() => setDetailDoc(null)}
+        isWriter={isWriter}
+        companies={companies}
+        onEdit={(d) => { setDetailDoc(null); setDocForm({ open: true, record: d }); }}
       />
 
       <SafetyWorkerForm
@@ -526,9 +539,31 @@ function BreakdownBar({ label, value = 0, max = 1, color }) {
   );
 }
 
+// Row thumbnail — first display url, falling back to a neutral placeholder both
+// when there is no photo and when the (per-GET, expiry-prone) url fails to load,
+// so a stale preview never shows a broken-image glyph.
+function DocThumb({ url }) {
+  const [broken, setBroken] = useState(false);
+  if (url && !broken) {
+    return (
+      <img
+        src={url}
+        alt=""
+        onError={() => setBroken(true)}
+        className="w-11 h-11 rounded-lg object-cover border border-slate-200 shrink-0"
+      />
+    );
+  }
+  return (
+    <div className="w-11 h-11 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
+      <Camera className="w-4 h-4 text-slate-300" />
+    </div>
+  );
+}
+
 function DocumentsList({
   items, selectedIds, onToggle, onSelectAll, allSelected,
-  hasActiveFilter, onClearFilter, isWriter, onEdit,
+  hasActiveFilter, onClearFilter, isWriter, onEdit, onOpenDetail,
 }) {
   if (!items?.length) {
     return (
@@ -568,7 +603,12 @@ function DocumentsList({
       </div>
       <ul className="divide-y divide-slate-100">
         {items.map((d) => (
-          <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+          <li
+            key={d.id}
+            role="button"
+            onClick={() => onOpenDetail(d)}
+            className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50 cursor-pointer"
+          >
             <input
               type="checkbox"
               aria-label={`בחר ליקוי ${d.title || ''}`}
@@ -577,6 +617,7 @@ function DocumentsList({
               onClick={(e) => e.stopPropagation()}
               className="w-5 h-5 mt-0.5 cursor-pointer accent-blue-600 shrink-0"
             />
+            <DocThumb url={d.photo_display_urls?.[0]} />
             <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
               {SEVERITY_HE[d.severity] || '—'}
             </Badge>
