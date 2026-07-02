@@ -1,104 +1,100 @@
 ========================================================================
-BATCH safety-p2-1d — thumbnail ברשימת ליקויים + דיטייל קריאה-בלבד
-                      + כפתור "צרף תמונה" בולט
+BATCH companies-placeholder-visibility — חברות placeholder (מטופס ליקוי
+       בטיחות) נראות שוב בכל קוראי project_companies
 ========================================================================
 STATUS: ✅ הושלם ואומת מקומית — ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-ROLLBACK SHA (HEAD לפני העבודה): d1f6fa9
-DEPLOY TARGET: FRONTEND-ONLY — Capgo OTA, no backend, no new dependency, no new flag
-FILES (3):
-  EDIT frontend/src/pages/SafetyHomePage.js                    | 47 +++++++--
-  ADD  frontend/src/components/safety/SafetyDocumentDetail.js  | NEW
-  EDIT frontend/src/components/safety/SafetyDocumentForm.js    |  6 +--
+ROLLBACK SHA (HEAD לפני העבודה): 2841cda
+DEPLOY TARGET: BACKEND (EB Frankfurt + Cloudflare, ./deploy.sh).
+               אין תלות חדשה, אין flag חדש, אין שינוי API.
+מיקום cleanup: אופציה ב׳ (בחירת זאהי) — בתוך _deferred_db_init ליד ה-migrations
+               (non-blocking, תואם קוד שכן), ולא ב-startup() ישירות.
+FILES (2 קוד):
+  EDIT backend/contractor_ops/safety_router.py   | 2 שורות הוסרו
+  EDIT backend/server.py                         | 14 שורות נוספו
+  (+ .agents/agent_assets_metadata.toml — metadata אוטומטי מ-present_asset של
+     התוכנית, לא קוד)
 
 ========================================================================
-STEP 0 — ממצאי PRE-FLIGHT (read-only)
+STEP 0 — PRE-FLIGHT (read-only) ✅ הכל עבר, אף ציפייה לא נכשלה
 ========================================================================
-0.1 photo_display_urls קיים ב-origin/staging וגם מקומית (2 hits) → 1b נשלח ✅
-0.2 isWriter (@206, SAFETY_WRITERS) שולט על עיפרון העריכה — שימוש חוזר לכפתור
-    "ערוך" בדיטייל ✅
-0.3 זרימת עריכה: onEdit(d) => setDocForm({open:true, record:d}) (@437), מועבר
-    ל-DocumentsList (@436). הדיטייל קורא לאותו setDocForm. (הספק כתב openDocForm —
-    בפועל setDocForm) ✅
-0.4 SafetyFormModal chrome: Dialog modal={false}, [&>button]:hidden,
-    onInteractOutside/onPointerDownOutside preventDefault, DialogClose מ-'../ui/dialog'
-    → שוקף במדויק ✅
-0.5 safetyLabels.js כבר מייצא CATEGORY_HE/SEVERITY_HE/DOC_STATUS_HE → אין הוספה,
-    אין import מ-backend ✅
-    DocRow <li> (@571): hover:bg-slate-50 ללא onClick; checkbox+עיפרון עם stopPropagation ✅
-=> אין divergence.
+0.1 insert יחיד @117 עם "is_placeholder": True ושתי שורות null @124-125 ✅
+0.2 קוראים שבורים ('exists': False + project_companies): 6 hits (ציפייה ≥5) ✅
+0.3 קוראי READ של safety משתמשים ב-'deletedAt': None (match-missing, לא מושפע
+    מה-unset); grep $set deletedAt None → 0 hits ✅
+0.4 @app.on_event("startup") @1257 ✅
+0.5 deletedBy readers שמסננים על exists (מקור בלבד) → 0 hits ✅
 
 ========================================================================
-PART 1 — SafetyHomePage.js
+CHANGE 1 — safety_router.py: הפסקת כתיבת שדות ה-null tombstone
 ========================================================================
-• State: detailDoc (useState(null)).
-• import SafetyDocumentDetail + הוספת Camera ל-lucide imports.
-• DocumentsList: prop onOpenDetail; חיווט onOpenDetail={(d)=>setDetailDoc(d)}.
-• DocRow <li>: onClick={()=>onOpenDetail(d)} + role="button" + cursor-pointer.
-  checkbox (@onChange/onClick stopPropagation) והעיפרון (stopPropagation) לא מפעילים דיטייל.
-• רכיב DocThumb חדש: 44x44 (w-11 h-11). קורא d.photo_display_urls?.[0]; onError→
-  state broken→placeholder עם <Camera/>; ללא url→אותו placeholder. אף פעם לא glyph שבור.
-  ממוקם אחרי ה-checkbox, לפני ה-severity badge.
-• רינדור <SafetyDocumentDetail> כאח ל-SafetyDocumentForm: doc/open/onClose/isWriter/
-  companies + onEdit={(d)=>{ setDetailDoc(null); setDocForm({open:true, record:d}); }}.
+מתוך insert ה-placeholder (@117) הוסרו:
+    "deletedAt": None,
+    "deletedBy": None,
+לא נגעתי בשום דבר אחר ב-dict/פונקציה. שאר שדות (id/project_id/name/
+is_placeholder/created_at/created_by) ללא שינוי.
 
 ========================================================================
-PART 2 — SafetyDocumentDetail.js (חדש, קריאה בלבד)
+CHANGE 2 — server.py: cleanup אידמפוטנטי (אופציה ב׳)
 ========================================================================
-• Chrome משוקף מ-SafetyFormModal: Dialog modal={false}, header slate-900, X close,
-  dir="rtl", [&>button]:hidden, onInteractOutside/onPointerDownOutside preventDefault.
-• גוף: כותרת גדולה + severity badge צבעוני; grid שדות: קטגוריה (CATEGORY_HE),
-  סטטוס (DOC_STATUS_HE), תאריך גילוי (slice 10), מיקום, חברה (resolve דרך companies
-  prop: id→name||company_name), אחראי (doc.assignee_name — מושמט אם אין, ללא fetch),
-  תיאור (whitespace-pre-wrap). רכיב Field מסתיר שדות ריקים אוטומטית.
-• תמונות: grid מ-doc.photo_display_urls (מסונן isHttp), כל אחת עטופה
-  <a target="_blank" rel="noopener noreferrer"> → full-size בטאב חדש, ללא lightbox dep.
-  מצב ריק: "אין תמונות מצורפות".
-• Footer: "סגור" (DialogClose) + (רק isWriter) "ערוך"→onEdit(doc). Guard: if(!doc) return null.
-• אין network, אין writes.
+נוסף בלוק try/except בתוך _deferred_db_init (@1167), מיד אחרי בלוק ה-migrations
+(bootstrap_super_admin ... backfill_project_templates) ולפני בלוק ה-billing:
 
-========================================================================
-PART 3 — SafetyDocumentForm.js
-========================================================================
-• הכפתור "צרף תמונה" → drop-zone מלא-רוחב סגול מקווקו:
-  border-2 border-dashed border-purple-300 bg-purple-50 text-purple-700 ... min-h-[52px].
-  אייקון Camera w-5 h-5, טקסט 'צרף תמונה (מומלץ)' / 'מעלה…', guard uploading נשמר.
-• שורת ה-thumbnails + לוגיקת "×" + ה-<input> המוסתר — ללא שינוי (1b).
+    try:
+        res = await db.project_companies.update_many(
+            {"deletedAt": {"$type": "null"}},
+            {"$unset": {"deletedAt": "", "deletedBy": ""}},
+        )
+        if res.modified_count:
+            logger.info(f"[STARTUP] project_companies null-tombstone cleanup: unset on {res.modified_count} docs")
+    except Exception as e:
+        logger.warning(f"[STARTUP] project_companies cleanup failed (non-fatal): {e}")
+
+• $type:'null' תואם רק null מפורש (לא שדה חסר) → לא נוגע ב-placeholders חדשים
+  (שכבר לא נכתבים עם השדה) ולא ב-soft-deleted (deletedAt=timestamp).
+• אותו db handle global (@46) — לא נבנה client חדש.
+• non-blocking: רץ ברקע כמו שאר ה-migrations, לא חוסם "server accepting connections".
 
 ========================================================================
 VERIFY
 ========================================================================
-V1 Babel parse (@babel/preset-react): OK ל-3 הקבצים ✅
-V2 greps:
-   · SafetyHomePage: onClick={()=>onOpenDetail(d)} (@609);
-     <DocThumb url={d.photo_display_urls?.[0]}/> (@620); onError→setBroken(true) (@552).
-   · SafetyDocumentDetail: Dialog modal={false} + [&>button]:hidden ✅
-   · SafetyDocumentForm: border-dashed border-purple-300 ✅
-V3 THUMBNAIL (trace): DocThumb מרנדר <img> כשיש url תקין; onError מדליק broken→
-   placeholder Camera; ללא url→placeholder. url פג-תוקף נופל ל-placeholder, לא glyph שבור.
-V4 DETAIL (trace): <li onClick=onOpenDetail> פותח את המודל (detailDoc set);
-   checkbox+עיפרון עם stopPropagation לא יפתחו אותו. המודל מציג את כל השדות + תמונות;
-   <a target="_blank"> פותח full-size בטאב חדש; "ערוך" (isWriter) קורא onEdit→
-   סוגר דיטייל + פותח setDocForm עם הליקוי; "סגור"/X סוגרים. non-writer: אין "ערוך".
-V5 FORM BUTTON (trace): הכפתור כעת drop-zone סגול מלא-רוחב בולט; ה-<input> וה-handlePhoto/
-   removePhoto + שורת ה-thumbnails לא שונו → העלאה/preview/הסרה זהים ל-1b.
-V6 REGRESSION: create/edit (setDocForm), delete/bulk (checkbox stopPropagation נשמר),
-   filter/tabs/score — לא נגעתי בלוגיקה שלהם; רק תוספת onClick+thumbnail בשורה.
-V-diff: git diff --stat vs d1f6fa9 = SafetyHomePage.js + SafetyDocumentForm.js;
-   SafetyDocumentDetail.js קובץ חדש (untracked). רק 3 הקבצים ✅
+V1 ast.parse ל-safety_router.py ו-server.py → OK both files ✅
+V2 sed 117-131 של safety_router.py: ה-INSERT כבר לא מכיל deletedAt/deletedBy null ✅
+   שאר ה-'deletedAt': None ב-safety_router (98/111/215/261...) = קוראי READ /
+   קולקשנים אחרים (safety_workers/trainings/documents/tasks/incidents) — נשארים
+   בכוונה (match-missing), לא INSERT של placeholder ✅
+V3 ⭐ staging לאחר deploy (זאהי):
+   a. log עלייה: "project_companies null-tombstone cleanup: unset on N docs"
+      (N≥1 אם קיים "אינסטלציה" של מתן; N=0/ללא שורה אם אין nulls).
+   b. יצירת ליקוי עם שם חברה חדש → GET /projects/{id}/companies כולל אותו.
+   c. placeholder שהיה מוסתר מופיע ב-picker לאחר boot.
+V4 שלילי: חברה soft-deleted (deletedAt=timestamp) נשארת מוסתרת ב-picker+suggestions
+   ($type:'null' לא נוגע בה).
+V5 exports (Safety PDF + Excel) עדיין מפענחים שמות חברות (company_map).
+V6 git diff --stat מול 2841cda → 2 קבצי קוד (safety_router.py, server.py).
+   קובץ שלישי .agents/agent_assets_metadata.toml = metadata אוטומטי מ-present_asset
+   של קובץ התוכנית, לא שינוי קוד.
 
 ========================================================================
 DIVERGENCES
 ========================================================================
-1. onEdit בדיטייל קורא setDocForm({open,record}) (השם בפועל) ולא openDocForm שבספק —
-   אותה זרימה בדיוק, שם שונה בלבד.
-2. נוספה שורת "אין תמונות מצורפות" במודל כשאין תמונות (שיפור UX קטן, אין פגיעה בספק).
-3. אימות V3-V6 בוצע כ-trace לוגי + parse/grep (batch frontend OTA, ללא backend);
-   הרינדור החי ייבחן בסביבת ה-staging לאחר deploy.
+1. מיקום ה-cleanup: אופציה ב׳ (בתוך _deferred_db_init ליד ה-migrations) לפי
+   בחירת זאהי, ולא ב-startup() ישירות כלשון הספק. אותה סמנטיקה + אותו log line;
+   ההבדל: לא חוסם את עליית השרת ותואם דפוס ה-non-blocking של הקובץ.
+2. Rollback SHA בפועל 2841cda (הספק ציפה d1f6fa9) — HEAD התקדם בבאצ'ים קודמים.
+3. V3-V5 דורשים סביבת staging חיה — ייבחנו לאחר deploy.
+
+========================================================================
+KNOWN NON-BLOCKING WINDOW (מודעות בלבד)
+========================================================================
+במהלך EB rolling deploy, instance ישן עלול לכתוב placeholder עם nulls אחרי
+שה-cleanup של ה-instance החדש כבר רץ → אותו placeholder יישאר מוסתר עד ה-boot
+הבא (ה-cleanup אידמפוטנטי ירפא אותו). חלון של יצירת placeholder בודדת במהלך
+ה-deploy עצמו. מקובל.
 
 ========================================================================
 DEPLOY
 ========================================================================
-FRONTEND-ONLY — Capgo OTA, no backend, no new dependency, no new flag.
+BACKEND (EB Frankfurt + Cloudflare, ./deploy.sh). אין תלות חדשה, אין flag, אין API.
 ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
 
-commit: feat(safety): defect thumbnails + read-only detail view + prominent photo upload
+commit: fix(companies): placeholder companies visible everywhere — stop writing null tombstones + startup cleanup

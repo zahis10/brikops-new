@@ -121,8 +121,6 @@ async def _ensure_company_or_placeholder(
         "is_placeholder": True,
         "created_at": _now(),
         "created_by": actor_id,
-        "deletedAt": None,
-        "deletedBy": None,
     })
     await _audit("project_company", new_id, "create_placeholder", actor_id, {
         "project_id": project_id, "name": name, "source": "safety",

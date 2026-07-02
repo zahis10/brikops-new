@@ -1232,6 +1232,20 @@ async def _deferred_db_init():
     except Exception as e:
         logger.warning(f"[STARTUP] Migration/bootstrap failed (non-fatal): {e}")
 
+    # One-shot cleanup (idempotent): safety placeholders were inserted with
+    # explicit deletedAt/deletedBy null, which $exists:False readers exclude.
+    # $type:'null' matches ONLY explicit nulls (not missing). Safe to remove
+    # after a release or two once modified stays 0.
+    try:
+        res = await db.project_companies.update_many(
+            {"deletedAt": {"$type": "null"}},
+            {"$unset": {"deletedAt": "", "deletedBy": ""}},
+        )
+        if res.modified_count:
+            logger.info(f"[STARTUP] project_companies null-tombstone cleanup: unset on {res.modified_count} docs")
+    except Exception as e:
+        logger.warning(f"[STARTUP] project_companies cleanup failed (non-fatal): {e}")
+
     try:
         from contractor_ops.billing import BILLING_V1_ENABLED, apply_pending_decreases
         if BILLING_V1_ENABLED:
