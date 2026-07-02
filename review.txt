@@ -1,73 +1,94 @@
 ========================================================================
-MICRO-BATCH deploy-sh-silent-death — deploy.sh מת בשקט כש-frontend/build חסר
+REVIEW — BATCH safety-p2-2b1 — משימות מתקנות: מודל create + edit
 ========================================================================
-STATUS: ✅ הושלם ואומת מקומית — ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-ROLLBACK SHA (HEAD לפני העבודה): 63800d8
-DEPLOY TARGET: אין — שינוי סקריפט בלבד, נכנס לתוקף בהרצה הבאה. ה-commit רוכב עם
-               הבאץ' הבא.
-FILES (1, שורה 1):
-  EDIT deploy.sh  | שורה 1 (append "|| true")
+Scope: FRONTEND-ONLY · Capgo OTA · אין שינוי backend · אין תלות/flag חדשים
+Rollback SHA (HEAD לפני הבאץ'): 7ee6f4b   (הספק ציפה 63800d8 — התקדם מבאצ'ים קודמים)
+Deploy: FRONTEND (Capgo OTA). ⛔ DO NOT DEPLOY — זאהי מריץ ship.sh/deploy.
 
-⚠️ פעולה נדרשת ממך לפני commit:
-   ה-dry-run של V2 גרם ל-deploy.sh להריץ פקודת git שה-sandbox חוסם, ונוצר
-   קובץ נעילה ריק .git/index.lock (0 בייט). ה-sandbox חוסם ממני גם למחוק אותו.
-   הרץ לפני ה-commit:   rm -f .git/index.lock
+------------------------------------------------------------------------
+מה נעשה (4 קבצים)
+------------------------------------------------------------------------
+1. frontend/src/services/api.js  (+18)
+   safetyService.createTask(projectId,payload)  → POST  /api/safety/{pid}/tasks
+   safetyService.updateTask(projectId,tid,payload) → PATCH /api/safety/{pid}/tasks/{tid}
+   אותה תבנית axios+getAuthHeader כמו createDocument/updateDocument.
 
-========================================================================
-STEP 0 — PRE-FLIGHT ✅
-========================================================================
-0.1 יעד @82 (בתוך check_frontend_staleness): hit יחיד ✅
-    new_bundle=$(ls ...) @216 קיים — מוגן כבר ב-`-z` משלו ורץ אחרי build מוצלח;
-    לא נגעתי בו ✅
+2. frontend/src/components/safety/SafetyTaskForm.js  (חדש)
+   מודל create+edit למשימת בטיחות מתקנת, מראה SafetyDocumentForm 1:1
+   (SafetyFormModal → Radix Dialog modal={false}, header כהה, X, dir=rtl,
+   [&>button]:hidden, sonner, submitting guard).
+   • מושך לבד companies+memberships (Promise.allSettled), members מסוננים
+     role∈{project_manager,management_team} ו-status!==pending (זהה ל"אחראי" בליקוי).
+   • שדות: כותרת*(2-200), חומרה*(SEVERITY_HE), תיאור, אחראי (צוות פנימי בלבד,
+     "ללא אחראי"), חברה ("ללא חברה"), תאריך יעד (date → מחרוזת/null).
+   • EDIT: badge סטטוס נוכחי + Select "עדכון סטטוס" שמראה רק מעברים חוקיים לפי
+     סטטוס נוכחי (mirror שרת): open→בביצוע; in_progress→הושלם; +בוטל רק אם
+     myRole==='project_manager'; completed/cancelled ללא יעדים→ה-Select מוסתר.
+     ברירת מחדל "ללא שינוי".
+   • השלמה ("completed") מציגה Textarea חובה "פעולה מתקנת שבוצעה"; ריק → חסימת
+     submit + toast עברית. corrective_action נשלח רק בהשלמה.
+   • payload PATCH מכיל status רק כשנבחר מעבר (exclude_unset ידידותי).
 
-========================================================================
-CHANGE — pipefail guard
-========================================================================
-בתוך check_frontend_staleness (@82):
-  לפני:  bundle=$(ls -t frontend/build/static/js/main*.js 2>/dev/null | head -1)
-  אחרי:  bundle=$(ls -t frontend/build/static/js/main*.js 2>/dev/null | head -1 || true)
+3. frontend/src/components/safety/safetyLabels.js  (+3)
+   export const TASK_STATUS_HE (open/in_progress/completed/cancelled →
+   פתוח/בביצוע/הושלם/בוטל) — מקור אמת יחיד.
 
-WHY: תחת `set -euo pipefail`, כשאין bundle ה-glob לא מתרחב, `ls` יוצא 2,
-pipefail מפיל את ה-pipeline, ההשמה נכשלת ו-set -e הורג את כל הסקריפט בשקט —
-שורה אחת לפני ה-fallback `if [[ -z "$bundle" ]]` שנכתב בדיוק למקרה הזה.
-ה-`|| true` גורם ל-command substitution להצליח (bundle="") כך שהזרימה ממשיכה
-ל-`-z` ומדפיסה "[STALE BUILD] No frontend bundle found — will rebuild".
+4. frontend/src/pages/SafetyHomePage.js  (+46/-6)
+   • import SafetyTaskForm + TASK_STATUS_HE מ-safetyLabels; הוסר ה-const המקומי הכפול.
+   • state taskForm; reloadTasks() (listTasks limit=50 → setTasks).
+   • כפתור "+" נפתח גם בטאב tasks (writer-gated כמו קודם); label map
+     {workers:'הוסף עובד', tasks:'הוסף משימה'} אחרת 'הוסף ליקוי'.
+   • TasksList קיבל isWriter+onEdit; עיפרון עריכה writer-gated לכל שורה
+     (aria-label="ערוך משימה", stopPropagation).
+   • render <SafetyTaskForm ... myRole={project?.my_role} onSaved={reloadTasks}/>.
 
-========================================================================
-DO NOT (נשמר)
-========================================================================
-- לא נגעתי בשום דבר אחר ב-deploy.sh (אין refactor, אין שינוי set -e, אין
-  || true נוסף, לא נגעתי ב-new_bundle @216).
+------------------------------------------------------------------------
+BACKEND CONTRACT ששוקף (לא נגעתי בשרת)
+------------------------------------------------------------------------
+מעברים (נאכפים בשרת, 409): open→in_progress|cancelled ; in_progress→completed|cancelled ;
+completed→cancelled ; cancelled→(אין). "completed" מחייב corrective_action לא-ריק.
+"cancelled" רק ל-project_manager. ה-UI לעולם לא ישלח מעבר שהשרת יחזיר עליו 409.
 
-========================================================================
-VERIFY
-========================================================================
-V1 bash -n deploy.sh → syntax OK ✅
-V2 סימולציה חיה (הזזת frontend/build והרצת ./deploy.sh) — ⚠️ לא ניתן להרצה
-   ב-sandbox הזה: deploy.sh מריץ פקודות git ש-main-agent חוסם ("Destructive git
-   operations are not allowed"), מה שגם יצר את ה-index.lock. ה-build הוזז והוחזר
-   בהצלחה (frontend/build/static/js/main.91679534.js קיים שוב).
-   TRACE לוגי: עם `|| true` ה-substitution מחזיר קוד יציאה 0 ו-bundle="" גם
-   כשאין קובץ → set -e לא הורג → `if [[ -z "$bundle" ]]` אמת → מדפיס
-   "[STALE BUILD] No frontend bundle found — will rebuild", frontend_changed=1,
-   return, וממשיך ל-"=== Deploy Status ===". התיקון נכון.
-   (ניתן לאמת חי אצלך: mv frontend/build /tmp/build.bak && ./deploy.sh &&
-    mv /tmp/build.bak frontend/build)
-V3 git diff deploy.sh → בדיוק שורה 1 שונתה ✅
+------------------------------------------------------------------------
+VERIFY שבוצע מקומית
+------------------------------------------------------------------------
+V1 Babel parse (jsx) — PARSE OK לכל 4 הקבצים.
+V2 greps — createTask/updateTask ב-api; SafetyFormModal+corrective_action+allowedNext
+   ב-TaskForm; 'הוסף משימה' במפת ה-"+"; 'ערוך משימה'+stopPropagation בשורות tasks;
+   export TASK_STATUS_HE מ-safetyLabels; אין const כפול בעמוד. הכל ✅.
+V6 git diff --stat = בדיוק 4 קבצים (3 M + SafetyTaskForm חדש). ✅
 
-========================================================================
-DIVERGENCES
-========================================================================
-1. V2 החי הוחלף ב-trace לוגי — ה-sandbox חוסם את פקודות ה-git שבתוך deploy.sh.
-2. שריד: .git/index.lock ריק נוצר מה-dry-run החסום; מחיקה חסומה ל-main-agent.
-   הרץ rm -f .git/index.lock לפני ה-commit (ראה ראש הקובץ).
-3. Rollback SHA בפועל 63800d8 (התקדם מבאצ'ים קודמים).
+------------------------------------------------------------------------
+VERIFY שדורש staging חי (זאהי, אחרי deploy)
+------------------------------------------------------------------------
+V3 ⭐ יצירת משימה (כותרת+חומרה) → מופיעה עם badge "פתוח"; עריכה: dropdown אחראי
+   מציג רק צוות פנימי; תאריך יעד; פתוח→בביצוע נשמר; בביצוע→הושלם ללא פעולה מתקנת
+   → נחסם client-side עם toast עברית; מילוי → מושלם; "בוטל" זמין רק ל-PM.
+V4 שלילי (server-strict): PATCH ישיר open→completed בלי corrective_action → 409.
+V5 non-writer: אין "+" בטאב tasks ואין עיפרון.
+V6-live רגרסיה: documents/workers + טפסיהם ללא שינוי; bulk/filters ללא נגיעה.
 
-========================================================================
-DEPLOY
-========================================================================
-אין deploy — שינוי סקריפט בלבד, נכנס לתוקף בהרצה הבאה של deploy.sh.
-ה-commit רוכב עם הבאץ' הבא.
-⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+------------------------------------------------------------------------
+DECISIONS / DIVERGENCES
+------------------------------------------------------------------------
+1. 4 קבצים ולא 3: הכותרת אמרה 3, אך STEP 0.2 + VERIFY V2 מחייבים export של
+   TASK_STATUS_HE מ-safetyLabels.js (היה const מקומי כפול ב-SafetyHomePage).
+   הועבר ל-safetyLabels + הוסר הכפול → מקור אמת יחיד, ספק-עקבי.
+2. SafetyTaskForm מושך members/companies לבד (מראה DocumentForm 1:1) ואינו מקבל
+   אותם כ-props: ה-state `users` בעמוד ממופה {id,name} בלבד וחסר role/status
+   הדרושים לסינון "אחראי". רק myRole מועבר כ-prop. מצמצם שינויים בעמוד + סינון נכון.
+3. Rollback SHA בפועל 7ee6f4b (הספק ציפה 63800d8).
 
-commit: fix(deploy): don't die silently when frontend/build is missing
+------------------------------------------------------------------------
+מגבלות ידועות / מחוץ ל-scope
+------------------------------------------------------------------------
+- ללא UI ל-document_id (קישור לליקוי) ו-verification_photo_urls — לא בבאץ' זה.
+- Trainings + Incidents = באץ' נפרד safety-p2-2b2 (לא הותחל).
+- אין שינוי backend/טאבים/bulk/filters.
+
+------------------------------------------------------------------------
+תזכורת תשתית
+------------------------------------------------------------------------
+⚠️ קיים .git/index.lock ריק משיירים קודמים — הסנדבוקס חוסם ממני rm. לפני commit:
+   rm -f .git/index.lock
+========================================================================

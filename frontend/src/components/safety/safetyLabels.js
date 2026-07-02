@@ -20,3 +20,6 @@ export const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'ג�
 
 // Safety document status (schemas.py SafetyDocumentStatus).
 export const DOC_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', resolved: 'נפתר', verified: 'אומת' };
+
+// Safety task status (schemas.py SafetyTaskStatus / safety_pdf.py TASK_STATUS_HE).
+export const TASK_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', completed: 'הושלם', cancelled: 'בוטל' };

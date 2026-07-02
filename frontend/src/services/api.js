@@ -420,6 +420,24 @@ export const safetyService = {
     return response.data;
   },
 
+  async createTask(projectId, payload) {
+    const r = await axios.post(
+      `${API}/safety/${projectId}/tasks`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+
+  async updateTask(projectId, taskId, payload) {
+    const r = await axios.patch(
+      `${API}/safety/${projectId}/tasks/${taskId}`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+
   async listWorkers(projectId, params = {}) {
     const response = await axios.get(
       `${API}/safety/${projectId}/workers`,

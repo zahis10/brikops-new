@@ -21,7 +21,8 @@ import SafetyBulkActionBar from '../components/safety/SafetyBulkActionBar';
 import SafetyWorkerForm from '../components/safety/SafetyWorkerForm';
 import SafetyDocumentForm from '../components/safety/SafetyDocumentForm';
 import SafetyDocumentDetail from '../components/safety/SafetyDocumentDetail';
-import { SEVERITY_HE, DOC_STATUS_HE } from '../components/safety/safetyLabels';
+import SafetyTaskForm from '../components/safety/SafetyTaskForm';
+import { SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE } from '../components/safety/safetyLabels';
 
 // Writers = the two project roles the safety backend accepts for create/edit
 // (safety_router.py SAFETY_WRITERS). The "+"/edit affordances gate on these.
@@ -31,7 +32,6 @@ const SEVERITY_COLOR = {
   '2': 'bg-amber-100 text-amber-800',
   '3': 'bg-red-100 text-red-800',
 };
-const TASK_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', completed: 'הושלם', cancelled: 'בוטל' };
 
 export default function SafetyHomePage() {
   const { projectId } = useParams();
@@ -59,6 +59,7 @@ export default function SafetyHomePage() {
   // Batch safety-p2-1 — create/edit modal state (one pair per entity).
   const [docForm, setDocForm] = useState({ open: false, record: null });
   const [workerForm, setWorkerForm] = useState({ open: false, record: null });
+  const [taskForm, setTaskForm] = useState({ open: false, record: null });
   // Batch safety-p2-1d — read-only detail modal (row tap opens it).
   const [detailDoc, setDetailDoc] = useState(null);
 
@@ -273,6 +274,15 @@ export default function SafetyHomePage() {
     }
   };
 
+  const reloadTasks = async () => {
+    try {
+      const tasksResp = await safetyService.listTasks(projectId, { limit: 50 });
+      setTasks(tasksResp || { items: [], total: 0 });
+    } catch (e) {
+      toast.error('שגיאה ברענון רשימת המשימות');
+    }
+  };
+
   const reloadWorkers = async () => {
     try {
       const [workersResp, scoreResp] = await Promise.all([
@@ -302,17 +312,18 @@ export default function SafetyHomePage() {
           {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
         </div>
 
-        {isWriter && activeTab !== 'tasks' && (
+        {isWriter && (
           <button
             type="button"
             onClick={() => {
               if (activeTab === 'workers') setWorkerForm({ open: true, record: null });
+              else if (activeTab === 'tasks') setTaskForm({ open: true, record: null });
               else setDocForm({ open: true, record: null });
             }}
             className="px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1 min-h-[44px]"
           >
             <Plus className="w-4 h-4" />
-            {activeTab === 'workers' ? 'הוסף עובד' : 'הוסף ליקוי'}
+            {{ workers: 'הוסף עובד', tasks: 'הוסף משימה' }[activeTab] || 'הוסף ליקוי'}
           </button>
         )}
 
@@ -442,7 +453,11 @@ export default function SafetyHomePage() {
               />
             </TabsContent>
             <TabsContent value="tasks" className="p-0 m-0">
-              <TasksList items={tasks.items} />
+              <TasksList
+                items={tasks.items}
+                isWriter={isWriter}
+                onEdit={(t) => setTaskForm({ open: true, record: t })}
+              />
             </TabsContent>
             <TabsContent value="workers" className="p-0 m-0">
               <WorkersList
@@ -488,6 +503,15 @@ export default function SafetyHomePage() {
         open={workerForm.open}
         onClose={() => setWorkerForm({ open: false, record: null })}
         onSaved={reloadWorkers}
+      />
+
+      <SafetyTaskForm
+        projectId={projectId}
+        task={taskForm.record}
+        open={taskForm.open}
+        onClose={() => setTaskForm({ open: false, record: null })}
+        onSaved={reloadTasks}
+        myRole={project?.my_role}
       />
 
       {activeTab === 'documents' && selectedIds.size > 0 && (
@@ -650,7 +674,7 @@ function DocumentsList({
   );
 }
 
-function TasksList({ items }) {
+function TasksList({ items, isWriter, onEdit }) {
   if (!items?.length) return <EmptyState icon={Wrench} text="אין משימות בטיחות פתוחות" />;
   const nowIso = new Date().toISOString();
   return (
@@ -674,6 +698,16 @@ function TasksList({ items }) {
               </div>
             </div>
             {overdue && <Badge className="bg-red-100 text-red-800 shrink-0">באיחור</Badge>}
+            {isWriter && (
+              <button
+                type="button"
+                aria-label="ערוך משימה"
+                onClick={(e) => { e.stopPropagation(); onEdit(tk); }}
+                className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+            )}
           </li>
         );
       })}
