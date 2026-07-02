@@ -516,3 +516,9 @@ id = "kB7AOarrYsnaqXSamoC7I"
 uri = "file://.local/plans/companies-placeholder-visibility-plan.txt"
 type = "text"
 title = "companies-placeholder-visibility — תוכנית לאישור"
+
+[[outputs]]
+id = "JI38T_n60R_a5dPonSKdP"
+uri = "file://.local/plans/safety-p2-2b1-plan.txt"
+type = "text"
+title = "safety-p2-2b1 — תוכנית לאישור (משימות מתקנות)"
