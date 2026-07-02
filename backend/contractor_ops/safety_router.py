@@ -1493,17 +1493,21 @@ def _write_sheet(wb, title, headers, rows, widths):
 
 
 def _build_safety_excel_3sheet(
-    workers, trainings, incidents, company_map, worker_name_map
+    workers, trainings, documents, incidents, company_map, worker_name_map, user_map
 ):
     """
-    Build the regulatory 3-sheet RTL Hebrew workbook (spec §Steps.2):
+    Build the regulatory RTL Hebrew workbook (spec §Steps.2). NOTE: the
+    function name is a legacy misnomer — it now emits FOUR sheets:
       Sheet 1: עובדים  (Workers — NO id_number / id_number_hash)
       Sheet 2: הדרכות  (Trainings)
-      Sheet 3: אירועים (Incidents)
+      Sheet 3: ליקויים (Safety findings / documents)
+      Sheet 4: אירועים (Incidents)
     Frozen row 1 on every sheet.
     """
     from openpyxl import Workbook
-    from services.safety_pdf import SEVERITY_HE, INCIDENT_TYPE_HE
+    from services.safety_pdf import (
+        SEVERITY_HE, INCIDENT_TYPE_HE, CATEGORY_HE, DOC_STATUS_HE,
+    )
 
     wb = Workbook()
     wb.remove(wb.active)
@@ -1542,7 +1546,30 @@ def _build_safety_excel_3sheet(
         [22, 22, 18, 18, 18],
     )
 
-    # Sheet 3: incidents
+    # Sheet 3: ליקויים (safety findings / documents) — mirrors the filtered
+    # documents export row logic. No photo_urls (S3 keys, not human-readable).
+    document_rows = []
+    for d in documents:
+        document_rows.append([
+            d.get("title", ""),
+            CATEGORY_HE.get(d.get("category", ""), d.get("category", "")),
+            SEVERITY_HE.get(d.get("severity", ""), ""),
+            DOC_STATUS_HE.get(d.get("status", ""), d.get("status", "")),
+            _fmt_dt(d.get("found_at")),
+            d.get("location", "") or "",
+            company_map.get(d.get("company_id", ""), ""),
+            user_map.get(d.get("assignee_id", ""), ""),
+            d.get("description", "") or "",
+        ])
+    _write_sheet(
+        wb, "ליקויים",
+        ["כותרת", "קטגוריה", "חומרה", "סטטוס", "תאריך גילוי",
+         "מיקום", "חברה", "אחראי", "תיאור"],
+        document_rows,
+        [26, 16, 12, 12, 16, 20, 20, 18, 40],
+    )
+
+    # Sheet 4: incidents
     incident_rows = []
     for inc in incidents:
         incident_rows.append([
@@ -1616,7 +1643,7 @@ async def export_safety_excel(
     user: dict = Depends(require_roles(*SAFETY_WRITERS)),
 ):
     """
-    3-sheet Hebrew RTL Excel export (workers / trainings / incidents).
+    4-sheet Hebrew RTL Excel export (workers / trainings / ליקויים / incidents).
     Management-only. PII (id_number / id_number_hash) is stripped.
     """
     db = get_db()
@@ -1631,13 +1658,14 @@ async def export_safety_excel(
     worker_name_map = {w["id"]: w.get("full_name", "") for w in workers}
 
     buf = _build_safety_excel_3sheet(
-        workers, trainings, incidents, company_map, worker_name_map
+        workers, trainings, documents, incidents, company_map, worker_name_map, user_map
     )
 
     await _audit("safety_export", project_id, "excel_exported", user["id"], {
         "project_id": project_id,
         "workers": len(workers),
         "trainings": len(trainings),
+        "documents": len(documents),
         "incidents": len(incidents),
     })
 

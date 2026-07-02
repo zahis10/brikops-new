@@ -40,10 +40,43 @@ def _register_fonts_once():
         pdfmetrics.registerFont(TTFont("Rubik", regular))
     except Exception as e:
         logger.warning(f"[SAFETY-PDF] Failed to register Rubik regular at {regular}: {e}")
+
+    # Rubik-Bold has historically shipped as a Latin-only subset (~47KB) with NO
+    # Hebrew glyphs, so every bold heading rendered as tofu boxes. reportlab does
+    # NOT reliably override an already-registered font NAME (verified — a second
+    # registerFont under the same name is ignored), so we must pick the correct
+    # file BEFORE registering rather than register-then-fallback. Inspect glyph
+    # coverage with TTFontFile (always available, no fontTools dependency) and
+    # register the right file ONCE under "Rubik-Bold" so no downstream code
+    # (which hardcodes the name "Rubik-Bold") needs to change.
+    from reportlab.pdfbase.ttfonts import TTFontFile
+
+    _dejavu_bold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+    def _has_hebrew(path):
+        try:
+            return 0x05D0 in TTFontFile(path).charToGlyph
+        except Exception as e:
+            logger.warning(f"[SAFETY-PDF] glyph inspect failed for {path}: {e}")
+            return False
+
+    bold_path = bold
+    if not _has_hebrew(bold_path):
+        if os.path.exists(_dejavu_bold) and _has_hebrew(_dejavu_bold):
+            bold_path = _dejavu_bold
+            logger.warning("[SAFETY-PDF] Rubik-Bold lacks Hebrew — using DejaVuSans-Bold")
+        else:
+            bold_path = regular
+            logger.warning("[SAFETY-PDF] No Hebrew bold available — aliasing bold to regular")
     try:
-        pdfmetrics.registerFont(TTFont("Rubik-Bold", bold))
+        pdfmetrics.registerFont(TTFont("Rubik-Bold", bold_path))
     except Exception as e:
-        logger.warning(f"[SAFETY-PDF] Failed to register Rubik bold at {bold}: {e}")
+        logger.warning(f"[SAFETY-PDF] Failed to register Rubik-Bold at {bold_path}: {e}")
+        try:
+            pdfmetrics.registerFont(TTFont("Rubik-Bold", regular))
+        except Exception as e2:
+            logger.warning(f"[SAFETY-PDF] Bold alias to regular failed: {e2}")
+
     _fonts_registered = True
 
 
@@ -80,6 +113,49 @@ def _fmt_date(iso):
         return str(iso)[:10]
 
 
+# Brand palette used by the canvas layer (header band + footer credit).
+_NAVY_HEX = "#1E293B"
+_SLATE400_HEX = "#94A3B8"
+
+
+def _load_brikops_logo():
+    """BrikOps logo bundled with the backend (fonts/ ships on EB). Fail-soft."""
+    from reportlab.lib.utils import ImageReader
+    try:
+        p = os.path.join(_FONTS_DIR, "brikops-logo.png")
+        if os.path.exists(p):
+            return ImageReader(p)
+    except Exception as e:
+        logger.warning(f"[SAFETY-PDF] BrikOps logo load failed: {e}")
+    return None
+
+
+async def _load_client_logo(db, org_id):
+    """Client org logo from org.logo_url (S3 key) → presigned → bytes. Fail-soft."""
+    if not org_id:
+        return None
+    try:
+        org = await db.organizations.find_one({"id": org_id}, {"_id": 0, "logo_url": 1})
+        key = (org or {}).get("logo_url")
+        if not key:
+            return None
+        from services.object_storage import generate_url
+        from reportlab.lib.utils import ImageReader
+        url = generate_url(key)
+        if not url:
+            return None
+        if str(url).startswith("http"):
+            import requests
+            resp = requests.get(url, timeout=8)
+            if resp.status_code == 200 and resp.content:
+                return ImageReader(io.BytesIO(resp.content))
+        elif os.path.exists(str(url)):
+            return ImageReader(str(url))
+    except Exception as e:
+        logger.warning(f"[SAFETY-PDF] client logo load failed: {e}")
+    return None
+
+
 class _NumberedCanvas:
     """
     Two-pass page-X-of-Y footer canvas. Buffers each page's state during
@@ -92,6 +168,8 @@ class _NumberedCanvas:
         self._canvas_cls = _canvas_mod.Canvas
         self._canvas = _canvas_mod.Canvas(*args, **kwargs)
         self._saved_states = []
+        self._brikops_logo = None
+        self._client_logo = None
 
     def __getattr__(self, name):
         return getattr(self._canvas, name)
@@ -104,11 +182,55 @@ class _NumberedCanvas:
         total = len(self._saved_states)
         for state in self._saved_states:
             self._canvas.__dict__.update(state)
+            self._draw_header(self._canvas.getPageNumber())
             self._draw_footer(total)
             self._canvas_cls.showPage(self._canvas)
         self._canvas.save()
 
+    def _draw_header(self, page):
+        """Navy brand band on every page: BrikOps logo (right/leading in RTL),
+        client logo (left/trailing, fail-soft), centered wordmark on the cover."""
+        from reportlab.lib.colors import HexColor, white
+        c = self._canvas
+        W, H = 595.27, 841.89
+        band_h = 74.0          # ~26mm; sits inside the 30mm topMargin
+        logo_h = 40.0          # ~14mm, aspect-preserved
+        c.saveState()
+        c.setFillColor(HexColor(_NAVY_HEX))
+        c.rect(0, H - band_h, W, band_h, fill=1, stroke=0)
+        cy = H - band_h + (band_h - logo_h) / 2.0
+
+        bl = getattr(self, "_brikops_logo", None)
+        if bl is not None:
+            try:
+                iw, ih = bl.getSize()
+                w = logo_h * (iw / float(ih)) if ih else logo_h
+                c.drawImage(bl, W - 18 - w, cy, width=w, height=logo_h,
+                            mask="auto", preserveAspectRatio=True)
+            except Exception:
+                pass
+
+        cl = getattr(self, "_client_logo", None)
+        if cl is not None:
+            try:
+                iw, ih = cl.getSize()
+                w = logo_h * (iw / float(ih)) if ih else logo_h
+                c.drawImage(cl, 18, cy, width=w, height=logo_h,
+                            mask="auto", preserveAspectRatio=True)
+            except Exception:
+                pass
+
+        if page == 1:
+            c.setFillColor(white)
+            try:
+                c.setFont("Rubik-Bold", 13)
+            except Exception:
+                c.setFont("Helvetica-Bold", 13)
+            c.drawCentredString(W / 2.0, H - band_h / 2.0 - 5, hebrew("פנקס כללי — בטיחות"))
+        c.restoreState()
+
     def _draw_footer(self, total):
+        from reportlab.lib.colors import HexColor
         c = self._canvas
         page = c.getPageNumber()
         c.saveState()
@@ -119,6 +241,12 @@ class _NumberedCanvas:
         # A4 width = 595.27 pts; 28.35 pts ~= 1 cm
         text = hebrew(f"עמוד {page} מתוך {total}")
         c.drawCentredString(595.27 / 2.0, 28.35, text)
+        c.setFillColor(HexColor(_SLATE400_HEX))
+        try:
+            c.setFont("Rubik", 7)
+        except Exception:
+            c.setFont("Helvetica", 7)
+        c.drawCentredString(595.27 / 2.0, 42.0, hebrew("נוצר באמצעות BrikOps · brikops.com"))
         c.restoreState()
 
 
@@ -139,7 +267,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import cm, mm
     from reportlab.platypus import (
-        Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, PageBreak
+        Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, PageBreak, HRFlowable
     )
 
     _register_fonts_once()
@@ -216,6 +344,9 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     SLATE_500 = colors.HexColor("#64748B")
     SLATE_200 = colors.HexColor("#E2E8F0")
     GREY_HDR = colors.HexColor("#E5E7EB")
+    NAVY = colors.HexColor("#1E293B")     # header band + table header
+    ORANGE = colors.HexColor("#F97316")   # BrikOps accent rules
+    SLATE_50 = colors.HexColor("#F8FAFC")  # zebra + cover panel
 
     title_style = ParagraphStyle(
         "RTitle", fontName="Rubik-Bold", fontSize=20,
@@ -242,36 +373,46 @@ async def generate_safety_register(db, project_id: str) -> bytes:
         "RCellHdr", fontName="Rubik-Bold", fontSize=9,
         alignment=TA_RIGHT, textColor=SLATE_700, leading=12,
     )
+    cell_hdr_white = ParagraphStyle(
+        "RCellHdrW", parent=cell_hdr, textColor=colors.white,
+    )
 
     def _table(headers, rows, col_widths):
-        data = [[Paragraph(hebrew(h), cell_hdr) for h in headers]]
+        data = [[Paragraph(hebrew(h), cell_hdr_white) for h in headers]]
         for r in rows:
             data.append([Paragraph(hebrew(c), cell) for c in r])
         t = Table(data, colWidths=col_widths, repeatRows=1)
         t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), GREY_HDR),
-            ("GRID", (0, 0), (-1, -1), 0.4, SLATE_200),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, SLATE_50]),
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("GRID", (0, 0), (-1, -1), 0.3, SLATE_200),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ]))
         return t
+
+    def _section(title):
+        """Section header + a 2pt orange accent rule beneath it."""
+        return [
+            Paragraph(hebrew(title), h2),
+            HRFlowable(width="100%", thickness=2, color=ORANGE,
+                       spaceBefore=1, spaceAfter=6, lineCap="round"),
+        ]
 
     out = io.BytesIO()
     doc = SimpleDocTemplate(
         out, pagesize=A4,
         leftMargin=1.5 * cm, rightMargin=1.5 * cm,
-        topMargin=1.5 * cm, bottomMargin=1.8 * cm,
+        topMargin=3.0 * cm, bottomMargin=2.4 * cm,
         title="פנקס כללי - בטיחות",
     )
     elems = []
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    # Section 1: Cover
-    elems.append(Paragraph(hebrew("פנקס כללי - בטיחות בעבודה"), title_style))
-    elems.append(Spacer(1, 4 * mm))
+    # Section 1: Cover — centered title block on a light rounded panel
     project_name = project.get("name", "")
     cover_lines = [f"פרויקט: {project_name}"]
     if project.get("client_name"):
@@ -279,12 +420,27 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     if project.get("address"):
         cover_lines.append(f"כתובת: {project['address']}")
     cover_lines.append(f"תאריך הפקה: {today}")
+
+    panel_rows = [[Paragraph(hebrew("פנקס כללי - בטיחות בעבודה"), title_style)]]
     for line in cover_lines:
-        elems.append(Paragraph(hebrew(line), sub))
+        panel_rows.append([Paragraph(hebrew(line), sub)])
+    cover_panel = Table(panel_rows, colWidths=[16 * cm])
+    cover_panel.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), SLATE_50),
+        ("BOX", (0, 0), (-1, -1), 0.5, SLATE_200),
+        ("ROUNDEDCORNERS", [10, 10, 10, 10]),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 16),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+        ("TOPPADDING", (0, 0), (-1, -1), 14),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
+    ]))
+    elems.append(Spacer(1, 6 * mm))
+    elems.append(cover_panel)
     elems.append(Spacer(1, 8 * mm))
 
     # Section 2: Project metadata table
-    elems.append(Paragraph(hebrew("1. פרטי הפרויקט"), h2))
+    elems.extend(_section("1. פרטי הפרויקט"))
     meta_rows = [
         ["שם פרויקט", project_name or "—"],
         ["מזהה פרויקט", project_id],
@@ -296,7 +452,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(Spacer(1, 6 * mm))
 
     # Section 2: Management Team (Part 3a)
-    elems.append(Paragraph(hebrew("2. צוות ניהולי"), h2))
+    elems.extend(_section("2. צוות ניהולי"))
     MGMT_ROLE_HE = {
         "project_manager": "מנהל פרויקט",
         "management_team": "צוות ניהולי",
@@ -323,7 +479,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(Spacer(1, 6 * mm))
 
     # Section 3: Workers (NO id_number)
-    elems.append(Paragraph(hebrew("3. רשימת עובדים"), h2))
+    elems.extend(_section("3. רשימת עובדים"))
     if workers:
         rows = []
         for w in workers:
@@ -343,7 +499,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(Spacer(1, 6 * mm))
 
     # Section 4: Trainings
-    elems.append(Paragraph(hebrew("4. הדרכות בטיחות"), h2))
+    elems.extend(_section("4. הדרכות בטיחות"))
     if trainings:
         rows = []
         for t in trainings:
@@ -363,7 +519,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(PageBreak())
 
     # Section 5: Open documents
-    elems.append(Paragraph(hebrew("5. ליקויי בטיחות פתוחים"), h2))
+    elems.extend(_section("5. ליקויי בטיחות פתוחים"))
     open_docs = [d for d in documents if d.get("status") in ("open", "in_progress")]
     if open_docs:
         rows = []
@@ -385,7 +541,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(Spacer(1, 6 * mm))
 
     # Section 6: Corrective tasks
-    elems.append(Paragraph(hebrew("6. משימות מתקנות"), h2))
+    elems.extend(_section("6. משימות מתקנות"))
     if tasks:
         rows = []
         for tk in tasks:
@@ -406,7 +562,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(PageBreak())
 
     # Section 7: Incidents
-    elems.append(Paragraph(hebrew("7. אירועי בטיחות"), h2))
+    elems.extend(_section("7. אירועי בטיחות"))
     if incidents:
         rows = []
         for inc in incidents:
@@ -427,7 +583,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(Spacer(1, 6 * mm))
 
     # Section 8: Statistical summary
-    elems.append(Paragraph(hebrew("8. סיכום סטטיסטי"), h2))
+    elems.extend(_section("8. סיכום סטטיסטי"))
     by_category = {}
     for d in documents:
         cat = d.get("category", "other")
@@ -482,7 +638,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(PageBreak())
 
     # Section 9: Work-manager declaration + 3 signature lines
-    elems.append(Paragraph(hebrew("9. הצהרת מנהל העבודה וחתימות"), h2))
+    elems.extend(_section("9. הצהרת מנהל העבודה וחתימות"))
     elems.append(Spacer(1, 3 * mm))
     elems.append(Paragraph(hebrew(WORK_MANAGER_DECLARATION), body))
     elems.append(Spacer(1, 12 * mm))
@@ -504,7 +660,16 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(Spacer(1, 6 * mm))
     elems.append(Paragraph(hebrew("נוצר באמצעות BrikOps · brikops.com"), sub))
 
-    doc.build(elems, canvasmaker=_make_canvas)
+    brikops_logo = _load_brikops_logo()
+    client_logo = await _load_client_logo(db, project.get("org_id"))
+
+    def make_canvas(*a, **k):
+        cv = _NumberedCanvas(*a, **k)
+        cv._brikops_logo = brikops_logo
+        cv._client_logo = client_logo
+        return cv
+
+    doc.build(elems, canvasmaker=make_canvas)
     out.seek(0)
     return out.getvalue()
 

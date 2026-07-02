@@ -1,126 +1,108 @@
 ========================================================================
-BATCH safety-p2-1b — תמונות לליקויי בטיחות (durable: מפתח נשמר, URL מתחדש per-GET)
+BATCH safety-p2-1c — פנקס כללי: תיקון פונט מודגש + עיצוב מקצועי + לוגואים
+                       + גיליון "ליקויים" ב‑Excel
 ========================================================================
-Branch: staging (Zahi owns git; local clone shows "main")
-Rollback SHA (HEAD before edit): 87ce25b
-Deploy target: BACKEND + FRONTEND — EB Frankfurt + Cloudflare (deploy TOGETHER)
-No native · No new dependency · No new flag
+STATUS: ✅ הושלם ואומת מקומית — ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+ROLLBACK SHA (HEAD לפני העבודה): 842b99d
+DEPLOY TARGET: BACKEND — ./deploy.sh (EB Frankfurt + Cloudflare יחד, לא OTA)
+NO new pip dependency · NO new feature flag · 1 logo asset added (fonts/brikops-logo.png)
+FONT FILE: לא הוחלף — Rubik-Bold.ttf נשאר (מסלול fallback ל‑DejaVuSans-Bold, ראה FIX 1)
 
-------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT (read-only, verified)
-------------------------------------------------------------------------
-0.1 /upload (safety_router ~1824): returns { id, url (PRESIGNED via obj_generate_url),
-    stored_ref (PERMANENT key), filename, content_type, size }. Uses LOCAL alias import
-    `generate_url as obj_generate_url` (1810). Endpoint & response UNCHANGED this batch.
-0.2 Store path: create_document stores payload.photo_urls verbatim (562); update_document
-    model_dump(exclude_unset=True) (656) → photo_urls passes through.
-0.3 GET serializers (injection points): get_document returns SafetyDocument(**doc);
-    list_documents builds items = cursor.to_list(...) then returns dict.
-0.4 generate_url NOT module-level in safety_router pre-batch (only local alias in upload).
-    handover_router:9 has the module-level pattern. object_storage.generate_url (…:95) is
-    SYNC, TTL-cached, fail-soft (returns ref unchanged when falsy/non-s3; s3:// → presigned GET).
-0.5 Schema: SafetyDocument had photo_urls only; photo_display_urls did NOT exist.
-0.6 Frontend: form sent photo_urls:[] / attachment_urls:[]; no compressImage import.
-    compressImage exported at utils/imageCompress.js:84. safetyService had no upload method;
-    taskService.uploadAttachment is the FormData precedent.
-No blocking divergence.
-
-------------------------------------------------------------------------
-DIVERGENCE (documented, no conflict)
-------------------------------------------------------------------------
-Added a MODULE-LEVEL `from services.object_storage import generate_url` to safety_router.
-It coexists with the upload fn's local `obj_generate_url` alias — separate names, no clash.
-
-------------------------------------------------------------------------
-CHANGES — 4 files
-------------------------------------------------------------------------
-[1] backend/contractor_ops/safety_router.py
-    + line 23: `from services.object_storage import generate_url`  (module-level)
-    + get_document (before return SafetyDocument(**doc)):
-        doc["photo_display_urls"] = [(generate_url(k) if k else k)
-                                     for k in (doc.get("photo_urls") or [])]
-    + list_documents (right after items = await cursor.to_list(length=limit)):
-        for it in items:
-            it["photo_display_urls"] = [(generate_url(k) if k else k)
-                                        for k in (it.get("photo_urls") or [])]
-    (Create/Update models NOT touched — display urls are server-computed, read-only.)
-
-[2] backend/contractor_ops/schemas.py
-    + SafetyDocument, after photo_urls:
-        photo_display_urls: Optional[List[str]] = None   # server-computed per-GET; never persisted
-
-[3] frontend/src/services/api.js
-    + safetyService.uploadDocumentFile(projectId, file): FormData POST /safety/{pid}/upload,
-      returns { url (presigned preview), stored_ref (permanent key), ... }.
-
-[4] frontend/src/components/safety/SafetyDocumentForm.js
-    + import { compressImage } from '../../utils/imageCompress'
-    + import { Camera, X } from 'lucide-react'; helper isHttp()
-    + state: photos [{key, preview}], uploading
-    + init effect: zip document.photo_urls (keys) ↔ document.photo_display_urls (previews)
-    + handlePhoto: compressImage → uploadDocumentFile → append {key: res.stored_ref, preview: res.url};
-      toast.error('העלאת תמונה נכשלה') on fail; guarded by uploading
-    + removePhoto(idx)
-    + render: "צרף תמונה" button (Camera icon, accept="image/*", min-h 44px) + thumbnail row
-      (img when preview is http(s); neutral Camera placeholder otherwise) each with "×" remove
-    + payload: photo_urls: photos.map(p => p.key)   (was []). attachment_urls stays [].
-      NEVER sends photo_display_urls.
-
-------------------------------------------------------------------------
-DURABILITY MODEL (make-or-break)
-------------------------------------------------------------------------
-Persisted photo_urls holds ONLY the permanent stored_ref (s3:// key), never a presigned
-https url. Every GET (get_document + list_documents) regenerates a parallel photo_display_urls
-via the fail-soft, TTL-cached generate_url. Presigned expiry is therefore irrelevant — a new
-session / long wait re-reads and gets fresh urls. FE consumes photo_display_urls only for
-preview and always re-submits the keys.
-
-------------------------------------------------------------------------
-VERIFICATION
-------------------------------------------------------------------------
-V1 — parse:
-  AST OK safety_router.py · AST OK schemas.py
-  babel PARSE OK api.js · babel PARSE OK SafetyDocumentForm.js
-V2 — greps (all confirmed):
-  module-level `from services.object_storage import generate_url` @23
-  photo_display_urls built in BOTH list_documents (@619) and get_document (@644)
-  schema field photo_display_urls @769
-  safetyService.uploadDocumentFile @524
-  FE payload `photo_urls: photos.map((p) => p.key)` (NOT [])
-  FE photo_display_urls used only for read pre-fill (never in payload/append/post)
-
-V3 ⭐ DURABILITY (manual, Zahi to spot-check post-deploy):
-  Create defect w/ photo → save → reload/re-open → photo still renders. DB photo_urls holds
-  an s3:// KEY (not https); GET returns fresh photo_display_urls. New session reload → still
-  renders (regenerated per-GET, immune to presigned expiry).
-V4 — Create w/ 2 photos → list GET returns photo_display_urls; edit pre-fills both; remove one
-  → save → only kept key persists. Fail-soft: preview null/non-http → Camera placeholder, no
-  crash, key still submits.
-V5 — No-photo defect → photo_urls:[], no crash (empty-list guards on both GET paths).
-V6 — Excel + PDF exports untouched (don't read photo_urls) → still succeed.
-V7 — Edit a pre-existing photo-less defect → assignee/company/category/status unchanged.
-
-------------------------------------------------------------------------
-DO NOT TOUCH (honored)
-------------------------------------------------------------------------
-✔ Never stored presigned url — only stored_ref key in photo_urls.
-✔ No photo_display_urls in Create/Update models or FE payload.
-✔ /upload endpoint, exports, worker form, attachment_urls, category/severity/status/
-  assignee/company logic all unchanged.
-FUTURE NOTE (warning, not a change): if defect photos are ever embedded in Excel/PDF export,
-that code MUST call generate_url(key). Exports today don't read photo_urls → untouched.
-
-------------------------------------------------------------------------
-COMMIT MESSAGE
-------------------------------------------------------------------------
-safety(p2-1b): durable photo upload for safety defects
-
-- store only permanent stored_ref keys in photo_urls (never presigned urls)
-- regenerate photo_display_urls per-GET in get_document + list_documents (fail-soft)
-- add SafetyDocument.photo_display_urls (server-computed, read-only, not persisted)
-- safetyService.uploadDocumentFile + SafetyDocumentForm photo capture/preview/remove
-- 4 files, no new dependency, no new flag; BACKEND+FRONTEND (EB + Cloudflare)
+FILES CHANGED (git diff --stat vs 842b99d):
+  backend/contractor_ops/safety_router.py |  42 +++++--
+  backend/services/safety_pdf.py          | 215 +++++++++++++++++++++++-----
+  backend/fonts/brikops-logo.png          |  NEW (99,445 B, עותק של _preview-logo.png)
 
 ========================================================================
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+STEP 0 — ממצאי PRE-FLIGHT (read-only)
 ========================================================================
+0.1 שורש הבעיה (P1): backend/fonts/Rubik-Bold.ttf = 47,688 B = subset לטיני בלבד,
+    ללא גליפים עבריים → כל כותרת/טקסט מודגש רונדר כ‑□□□. Rubik-Regular.ttf = 359,804 B
+    (עברית מלאה) — לכן הרגיל תמיד היה תקין.
+0.2 פונט fallback קיים: /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf = 708,920 B,
+    עברית מלאה, קיים גם על EB (בשימוש ב‑pdf_service בפרוד).
+0.3 ⚠️ תגלית מכרעת (הוכחה אמפירית — ראה למטה): reportlab **לא מחליף** שם פונט שכבר
+    נרשם. register(bad) → register(dejavu, שם זהה) ⇒ getFont עדיין מחזיר את הרע (aleph=False).
+    לכן ה‑fallback חייב לבחור את הקובץ *לפני* הרישום, לא register‑then‑fallback.
+0.4 Excel: _gather_export_data כבר מחזיר documents + user_map — לא נדרשה שאילתה חדשה,
+    רק העברת הפרמטרים הקיימים ל‑builder.
+0.5 לוגו BrikOps: _preview-logo.png (99,445 B) בשורש הריפו → הועתק ל‑backend/fonts/
+    (שורש הריפו לא נשלח ל‑EB; fonts/ כן).
+
+========================================================================
+FIX 1 (P1) — ביעור קופסאות הבולד העברי  [safety_pdf.py _register_fonts_once]
+========================================================================
+• בוחר את קובץ ה‑bold *לפני* הרישום: בודק כיסוי עברי (0x05D0) עם reportlab.TTFontFile
+  (זמין תמיד — ללא תלות ב‑fontTools). אם Rubik-Bold חסר עברית → DejaVuSans-Bold;
+  אם אף לא זמין → alias ל‑regular. נרשם פעם אחת תחת השם "Rubik-Bold" כך שאף קוד
+  downstream (שמקודד את השם "Rubik-Bold") לא משתנה.
+• מסלול שנשלח בפועל: DejaVuSans-Bold (כי Rubik-Bold.ttf עדיין subset לטיני).
+  ⚠️ ניסיון למשוך Rubik-Bold עברי מלא מהרשת נכשל (רשת חסומה) — קובץ הפונט לא הוחלף;
+  ה‑fallback דטרמיניסטי ומספיק. אם בעתיד יוטמע Rubik-Bold עברי אמיתי, הקוד יזהה ויעדיף אותו אוטומטית.
+
+--- הוכחה אמפירית לתגלית 0.3 (למה הגרסה הראשונה עדיין הראתה קופסאות) ---
+  (A) TTFontFile inspection:  rubik-bold aleph=False | dejavu aleph=True
+  (B) register(bad) ואז register(dejavu) תחת שם זהה →  aleph=False  ← reportlab לא החליף!
+  (C) register(dejavu) תחת שם חדש/נקי →                aleph=True
+  ⇒ אחרי התיקון (בחירה לפני רישום):
+     _register_fonts_once() → "Rubik-Bold lacks Hebrew — using DejaVuSans-Bold"
+     getFont("Rubik-Bold") aleph = True ✅
+
+========================================================================
+FIX 2 (P2) — עיצוב מקצועי  [safety_pdf.py] (טיפוגרפיה + לוגואים + צבע בלבד; 9 סקשנים ללא שינוי)
+========================================================================
+פלטה: NAVY #1E293B · ORANGE #F97316 · SLATE_50 #F8FAFC
+• margins: topMargin 1.5→3.0cm, bottomMargin 1.8→2.4cm (פינוי לבאנר ולקרדיט footer).
+• באנר נייבי ~26mm בכל עמוד (דרך _NumberedCanvas): לוגו BrikOps בקצה מוביל (ימין ב‑RTL),
+  לוגו הלקוח (org.logo_url→presigned→bytes→ImageReader) בקצה נגדי — fail-soft אם חסר;
+  wordmark לבן ממורכז "פנקס כללי — בטיחות" בעמוד השער בלבד.
+• שער: כותרת + פרטי פרויקט על פאנל SLATE_50 מעוגל (ROUNDEDCORNERS).
+• כותרות סקשן: קו accent כתום 2pt (HRFlowable) מתחת לכל כותרת, ממוספר כמקודם.
+• טבלאות: כותרת נייבי + טקסט לבן מודגש, פסי זברה (white/SLATE_50), גריד דק SLATE_200,
+  padding 6/6/5/5, repeatRows=1 נשמר.
+• footer: מספרי עמוד נשמרו + שורת קרדיט "נוצר באמצעות BrikOps · brikops.com" (slate-400).
+• תוכן/סדר/פילטרים (deletedAt:None) — ללא שינוי. אין סקשנים/KPI/קופי חדשים.
+
+========================================================================
+FIX 3 (P3) — Excel: גיליון "ליקויים"  [safety_router.py]
+========================================================================
+• _build_safety_excel_3sheet: הרחבת חתימה +documents +user_map (מ‑_gather הקיים);
+  גיליון "ליקויים" חדש נכנס לפני "אירועים". השם נשאר (misnomer קל — עכשיו 4 גיליונות).
+• עמודות: כותרת/קטגוריה/חומרה/סטטוס/תאריך גילוי/מיקום/חברה/אחראי/תיאור
+  (ממפה CATEGORY_HE/SEVERITY_HE/DOC_STATUS_HE + company_map + user_map, כמו הייצוא המסונן).
+  photo_urls לא נכללים (מפתחות S3, לא קריאים — עקבי עם 1b).
+• docstring + _audit meta עודכנו לכלול ספירת documents.
+
+========================================================================
+VERIFY
+========================================================================
+V1 ast.parse: safety_pdf.py OK · safety_router.py OK
+V2 greps: _bold_ok/TTFontFile/DejaVu fallback קיימים; "ליקויים" נכתב; export מעביר documents.
+V2b glyph: Rubik-Bold.ttf aleph=False (⇒ fallback) | DejaVuSans-Bold aleph=True | אחרי fix getFont aleph=True.
+V3 ⭐ MAKE-OR-BREAK: הופק פנקס אמיתי (project test_part3a_aa58107e + ליקוי זמני שהוזרע ונמחק).
+    כל כותרת/כותרת‑טבלה/wordmark/כותרת‑שער = טקסט עברי אמיתי, ללא קופסאות.
+    סקשן 5 מציג ליקוי פתוח קריא. אין חפיפה — הבאנר מפנה את הכותרות בכל עמוד, footer מפנה
+    את השורה האחרונה. צילומי הוכחה: .local/proof/safety-p2-1c_pg1.png + _pg2.png.
+V4 לוגו: באנר עם לוגו BrikOps בכל עמוד; לפרויקט הבדיקה אין org.logo_url → BrikOps בלבד,
+    ללא קריסה (מסלול fail-soft של לוגו הלקוח מאומת).
+V5 Excel: גיליונות = עובדים / הדרכות / ליקויים / אירועים (סדר נכון);
+    שורת ליקוי: 'מעקה חסר | פיגומים | גבוהה | פתוח | 2026-07-02 10:00 | קומה 3 | חברת בנייה בע"מ | מנהל אתר | סכנת נפילה'.
+V6 רגרסיה: הרינדור הראשון (docs=0, ללא לוגו לקוח) הופק ללא שגיאה.
+V7 score / ייצוא מסונן / חתימות endpoints — לא נגעתי.
+
+========================================================================
+DIVERGENCES (מתועד)
+========================================================================
+1. קובץ הפונט Rubik-Bold.ttf לא הוחלף (משיכת רשת נכשלה) → נשלח מסלול fallback ל‑DejaVuSans-Bold.
+2. הבאנר מצויר בכל העמודים (בחירה עקבית) ולא band-בשער/rule-בפנים — נראה מקצועי יותר ומבטיח פינוי.
+3. קרדיט ה‑footer הוא טקסט בלבד (לוגו רק בבאנר העליון) — למניעת עומס.
+4. מנגנון ה‑font-fix נכון עבור ה‑generator השני (~canvas ב‑safety_pdf) גם כן — נהנה מהתיקון
+   אוטומטית; ה‑layout שלו מחוץ ל‑scope ולא שונה.
+
+========================================================================
+DEPLOY
+========================================================================
+BACKEND — EB + Cloudflare (./deploy.sh), no new dependency, no new flag, 1 logo asset added.
+⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY.
+
+commit: fix(safety-pdf): Hebrew-bold font fallback + professional redesign + Excel ליקויים sheet

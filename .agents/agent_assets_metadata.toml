@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "safety-p2-1b — review.txt (תמונות לליקויי בטיחות, durable)"
+title = "safety-p2-1c — review.txt (סיכום + אימותים)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
@@ -480,3 +480,15 @@ id = "Tk2EqZK6dFpakNVG3pqyX"
 uri = "file://.local/plans/safety-p2-1c-plan.md"
 type = "text"
 title = "BATCH safety-p2-1c — תוכנית (פנקס כללי PDF redesign + לוגואים + Excel ליקויים)"
+
+[[outputs]]
+id = "-s9SWhmjc4f3tLaoZbfcZ"
+uri = "file://.local/proof/safety-p2-1c_pg1.png"
+type = "image"
+title = "הוכחה V3 — עמוד 1 (שער + סקשנים 1–4)"
+
+[[outputs]]
+id = "sl-c7wp6vask2FKPM3b-b"
+uri = "file://.local/proof/safety-p2-1c_pg2.png"
+type = "image"
+title = "הוכחה V3 — עמוד 2 (סקשן 5 ליקויים + 6)"
