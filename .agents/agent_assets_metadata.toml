@@ -534,3 +534,9 @@ id = "YJgErYD_t1yKnoFXwdwys"
 uri = "file://.local/plans/safety-p2-2c-plan.txt"
 type = "text"
 title = "safety-p2-2c — תוכנית לאישור (display-url regen — תעודות + תמונות אירוע)"
+
+[[outputs]]
+id = "Z-BW8WzGTsnEB2XnsanOQ"
+uri = "file://.local/plans/safety-p2-2d-plan.txt"
+type = "text"
+title = "safety-p2-2d — תוכנית לאישור (תעודות הדרכה + תמונות אירוע + שרשרת עובד)"
