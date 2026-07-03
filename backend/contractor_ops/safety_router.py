@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 import hashlib
 import logging
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Response
@@ -228,6 +229,8 @@ async def create_worker(
 @router.get("/{project_id}/workers")
 async def list_workers(
     project_id: str,
+    profession: Optional[str] = None,
+    company_id: Optional[str] = None,
     limit: int = Query(100, le=500),
     offset: int = Query(0, ge=0),
     include_deleted: bool = False,
@@ -240,6 +243,10 @@ async def list_workers(
     include_deleted = _resolve_include_deleted(include_deleted, user)
     if not include_deleted:
         q["deletedAt"] = None
+    if profession and profession.strip():
+        q["profession"] = {"$regex": re.escape(profession.strip()), "$options": "i"}
+    if company_id:
+        q["company_id"] = company_id
 
     total = await db.safety_workers.count_documents(q)
     cursor = db.safety_workers.find(q, {"_id": 0}).sort("created_at", -1).skip(offset).limit(limit)
@@ -418,8 +425,8 @@ async def list_trainings(
         q["deletedAt"] = None
     if worker_id:
         q["worker_id"] = worker_id
-    if training_type:
-        q["training_type"] = training_type
+    if training_type and training_type.strip():
+        q["training_type"] = {"$regex": re.escape(training_type.strip()), "$options": "i"}
     if expires_before:
         q["expires_at"] = {"$ne": None, "$lt": expires_before}
 
@@ -838,11 +845,21 @@ async def list_tasks(
     status_: Optional[SafetyTaskStatus] = Query(None, alias="status"),
     assignee_id: Optional[str] = None,
     document_id: Optional[str] = None,
+    severity: Optional[SafetySeverity] = None,
+    company_id: Optional[str] = None,
+    overdue: Optional[bool] = None,
     limit: int = Query(100, le=500),
     offset: int = Query(0, ge=0),
     include_deleted: bool = False,
     user: dict = Depends(get_current_user),
 ):
+    """List safety tasks.
+
+    NOTE: when both overdue=true and status=<x> are sent, overdue WINS — its
+    status $in (open/in_progress) overwrites the explicit status filter. The FE
+    disables the status select while "באיחור" is on. overdue reuses the exact
+    same semantics as the score's overdue bucket.
+    """
     db = get_db()
     await _check_project_access(user, project_id)
 
@@ -853,6 +870,12 @@ async def list_tasks(
     if status_:      q["status"] = status_.value
     if assignee_id:  q["assignee_id"] = assignee_id
     if document_id:  q["document_id"] = document_id
+    if severity:     q["severity"] = severity.value
+    if company_id:   q["company_id"] = company_id
+    if overdue:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        q["due_at"] = {"$ne": None, "$lt": now_iso}
+        q["status"] = {"$in": ["open", "in_progress"]}
 
     total = await db.safety_tasks.count_documents(q)
     cursor = db.safety_tasks.find(q, {"_id": 0}).sort("created_at", -1).skip(offset).limit(limit)
@@ -1036,6 +1059,10 @@ async def list_incidents(
     project_id: str,
     incident_type: Optional[str] = None,
     severity: Optional[SafetySeverity] = None,
+    reported_to_authority: Optional[bool] = None,
+    injured_worker_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     limit: int = Query(100, le=500),
     offset: int = Query(0, ge=0),
     include_deleted: bool = False,
@@ -1050,6 +1077,19 @@ async def list_incidents(
         q["deletedAt"] = None
     if incident_type: q["incident_type"] = incident_type
     if severity:      q["severity"] = severity.value
+    if reported_to_authority is not None:
+        q["reported_to_authority"] = reported_to_authority
+    if injured_worker_id:
+        q["injured_worker_id"] = injured_worker_id
+    if date_from or date_to:
+        rng = {}
+        if date_from:
+            rng["$gte"] = date_from
+        if date_to:
+            # pad a date-only "עד תאריך" to end-of-day so it is inclusive.
+            # explicit parens: the concat belongs to the true-branch only.
+            rng["$lte"] = (date_to + "T23:59:59") if len(date_to) == 10 else date_to
+        q["occurred_at"] = rng
 
     total = await db.safety_incidents.count_documents(q)
     cursor = db.safety_incidents.find(q, {"_id": 0}).sort("occurred_at", -1).skip(offset).limit(limit)

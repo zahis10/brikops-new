@@ -1,116 +1,96 @@
 ========================================================================
-REVIEW — BATCH safety-p2-2d
-  training CERTIFICATE upload (צילום/גלריה/PDF) + incident PHOTOS
-  + worker→trainings onboarding chain
+REVIEW — BATCH safety-p2-3a
+  BACKEND filter params for workers/trainings/tasks/incidents lists
+  (prereq for per-tab filter UI — batch 3b)
 ========================================================================
 STATUS: ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-Date: 2026-07-03 · Branch: staging · Scope: FRONTEND-ONLY · Capgo OTA
-Rollback SHA: 86d34bf  (commit של 2c — הקומיט האחרון עם קוד)
-  הערה: HEAD נוכחי = 28c9b42 (checkpoint שמוסיף רק את קובץ התוכנית, בלי קוד).
-קבצים (3, git diff --stat):
-  frontend/src/components/safety/SafetyTrainingForm.js  (+90/-)
-  frontend/src/components/safety/SafetyIncidentForm.js  (+66)
-  frontend/src/pages/SafetyHomePage.js                  (+75/-)
-  = 3 files changed, 223 insertions(+), 8 deletions(-)
+Date: 2026-07-03 · Branch: staging · Scope: BACKEND-ONLY (EB + Cloudflare)
+Rollback SHA: da231e6 (HEAD לפני העריכה)
+קבצים (1, git diff --stat):
+  backend/contractor_ops/safety_router.py  (+42/-2) = 1 file changed
 
 ------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT (read-only) ✅
+STEP 0 — PRE-FLIGHT RESULTS (read-only) ✅
 ------------------------------------------------------------------------
-0.1 ✅ certificate_display_url ב-safety_router.py = 2 hits → 2c על ה-branch,
-    בסיס נכון (HEAD היה 86d34bf בזמן ה-pre-flight).
-0.2 ✅ SafetyWorkerForm קורא onSaved?.(result) @101 עם העובד שנוצר → לא נגעתי בו.
-0.3 ✅ safetyService.uploadDocumentFile @578 מחזיר {url, stored_ref} → שימוש
-    חוזר בשני הטפסים, בלי מתודה חדשה.
-0.4 ✅ תבנית defect (SafetyDocumentForm): handlePhoto @86 (compressImage →
-    uploadDocumentFile), drop-zone @242 (accept="image/*" בלי capture, מנקה
-    e.target.value=''), previews @254. שוכפלה.
-0.5 ✅ DocThumb @655 קיים → שימוש חוזר בשורת האירוע.
+0.1 ✅ 4 endpoints (+ documents ref) קיימים; היסט שורות קל מול ה-spec:
+    list_workers @229 · list_trainings @402 · list_tasks @836 ·
+    list_incidents @1035 · list_documents @585 (NOT touched).
+0.2 ❌→FIX `import re` לא היה קיים (ואין שום re.* קודם) → נוסף (CHANGE 0).
+0.3 ✅ overdue: score bucket (@1250 אחרי העריכה) = due_at {$ne:None,$lt:now_iso}
+    + status $in [open,in_progress] — ה-param overdue משכפל 1:1.
+    datetime,timezone מיובאים @14.
+0.4 ✅ _resolve_include_deleted @138, בשימוש בכל 5 ה-lists; לא נגעתי בו.
 
 ------------------------------------------------------------------------
 מה בוצע
 ------------------------------------------------------------------------
-CHANGE 1 — SafetyTrainingForm.js:
-  · בלוק "תעודת הדרכה (מומלץ)" מתחת ל"מיקום". state cert={key,preview,isPdf}
-    + certImgBroken + uploading. prefill מ-certificate_url/certificate_display_url
-    (isPdf לפי סיומת .pdf).
-  · drop-zone (אותן classes כמו defect) accept="image/*,.pdf" בלי capture,
-    מנקה e.target.value=''. handleCert: image → compressImage ואז upload;
-    PDF → upload as-is (בלי דחיסה). uploading guard + 'מעלה…'. שגיאות sonner.
-  · תצוגה: תמונה → thumbnail 64px (onError→אייקון FileText); PDF → FileText +
-    "תעודה (PDF)". עטוף ב-<a target="_blank" rel="noopener noreferrer"> כש-http.
-    כפתור "×" מנקה (הטופס writer-gated ממילא).
-  · payload (create+edit): certificate_url: cert.key || null (null מנקה בשרת).
-  · prop חדש lockedWorker={id,name}: בורר עובד preset+disabled, כותרת
-    "הדרכה לעובד <name>".
-CHANGE 2 — SafetyIncidentForm.js:
-  · בלוק תמונות multi, שכפול 1:1 של defect (state photos=[{key,preview}], zip
-    מ-photo_urls+photo_display_urls, drop-zone accept="image/*" בלי capture,
-    compressImage→uploadDocumentFile, previews עם "×", isHttp fail-soft).
-  · payload (create+edit): photo_urls: photos.map(p=>p.key).
-CHANGE 3 — SafetyHomePage.js:
-  · state workerChain {workerId,workerName,count}|null.
-  · SafetyWorkerForm onSaved: wasEdit=!!workerForm.record; רק ביצירה חדשה
-    (!wasEdit && w.id) פותח שרשרת.
-  · ask-dialog Radix Dialog modal={false}, מוצג רק כש-!!workerChain &&
-    !trainingForm.open. כותרת לפי count. [לא עכשיו] / [הוסף הדרכה].
-  · SafetyTrainingForm: lockedWorker מועבר ורק כאשר !trainingForm.record &&
-    workerChain; הגדלת count ב-onSaved באותו תנאי בדיוק.
-  · TrainingsList: קישור "תעודה" (FileText) כש-certificate_display_url.
-  · IncidentsList: <DocThumb url={inc.photo_display_urls?.[0]} />.
+CHANGE 0 — import re: נוסף @15 (ליד hashlib/logging/uuid). נדרש ל-CHANGE 1+2.
 
-3 החידודים המחייבים של זאהי ל-CHANGE 3 (מקרה קצה modal={false}) — יושמו:
-  1. lockedWorker רק ב-!trainingForm.record && workerChain ✅
-  2. count++ רק ב-!trainingForm.record && workerChain ✅
-  3. dialog מוצג רק ב-!!workerChain && !trainingForm.open ✅
+CHANGE 1 — list_workers: + profession + company_id
+  · profession: contains case-insensitive, re.escape ($regex,$options:"i"),
+    עם .strip() gate.
+  · company_id: exact.
+
+CHANGE 2 — list_trainings: training_type EXACT → contains
+  · training_type: {"$regex": re.escape(.strip()), "$options":"i"} עם .strip()
+    gate. worker_id / expires_before ללא שינוי.
+  · תוצאה: "בגובה" תופס "עבודה בגובה".
+
+CHANGE 3 — list_tasks: + severity + company_id + overdue
+  · severity: enum → severity.value. company_id: exact.
+  · overdue: now_iso=datetime.now(timezone.utc).isoformat();
+    due_at {$ne:None,$lt:now_iso} + status $in [open,in_progress].
+  · docstring: overdue מנצח status מפורש (ה-$in דורס); ה-FE (3b) ינטרל את
+    בורר הסטטוס כש"באיחור" דלוק. סמנטיקה זהה ל-score bucket.
+
+CHANGE 4 — list_incidents: + reported_to_authority + injured_worker_id + טווח תאריכים
+  · reported_to_authority: `is not None` → false מסנן (לא מדולג).
+  · injured_worker_id: exact (התוספת המאוחרת של זאהי — מזין כרטיס עובד בבאץ' עתידי).
+  · date_from/date_to: טווח על occurred_at (מחרוזות ISO → לקסיקוגרפי); date_to
+    של תאריך-בלבד (len==10) מרופד ל-T23:59:59 לסוף-יום כולל, בסוגריים מפורשים.
 
 ------------------------------------------------------------------------
-CODE REVIEW (architect) — מצא באג חוסם, תוקן
+CODE REVIEW (architect) — PASS, אין חוסמים
 ------------------------------------------------------------------------
-BLOCKER שנמצא: ה-ask-dialog השתמש ב-onOpenChange={(o)=>{if(!o)
-  setWorkerChain(null)}} עם modal={false}. לחיצה על עיפרון של הדרכה אחרת
-  ברקע (בדיוק מקרה הקצה של זאהי) היא outside-interaction → מפעילה
-  onOpenChange(false) → מנקה את workerChain → השרשרת אובדת והדיאלוג לא חוזר.
-FIX: הוסר הניקוי מ-onOpenChange (עכשיו no-op); ניקוי השרשרת רק דרך "לא עכשיו".
-  הוסתר כפתור ה-X הדיפולטי ([&>button]:hidden) + onInteractOutside/
-  onPointerDownOutside preventDefault → אין דרך משתמעת לסגור, רק שני הכפתורים.
-  התנהגות: לחיצת עיפרון ברקע → הטופס נפתח, הדיאלוג נעלם (open נשלט ע"י
-  !trainingForm.open), אחרי שמירה/סגירה של העריכה → הדיאלוג חוזר עם count
-  ללא שינוי. אושר ע"י ה-architect כתיקון הנכון.
-שאר הממצאים: הלוגיקה, ה-timing (onSaved לפני onClose), וההעלאות — תקינים.
-אין צורך בשינוי backend.
+כל 5 השינויים additive ותואמים ל-objective. אומת: אין injection (re.escape על
+כל regex), reported_to_authority=false מסנן נכון, precedence של הריפוד תקין,
+overdue תואם את ה-score bucket, defaults/limits/sort/deletedAt לא נגעו,
+list_documents (7-dim) ו-endpoints שאינם list לא נגעו, אין אינדקסים חדשים.
+המלצת architect: smoke tests ל-combos (בעיקר overdue=true עם status מפורש,
+reported_to_authority=false) — מתבצע ב-V3 על staging.
 
 ------------------------------------------------------------------------
 VERIFY
 ------------------------------------------------------------------------
-V1 ✅ Babel parse (jsx) — 3 קבצים OK (גם אחרי התיקון).
+V1 ✅ py_compile — OK.
 V2 ✅ greps:
-   · accept="image/*,.pdf" ב-TrainingForm — קיים.
-   · capture — אין באף אחד מ-3 הקבצים.
-   · uploadDocumentFile — בשני הטפסים (1 כל אחד).
-   · lockedWorker — prop + preset + disabled + title + מעבר מהדף.
-   · מחרוזות ask-dialog "להוסיף הדרכות לעובד" / "נוספה הדרכה" — קיימות.
-   · "תעודה" link ב-TrainingsList; DocThumb ב-IncidentsList — קיימים.
-   · certificate_url: cert.key||null ב-payload הדרכה; photo_urls: photos.map
-     ב-payload אירוע — קיימים.
-V7 ✅ git diff --stat = בדיוק 3 קבצים.
+   · import re @15.
+   · re.escape = 2 (workers @247, trainings @429).
+   · profession $regex @247.
+   · overdue block @875-881; תואם score $in @1250.
+   · reported_to_authority is not None @1080.
+   · injured_worker_id param @1063 + query @1082-1083 (השדה כבר קיים במודל/
+     create/update/excel — @985/999/1035/1153/1630).
+   · severity.value tasks @873 (חדש); incidents @1079 (קיים); documents @615
+     (7-dim, לא נגע).
+   · company_id workers @249 (חדש), tasks @874 (חדש); documents @617 (7-dim, לא נגע).
+   · date end-of-day T23:59:59 @1091.
+V5 ✅ git diff --stat = קובץ אחד (42+ / 2-).
 
 ⚠ דורש staging חי (אחרי deploy אצל זאהי) — לא ניתן להרצה מקומית:
-V3 ⏳ תעודות: (a) גלריה→thumbnail; שמירה; עריכה→עדיין מוצג (display url 2c);
-   (b) PDF → "תעודה (PDF)" + טאב חדש; (c) הסרה בעריכה→שמירה→נעלם. הרשימה
-   מציגה "תעודה" רק למי שיש.
-V4 ⏳ chain: עובד חדש → "להוסיף הדרכות לעובד X?" → הוסף → עובד נעול → שמירה →
-   "נוספה הדרכה ✓..." → הוסף → שנייה → לא עכשיו → סיום. עריכת עובד קיים → אין
-   dialog. + מקרה קצה: באמצע שרשרת פתח עריכת הדרכה אחרת דרך העיפרון → שמור →
-   count לא גדל וה-dialog חוזר לשאול.
-V5 ⏳ תמונות אירוע: יצירה עם 2 תמונות → thumbnail בשורה; עריכה → previews
-   (urls 2c), הסרת אחת → שמירה → נשארה אחת.
-V6 ⏳ non-writer: אין affordances העלאה, אין chain dialog.
+V3 ⏳ (curl/app אחרי 3b):
+   /workers?profession=אינסט → רק אינסטלטורים;
+   /trainings?training_type=בגובה → תופס "עבודה בגובה";
+   /tasks?overdue=true → רק open/in_progress שעברו due; overdue=false כיוון הפוך;
+   /incidents?reported_to_authority=true|false → שני הכיוונים מסננים;
+   /incidents?injured_worker_id=<id> → רק אירועי אותו עובד;
+   /incidents?date_from=X&date_to=Y → כולל את כל יום Y.
+V4 ⏳ regression: קריאות ללא פרמטרים מחזירות בדיוק כמו לפני.
 
 ------------------------------------------------------------------------
 פתוח לזאהי
 ------------------------------------------------------------------------
-- אזהרה: בקובץ .git/index.lock ריק/תקוע ייתכן שיש להריץ `rm -f .git/index.lock`
-  לפני commit.
+- אזהרה: אם .git/index.lock ריק/תקוע — `rm -f .git/index.lock` לפני commit.
 - commit מוצע:
-  feat(safety): training certificates (camera/gallery/PDF) + incident photos + worker onboarding chain
+  feat(safety): filter params for workers/trainings/tasks/incidents lists
 ========================================================================
