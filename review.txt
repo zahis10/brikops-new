@@ -1,75 +1,116 @@
 ========================================================================
-REVIEW — BATCH safety-p2-2c — BACKEND display-url regen ל-
-         TRAINING CERTIFICATES + INCIDENT PHOTOS (השלמת תבנית 1b)
+REVIEW — BATCH safety-p2-2d
+  training CERTIFICATE upload (צילום/גלריה/PDF) + incident PHOTOS
+  + worker→trainings onboarding chain
 ========================================================================
-Scope: BACKEND-ONLY · deploy = EB Frankfurt + Cloudflare יחד (./deploy.sh) ·
-       אין תלות חדשה · אין flag · אין שינוי frontend
-Rollback SHA: 7a6f530   (ה-commit של 2b2)
-Commit מוצע: feat(safety): regenerate display urls for training certificates + incident photos (1b pattern)
-STATUS: ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY. לא הרצתי git, לא deployתי.
+STATUS: ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+Date: 2026-07-03 · Branch: staging · Scope: FRONTEND-ONLY · Capgo OTA
+Rollback SHA: 86d34bf  (commit של 2c — הקומיט האחרון עם קוד)
+  הערה: HEAD נוכחי = 28c9b42 (checkpoint שמוסיף רק את קובץ התוכנית, בלי קוד).
+קבצים (3, git diff --stat):
+  frontend/src/components/safety/SafetyTrainingForm.js  (+90/-)
+  frontend/src/components/safety/SafetyIncidentForm.js  (+66)
+  frontend/src/pages/SafetyHomePage.js                  (+75/-)
+  = 3 files changed, 223 insertions(+), 8 deletions(-)
 
 ------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT (read-only, בוצע לפני קוד)
+STEP 0 — PRE-FLIGHT (read-only) ✅
 ------------------------------------------------------------------------
-0.1 ✅ photo_display_urls ב-safety_router היה 2 hits (documents regen של 1b,
-    `generate_url(k) if k else k` על photo_urls) — התבנית שהועתקה מילה-במילה.
-0.2 ✅ `from services.object_storage import generate_url` קיים @23 (module-level).
-0.3 ✅ 4 נקודות injection אותרו: list_trainings to_list/return, get_training
-    return, list_incidents to_list/return, get_incident return.
-0.4 ✅ SafetyTraining היה עם certificate_url בלבד → נוסף certificate_display_url.
-    SafetyIncident היה עם photo_urls בלבד → נוסף photo_display_urls. (השדה
-    photo_display_urls הקיים שייך ל-SafetyDocument, לא לאירוע.) Create/Update
-    models לא נגעתי — השדות response-only.
-0.5 ✅ אין export שמרנדר certificate_url/photo_urls/training_type/incident_type
-    (grep ריק על excel/pdf) → אין שינוי export. אין שימוש בשדות מחוץ ל-
-    router/schemas (רק pyc caches).
+0.1 ✅ certificate_display_url ב-safety_router.py = 2 hits → 2c על ה-branch,
+    בסיס נכון (HEAD היה 86d34bf בזמן ה-pre-flight).
+0.2 ✅ SafetyWorkerForm קורא onSaved?.(result) @101 עם העובד שנוצר → לא נגעתי בו.
+0.3 ✅ safetyService.uploadDocumentFile @578 מחזיר {url, stored_ref} → שימוש
+    חוזר בשני הטפסים, בלי מתודה חדשה.
+0.4 ✅ תבנית defect (SafetyDocumentForm): handlePhoto @86 (compressImage →
+    uploadDocumentFile), drop-zone @242 (accept="image/*" בלי capture, מנקה
+    e.target.value=''), previews @254. שוכפלה.
+0.5 ✅ DocThumb @655 קיים → שימוש חוזר בשורת האירוע.
 
 ------------------------------------------------------------------------
-מה נעשה (2 קבצים)
+מה בוצע
 ------------------------------------------------------------------------
-CHANGE 1 — schemas.py:
-  · SafetyTraining += certificate_display_url: Optional[str] = None (response-only)
-  · SafetyIncident += photo_display_urls: Optional[List[str]] = None (response-only)
-CHANGE 2 — safety_router.py (4 injection, העתקה מדויקת של תבנית 1b):
-  2a list_trainings — לכל item: certificate_display_url = generate_url(key) if key else None
-  2b get_training   — אותו דבר על doc יחיד
-  2c list_incidents — לכל item: photo_display_urls = [generate_url(k) if k else k ...]
-  2d get_incident   — אותו דבר על doc יחיד
-הבחנה: certificate = מפתח יחיד → None כשריק; photos = list → list ריק כשריק
-(עקבי 1:1 עם regen ה-documents).
+CHANGE 1 — SafetyTrainingForm.js:
+  · בלוק "תעודת הדרכה (מומלץ)" מתחת ל"מיקום". state cert={key,preview,isPdf}
+    + certImgBroken + uploading. prefill מ-certificate_url/certificate_display_url
+    (isPdf לפי סיומת .pdf).
+  · drop-zone (אותן classes כמו defect) accept="image/*,.pdf" בלי capture,
+    מנקה e.target.value=''. handleCert: image → compressImage ואז upload;
+    PDF → upload as-is (בלי דחיסה). uploading guard + 'מעלה…'. שגיאות sonner.
+  · תצוגה: תמונה → thumbnail 64px (onError→אייקון FileText); PDF → FileText +
+    "תעודה (PDF)". עטוף ב-<a target="_blank" rel="noopener noreferrer"> כש-http.
+    כפתור "×" מנקה (הטופס writer-gated ממילא).
+  · payload (create+edit): certificate_url: cert.key || null (null מנקה בשרת).
+  · prop חדש lockedWorker={id,name}: בורר עובד preset+disabled, כותרת
+    "הדרכה לעובד <name>".
+CHANGE 2 — SafetyIncidentForm.js:
+  · בלוק תמונות multi, שכפול 1:1 של defect (state photos=[{key,preview}], zip
+    מ-photo_urls+photo_display_urls, drop-zone accept="image/*" בלי capture,
+    compressImage→uploadDocumentFile, previews עם "×", isHttp fail-soft).
+  · payload (create+edit): photo_urls: photos.map(p=>p.key).
+CHANGE 3 — SafetyHomePage.js:
+  · state workerChain {workerId,workerName,count}|null.
+  · SafetyWorkerForm onSaved: wasEdit=!!workerForm.record; רק ביצירה חדשה
+    (!wasEdit && w.id) פותח שרשרת.
+  · ask-dialog Radix Dialog modal={false}, מוצג רק כש-!!workerChain &&
+    !trainingForm.open. כותרת לפי count. [לא עכשיו] / [הוסף הדרכה].
+  · SafetyTrainingForm: lockedWorker מועבר ורק כאשר !trainingForm.record &&
+    workerChain; הגדלת count ב-onSaved באותו תנאי בדיוק.
+  · TrainingsList: קישור "תעודה" (FileText) כש-certificate_display_url.
+  · IncidentsList: <DocThumb url={inc.photo_display_urls?.[0]} />.
+
+3 החידודים המחייבים של זאהי ל-CHANGE 3 (מקרה קצה modal={false}) — יושמו:
+  1. lockedWorker רק ב-!trainingForm.record && workerChain ✅
+  2. count++ רק ב-!trainingForm.record && workerChain ✅
+  3. dialog מוצג רק ב-!!workerChain && !trainingForm.open ✅
 
 ------------------------------------------------------------------------
-אימות מקומי
+CODE REVIEW (architect) — מצא באג חוסם, תוקן
 ------------------------------------------------------------------------
-V1 ✅ ast.parse — schemas.py + safety_router.py שניהם OK.
+BLOCKER שנמצא: ה-ask-dialog השתמש ב-onOpenChange={(o)=>{if(!o)
+  setWorkerChain(null)}} עם modal={false}. לחיצה על עיפרון של הדרכה אחרת
+  ברקע (בדיוק מקרה הקצה של זאהי) היא outside-interaction → מפעילה
+  onOpenChange(false) → מנקה את workerChain → השרשרת אובדת והדיאלוג לא חוזר.
+FIX: הוסר הניקוי מ-onOpenChange (עכשיו no-op); ניקוי השרשרת רק דרך "לא עכשיו".
+  הוסתר כפתור ה-X הדיפולטי ([&>button]:hidden) + onInteractOutside/
+  onPointerDownOutside preventDefault → אין דרך משתמעת לסגור, רק שני הכפתורים.
+  התנהגות: לחיצת עיפרון ברקע → הטופס נפתח, הדיאלוג נעלם (open נשלט ע"י
+  !trainingForm.open), אחרי שמירה/סגירה של העריכה → הדיאלוג חוזר עם count
+  ללא שינוי. אושר ע"י ה-architect כתיקון הנכון.
+שאר הממצאים: הלוגיקה, ה-timing (onSaved לפני onClose), וההעלאות — תקינים.
+אין צורך בשינוי backend.
+
+------------------------------------------------------------------------
+VERIFY
+------------------------------------------------------------------------
+V1 ✅ Babel parse (jsx) — 3 קבצים OK (גם אחרי התיקון).
 V2 ✅ greps:
-   · certificate_display_url ב-schemas = 1 (SafetyTraining) + ב-router = 2 (2a,2b)
-   · photo_display_urls ב-schemas = SafetyDocument הקיים + SafetyIncident החדש
-   · photo_display_urls ב-router = 4 hits (2 documents קיימים @622/647 +
-     2 incidents חדשים @1058/1075) — בדיוק כצפוי.
-V6 ✅ git diff --stat = בדיוק 2 קבצים (schemas +2, router +12), אפס דליפה
-   ל-documents regen / upload / exports / score.
+   · accept="image/*,.pdf" ב-TrainingForm — קיים.
+   · capture — אין באף אחד מ-3 הקבצים.
+   · uploadDocumentFile — בשני הטפסים (1 כל אחד).
+   · lockedWorker — prop + preset + disabled + title + מעבר מהדף.
+   · מחרוזות ask-dialog "להוסיף הדרכות לעובד" / "נוספה הדרכה" — קיימות.
+   · "תעודה" link ב-TrainingsList; DocThumb ב-IncidentsList — קיימים.
+   · certificate_url: cert.key||null ב-payload הדרכה; photo_urls: photos.map
+     ב-payload אירוע — קיימים.
+V7 ✅ git diff --stat = בדיוק 3 קבצים.
+
+⚠ דורש staging חי (אחרי deploy אצל זאהי) — לא ניתן להרצה מקומית:
+V3 ⏳ תעודות: (a) גלריה→thumbnail; שמירה; עריכה→עדיין מוצג (display url 2c);
+   (b) PDF → "תעודה (PDF)" + טאב חדש; (c) הסרה בעריכה→שמירה→נעלם. הרשימה
+   מציגה "תעודה" רק למי שיש.
+V4 ⏳ chain: עובד חדש → "להוסיף הדרכות לעובד X?" → הוסף → עובד נעול → שמירה →
+   "נוספה הדרכה ✓..." → הוסף → שנייה → לא עכשיו → סיום. עריכת עובד קיים → אין
+   dialog. + מקרה קצה: באמצע שרשרת פתח עריכת הדרכה אחרת דרך העיפרון → שמור →
+   count לא גדל וה-dialog חוזר לשאול.
+V5 ⏳ תמונות אירוע: יצירה עם 2 תמונות → thumbnail בשורה; עריכה → previews
+   (urls 2c), הסרת אחת → שמירה → נשארה אחת.
+V6 ⏳ non-writer: אין affordances העלאה, אין chain dialog.
 
 ------------------------------------------------------------------------
-בדיקות ידניות ל-staging (אחרי deploy אצלך)
+פתוח לזאהי
 ------------------------------------------------------------------------
-V3 ⭐ POST /api/safety/{pid}/upload → stored_ref → PATCH training עם
-   certificate_url=stored_ref → GET list+single: certificate_display_url = url
-   חתום (http); certificate_url ב-DB עדיין s3:// (Network tab).
-V4 ⭐ אותו דבר ל-incident עם photo_urls=[stored_ref] → photo_display_urls
-   מחודש ב-list+get.
-V5 ⭐ שלילי: training ללא תעודה → certificate_display_url=null, אין קריסה;
-   incident עם photo_urls ריק → list ריק.
-
-------------------------------------------------------------------------
-DO NOT (נשמר)
-------------------------------------------------------------------------
-- לא שומרים display-urls בשום מקום (אין $set, לא ב-create/update).
-- לא נגעתי ב-regen של documents, ב-/upload, ב-exports, ב-score.
-- אין שינוי frontend (batch הבא). אין שינוי ב-Create/Update models/ולידציה.
-
-------------------------------------------------------------------------
-DELIVERY
-------------------------------------------------------------------------
-נעצר כאן. אין deploy, אין git, אין mark_task_complete. זאהי מריץ ship.sh/deploy.sh.
+- אזהרה: בקובץ .git/index.lock ריק/תקוע ייתכן שיש להריץ `rm -f .git/index.lock`
+  לפני commit.
+- commit מוצע:
+  feat(safety): training certificates (camera/gallery/PDF) + incident photos + worker onboarding chain
 ========================================================================

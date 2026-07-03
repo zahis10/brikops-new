@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
-  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter, Plus, Pencil, Camera,
+  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter, Plus, Pencil, Camera, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
@@ -12,6 +12,10 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '../components/ui/alert-dialog';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from '../components/ui/dialog';
+import { Button } from '../components/ui/button';
 import { safetyService, projectService, projectCompanyService } from '../services/api';
 import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
 import SafetyKpiCard from '../components/safety/SafetyKpiCard';
@@ -68,6 +72,7 @@ export default function SafetyHomePage() {
   const [taskForm, setTaskForm] = useState({ open: false, record: null });
   const [trainingForm, setTrainingForm] = useState({ open: false, record: null });
   const [incidentForm, setIncidentForm] = useState({ open: false, record: null });
+  const [workerChain, setWorkerChain] = useState(null);
   // Batch safety-p2-1d — read-only detail modal (row tap opens it).
   const [detailDoc, setDetailDoc] = useState(null);
 
@@ -570,7 +575,13 @@ export default function SafetyHomePage() {
         worker={workerForm.record}
         open={workerForm.open}
         onClose={() => setWorkerForm({ open: false, record: null })}
-        onSaved={reloadWorkers}
+        onSaved={(w) => {
+          const wasEdit = !!workerForm.record;
+          reloadWorkers();
+          if (!wasEdit && w?.id) {
+            setWorkerChain({ workerId: w.id, workerName: w.full_name || '', count: 0 });
+          }
+        }}
       />
 
       <SafetyTaskForm
@@ -587,8 +598,16 @@ export default function SafetyHomePage() {
         training={trainingForm.record}
         open={trainingForm.open}
         onClose={() => setTrainingForm({ open: false, record: null })}
-        onSaved={reloadTrainings}
+        onSaved={() => {
+          reloadTrainings();
+          if (!trainingForm.record && workerChain) {
+            setWorkerChain((prev) => (prev ? { ...prev, count: prev.count + 1 } : prev));
+          }
+        }}
         workers={workers.items}
+        lockedWorker={(!trainingForm.record && workerChain)
+          ? { id: workerChain.workerId, name: workerChain.workerName }
+          : null}
       />
 
       <SafetyIncidentForm
@@ -628,6 +647,44 @@ export default function SafetyHomePage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={!!workerChain && !trainingForm.open}
+        onOpenChange={() => {}}
+        modal={false}
+      >
+        <DialogContent
+          dir="rtl"
+          className="max-w-sm w-[calc(100%-2rem)] [&>button]:hidden"
+          onInteractOutside={(e) => e.preventDefault()}
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-right">
+              {workerChain?.count === 0
+                ? `להוסיף הדרכות לעובד ${workerChain?.workerName || ''}?`
+                : 'נוספה הדרכה ✓ להוסיף הדרכה נוספת?'}
+            </DialogTitle>
+          </DialogHeader>
+          <DialogFooter className="flex flex-row-reverse gap-2 sm:justify-start">
+            <Button
+              type="button"
+              className="min-h-[44px]"
+              onClick={() => setTrainingForm({ open: true, record: null })}
+            >
+              הוסף הדרכה
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-[44px]"
+              onClick={() => setWorkerChain(null)}
+            >
+              לא עכשיו
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -857,6 +914,17 @@ function TrainingsList({ items, workers, isWriter, onEdit }) {
                   <span className="text-xs text-slate-500">בתוקף עד {tr.expires_at.slice(0, 10)}</span>
                 )}
                 {expired && <Badge className="bg-red-100 text-red-800">פג תוקף</Badge>}
+                {tr.certificate_display_url && (
+                  <a
+                    href={tr.certificate_display_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="inline-flex items-center gap-1 text-xs text-purple-700 hover:underline"
+                  >
+                    <FileText className="w-3.5 h-3.5" /> תעודה
+                  </a>
+                )}
               </div>
             </div>
             {isWriter && (
@@ -883,6 +951,7 @@ function IncidentsList({ items, workers, isWriter, onEdit }) {
     <ul className="divide-y divide-slate-100">
       {items.map((inc) => (
         <li key={inc.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+          <DocThumb url={inc.photo_display_urls?.[0]} />
           <Badge className={SEVERITY_COLOR[inc.severity] || 'bg-slate-100 text-slate-700'}>
             {SEVERITY_HE[inc.severity] || '—'}
           </Badge>

@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { Camera, X } from 'lucide-react';
+import { compressImage } from '../../utils/imageCompress';
 import { safetyService } from '../../services/api';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -17,6 +19,8 @@ import { SEVERITY_HE, INCIDENT_TYPE_HE } from './safetyLabels';
 // photos / medical records / witnesses / status editing are OUT OF SCOPE here
 // (incident GET endpoints don't regenerate display urls; PATCH exclude_unset
 // preserves any untouched fields).
+const isHttp = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
+
 export default function SafetyIncidentForm({ projectId, incident, open, onClose, onSaved, workers }) {
   const isEdit = !!incident;
 
@@ -28,6 +32,8 @@ export default function SafetyIncidentForm({ projectId, incident, open, onClose,
   const [injuredWorkerId, setInjuredWorkerId] = useState('');
   const [reportedToAuthority, setReportedToAuthority] = useState(false);
   const [authorityReportRef, setAuthorityReportRef] = useState('');
+  const [photos, setPhotos] = useState([]);
+  const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -40,9 +46,29 @@ export default function SafetyIncidentForm({ projectId, incident, open, onClose,
     setInjuredWorkerId(incident?.injured_worker_id || '');
     setReportedToAuthority(!!incident?.reported_to_authority);
     setAuthorityReportRef(incident?.authority_report_ref || '');
+    const keys = incident?.photo_urls || [];
+    const previews = incident?.photo_display_urls || [];
+    setPhotos(keys.map((k, i) => ({ key: k, preview: previews[i] || null })));
   }, [open, incident]);
 
+  const handlePhoto = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const compressed = await compressImage(file);
+      const res = await safetyService.uploadDocumentFile(projectId, compressed);
+      setPhotos((prev) => [...prev, { key: res.stored_ref, preview: res.url }]);
+    } catch (err) {
+      toast.error('העלאת התמונה נכשלה — נסה שוב');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removePhoto = (idx) => setPhotos((prev) => prev.filter((_, i) => i !== idx));
+
   const handleSubmit = async () => {
+    if (uploading) { toast.error('המתן לסיום העלאת התמונות'); return; }
     if (!incidentType) { toast.error('יש לבחור סוג אירוע'); return; }
     if (!severity) { toast.error('יש לבחור חומרה'); return; }
     if (!occurredAt) { toast.error('יש לבחור מועד אירוע'); return; }
@@ -58,6 +84,7 @@ export default function SafetyIncidentForm({ projectId, incident, open, onClose,
       injured_worker_id: injuredWorkerId || null,
       reported_to_authority: reportedToAuthority,
       authority_report_ref: reportedToAuthority ? (authorityReportRef.trim() || null) : null,
+      photo_urls: photos.map((p) => p.key),
     };
 
     setSubmitting(true);
@@ -152,6 +179,45 @@ export default function SafetyIncidentForm({ projectId, incident, open, onClose,
           <Input id="in-ref" value={authorityReportRef} onChange={(e) => setAuthorityReportRef(e.target.value)} placeholder="מספר דיווח / אסמכתא" />
         </div>
       )}
+
+      <div className="space-y-1.5">
+        <Label>תמונות</Label>
+        <label
+          className={`flex items-center justify-center gap-2 w-full px-4 py-3 rounded-xl border-2 border-dashed border-purple-300 bg-purple-50 text-purple-700 font-medium text-sm cursor-pointer hover:bg-purple-100 active:scale-[0.99] min-h-[52px] transition-colors ${uploading ? 'opacity-60 pointer-events-none' : ''}`}
+        >
+          <Camera className="w-5 h-5" />
+          {uploading ? 'מעלה…' : 'צרף תמונה'}
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; handlePhoto(f); }}
+          />
+        </label>
+        {photos.length > 0 && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            {photos.map((p, idx) => (
+              <div key={p.key || idx} className="relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200 bg-slate-100">
+                {isHttp(p.preview) ? (
+                  <img src={p.preview} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-slate-400">
+                    <Camera className="w-6 h-6" />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  aria-label="הסר תמונה"
+                  onClick={() => removePhoto(idx)}
+                  className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </SafetyFormModal>
   );
 }
