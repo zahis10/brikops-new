@@ -72,6 +72,7 @@ export default function SafetyHomePage() {
   const [taskForm, setTaskForm] = useState({ open: false, record: null });
   const [trainingForm, setTrainingForm] = useState({ open: false, record: null });
   const [incidentForm, setIncidentForm] = useState({ open: false, record: null });
+  const [addChooserOpen, setAddChooserOpen] = useState(false);
   const [workerChain, setWorkerChain] = useState(null);
   // Batch safety-p2-1d — read-only detail modal (row tap opens it).
   const [detailDoc, setDetailDoc] = useState(null);
@@ -355,20 +356,14 @@ export default function SafetyHomePage() {
           {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
         </div>
 
-        {isWriter && activeTab !== 'overview' && (
+        {isWriter && (
           <button
             type="button"
-            onClick={() => {
-              if (activeTab === 'workers') setWorkerForm({ open: true, record: null });
-              else if (activeTab === 'tasks') setTaskForm({ open: true, record: null });
-              else if (activeTab === 'trainings') setTrainingForm({ open: true, record: null });
-              else if (activeTab === 'incidents') setIncidentForm({ open: true, record: null });
-              else setDocForm({ open: true, record: null });
-            }}
+            onClick={() => setAddChooserOpen(true)}
             className="px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1 min-h-[44px]"
           >
             <Plus className="w-4 h-4" />
-            {{ workers: 'הוסף עובד', tasks: 'הוסף משימה', trainings: 'הוסף הדרכה', incidents: 'הוסף אירוע' }[activeTab] || 'הוסף ליקוי'}
+            הוסף
           </button>
         )}
 
@@ -689,6 +684,76 @@ export default function SafetyHomePage() {
               onClick={() => setWorkerChain(null)}
             >
               לא עכשיו
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={addChooserOpen} onOpenChange={() => {}} modal={false}>
+        <DialogContent
+          dir="rtl"
+          className="max-w-sm w-[calc(100%-2rem)] [&>button]:hidden"
+          onInteractOutside={(e) => e.preventDefault()}
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-right">מה להוסיף?</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-start gap-3 min-h-[48px]"
+              onClick={() => { setAddChooserOpen(false); setDocForm({ open: true, record: null }); }}
+            >
+              <ShieldAlert className="w-4 h-4" />
+              ליקוי
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-start gap-3 min-h-[48px]"
+              onClick={() => { setAddChooserOpen(false); setTaskForm({ open: true, record: null }); }}
+            >
+              <Clock className="w-4 h-4" />
+              משימה
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-start gap-3 min-h-[48px]"
+              onClick={() => { setAddChooserOpen(false); setWorkerForm({ open: true, record: null }); }}
+            >
+              <Users className="w-4 h-4" />
+              עובד
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-start gap-3 min-h-[48px]"
+              onClick={() => { setAddChooserOpen(false); setTrainingForm({ open: true, record: null }); }}
+            >
+              <GraduationCap className="w-4 h-4" />
+              הדרכה
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-start gap-3 min-h-[48px]"
+              onClick={() => { setAddChooserOpen(false); setIncidentForm({ open: true, record: null }); }}
+            >
+              <AlertCircle className="w-4 h-4" />
+              אירוע
+            </Button>
+          </div>
+          <DialogFooter className="flex flex-row-reverse gap-2 sm:justify-start">
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-[44px]"
+              onClick={() => setAddChooserOpen(false)}
+            >
+              ביטול
             </Button>
           </DialogFooter>
         </DialogContent>

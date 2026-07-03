@@ -1,90 +1,87 @@
 ========================================================================
-REVIEW — BATCH safety-tabs-top-overview
-  טאבי הבטיחות ל-TOP; טאב ברירת-מחדל "סקירה" מחזיק gauge + KPI
+REVIEW — BATCH safety-global-add-chooser
+  כפתור "+ הוסף" גלובלי אחד → דיאלוג בוחר 5-אפשרויות
 ========================================================================
 STATUS: ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 Date: 2026-07-03 · Branch: staging · Scope: FRONTEND-ONLY · Capgo OTA
-Rollback SHA: 750264f (HEAD לפני העריכה)
+Depends on: safety-tabs-top-overview (03eb99d) — כבר על הענף.
+Rollback SHA: 03eb99d (HEAD לפני העריכה)
 קבצים (1, git diff --stat):
-  frontend/src/pages/SafetyHomePage.js  (74+ / 66-) = 1 file changed
-רה-ארגון layout טהור — אפס שינויי logic/fetch/state/effect.
+  frontend/src/pages/SafetyHomePage.js  (74+ / 9-) = 1 file changed
+UI בלבד — אפס שינוי ב-forms/chain/fetch/authz.
 
 ------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT RESULTS (read-only) — HEAD 750264f
+STEP 0 — PRE-FLIGHT RESULTS (read-only) — HEAD 03eb99d
 ------------------------------------------------------------------------
-0.1 ✅ activeTab = useState('documents') @58.
-0.2 ✅ גוש gauge+KPI @400-461 (gauge @405, bars @407-410, KPI ×6 @416-461);
-    tabs Card @463, Tabs @464, TabsList @465.
-0.3 ✅ KPI onClick→setActiveTab: documents @422, tasks @430, workers @438/452.
-0.4 ✅ "+" @358-373 (ענפי onClick @362-365, מפת תוויות @371).
-0.5 ✅ ניקוי selectedIds בהחלפת טאב @203-204 — לא נגע.
-0.6 ✅ TabsList @465 עם overflow-x-auto flex.
+0.1 ✅ בלוק ה-"+" @358-373: תנאי activeTab !== 'overview' @358; ענפי onClick
+    פר-טאב @362-366; מפת תוויות @371 — כולם הוחלפו.
+0.2 ✅ 5 setters קיימים @70-74 (doc/worker/task/training/incident). אין טפסים חדשים.
+0.3 ✅ chrome של ask-dialog מ-2d @659-695 (Dialog modal={false}, DialogContent
+    dir="rtl" [&>button]:hidden, onInteractOutside/onPointerDownOutside
+    preventDefault) — שוכפל verbatim. Dialog* @16, Button @18.
+0.4 ✅ אייקונים ב-lucide import @4-5: ShieldAlert/Clock/Users/GraduationCap/
+    AlertCircle + Plus — כולם קיימים. אין הוספה.
 
 ------------------------------------------------------------------------
 מה בוצע
 ------------------------------------------------------------------------
-CHANGE 1 — default tab: @58 useState('documents') → useState('overview').
+CHANGE 1 — State: הוסף const [addChooserOpen, setAddChooserOpen]=useState(false) @75.
 
-CHANGE 2 — רה-ארגון (MOVE):
-  · <Tabs ... dir="rtl"> עלה להיות האלמנט העליון של ה-content container.
-  · Card לבן (p-0 overflow-hidden, אותו chrome) עוטף עכשיו את TabsList +
-    5 בלוקי הרשימה TabsContent (verbatim, אותה הזחה בדיוק).
-  · TabsList: טריגר ראשון חדש value="overview" ("סקירה", בלי count), ואז
-    5 הטריגרים הקיימים ללא שינוי. RTL: סקירה ראשונה (ימנית ביותר).
-  · חדש <TabsContent value="overview"> אחרי ה-Card (בתוך Tabs) המחזיק את
-    כרטיס ה-gauge (+bars) + גריד ה-KPI — הועברו verbatim (רק re-indent).
-    KPI onClick setActiveTab נשמר כ-tap-through.
+CHANGE 2 — כפתור ה-"+" (@362-371) → קבוע:
+  · {isWriter && ( ... )} — הוסרה החרגת overview → גלוי בכל הטאבים כולל סקירה.
+  · onClick={() => setAddChooserOpen(true)} — נמחקו ענפי ה-if הפר-טאביים.
+  · תווית קבועה "הוסף" — נמחקה מפת התוויות הפר-טאבית.
+  · מיקום/עיצוב הכפתור בכותרת — ללא שינוי (אין FAB).
 
-CHANGE 3 — "+" מוסתר בסקירה:
-  @358 {isWriter && ( → {isWriter && activeTab !== 'overview' && (.
-  מפת התוויות וענפי ה-onClick — ללא שינוי.
+CHANGE 3 — דיאלוג בוחר חדש @695-763 (משקף chrome של 2d):
+  Dialog open={addChooserOpen} onOpenChange no-op modal={false};
+  DialogContent dir="rtl" max-w-sm [&>button]:hidden + outside prevented.
+  כותרת "מה להוסיף?". 5 כפתורי outline full-width (justify-start gap-3
+  min-h-[48px]), icon+תווית, כל אחד setAddChooserOpen(false) ואז פותח את הטופס:
+    ליקוי ShieldAlert→setDocForm; משימה Clock→setTaskForm;
+    עובד Users→setWorkerForm; הדרכה GraduationCap→setTrainingForm;
+    אירוע AlertCircle→setIncidentForm — כולם record:null.
+  Footer "ביטול" (outline) → setAddChooserOpen(false).
+  שרשרת עובד→הדרכות (2d): "עובד" פותח את אותו worker form; onSaved שלו
+  (create path קובע workerChain) — לא נגעתי, השרשרת נדלקת כרגיל.
 
-------------------------------------------------------------------------
-סטיות מהתוכנית (מרווח בלבד, אושרו ע"י architect)
-------------------------------------------------------------------------
-כדי לשמר את המרווחים הזהים (24px) שהגיעו קודם מ-space-y-6 של ה-container:
-  · נוסף className="space-y-6" ל-<Tabs> root → מרווח בין Card של סרגל
-    הטאבים לבין תוכן הסקירה (כשהסקירה פעילה; בטאב רשימה תוכן הסקירה=null
-    ולכן אין מרווח מיותר).
-  · TabsContent של הסקירה קיבל "p-0 m-0 space-y-6" → מרווח gauge↔KPI.
-אין שינוי markup/prop/logic מעבר לזה.
+CHANGE 4 — שום דבר אחר: טפסים, שרשרת, רשימות, טאבים, סינון, תוכן סקירה — ללא שינוי.
 
 ------------------------------------------------------------------------
 CODE REVIEW (architect) — PASS, אין חוסמים
 ------------------------------------------------------------------------
-אומת: Radix Tabs תקין — TabsContent לא חייב להיות ילד ישיר, רק צאצא של אותו
-Tabs root; overview כ-sibling-descendant + list contents בתוך ה-Card פותרים
-context נכון וכל 6 הטאבים נטענים. אין רגרסיות logic (score interval, filter
-effect, bulk bar documents-only, chain dialog, forms, selectedIds clear-on-tab
-— שלמים). RTL: סקירה ראשונה/ימנית. space-y-6 על Tabs root בטוח (אין מרווח
-מיותר בטאבי רשימה). "+" gate נכון בסקירה.
+אומת: 3 השינויים תקינים; 5 האפשרויות ממופות לטפסים הנכונים עם record:null;
+כפתור writer-only גלוי בכל הטאבים כולל סקירה; מפת התוויות/הענפים הישנים הוסרו
+ממסלול הכפתור; chrome הדיאלוג עקבי לכללי הבית (modal={false}, הקשה בחוץ לא
+סוגרת, dir rtl); שרשרת 2d נשמרת (עובד→worker form→onSaved→workerChain);
+אין רגרסיות JSX/key/logic ואין state לא-בשימוש.
 
 ------------------------------------------------------------------------
 VERIFY
 ------------------------------------------------------------------------
 V1 ✅ Babel parse (jsx) — OK.
 V2 ✅ greps:
-   · useState('overview') @58.
-   · TabsTrigger value="overview" @407 קודם ל-value="documents" @413 (ראשון).
-   · TabsContent value="overview" @490 מכיל SafetyScoreGauge @493.
-   · "+" gate כולל activeTab !== 'overview' @358.
-V6 ✅ git diff --stat = קובץ אחד (74+ / 66-).
+   · addChooserOpen state @75.
+   · title "מה להוסיף?" @700.
+   · 5 setters מחווטים @707/716/725/734/743 (doc/task/worker/training/incident).
+   · "+" @359 {isWriter && ( — בלי החרגת overview. (יתר {isWriter && ( הם
+     בתוך רכיבי הרשימות, לא רלוונטיים.)
+   · מפת התוויות הישנה הוסרה — ה-match היחיד @678 הוא כפתור "הוסף הדרכה" של
+     דיאלוג השרשרת (לגיטימי, לא המפה).
+   · תווית קבועה "הוסף" @366.
+V5b ✅ git diff --stat = קובץ אחד (74+ / 9-).
 
-⚠ דורש staging חי (אחרי deploy אצל זאהי) — לא ניתן להרצה מקומית:
-V3 ⭐ MOBILE: כניסה לעמוד → סרגל הטאבים למעלה בלי גלילה; ברירת מחדל = gauge +
-   KPIs (מראה זהה להיום); הקשה אחת על עובדים/הדרכות נוחתת על הרשימה עם הסרגל
-   למעלה.
-V4 KPI tap-through: בסקירה, "ליקויים פתוחים"→documents; "משימות באיחור"→tasks;
-   כרטיסי עובדים→workers.
-V5 "+" מוסתר בסקירה; תווית נכונה ל-5 הטאבים; bulk-select documents-only;
-   תפריט ייצוא ללא שינוי.
-V6b Regression חי: 5 הרשימות נטענות כקודם; forms/chain/detail modals לא מושפעים;
-   refetch של filter ב-documents ללא שינוי.
+⚠ דורש staging חי (אחרי deploy אצל זאהי):
+V3 ⭐ בסקירה: "+ הוסף" גלוי → בוחר → עובד → נפתח worker form (ושרשרת ההדרכות
+   נדלקת אחרי שמירה); בליקויים: בוחר → ליקוי פותח את טופס הליקוי; "ביטול"
+   סוגר נקי; הקשה בחוץ לא סוגרת.
+V4 Non-writer: אין "+" בשום מקום.
+V5 Regression: רשימות/טפסים פר-טאב ללא שינוי.
 
 ------------------------------------------------------------------------
 פתוח לזאהי
 ------------------------------------------------------------------------
 - אזהרה: אם .git/index.lock ריק/תקוע — `rm -f .git/index.lock` לפני commit.
 - commit מוצע:
-  feat(safety): tabs bar at top with default overview tab (gauge + KPIs)
+  feat(safety): global add button with 5-option chooser
 ========================================================================
