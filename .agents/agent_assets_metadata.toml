@@ -546,3 +546,9 @@ id = "6CnfNSw2X_PuTmp_ytGxW"
 uri = "file://.local/plans/safety-p2-3a-plan.txt"
 type = "text"
 title = "safety-p2-3a — תוכנית (⛔ ממתין אישור)"
+
+[[outputs]]
+id = "D6rOKqTaow-yUp7pkFlnH"
+uri = "file://.local/plans/safety-tabs-top-overview-plan.txt"
+type = "text"
+title = "safety-tabs-top-overview — תוכנית (⛔ ממתין אישור)"
