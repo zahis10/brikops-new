@@ -552,3 +552,9 @@ id = "D6rOKqTaow-yUp7pkFlnH"
 uri = "file://.local/plans/safety-tabs-top-overview-plan.txt"
 type = "text"
 title = "safety-tabs-top-overview — תוכנית (⛔ ממתין אישור)"
+
+[[outputs]]
+id = "oc-ifmNPay45UuUnbI8Dv"
+uri = "file://.local/plans/safety-global-add-chooser-plan.txt"
+type = "text"
+title = "safety-global-add-chooser — תוכנית (⛔ ממתין אישור)"
