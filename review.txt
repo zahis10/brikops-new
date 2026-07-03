@@ -1,96 +1,90 @@
 ========================================================================
-REVIEW — BATCH safety-p2-3a
-  BACKEND filter params for workers/trainings/tasks/incidents lists
-  (prereq for per-tab filter UI — batch 3b)
+REVIEW — BATCH safety-tabs-top-overview
+  טאבי הבטיחות ל-TOP; טאב ברירת-מחדל "סקירה" מחזיק gauge + KPI
 ========================================================================
 STATUS: ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-Date: 2026-07-03 · Branch: staging · Scope: BACKEND-ONLY (EB + Cloudflare)
-Rollback SHA: da231e6 (HEAD לפני העריכה)
+Date: 2026-07-03 · Branch: staging · Scope: FRONTEND-ONLY · Capgo OTA
+Rollback SHA: 750264f (HEAD לפני העריכה)
 קבצים (1, git diff --stat):
-  backend/contractor_ops/safety_router.py  (+42/-2) = 1 file changed
+  frontend/src/pages/SafetyHomePage.js  (74+ / 66-) = 1 file changed
+רה-ארגון layout טהור — אפס שינויי logic/fetch/state/effect.
 
 ------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT RESULTS (read-only) ✅
+STEP 0 — PRE-FLIGHT RESULTS (read-only) — HEAD 750264f
 ------------------------------------------------------------------------
-0.1 ✅ 4 endpoints (+ documents ref) קיימים; היסט שורות קל מול ה-spec:
-    list_workers @229 · list_trainings @402 · list_tasks @836 ·
-    list_incidents @1035 · list_documents @585 (NOT touched).
-0.2 ❌→FIX `import re` לא היה קיים (ואין שום re.* קודם) → נוסף (CHANGE 0).
-0.3 ✅ overdue: score bucket (@1250 אחרי העריכה) = due_at {$ne:None,$lt:now_iso}
-    + status $in [open,in_progress] — ה-param overdue משכפל 1:1.
-    datetime,timezone מיובאים @14.
-0.4 ✅ _resolve_include_deleted @138, בשימוש בכל 5 ה-lists; לא נגעתי בו.
+0.1 ✅ activeTab = useState('documents') @58.
+0.2 ✅ גוש gauge+KPI @400-461 (gauge @405, bars @407-410, KPI ×6 @416-461);
+    tabs Card @463, Tabs @464, TabsList @465.
+0.3 ✅ KPI onClick→setActiveTab: documents @422, tasks @430, workers @438/452.
+0.4 ✅ "+" @358-373 (ענפי onClick @362-365, מפת תוויות @371).
+0.5 ✅ ניקוי selectedIds בהחלפת טאב @203-204 — לא נגע.
+0.6 ✅ TabsList @465 עם overflow-x-auto flex.
 
 ------------------------------------------------------------------------
 מה בוצע
 ------------------------------------------------------------------------
-CHANGE 0 — import re: נוסף @15 (ליד hashlib/logging/uuid). נדרש ל-CHANGE 1+2.
+CHANGE 1 — default tab: @58 useState('documents') → useState('overview').
 
-CHANGE 1 — list_workers: + profession + company_id
-  · profession: contains case-insensitive, re.escape ($regex,$options:"i"),
-    עם .strip() gate.
-  · company_id: exact.
+CHANGE 2 — רה-ארגון (MOVE):
+  · <Tabs ... dir="rtl"> עלה להיות האלמנט העליון של ה-content container.
+  · Card לבן (p-0 overflow-hidden, אותו chrome) עוטף עכשיו את TabsList +
+    5 בלוקי הרשימה TabsContent (verbatim, אותה הזחה בדיוק).
+  · TabsList: טריגר ראשון חדש value="overview" ("סקירה", בלי count), ואז
+    5 הטריגרים הקיימים ללא שינוי. RTL: סקירה ראשונה (ימנית ביותר).
+  · חדש <TabsContent value="overview"> אחרי ה-Card (בתוך Tabs) המחזיק את
+    כרטיס ה-gauge (+bars) + גריד ה-KPI — הועברו verbatim (רק re-indent).
+    KPI onClick setActiveTab נשמר כ-tap-through.
 
-CHANGE 2 — list_trainings: training_type EXACT → contains
-  · training_type: {"$regex": re.escape(.strip()), "$options":"i"} עם .strip()
-    gate. worker_id / expires_before ללא שינוי.
-  · תוצאה: "בגובה" תופס "עבודה בגובה".
+CHANGE 3 — "+" מוסתר בסקירה:
+  @358 {isWriter && ( → {isWriter && activeTab !== 'overview' && (.
+  מפת התוויות וענפי ה-onClick — ללא שינוי.
 
-CHANGE 3 — list_tasks: + severity + company_id + overdue
-  · severity: enum → severity.value. company_id: exact.
-  · overdue: now_iso=datetime.now(timezone.utc).isoformat();
-    due_at {$ne:None,$lt:now_iso} + status $in [open,in_progress].
-  · docstring: overdue מנצח status מפורש (ה-$in דורס); ה-FE (3b) ינטרל את
-    בורר הסטטוס כש"באיחור" דלוק. סמנטיקה זהה ל-score bucket.
-
-CHANGE 4 — list_incidents: + reported_to_authority + injured_worker_id + טווח תאריכים
-  · reported_to_authority: `is not None` → false מסנן (לא מדולג).
-  · injured_worker_id: exact (התוספת המאוחרת של זאהי — מזין כרטיס עובד בבאץ' עתידי).
-  · date_from/date_to: טווח על occurred_at (מחרוזות ISO → לקסיקוגרפי); date_to
-    של תאריך-בלבד (len==10) מרופד ל-T23:59:59 לסוף-יום כולל, בסוגריים מפורשים.
+------------------------------------------------------------------------
+סטיות מהתוכנית (מרווח בלבד, אושרו ע"י architect)
+------------------------------------------------------------------------
+כדי לשמר את המרווחים הזהים (24px) שהגיעו קודם מ-space-y-6 של ה-container:
+  · נוסף className="space-y-6" ל-<Tabs> root → מרווח בין Card של סרגל
+    הטאבים לבין תוכן הסקירה (כשהסקירה פעילה; בטאב רשימה תוכן הסקירה=null
+    ולכן אין מרווח מיותר).
+  · TabsContent של הסקירה קיבל "p-0 m-0 space-y-6" → מרווח gauge↔KPI.
+אין שינוי markup/prop/logic מעבר לזה.
 
 ------------------------------------------------------------------------
 CODE REVIEW (architect) — PASS, אין חוסמים
 ------------------------------------------------------------------------
-כל 5 השינויים additive ותואמים ל-objective. אומת: אין injection (re.escape על
-כל regex), reported_to_authority=false מסנן נכון, precedence של הריפוד תקין,
-overdue תואם את ה-score bucket, defaults/limits/sort/deletedAt לא נגעו,
-list_documents (7-dim) ו-endpoints שאינם list לא נגעו, אין אינדקסים חדשים.
-המלצת architect: smoke tests ל-combos (בעיקר overdue=true עם status מפורש,
-reported_to_authority=false) — מתבצע ב-V3 על staging.
+אומת: Radix Tabs תקין — TabsContent לא חייב להיות ילד ישיר, רק צאצא של אותו
+Tabs root; overview כ-sibling-descendant + list contents בתוך ה-Card פותרים
+context נכון וכל 6 הטאבים נטענים. אין רגרסיות logic (score interval, filter
+effect, bulk bar documents-only, chain dialog, forms, selectedIds clear-on-tab
+— שלמים). RTL: סקירה ראשונה/ימנית. space-y-6 על Tabs root בטוח (אין מרווח
+מיותר בטאבי רשימה). "+" gate נכון בסקירה.
 
 ------------------------------------------------------------------------
 VERIFY
 ------------------------------------------------------------------------
-V1 ✅ py_compile — OK.
+V1 ✅ Babel parse (jsx) — OK.
 V2 ✅ greps:
-   · import re @15.
-   · re.escape = 2 (workers @247, trainings @429).
-   · profession $regex @247.
-   · overdue block @875-881; תואם score $in @1250.
-   · reported_to_authority is not None @1080.
-   · injured_worker_id param @1063 + query @1082-1083 (השדה כבר קיים במודל/
-     create/update/excel — @985/999/1035/1153/1630).
-   · severity.value tasks @873 (חדש); incidents @1079 (קיים); documents @615
-     (7-dim, לא נגע).
-   · company_id workers @249 (חדש), tasks @874 (חדש); documents @617 (7-dim, לא נגע).
-   · date end-of-day T23:59:59 @1091.
-V5 ✅ git diff --stat = קובץ אחד (42+ / 2-).
+   · useState('overview') @58.
+   · TabsTrigger value="overview" @407 קודם ל-value="documents" @413 (ראשון).
+   · TabsContent value="overview" @490 מכיל SafetyScoreGauge @493.
+   · "+" gate כולל activeTab !== 'overview' @358.
+V6 ✅ git diff --stat = קובץ אחד (74+ / 66-).
 
 ⚠ דורש staging חי (אחרי deploy אצל זאהי) — לא ניתן להרצה מקומית:
-V3 ⏳ (curl/app אחרי 3b):
-   /workers?profession=אינסט → רק אינסטלטורים;
-   /trainings?training_type=בגובה → תופס "עבודה בגובה";
-   /tasks?overdue=true → רק open/in_progress שעברו due; overdue=false כיוון הפוך;
-   /incidents?reported_to_authority=true|false → שני הכיוונים מסננים;
-   /incidents?injured_worker_id=<id> → רק אירועי אותו עובד;
-   /incidents?date_from=X&date_to=Y → כולל את כל יום Y.
-V4 ⏳ regression: קריאות ללא פרמטרים מחזירות בדיוק כמו לפני.
+V3 ⭐ MOBILE: כניסה לעמוד → סרגל הטאבים למעלה בלי גלילה; ברירת מחדל = gauge +
+   KPIs (מראה זהה להיום); הקשה אחת על עובדים/הדרכות נוחתת על הרשימה עם הסרגל
+   למעלה.
+V4 KPI tap-through: בסקירה, "ליקויים פתוחים"→documents; "משימות באיחור"→tasks;
+   כרטיסי עובדים→workers.
+V5 "+" מוסתר בסקירה; תווית נכונה ל-5 הטאבים; bulk-select documents-only;
+   תפריט ייצוא ללא שינוי.
+V6b Regression חי: 5 הרשימות נטענות כקודם; forms/chain/detail modals לא מושפעים;
+   refetch של filter ב-documents ללא שינוי.
 
 ------------------------------------------------------------------------
 פתוח לזאהי
 ------------------------------------------------------------------------
 - אזהרה: אם .git/index.lock ריק/תקוע — `rm -f .git/index.lock` לפני commit.
 - commit מוצע:
-  feat(safety): filter params for workers/trainings/tasks/incidents lists
+  feat(safety): tabs bar at top with default overview tab (gauge + KPIs)
 ========================================================================

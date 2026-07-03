@@ -55,7 +55,7 @@ export default function SafetyHomePage() {
   const [flagOff, setFlagOff] = useState(false);
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('documents');
+  const [activeTab, setActiveTab] = useState('overview');
 
   // Part 5 — filter / selection / bulk state
   const [filter, setFilter] = useState(EMPTY_FILTER);
@@ -355,7 +355,7 @@ export default function SafetyHomePage() {
           {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
         </div>
 
-        {isWriter && (
+        {isWriter && activeTab !== 'overview' && (
           <button
             type="button"
             onClick={() => {
@@ -400,69 +400,15 @@ export default function SafetyHomePage() {
       </div>
 
       <div className="max-w-6xl mx-auto px-4 py-5 space-y-6">
-        <Card className="p-5 bg-white shadow-sm">
-          <div className="flex flex-col md:flex-row items-center gap-6">
-            <SafetyScoreGauge score={scoreData?.score ?? 0} label="ציון בטיחות" />
-            <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <BreakdownBar label="ליקויים" value={b.doc_penalty} max={caps.doc_max} color="bg-red-500" />
-              <BreakdownBar label="משימות באיחור" value={b.task_penalty} max={caps.task_max} color="bg-amber-500" />
-              <BreakdownBar label="הדרכות" value={b.training_penalty} max={caps.training_max} color="bg-blue-500" />
-              <BreakdownBar label="אירועים (90 יום)" value={b.incident_penalty} max={caps.incident_max} color="bg-fuchsia-500" />
-            </div>
-          </div>
-        </Card>
-
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          <SafetyKpiCard
-            icon={ShieldAlert}
-            label="ליקויים פתוחים"
-            value={openDocs}
-            sub={`חמור: ${sev3}`}
-            tone={sev3 > 0 ? 'danger' : 'neutral'}
-            onClick={() => setActiveTab('documents')}
-          />
-          <SafetyKpiCard
-            icon={Clock}
-            label="משימות באיחור"
-            value={overdueTotal}
-            sub={`חמור: ${overdueSev3}`}
-            tone={overdueTotal > 0 ? 'warning' : 'neutral'}
-            onClick={() => setActiveTab('tasks')}
-          />
-          <SafetyKpiCard
-            icon={GraduationCap}
-            label="עובדים ללא הדרכה"
-            value={untrained}
-            sub={`מתוך ${totalWorkers} עובדים`}
-            tone={untrained > 0 ? 'warning' : 'success'}
-            onClick={() => setActiveTab('workers')}
-          />
-          <SafetyKpiCard
-            icon={AlertCircle}
-            label="אירועים (90 יום)"
-            value={incidentsTotal}
-            sub={`פציעות: ${incidentsInjury}`}
-            tone={incidentsInjury > 0 ? 'danger' : 'neutral'}
-          />
-          <SafetyKpiCard
-            icon={Users}
-            label="סך עובדים באתר"
-            value={totalWorkers}
-            tone="info"
-            onClick={() => setActiveTab('workers')}
-          />
-          <SafetyKpiCard
-            icon={TrendingUp}
-            label="ציון מצטבר"
-            value={`${scoreData?.score ?? 0}%`}
-            sub="מעודכן כל 5 דק׳"
-            tone="info"
-          />
-        </div>
-
-        <Card className="p-0 overflow-hidden bg-white shadow-sm">
-          <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
+        <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl" className="space-y-6">
+          <Card className="p-0 overflow-hidden bg-white shadow-sm">
             <TabsList className="w-full justify-start rounded-none border-b bg-slate-50 p-0 h-auto overflow-x-auto flex">
+              <TabsTrigger
+                value="overview"
+                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
+              >
+                סקירה
+              </TabsTrigger>
               <TabsTrigger
                 value="documents"
                 className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
@@ -539,8 +485,70 @@ export default function SafetyHomePage() {
                 onEdit={(i) => setIncidentForm({ open: true, record: i })}
               />
             </TabsContent>
-          </Tabs>
-        </Card>
+          </Card>
+
+          <TabsContent value="overview" className="p-0 m-0 space-y-6">
+            <Card className="p-5 bg-white shadow-sm">
+              <div className="flex flex-col md:flex-row items-center gap-6">
+                <SafetyScoreGauge score={scoreData?.score ?? 0} label="ציון בטיחות" />
+                <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <BreakdownBar label="ליקויים" value={b.doc_penalty} max={caps.doc_max} color="bg-red-500" />
+                  <BreakdownBar label="משימות באיחור" value={b.task_penalty} max={caps.task_max} color="bg-amber-500" />
+                  <BreakdownBar label="הדרכות" value={b.training_penalty} max={caps.training_max} color="bg-blue-500" />
+                  <BreakdownBar label="אירועים (90 יום)" value={b.incident_penalty} max={caps.incident_max} color="bg-fuchsia-500" />
+                </div>
+              </div>
+            </Card>
+
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <SafetyKpiCard
+                icon={ShieldAlert}
+                label="ליקויים פתוחים"
+                value={openDocs}
+                sub={`חמור: ${sev3}`}
+                tone={sev3 > 0 ? 'danger' : 'neutral'}
+                onClick={() => setActiveTab('documents')}
+              />
+              <SafetyKpiCard
+                icon={Clock}
+                label="משימות באיחור"
+                value={overdueTotal}
+                sub={`חמור: ${overdueSev3}`}
+                tone={overdueTotal > 0 ? 'warning' : 'neutral'}
+                onClick={() => setActiveTab('tasks')}
+              />
+              <SafetyKpiCard
+                icon={GraduationCap}
+                label="עובדים ללא הדרכה"
+                value={untrained}
+                sub={`מתוך ${totalWorkers} עובדים`}
+                tone={untrained > 0 ? 'warning' : 'success'}
+                onClick={() => setActiveTab('workers')}
+              />
+              <SafetyKpiCard
+                icon={AlertCircle}
+                label="אירועים (90 יום)"
+                value={incidentsTotal}
+                sub={`פציעות: ${incidentsInjury}`}
+                tone={incidentsInjury > 0 ? 'danger' : 'neutral'}
+              />
+              <SafetyKpiCard
+                icon={Users}
+                label="סך עובדים באתר"
+                value={totalWorkers}
+                tone="info"
+                onClick={() => setActiveTab('workers')}
+              />
+              <SafetyKpiCard
+                icon={TrendingUp}
+                label="ציון מצטבר"
+                value={`${scoreData?.score ?? 0}%`}
+                sub="מעודכן כל 5 דק׳"
+                tone="info"
+              />
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
 
       <SafetyFilterSheet
