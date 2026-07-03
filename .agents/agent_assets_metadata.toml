@@ -558,3 +558,9 @@ id = "oc-ifmNPay45UuUnbI8Dv"
 uri = "file://.local/plans/safety-global-add-chooser-plan.txt"
 type = "text"
 title = "safety-global-add-chooser — תוכנית (⛔ ממתין אישור)"
+
+[[outputs]]
+id = "l0UZC92SO_ml_VLU6bA16"
+uri = "file://.local/plans/safety-tab-url-back-nav-plan.txt"
+type = "text"
+title = "safety-tab-url-back-nav — תוכנית (⛔ ממתין אישור)"
