@@ -1,79 +1,120 @@
 ========================================================================
-REVIEW — BATCH safety-back-arrow-control
-  חץ ה-BACK בכותרת הבטיחות → /control?workMode=structure (ולא /dashboard)
+REVIEW — BATCH safety-worker-card
+  לחיצה על שורת עובד → כרטיס עובד קריאה-בלבד
+  (פרטים + ההדרכות שלו + האירועים שלו + הוספה מהירה)
 ========================================================================
 STATUS: ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 Date: 2026-07-03 · Branch: staging (NOT main) · Severity: P2
-Scope: FRONTEND-ONLY · Capgo OTA · קובץ 1 · 3 שורות
-Rollback SHA: e774fca (= HEAD לפני העריכה, אומת ב-STEP 0)
-קבצים (1, git diff --stat):
-  frontend/src/pages/SafetyHomePage.js  (3+ / 3-) = 1 file changed
-שינוי ניתוב בלבד — אפס נגיעה ב-?tab=/טפסים/שרשרת/chooser/KPI/tabs/fetch/authz.
+Scope: FRONTEND-ONLY · Capgo OTA · אין שינוי backend · אין תלות חדשה
+Depends on: 3a (trainings?worker_id, incidents?injured_worker_id) — כבר ב-PROD.
+Rollback SHA: df22bee (= HEAD לפני העריכה, אומת ב-STEP 0)
+קבצים (2, git diff --stat + untracked):
+  ADD  frontend/src/components/safety/SafetyWorkerCard.js   (חדש)
+  EDIT frontend/src/pages/SafetyHomePage.js                  (33+ / 6-)
 
 ------------------------------------------------------------------------
-WHY — anti-pattern של CLAUDE.md, הבטיחות פוספסה בסבב הקודם
+STEP 0 — PRE-FLIGHT RESULTS (read-only) — HEAD df22bee
 ------------------------------------------------------------------------
-CLAUDE.md: חצי BACK ב-/handover ו-/org-billing נותבו ל-
-/control?workMode=structure במקום /projects/:id השבור. אותו sweep מעולם
-לא נגע ב-SafetyHomePage → חץ הבטיחות עדיין הוביל ל-/dashboard השגוי.
-נקודת הכניסה = ProjectControlPage (navigate → /safety), לכן חזרה ל-
-/control?workMode=structure = בדיוק "חזרה למאיפה שהמשתמש הגיע".
-העמודים האחים מקודדים את היעד ליטרלית (Handover/ProjectDashboard/OrgBilling)
-— התאמנו אליהם, בלי helper.
+0.1 ✅ WorkersList @947; שורת <li> ללא onClick; עיפרון עם stopPropagation+onEdit.
+    Call-site @471-475 (workers tab).
+0.2 ✅ תבנית chrome = SafetyDocumentDetail: Dialog modal={false}, header כהה,
+    X (DialogClose), [&>button]:hidden, onInteractOutside/onPointerDownOutside
+    preventDefault, body max-h scroll, Field helper מסתיר ערכים ריקים.
+0.3 ✅ api.js listTrainings/listIncidents(projectId, params) — params ב-axios,
+    מחזירים response.data (.items).
+0.4 ✅ SafetyTrainingForm תומך ב-lockedWorker: preset (@37) + picker
+    disabled (@113) + כותרת `הדרכה לעובד ${name}` (@107). בעמוד lockedWorker
+    היה מ-workerChain בלבד; chain מתאפס ב-"לא עכשיו"; ask-dialog תלוי
+    ב-(!!workerChain && !trainingForm.open); onSaved מגדיל count.
+0.5 ✅ companies state @76 — הועבר כ-prop לכרטיס.
+0.6 ⚠ PII: list_workers projection = find(q, {"_id":0}) → ה-FE מקבל גם
+    id_number(=None) + id_number_hash. הכרטיס לא מרנדר אותם בשום מקום.
+    notes + created_at זמינים (תאריך כניסה = created_at.slice(0,10)).
 
 ------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT RESULTS (read-only) — HEAD e774fca
+מה בוצע
 ------------------------------------------------------------------------
-0.1 ✅ grep "/dashboard`)" = בדיוק 3 hits כצפוי:
-      @218 SafetyForbidden onBack · @219 SafetyFlagOff onBack · @357 חץ הכותרת.
-0.2 ✅ אין getProjectBackPath בקובץ → יעד ליטרל קבוע כמו העמודים האחים.
-0.3 ✅ control?workMode=structure עדיין לא קיים (0 hits) — נקי.
-
-------------------------------------------------------------------------
-מה בוצע — 3 החלפות, יעד זהה (replace_all על substring)
-------------------------------------------------------------------------
-בכל 3 המקומות:
-  navigate(`/projects/${projectId}/dashboard`)
-  → navigate(`/projects/${projectId}/control?workMode=structure`)
-CHANGE 1 — @357 חץ הכותרת onClick (הבאג הראשי).
-CHANGE 2 (FOLD-IN, Boy Scout — מסומן לזאהי):
-  @218 SafetyForbidden onBack + @219 SafetyFlagOff onBack — אותו באג בדיוק
-  במסכי fallback (flag-off/forbidden). ניתובם ל-control עקבי עם החץ הראשי.
-  → אם זאהי רוצה רק את חץ הכותרת: להחזיר את @218+@219 ל-/dashboard.
+CHANGE 1 — SafetyWorkerCard.js (חדש, קריאה-בלבד):
+  · chrome תואם SafetyDocumentDetail: Dialog modal={false}, dir="rtl",
+    [&>button]:hidden, header כהה "כרטיס עובד" + X, outside-close prevented,
+    body max-h-[70vh] scroll, Field helper מסתיר ריקים.
+  · fetch fail-soft ב-useEffect [open, worker?.id, projectId]:
+    Promise.allSettled([listTrainings{worker_id}, listIncidents{injured_worker_id}]);
+    call שנכשל → [] (לא מרוקן את השני); דגל cancelled מונע setState אחרי unmount;
+    (ליטוש) איפוס trainings/incidents ל-[] בתחילת ה-effect כדי למנוע הבזק שורות
+    ישנות בהחלפת עובד.
+  · גוף: שם+מקצוע; Field חברה/טלפון/תאריך-כניסה; הערות (אם קיימות);
+    "הדרכות (n)" (training_type + trained_at + "בתוקף עד" + Badge "פג תוקף"
+    אדום כש-expires_at<today + קישור "תעודה" טאב חדש rel=noopener); "אירועים (n)"
+    (INCIDENT_TYPE_HE + Badge severity + occurred_at + location); ריק → "אין…" עמום.
+  · footer (isWriter בלבד): [ערוך עובד]→onEditWorker; [הוסף הדרכה]→onAddTraining.
+  · ❌ אין id_number/id_number_hash; אין lightbox; אין writes; אין console PII.
+CHANGE 2 — SafetyHomePage.js:
+  · import SafetyWorkerCard; state workerCard + trainingCardLock.
+  · WorkersList: prop onOpenCard; <li> role="button" + onClick(onOpenCard) +
+    cursor-pointer; העיפרון שומר stopPropagation (עריכה בלי לפתוח כרטיס).
+    Call-site: onOpenCard={(w)=>setWorkerCard(w)}.
+  · render <SafetyWorkerCard>: onEditWorker (סוגר כרטיס→פותח WorkerForm),
+    onAddTraining (סוגר כרטיס→setWorkerChain(null)→setTrainingCardLock(w)→
+    פותח TrainingForm record:null).
+  · ⭐ lockedWorker דו-מקורי, CARD-LOCK ראשון ואז השרשרת:
+    trainingCardLock ? {id, name:full_name} : workerChain ? {...} : null.
+  · trainingCardLock מנוקה גם ב-onClose וגם ב-onSaved של TrainingForm → לא
+    דולף להוספה עתידית לא-מהכרטיס. onAddTraining מאפס workerChain → ask-dialog
+    (תלוי workerChain) לא נפתח ל-card-add.
 
 ------------------------------------------------------------------------
 DO NOT — נשמרו
 ------------------------------------------------------------------------
-✅ לא נגענו בלוגיקת ?tab= (e774fca) — נשארה זהה (activeTab נגזר מ-useSearchParams).
-✅ לא הוכנס getProjectBackPath / role-aware — ליטרל קבוע כמו העמודים האחים.
-✅ שום דבר אחר בעמוד לא שונה (רק 3 יעדי ניווט).
+✅ אין רינדור id_number/id_number_hash (למרות שה-API מחזיר אותם).
+✅ אין שינוי backend — רק endpoints קיימים (3a).
+✅ card-add לא מוזג ל-counter/ask-dialog של שרשרת 2d (חד-פעמי).
+✅ הכרטיס לא ניתן לעריכה — עריכות דרך WorkerForm.
+✅ אין lightbox (תעודה בטאב חדש); Radix modal={false}; עברית; בלי
+   WebkitOverflowScrolling; בלי console PII.
 
 ------------------------------------------------------------------------
 CODE REVIEW (architect, includeGitDiff) — PASS
 ------------------------------------------------------------------------
-אומת: היעד תוקן ב-3 האתרים בלבד; אין יותר "/dashboard" בקובץ; אין
-getProjectBackPath; לוגיקת ?tab= נשארה ללא שינוי; אין רגרסיות/בעיות hooks;
-שינוי ניתוב בלבד ללא נגיעה ב-auth/data.
+אומת: fetch fail-soft + cancel-guard + deps יציבים (אין refetch loop);
+lockedWorker card-first נכון; trainingCardLock מנוקה ב-close AND save (אין דליפה);
+onAddTraining מאפס workerChain → אין ask-dialog loop ל-card-add; שרשרת onboarding
+ללא רגרסיה; row-tap vs עיפרון (stopPropagation) תקינים; non-writer בלי footer/עיפרון;
+אין id_number; house rules/hooks תקינים. הליטוש (איפוס רשימות בהחלפת עובד) —
+הצעת ה-UX של architect — יושם.
 
 ------------------------------------------------------------------------
 VERIFY
 ------------------------------------------------------------------------
-V1 ✅ Babel parse (jsx) — OK.
-V2 ✅ grep "/dashboard`)" → 0 hits; grep "control?workMode=structure" → 3 hits
-   (@218/@219/@357).
-V5 ✅ git diff --stat = קובץ אחד (3+ / 3-).
+V1 ✅ Babel parse (jsx) לשני הקבצים — OK.
+V2 ✅ greps: card מכיל modal={false} + [&>button]:hidden; listTrainings{worker_id}
+   + listIncidents{injured_worker_id}; אין id_number בכרטיס; page: workerCard
+   state @88 + onOpenCard @478 + row onClick @978; lockedWorker בודק
+   trainingCardLock @626 לפני workerChain @631; setTrainingCardLock(null) ב-onClose
+   @617 וב-onSaved @619; onAddTraining setWorkerChain(null) @652.
+V5b ✅ git diff/status = 2 קבצים (SafetyHomePage.js 33+/6-, SafetyWorkerCard.js חדש).
 
 ⚠ דורש staging חי (אחרי deploy אצל זאהי):
-V3 ⭐ ב-/safety וגם /safety?tab=documents → הקשה על חץ הכותרת → נחיתה על
-   /projects/{id}/control?workMode=structure (לא /dashboard).
-V3b מסכי forbidden/flag-off → onBack מוביל לאותו control URL.
-V4 in-tab BACK (דפדפן) מ-batch ?tab= עדיין עובד: KPI→tab→back→סקירה
-   (לא מושפע מ-batch זה).
+V3 ⭐ tap עובד → כרטיס עם פרטים + הדרכות (תעודה + פג תוקף) + אירועים; ספירות
+   נכונות; מקטעים ריקים "אין…".
+V4 מהכרטיס "הוסף הדרכה" → טופס נעול (picker disabled, כותרת "הדרכה לעובד <שם>"),
+   שמירה → ההדרכה מופיעה; אין ask-dialog loop. "ערוך עובד" → טופס עריכה.
+V5 ⭐ Edge (modal={false}): עובד חדש → ask-dialog נפתח → מעבר לטאב עובדים →
+   פתיחת כרטיס של עובד אחר → "הוסף הדרכה" → נעילה לעובד מהכרטיס (לא מהשרשרת),
+   ואחרי שמירה אין ask-dialog loop.
+V6 עיפרון עורך ישירות בלי לפתוח כרטיס; non-writer רואה כרטיס קריאה-בלבד
+   בלי כפתורי footer ובלי עיפרון.
+V7 Regression: שרשרת onboarding (עובד חדש → ask-dialog → הוספת הדרכות, count)
+   עדיין עובדת בפני עצמה.
 
 ------------------------------------------------------------------------
 פתוח לזאהי
 ------------------------------------------------------------------------
+- הערת PII (defense-in-depth, מחוץ ל-scope FE): projection של list_workers
+  מחזיר id_number(null)+id_number_hash ל-FE. הכרטיס לא נוגע בהם, אך אפשר batch
+  נפרד להדק את ה-projection בבקאנד (להחריג id_number_hash).
 - אזהרה: אם .git/index.lock ריק/תקוע → `rm -f .git/index.lock` לפני commit.
+- זכור: SafetyWorkerCard.js הוא קובץ חדש (untracked) — `git add` לפני commit.
 - commit מוצע:
-  fix(safety): back arrow returns to /control?workMode=structure instead of /dashboard
+  feat(safety): worker card with his trainings + incidents + quick add-training
 ========================================================================

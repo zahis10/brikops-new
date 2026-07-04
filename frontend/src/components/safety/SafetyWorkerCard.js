@@ -1,0 +1,183 @@
+import React, { useEffect, useState } from 'react';
+import { X, FileText, GraduationCap, AlertCircle } from 'lucide-react';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose,
+} from '../ui/dialog';
+import { Button } from '../ui/button';
+import { Badge } from '../ui/badge';
+import { INCIDENT_TYPE_HE, SEVERITY_HE } from './safetyLabels';
+import { safetyService } from '../../services/api';
+
+// Read-only worker card. Mirrors SafetyDocumentDetail's chrome (Dialog
+// modal={false} + outside-close prevention + [&>button]:hidden). Fetches the
+// worker's trainings + incidents fail-soft (a rejected call -> [], never blanks
+// the other). NEVER renders id_number / id_number_hash (PII) even though the
+// list_workers projection returns them.
+const SEVERITY_COLOR = {
+  '1': 'bg-blue-100 text-blue-800',
+  '2': 'bg-amber-100 text-amber-800',
+  '3': 'bg-red-100 text-red-800',
+};
+
+function Field({ label, children }) {
+  if (children == null || children === '') return null;
+  return (
+    <div className="space-y-0.5">
+      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <div className="text-sm text-slate-900">{children}</div>
+    </div>
+  );
+}
+
+export default function SafetyWorkerCard({
+  projectId, worker, open, onClose, isWriter, companies = [], onEditWorker, onAddTraining,
+}) {
+  const [trainings, setTrainings] = useState([]);
+  const [incidents, setIncidents] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open || !worker?.id) return undefined;
+    let cancelled = false;
+    setTrainings([]);
+    setIncidents([]);
+    setLoading(true);
+    Promise.allSettled([
+      safetyService.listTrainings(projectId, { worker_id: worker.id, limit: 100 }),
+      safetyService.listIncidents(projectId, { injured_worker_id: worker.id, limit: 100 }),
+    ]).then(([tr, inc]) => {
+      if (cancelled) return;
+      setTrainings(tr.status === 'fulfilled' ? (tr.value?.items || []) : []);
+      setIncidents(inc.status === 'fulfilled' ? (inc.value?.items || []) : []);
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [open, worker?.id, projectId]);
+
+  if (!worker) return null;
+
+  const companyName = worker.company_id
+    ? (companies.find((c) => c.id === worker.company_id)?.name
+      || companies.find((c) => c.id === worker.company_id)?.company_name
+      || null)
+    : null;
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }} modal={false}>
+      <DialogContent
+        dir="rtl"
+        className="max-w-lg w-[calc(100%-2rem)] p-0 gap-0 overflow-hidden [&>button]:hidden"
+        onInteractOutside={(e) => e.preventDefault()}
+        onPointerDownOutside={(e) => e.preventDefault()}
+      >
+        <DialogHeader className="bg-slate-900 text-white px-5 py-4 flex flex-row items-center justify-between space-y-0">
+          <DialogClose asChild>
+            <button type="button" className="p-1 rounded-lg hover:bg-slate-700 transition-colors" aria-label="סגור">
+              <X className="w-5 h-5" />
+            </button>
+          </DialogClose>
+          <DialogTitle className="text-base font-bold text-right">כרטיס עובד</DialogTitle>
+        </DialogHeader>
+
+        <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+          <div>
+            <h3 className="text-lg font-bold text-slate-900">{worker.full_name}</h3>
+            {worker.profession && <p className="text-sm text-slate-500 mt-0.5">{worker.profession}</p>}
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+            <Field label="חברה">{companyName}</Field>
+            <Field label="טלפון">{worker.phone || null}</Field>
+            <Field label="תאריך כניסה">{(worker.created_at || '').slice(0, 10) || null}</Field>
+          </div>
+
+          {worker.notes && (
+            <Field label="הערות">
+              <p className="whitespace-pre-wrap">{worker.notes}</p>
+            </Field>
+          )}
+
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <GraduationCap className="w-4 h-4 text-slate-500" />
+              <p className="text-sm font-semibold text-slate-700">הדרכות ({trainings.length})</p>
+            </div>
+            {trainings.length === 0 ? (
+              <p className="text-sm text-slate-400">{loading ? 'טוען…' : 'אין הדרכות'}</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 rounded-lg border border-slate-100">
+                {trainings.map((tr) => {
+                  const expired = tr.expires_at && tr.expires_at.slice(0, 10) < today;
+                  return (
+                    <li key={tr.id} className="px-3 py-2">
+                      <p className="font-medium text-slate-900 text-sm">{tr.training_type}</p>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <span className="text-xs text-slate-500">{(tr.trained_at || '').slice(0, 10)}</span>
+                        {tr.expires_at && (
+                          <span className="text-xs text-slate-500">בתוקף עד {tr.expires_at.slice(0, 10)}</span>
+                        )}
+                        {expired && <Badge className="bg-red-100 text-red-800">פג תוקף</Badge>}
+                        {tr.certificate_display_url && (
+                          <a
+                            href={tr.certificate_display_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs text-purple-700 hover:underline"
+                          >
+                            <FileText className="w-3.5 h-3.5" /> תעודה
+                          </a>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-slate-500" />
+              <p className="text-sm font-semibold text-slate-700">אירועים ({incidents.length})</p>
+            </div>
+            {incidents.length === 0 ? (
+              <p className="text-sm text-slate-400">{loading ? 'טוען…' : 'אין אירועים'}</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 rounded-lg border border-slate-100">
+                {incidents.map((inc) => (
+                  <li key={inc.id} className="px-3 py-2 flex items-start gap-2">
+                    <Badge className={SEVERITY_COLOR[inc.severity] || 'bg-slate-100 text-slate-700'}>
+                      {SEVERITY_HE[inc.severity] || '—'}
+                    </Badge>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-slate-900 text-sm truncate">
+                        {INCIDENT_TYPE_HE[inc.incident_type] || inc.incident_type}
+                      </p>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <span className="text-xs text-slate-500">{(inc.occurred_at || '').slice(0, 10)}</span>
+                        {inc.location && <span className="text-xs text-slate-500">{inc.location}</span>}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+
+        {isWriter && (
+          <DialogFooter className="px-5 py-3 border-t border-slate-100 bg-slate-50 flex flex-row-reverse gap-2 sm:justify-start">
+            <Button type="button" onClick={() => onAddTraining(worker)} className="min-h-[44px] min-w-[96px]">
+              הוסף הדרכה
+            </Button>
+            <Button type="button" variant="outline" onClick={() => onEditWorker(worker)} className="min-h-[44px]">
+              ערוך עובד
+            </Button>
+          </DialogFooter>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}

@@ -28,6 +28,7 @@ import SafetyDocumentDetail from '../components/safety/SafetyDocumentDetail';
 import SafetyTaskForm from '../components/safety/SafetyTaskForm';
 import SafetyTrainingForm from '../components/safety/SafetyTrainingForm';
 import SafetyIncidentForm from '../components/safety/SafetyIncidentForm';
+import SafetyWorkerCard from '../components/safety/SafetyWorkerCard';
 import {
   SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE, INCIDENT_STATUS_HE,
 } from '../components/safety/safetyLabels';
@@ -84,6 +85,8 @@ export default function SafetyHomePage() {
   const [incidentForm, setIncidentForm] = useState({ open: false, record: null });
   const [addChooserOpen, setAddChooserOpen] = useState(false);
   const [workerChain, setWorkerChain] = useState(null);
+  const [workerCard, setWorkerCard] = useState(null);
+  const [trainingCardLock, setTrainingCardLock] = useState(null);
   // Batch safety-p2-1d — read-only detail modal (row tap opens it).
   const [detailDoc, setDetailDoc] = useState(null);
 
@@ -472,6 +475,7 @@ export default function SafetyHomePage() {
                 items={workers.items}
                 isWriter={isWriter}
                 onEdit={(w) => setWorkerForm({ open: true, record: w })}
+                onOpenCard={(w) => setWorkerCard(w)}
               />
             </TabsContent>
             <TabsContent value="trainings" className="p-0 m-0">
@@ -610,17 +614,20 @@ export default function SafetyHomePage() {
         projectId={projectId}
         training={trainingForm.record}
         open={trainingForm.open}
-        onClose={() => setTrainingForm({ open: false, record: null })}
+        onClose={() => { setTrainingForm({ open: false, record: null }); setTrainingCardLock(null); }}
         onSaved={() => {
+          setTrainingCardLock(null);
           reloadTrainings();
           if (!trainingForm.record && workerChain) {
             setWorkerChain((prev) => (prev ? { ...prev, count: prev.count + 1 } : prev));
           }
         }}
         workers={workers.items}
-        lockedWorker={(!trainingForm.record && workerChain)
-          ? { id: workerChain.workerId, name: workerChain.workerName }
-          : null}
+        lockedWorker={(!trainingForm.record && trainingCardLock)
+          ? { id: trainingCardLock.id, name: trainingCardLock.full_name }
+          : (!trainingForm.record && workerChain)
+            ? { id: workerChain.workerId, name: workerChain.workerName }
+            : null}
       />
 
       <SafetyIncidentForm
@@ -630,6 +637,22 @@ export default function SafetyHomePage() {
         onClose={() => setIncidentForm({ open: false, record: null })}
         onSaved={reloadIncidents}
         workers={workers.items}
+      />
+
+      <SafetyWorkerCard
+        projectId={projectId}
+        worker={workerCard}
+        open={!!workerCard}
+        onClose={() => setWorkerCard(null)}
+        isWriter={isWriter}
+        companies={companies}
+        onEditWorker={(w) => { setWorkerCard(null); setWorkerForm({ open: true, record: w }); }}
+        onAddTraining={(w) => {
+          setWorkerCard(null);
+          setWorkerChain(null);
+          setTrainingCardLock(w);
+          setTrainingForm({ open: true, record: null });
+        }}
       />
 
       {activeTab === 'documents' && selectedIds.size > 0 && (
@@ -944,12 +967,16 @@ function TasksList({ items, isWriter, onEdit }) {
   );
 }
 
-function WorkersList({ items, isWriter, onEdit }) {
+function WorkersList({ items, isWriter, onEdit, onOpenCard }) {
   if (!items?.length) return <EmptyState icon={Users} text="אין עובדים רשומים" />;
   return (
     <ul className="divide-y divide-slate-100">
       {items.map((w) => (
-        <li key={w.id} className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50">
+        <li
+          key={w.id}
+          role="button"
+          onClick={() => onOpenCard(w)}
+          className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50 cursor-pointer">
           <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
             <Hammer className="w-5 h-5 text-slate-500" />
           </div>
