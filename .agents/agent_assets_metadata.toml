@@ -564,3 +564,9 @@ id = "l0UZC92SO_ml_VLU6bA16"
 uri = "file://.local/plans/safety-tab-url-back-nav-plan.txt"
 type = "text"
 title = "safety-tab-url-back-nav — תוכנית (⛔ ממתין אישור)"
+
+[[outputs]]
+id = "rHYjstRkD_kVoxH_W1wDT"
+uri = "file://.local/plans/safety-back-arrow-control-plan.txt"
+type = "text"
+title = "safety-back-arrow-control — תוכנית (ממתין תתחיל)"
