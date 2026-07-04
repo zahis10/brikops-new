@@ -1,87 +1,92 @@
 ========================================================================
-REVIEW — BATCH safety-global-add-chooser
-  כפתור "+ הוסף" גלובלי אחד → דיאלוג בוחר 5-אפשרויות
+REVIEW — BATCH safety-tab-url-back-nav
+  טאב הבטיחות מסונכרן ל-URL (?tab=) כדי ש-BACK יחזיר לטאב הקודם
 ========================================================================
 STATUS: ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 Date: 2026-07-03 · Branch: staging · Scope: FRONTEND-ONLY · Capgo OTA
-Depends on: safety-tabs-top-overview (03eb99d) — כבר על הענף.
-Rollback SHA: 03eb99d (HEAD לפני העריכה)
+Depends on: safety-tabs-top-overview + global-add-chooser (c5ab86b) — על הענף.
+Rollback SHA: c5ab86b (HEAD לפני העריכה)
 קבצים (1, git diff --stat):
-  frontend/src/pages/SafetyHomePage.js  (74+ / 9-) = 1 file changed
-UI בלבד — אפס שינוי ב-forms/chain/fetch/authz.
+  frontend/src/pages/SafetyHomePage.js  (12+ / 2-) = 1 file changed
+Routing/state בלבד — אפס נגיעה ב-forms/chain/chooser/fetch/authz/חץ הכותרת.
 
 ------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT RESULTS (read-only) — HEAD 03eb99d
+STEP 0 — PRE-FLIGHT RESULTS (read-only) — HEAD c5ab86b
 ------------------------------------------------------------------------
-0.1 ✅ בלוק ה-"+" @358-373: תנאי activeTab !== 'overview' @358; ענפי onClick
-    פר-טאב @362-366; מפת תוויות @371 — כולם הוחלפו.
-0.2 ✅ 5 setters קיימים @70-74 (doc/worker/task/training/incident). אין טפסים חדשים.
-0.3 ✅ chrome של ask-dialog מ-2d @659-695 (Dialog modal={false}, DialogContent
-    dir="rtl" [&>button]:hidden, onInteractOutside/onPointerDownOutside
-    preventDefault) — שוכפל verbatim. Dialog* @16, Button @18.
-0.4 ✅ אייקונים ב-lucide import @4-5: ShieldAlert/Clock/Users/GraduationCap/
-    AlertCircle + Plus — כולם קיימים. אין הוספה.
+0.1 ✅ import @2: { useParams, useNavigate } → נוסף useSearchParams.
+0.2 ✅ activeTab state @58 useState('overview'); צרכנים: effect ניקוי
+    selectedIds @204-205 ([activeTab]); Tabs value/onValueChange @398;
+    KPI onClicks @505/513/521/535; תנאי bulk bar @625 — כולם משתמשים
+    ב-activeTab/setActiveTab (שמות נשמרו זהים → עובדים ללא שינוי).
+0.3 ✅ אין query-params קיימים בקובץ (grep ריק) → ?tab= בבעלות בטוחה.
+0.4 ✅ react-router-dom ^7.5.1 → useSearchParams זמין; setSearchParams=PUSH.
 
 ------------------------------------------------------------------------
 מה בוצע
 ------------------------------------------------------------------------
-CHANGE 1 — State: הוסף const [addChooserOpen, setAddChooserOpen]=useState(false) @75.
-
-CHANGE 2 — כפתור ה-"+" (@362-371) → קבוע:
-  · {isWriter && ( ... )} — הוסרה החרגת overview → גלוי בכל הטאבים כולל סקירה.
-  · onClick={() => setAddChooserOpen(true)} — נמחקו ענפי ה-if הפר-טאביים.
-  · תווית קבועה "הוסף" — נמחקה מפת התוויות הפר-טאבית.
-  · מיקום/עיצוב הכפתור בכותרת — ללא שינוי (אין FAB).
-
-CHANGE 3 — דיאלוג בוחר חדש @695-763 (משקף chrome של 2d):
-  Dialog open={addChooserOpen} onOpenChange no-op modal={false};
-  DialogContent dir="rtl" max-w-sm [&>button]:hidden + outside prevented.
-  כותרת "מה להוסיף?". 5 כפתורי outline full-width (justify-start gap-3
-  min-h-[48px]), icon+תווית, כל אחד setAddChooserOpen(false) ואז פותח את הטופס:
-    ליקוי ShieldAlert→setDocForm; משימה Clock→setTaskForm;
-    עובד Users→setWorkerForm; הדרכה GraduationCap→setTrainingForm;
-    אירוע AlertCircle→setIncidentForm — כולם record:null.
-  Footer "ביטול" (outline) → setAddChooserOpen(false).
-  שרשרת עובד→הדרכות (2d): "עובד" פותח את אותו worker form; onSaved שלו
-  (create path קובע workerChain) — לא נגעתי, השרשרת נדלקת כרגיל.
-
-CHANGE 4 — שום דבר אחר: טפסים, שרשרת, רשימות, טאבים, סינון, תוכן סקירה — ללא שינוי.
+CHANGE 1 — Import @2: הוסף useSearchParams.
+CHANGE 2 — const מודול @38: VALID_TABS = ['overview','documents','tasks',
+  'workers','trainings','incidents'] (מחוץ לרכיב → לא נוצר מחדש בכל render).
+CHANGE 3 — החלפת useState('overview') @58 בערך נגזר-URL (@62-71):
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = searchParams.get('tab');
+  const activeTab = VALID_TABS.includes(rawTab) ? rawTab : 'overview';
+  const setActiveTab = (t) => {
+    if (t === activeTab) return;
+    const next = new URLSearchParams(searchParams);
+    if (t === 'overview') next.delete('tab'); else next.set('tab', t);
+    setSearchParams(next);              // PUSH (בלי replace) — back-walkable
+  };
+  · השמות activeTab/setActiveTab זהים → Tabs/KPI/effect/bulk ללא שינוי.
+CHANGE 4 — effect ניקוי selectedIds/filter נשארים keyed על activeTab →
+  מגיבים גם ל-back/forward pops. חץ הכותרת/chooser/טפסים/שרשרת — ללא נגיעה.
 
 ------------------------------------------------------------------------
-CODE REVIEW (architect) — PASS, אין חוסמים
+סטייה מדודה מהקוד המילולי של הספק (אושרה ע"י architect)
 ------------------------------------------------------------------------
-אומת: 3 השינויים תקינים; 5 האפשרויות ממופות לטפסים הנכונים עם record:null;
-כפתור writer-only גלוי בכל הטאבים כולל סקירה; מפת התוויות/הענפים הישנים הוסרו
-ממסלול הכפתור; chrome הדיאלוג עקבי לכללי הבית (modal={false}, הקשה בחוץ לא
-סוגרת, dir rtl); שרשרת 2d נשמרת (עובד→worker form→onSaved→workerChain);
-אין רגרסיות JSX/key/logic ואין state לא-בשימוש.
+הספק כתב במפורש: `if (t==='overview') setSearchParams({}); else
+setSearchParams({ tab: t });`. architect (סבב 1) סימן FAIL: זה דורס query-
+params אחרים (URL clobber), בניגוד לדרישה (e) "no other query params clobbered"
+ולקח הבית "URL שורד".
+תיקון שיושם: שכפול הפרמטרים הקיימים (new URLSearchParams(searchParams)) +
+עדכון/מחיקה של המפתח 'tab' בלבד.
+· למה זה בטוח ותואם ספק: STEP 0.3 אימת שאין כיום params אחרים במסלול הזה →
+  ההתנהגות היום זהה לחלוטין לספק (?tab=... בלבד; overview=URL נקי).
+· לא חוצה אף DO NOT: אינו "persist filters" (לא מוסיף סינון ל-URL), לא נוגע
+  בעמודים אחרים, לא ב-getProjectBackPath/returnTo, לא ב-window.history.
+· semantics: עדיין PUSH (בלי {replace:true}) → back-walkable כנדרש.
+→ אם זאהי מעדיף את הקוד המילולי המדויק של הספק, זו סטייה יחידה להחזרה.
+
+------------------------------------------------------------------------
+CODE REVIEW (architect) — סבב 1 FAIL (clobber) → תוקן → סבב 2 PASS
+------------------------------------------------------------------------
+אומת סבב 2: שימור params תקין (set/delete רק 'tab'); PUSH/back-walkable שלם;
+?tab=zzz נופל בבטחה ל-overview; effect ניקוי selectedIds תקין גם ב-pops;
+useSearchParams ב-top-level, אין בעיות hooks-order/stale-state; אין רגרסיות.
 
 ------------------------------------------------------------------------
 VERIFY
 ------------------------------------------------------------------------
 V1 ✅ Babel parse (jsx) — OK.
-V2 ✅ greps:
-   · addChooserOpen state @75.
-   · title "מה להוסיף?" @700.
-   · 5 setters מחווטים @707/716/725/734/743 (doc/task/worker/training/incident).
-   · "+" @359 {isWriter && ( — בלי החרגת overview. (יתר {isWriter && ( הם
-     בתוך רכיבי הרשימות, לא רלוונטיים.)
-   · מפת התוויות הישנה הוסרה — ה-match היחיד @678 הוא כפתור "הוסף הדרכה" של
-     דיאלוג השרשרת (לגיטימי, לא המפה).
-   · תווית קבועה "הוסף" @366.
-V5b ✅ git diff --stat = קובץ אחד (74+ / 9-).
+V2 ✅ greps: useSearchParams מיובא @2 + בשימוש @62; VALID_TABS @38 + guard @64;
+   activeTab נגזר @64 + setter @65; new URLSearchParams(searchParams) @67 +
+   next.delete/set + setSearchParams(next); useState('overview') הישן הוסר;
+   אין {replace:true}; אין setSearchParams({tab})/({}) דורסים.
+V6b ✅ git diff --stat = קובץ אחד (12+ / 2-).
 
 ⚠ דורש staging חי (אחרי deploy אצל זאהי):
-V3 ⭐ בסקירה: "+ הוסף" גלוי → בוחר → עובד → נפתח worker form (ושרשרת ההדרכות
-   נדלקת אחרי שמירה); בליקויים: בוחר → ליקוי פותח את טופס הליקוי; "ביטול"
-   סוגר נקי; הקשה בחוץ לא סוגרת.
-V4 Non-writer: אין "+" בשום מקום.
-V5 Regression: רשימות/טפסים פר-טאב ללא שינוי.
+V3 ⭐ תרחיש זאהי: בטיחות (URL נקי, סקירה) → KPI "ליקויים פתוחים" →
+   ?tab=documents, רשימה נפתחת → BACK → סקירה (URL נקי) → BACK → יציאה ל-dashboard.
+V4 סרגל: סקירה→עובדים→הדרכות→back→עובדים→back→סקירה.
+V5 Deep link: .../safety?tab=trainings ישר על הדרכות; ?tab=zzz → סקירה בלי crash.
+V5b שימור params: .../safety?foo=1&tab=tasks → החלפת טאב → foo=1 נשמר.
+V6 Regression: bulk-select מתנקה ביציאה מ-documents (גם דרך back-pop);
+   chooser "+", טפסים, שרשרת, KPI tap-through — הכל עובד.
 
 ------------------------------------------------------------------------
 פתוח לזאהי
 ------------------------------------------------------------------------
 - אזהרה: אם .git/index.lock ריק/תקוע — `rm -f .git/index.lock` לפני commit.
 - commit מוצע:
-  feat(safety): global add button with 5-option chooser
+  fix(safety): sync active tab to URL so back returns to the previous tab
 ========================================================================

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
   Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter, Plus, Pencil, Camera, FileText,
@@ -35,6 +35,7 @@ import {
 // Writers = the two project roles the safety backend accepts for create/edit
 // (safety_router.py SAFETY_WRITERS). The "+"/edit affordances gate on these.
 const SAFETY_WRITERS = ['project_manager', 'management_team'];
+const VALID_TABS = ['overview', 'documents', 'tasks', 'workers', 'trainings', 'incidents'];
 const SEVERITY_COLOR = {
   '1': 'bg-blue-100 text-blue-800',
   '2': 'bg-amber-100 text-amber-800',
@@ -55,7 +56,16 @@ export default function SafetyHomePage() {
   const [flagOff, setFlagOff] = useState(false);
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('overview');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = searchParams.get('tab');
+  const activeTab = VALID_TABS.includes(rawTab) ? rawTab : 'overview';
+  const setActiveTab = (t) => {
+    if (t === activeTab) return;
+    const next = new URLSearchParams(searchParams);
+    if (t === 'overview') next.delete('tab');
+    else next.set('tab', t);
+    setSearchParams(next);
+  };
 
   // Part 5 — filter / selection / bulk state
   const [filter, setFilter] = useState(EMPTY_FILTER);
