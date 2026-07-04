@@ -1,92 +1,79 @@
 ========================================================================
-REVIEW — BATCH safety-tab-url-back-nav
-  טאב הבטיחות מסונכרן ל-URL (?tab=) כדי ש-BACK יחזיר לטאב הקודם
+REVIEW — BATCH safety-back-arrow-control
+  חץ ה-BACK בכותרת הבטיחות → /control?workMode=structure (ולא /dashboard)
 ========================================================================
 STATUS: ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-Date: 2026-07-03 · Branch: staging · Scope: FRONTEND-ONLY · Capgo OTA
-Depends on: safety-tabs-top-overview + global-add-chooser (c5ab86b) — על הענף.
-Rollback SHA: c5ab86b (HEAD לפני העריכה)
+Date: 2026-07-03 · Branch: staging (NOT main) · Severity: P2
+Scope: FRONTEND-ONLY · Capgo OTA · קובץ 1 · 3 שורות
+Rollback SHA: e774fca (= HEAD לפני העריכה, אומת ב-STEP 0)
 קבצים (1, git diff --stat):
-  frontend/src/pages/SafetyHomePage.js  (12+ / 2-) = 1 file changed
-Routing/state בלבד — אפס נגיעה ב-forms/chain/chooser/fetch/authz/חץ הכותרת.
+  frontend/src/pages/SafetyHomePage.js  (3+ / 3-) = 1 file changed
+שינוי ניתוב בלבד — אפס נגיעה ב-?tab=/טפסים/שרשרת/chooser/KPI/tabs/fetch/authz.
 
 ------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT RESULTS (read-only) — HEAD c5ab86b
+WHY — anti-pattern של CLAUDE.md, הבטיחות פוספסה בסבב הקודם
 ------------------------------------------------------------------------
-0.1 ✅ import @2: { useParams, useNavigate } → נוסף useSearchParams.
-0.2 ✅ activeTab state @58 useState('overview'); צרכנים: effect ניקוי
-    selectedIds @204-205 ([activeTab]); Tabs value/onValueChange @398;
-    KPI onClicks @505/513/521/535; תנאי bulk bar @625 — כולם משתמשים
-    ב-activeTab/setActiveTab (שמות נשמרו זהים → עובדים ללא שינוי).
-0.3 ✅ אין query-params קיימים בקובץ (grep ריק) → ?tab= בבעלות בטוחה.
-0.4 ✅ react-router-dom ^7.5.1 → useSearchParams זמין; setSearchParams=PUSH.
+CLAUDE.md: חצי BACK ב-/handover ו-/org-billing נותבו ל-
+/control?workMode=structure במקום /projects/:id השבור. אותו sweep מעולם
+לא נגע ב-SafetyHomePage → חץ הבטיחות עדיין הוביל ל-/dashboard השגוי.
+נקודת הכניסה = ProjectControlPage (navigate → /safety), לכן חזרה ל-
+/control?workMode=structure = בדיוק "חזרה למאיפה שהמשתמש הגיע".
+העמודים האחים מקודדים את היעד ליטרלית (Handover/ProjectDashboard/OrgBilling)
+— התאמנו אליהם, בלי helper.
 
 ------------------------------------------------------------------------
-מה בוצע
+STEP 0 — PRE-FLIGHT RESULTS (read-only) — HEAD e774fca
 ------------------------------------------------------------------------
-CHANGE 1 — Import @2: הוסף useSearchParams.
-CHANGE 2 — const מודול @38: VALID_TABS = ['overview','documents','tasks',
-  'workers','trainings','incidents'] (מחוץ לרכיב → לא נוצר מחדש בכל render).
-CHANGE 3 — החלפת useState('overview') @58 בערך נגזר-URL (@62-71):
-  const [searchParams, setSearchParams] = useSearchParams();
-  const rawTab = searchParams.get('tab');
-  const activeTab = VALID_TABS.includes(rawTab) ? rawTab : 'overview';
-  const setActiveTab = (t) => {
-    if (t === activeTab) return;
-    const next = new URLSearchParams(searchParams);
-    if (t === 'overview') next.delete('tab'); else next.set('tab', t);
-    setSearchParams(next);              // PUSH (בלי replace) — back-walkable
-  };
-  · השמות activeTab/setActiveTab זהים → Tabs/KPI/effect/bulk ללא שינוי.
-CHANGE 4 — effect ניקוי selectedIds/filter נשארים keyed על activeTab →
-  מגיבים גם ל-back/forward pops. חץ הכותרת/chooser/טפסים/שרשרת — ללא נגיעה.
+0.1 ✅ grep "/dashboard`)" = בדיוק 3 hits כצפוי:
+      @218 SafetyForbidden onBack · @219 SafetyFlagOff onBack · @357 חץ הכותרת.
+0.2 ✅ אין getProjectBackPath בקובץ → יעד ליטרל קבוע כמו העמודים האחים.
+0.3 ✅ control?workMode=structure עדיין לא קיים (0 hits) — נקי.
 
 ------------------------------------------------------------------------
-סטייה מדודה מהקוד המילולי של הספק (אושרה ע"י architect)
+מה בוצע — 3 החלפות, יעד זהה (replace_all על substring)
 ------------------------------------------------------------------------
-הספק כתב במפורש: `if (t==='overview') setSearchParams({}); else
-setSearchParams({ tab: t });`. architect (סבב 1) סימן FAIL: זה דורס query-
-params אחרים (URL clobber), בניגוד לדרישה (e) "no other query params clobbered"
-ולקח הבית "URL שורד".
-תיקון שיושם: שכפול הפרמטרים הקיימים (new URLSearchParams(searchParams)) +
-עדכון/מחיקה של המפתח 'tab' בלבד.
-· למה זה בטוח ותואם ספק: STEP 0.3 אימת שאין כיום params אחרים במסלול הזה →
-  ההתנהגות היום זהה לחלוטין לספק (?tab=... בלבד; overview=URL נקי).
-· לא חוצה אף DO NOT: אינו "persist filters" (לא מוסיף סינון ל-URL), לא נוגע
-  בעמודים אחרים, לא ב-getProjectBackPath/returnTo, לא ב-window.history.
-· semantics: עדיין PUSH (בלי {replace:true}) → back-walkable כנדרש.
-→ אם זאהי מעדיף את הקוד המילולי המדויק של הספק, זו סטייה יחידה להחזרה.
+בכל 3 המקומות:
+  navigate(`/projects/${projectId}/dashboard`)
+  → navigate(`/projects/${projectId}/control?workMode=structure`)
+CHANGE 1 — @357 חץ הכותרת onClick (הבאג הראשי).
+CHANGE 2 (FOLD-IN, Boy Scout — מסומן לזאהי):
+  @218 SafetyForbidden onBack + @219 SafetyFlagOff onBack — אותו באג בדיוק
+  במסכי fallback (flag-off/forbidden). ניתובם ל-control עקבי עם החץ הראשי.
+  → אם זאהי רוצה רק את חץ הכותרת: להחזיר את @218+@219 ל-/dashboard.
 
 ------------------------------------------------------------------------
-CODE REVIEW (architect) — סבב 1 FAIL (clobber) → תוקן → סבב 2 PASS
+DO NOT — נשמרו
 ------------------------------------------------------------------------
-אומת סבב 2: שימור params תקין (set/delete רק 'tab'); PUSH/back-walkable שלם;
-?tab=zzz נופל בבטחה ל-overview; effect ניקוי selectedIds תקין גם ב-pops;
-useSearchParams ב-top-level, אין בעיות hooks-order/stale-state; אין רגרסיות.
+✅ לא נגענו בלוגיקת ?tab= (e774fca) — נשארה זהה (activeTab נגזר מ-useSearchParams).
+✅ לא הוכנס getProjectBackPath / role-aware — ליטרל קבוע כמו העמודים האחים.
+✅ שום דבר אחר בעמוד לא שונה (רק 3 יעדי ניווט).
+
+------------------------------------------------------------------------
+CODE REVIEW (architect, includeGitDiff) — PASS
+------------------------------------------------------------------------
+אומת: היעד תוקן ב-3 האתרים בלבד; אין יותר "/dashboard" בקובץ; אין
+getProjectBackPath; לוגיקת ?tab= נשארה ללא שינוי; אין רגרסיות/בעיות hooks;
+שינוי ניתוב בלבד ללא נגיעה ב-auth/data.
 
 ------------------------------------------------------------------------
 VERIFY
 ------------------------------------------------------------------------
 V1 ✅ Babel parse (jsx) — OK.
-V2 ✅ greps: useSearchParams מיובא @2 + בשימוש @62; VALID_TABS @38 + guard @64;
-   activeTab נגזר @64 + setter @65; new URLSearchParams(searchParams) @67 +
-   next.delete/set + setSearchParams(next); useState('overview') הישן הוסר;
-   אין {replace:true}; אין setSearchParams({tab})/({}) דורסים.
-V6b ✅ git diff --stat = קובץ אחד (12+ / 2-).
+V2 ✅ grep "/dashboard`)" → 0 hits; grep "control?workMode=structure" → 3 hits
+   (@218/@219/@357).
+V5 ✅ git diff --stat = קובץ אחד (3+ / 3-).
 
 ⚠ דורש staging חי (אחרי deploy אצל זאהי):
-V3 ⭐ תרחיש זאהי: בטיחות (URL נקי, סקירה) → KPI "ליקויים פתוחים" →
-   ?tab=documents, רשימה נפתחת → BACK → סקירה (URL נקי) → BACK → יציאה ל-dashboard.
-V4 סרגל: סקירה→עובדים→הדרכות→back→עובדים→back→סקירה.
-V5 Deep link: .../safety?tab=trainings ישר על הדרכות; ?tab=zzz → סקירה בלי crash.
-V5b שימור params: .../safety?foo=1&tab=tasks → החלפת טאב → foo=1 נשמר.
-V6 Regression: bulk-select מתנקה ביציאה מ-documents (גם דרך back-pop);
-   chooser "+", טפסים, שרשרת, KPI tap-through — הכל עובד.
+V3 ⭐ ב-/safety וגם /safety?tab=documents → הקשה על חץ הכותרת → נחיתה על
+   /projects/{id}/control?workMode=structure (לא /dashboard).
+V3b מסכי forbidden/flag-off → onBack מוביל לאותו control URL.
+V4 in-tab BACK (דפדפן) מ-batch ?tab= עדיין עובד: KPI→tab→back→סקירה
+   (לא מושפע מ-batch זה).
 
 ------------------------------------------------------------------------
 פתוח לזאהי
 ------------------------------------------------------------------------
-- אזהרה: אם .git/index.lock ריק/תקוע — `rm -f .git/index.lock` לפני commit.
+- אזהרה: אם .git/index.lock ריק/תקוע → `rm -f .git/index.lock` לפני commit.
 - commit מוצע:
-  fix(safety): sync active tab to URL so back returns to the previous tab
+  fix(safety): back arrow returns to /control?workMode=structure instead of /dashboard
 ========================================================================

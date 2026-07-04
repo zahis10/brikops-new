@@ -215,8 +215,8 @@ export default function SafetyHomePage() {
   }, [activeTab]);
 
   if (loading) return <SafetySkeleton />;
-  if (forbidden) return <SafetyForbidden onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
-  if (flagOff) return <SafetyFlagOff onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
+  if (forbidden) return <SafetyForbidden onBack={() => navigate(`/projects/${projectId}/control?workMode=structure`)} />;
+  if (flagOff) return <SafetyFlagOff onBack={() => navigate(`/projects/${projectId}/control?workMode=structure`)} />;
 
   const b = scoreData?.breakdown || {};
   const caps = b.caps || {};
@@ -354,7 +354,7 @@ export default function SafetyHomePage() {
     <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
       <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-2 sticky top-0 z-20">
         <button
-          onClick={() => navigate(`/projects/${projectId}/dashboard`)}
+          onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)}
           className="p-2 rounded-lg hover:bg-slate-100"
           aria-label="חזור"
           type="button"
