@@ -570,3 +570,9 @@ id = "rHYjstRkD_kVoxH_W1wDT"
 uri = "file://.local/plans/safety-back-arrow-control-plan.txt"
 type = "text"
 title = "safety-back-arrow-control — תוכנית (ממתין תתחיל)"
+
+[[outputs]]
+id = "fB_HzMsNvMuTENiTwrOVf"
+uri = "file://.local/plans/safety-worker-card-plan.txt"
+type = "text"
+title = "safety-worker-card — תוכנית (ממתין תתחיל)"
