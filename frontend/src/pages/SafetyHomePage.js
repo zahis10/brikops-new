@@ -1014,7 +1014,10 @@ export default function SafetyHomePage() {
         tour={tourRunner}
         open={!!tourRunner}
         isWriter={isWriter}
-        onChanged={() => reloadTours()}
+        onChanged={(tr) => setTours((prev) => ({
+          ...prev,
+          items: (prev.items || []).map((x) => (x.id === tr.id ? tr : x)),
+        }))}
         onClose={() => { setTourRunner(null); reloadTours(); }}
       />
     </div>
@@ -1027,8 +1030,46 @@ function ToursList({ items = [], isWriter, onOpen, onCreate }) {
     pending_signature: 'bg-amber-100 text-amber-800',
     signed: 'bg-green-100 text-green-800',
   };
+
+  // Cemento-style month grouping (spec 6g). With 2-3 tours/day a flat list
+  // hits 60-90 rows/month — group by "YYYY-MM" (server already sorts DESC).
+  const groups = {};                       // key "YYYY-MM" → tours[]
+  for (const tr of items) {
+    const key = (tr.tour_date || '').slice(0, 7) || 'unknown';
+    (groups[key] = groups[key] || []).push(tr);
+  }
+  const monthLabel = (key) => {
+    const [y, m] = key.split('-').map(Number);
+    if (!y || !m) return 'ללא תאריך';
+    return new Date(y, m - 1, 1).toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
+  };
+  const monthKeys = Object.keys(groups).sort().reverse();   // newest month first
+
+  // Card markup unchanged from the flat list — only the wrapping changed.
+  const renderCard = (tr) => {
+    const title = tr.tour_type === 'custom' ? (tr.custom_name || 'סיור מותאם') : (TOUR_TYPE_HE[tr.tour_type] || 'סיור');
+    const total = (tr.items || []).length;
+    const answered = (tr.items || []).filter((it) => it.result != null).length;
+    return (
+      <button
+        key={tr.id}
+        type="button"
+        onClick={() => onOpen(tr)}
+        className="w-full text-right rounded-xl border border-slate-200 bg-white p-4 hover:bg-slate-50 transition-colors flex items-start justify-between gap-3"
+      >
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-slate-800 truncate">{title}</p>
+          <p className="text-xs text-slate-500 mt-0.5">{tr.tour_date} · נענו {answered}/{total}</p>
+        </div>
+        <span className={`shrink-0 text-[11px] font-medium rounded-full px-2 py-0.5 ${TOUR_STATUS_BADGE[tr.status] || TOUR_STATUS_BADGE.draft}`}>
+          {TOUR_STATUS_HE[tr.status] || tr.status}
+        </span>
+      </button>
+    );
+  };
+
   return (
-    <div className="p-4 space-y-3">
+    <div className="p-4 space-y-4">
       {isWriter && (
         <button
           type="button"
@@ -1041,25 +1082,30 @@ function ToursList({ items = [], isWriter, onOpen, onCreate }) {
       {items.length === 0 ? (
         <div className="text-center py-12 text-slate-400 text-sm">אין סיורים עדיין</div>
       ) : (
-        items.map((tr) => {
-          const title = tr.tour_type === 'custom' ? (tr.custom_name || 'סיור מותאם') : (TOUR_TYPE_HE[tr.tour_type] || 'סיור');
-          const total = (tr.items || []).length;
-          const answered = (tr.items || []).filter((it) => it.result != null).length;
+        monthKeys.map((key) => {
+          const grp = groups[key];
+          // The color IS the status (like Cemento) → chip shows only the number.
+          const pendingN = grp.filter((t) => t.status === 'pending_signature').length;
+          const draftN = grp.filter((t) => t.status === 'draft').length;
+          const signedN = grp.filter((t) => t.status === 'signed').length;
           return (
-            <button
-              key={tr.id}
-              type="button"
-              onClick={() => onOpen(tr)}
-              className="w-full text-right rounded-xl border border-slate-200 bg-white p-4 hover:bg-slate-50 transition-colors flex items-start justify-between gap-3"
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-slate-800 truncate">{title}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{tr.tour_date} · נענו {answered}/{total}</p>
+            <div key={key} className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-slate-700">{monthLabel(key)}</span>
+                {pendingN > 0 && (
+                  <span className="text-[11px] font-medium rounded-full px-2 py-0.5 bg-amber-100 text-amber-800">{pendingN}</span>
+                )}
+                {draftN > 0 && (
+                  <span className="text-[11px] font-medium rounded-full px-2 py-0.5 bg-slate-100 text-slate-600">{draftN}</span>
+                )}
+                {signedN > 0 && (
+                  <span className="text-[11px] font-medium rounded-full px-2 py-0.5 bg-green-100 text-green-800">{signedN}</span>
+                )}
               </div>
-              <span className={`shrink-0 text-[11px] font-medium rounded-full px-2 py-0.5 ${TOUR_STATUS_BADGE[tr.status] || TOUR_STATUS_BADGE.draft}`}>
-                {TOUR_STATUS_HE[tr.status] || tr.status}
-              </span>
-            </button>
+              <div className="space-y-3">
+                {grp.map(renderCard)}
+              </div>
+            </div>
           );
         })
       )}

@@ -1,102 +1,72 @@
 ================================================================================
-BrikOps — BATCH safety-p2-4b — Safety Tours UI (סיורי בטיחות — צד לקוח)
-Branch: staging  |  Base HEAD: 324776e  |  Date: 2026-07-05
+BrikOps — BATCH safety-p2-4b-fix1 — ToursList month grouping + no per-tap refetch
+Branch: staging  |  Base HEAD: ecfa6af  |  Date: 2026-07-05
 ================================================================================
 
 מה נעשה
 -------
-נבנה ה-UI המלא לסיורי הבטיחות שה-backend שלהם נבנה ב-4a. משתמש בעל הרשאה
-(project_manager / management_team) יכול ליצור סיור, לצעוד בצ'קליסט ולסמן כל
-פריט תקין/נכשל/לא-רלוונטי. פריט שנכשל פותח פאנל inline (חומרה חובה, הערה,
-תמונות, כותרת ליקוי) — השמירה פותחת ליקוי מקושר בצד השרת. בסוף אפשר להגיש
-לחתימה (נעילה) ולפתוח מחדש. החתימות עצמן = batch 4c.
+תיקון קטן ל-UI של סיורי הבטיחות (4b). קובץ אחד בלבד: SafetyHomePage.js, frontend
+בלבד. (1) ToursList עברה מרשימה שטוחה לקיבוץ לפי חודש בסגנון Cemento (spec 6g
+שדולג ב-4b). (2) בזמן צעידה בסיור, כל הקשה על פריט הפסיקה לגרור refetch מלא של
+כל רשימת הסיורים.
 
 STEP 0 — PRE-FLIGHT
 -------------------
-HEAD=324776e. כל העוגנים תאמו. אומת מול חוזי ה-backend של 4a (schemas.py +
-safety_router.py) לפני כתיבת כל שדה.
+HEAD = ecfa6af (=origin/staging). עוגנים תואמים:
+- function ToursList @1024
+- onChanged={() => reloadTours()} @1017
 
-STEP 1 — backend guard (safety_router.py, add_tour_item @1579)
--------------------------------------------------------------
-add_tour_item עכשיו לוכד upd = update_one(...); אם upd.matched_count == 0
-(סיור עבר מ-draft בגלל submit מקביל אחרי הקריאה בראש ה-handler) → 409
-"לא ניתן לערוך סיור שהוגש", לפני ה-after/audit. תואם את ה-guard הקיים ב-
-update_tour_item (מונע 200 + audit "item_added" שקרי). זה השינוי היחיד ב-backend.
-
-STEP 2 — api.js (safetyService @587+)
--------------------------------------
-7 מתודות tour: listTours(params) / createTour / getTour / updateTourItem /
-addTourItem / submitTour / reopenTour. אין deleteTour (מכוון). אותה תבנית
-axios + getAuthHeader כמו שאר ה-service. העלאת תמונות משתמשת ב-uploadDocumentFile
-הקיים (מפתח קבוע stored_ref בלבד ב-photo_urls).
-
-STEP 3 — safetyLabels.js
-------------------------
-TOUR_TYPE_HE (officer_monthly/assistant_morning/assistant_evening/custom) +
-TOUR_STATUS_HE (draft/pending_signature/signed). תואם enums של schemas.py.
-
-STEP 4 — SafetyTourCreateDialog.js (חדש)
-----------------------------------------
-בחירת סוג (4 כפתורים), שם חופשי ל-custom (חובה, מראה מקדים ל-422 של השרת),
-תאריך (ברירת מחדל = היום מקומי, לא UTC). שולח {tour_type, tour_date, custom_name?}.
-modal={false} + [&>button]:hidden + חסימת interact/pointer outside (chrome
-של ה-add-chooser).
-
-STEP 5 — SafetyTourRunner.js (חדש — הליבה)
-------------------------------------------
-- ראש: כותרת (custom_name/label), תאריך, badge סטטוס, "נענו X מתוך Y", כפתור סגירה.
-- כל פריט: label + pill קטגוריה + 3 כפתורים תקין/נכשל/לא-רלוונטי (min-h 44px).
-- תוצאות SERVER-AUTHORITATIVE: אין flip אופטימי מקומי — pass/na שולחים PATCH
-  {result}; בכישלון השורה פשוט נשארת על ערך השרת (אין "בחירה תקועה"). pendingItemId
-  חוסם את השורה ומראה spinner בזמן קריאה.
-- נכשל = פאנל inline (לא דיאלוג מקונן): chips חומרה (חובה — מראה מקדים ל-422),
-  הערה, העלאת תמונות (compressImage→upload→stored_ref, תצוגה דרך photo_display_urls),
-  כותרת ליקוי (placeholder = "סיור בטיחות: <label>"). שמירה שולחת
-  {result:'fail', severity, note?, photo_urls, defect_title?}.
-- re-init effect keyed על [open, tour?.id] בלבד — כדי שה-echo של onChanged
-  (runner→parent→prop) לא ימחק state מקומי (פאנל פתוח / טופס) בכל שמירה.
-- הוספת פריט ad-hoc (label 2-200 + קטגוריה) בתוך draft.
-- footer לפי סטטוס: draft → "הגש לחתימה" (חסום עד שכל הפריטים נענו, עם
-  "נותרו X פריטים ללא מענה") + דיאלוג אישור (Dialog נפרד, לא window.confirm) ;
-  pending_signature → הודעה + "פתח מחדש לעריכה" ; signed → "הסיור חתום".
-- readOnly = t.status !== 'draft' || !isWriter — חוסם כל עריכה/כפתורים.
-
-STEP 6 — SafetyHomePage.js (wiring)
+STEP 1 — ToursList: קיבוץ לפי חודש
 -----------------------------------
-- imports: ClipboardList (lucide), 2 הקומפוננטות החדשות, TOUR_TYPE_HE/TOUR_STATUS_HE.
-- VALID_TABS: נוסף 'tours' (אחרי 'observations').
-- state: tours / tourRunner / tourCreateOpen.
-- Promise.all הראשי: נוסף listTours({limit:100}) fail-soft (__err) + setTours.
-- aux filter effect: early-return גם ל-'tours' (אין סינון צד-לקוח).
-- gate כפתור הסינון: מוסתר גם ב-'tours'.
-- TabsTrigger "סיורים (N)" + TabsContent → ToursList (רשימה inline: כרטיס לכל
-  סיור עם כותרת/תאריך/נענו X/Y/badge סטטוס + כפתור "סיור חדש" ל-writer).
-- add-chooser: כפתור 7 "סיור" (ClipboardList) → פותח את דיאלוג היצירה.
-- mount: SafetyTourCreateDialog (onCreated → reloadTours + קפיצה ישירה ל-runner)
-  + SafetyTourRunner (onChanged/onClose → reloadTours). reloadTours() נוסף.
+- groups: key "YYYY-MM" מתוך tour_date.slice(0,7) (ריק → "unknown").
+- monthLabel: he-IL long month + year (למשל "יולי 2026"); fallback "ללא תאריך".
+- סדר: Object.keys(groups).sort().reverse() → החודש החדש ביותר ראשון (נכון כי
+  המפתחות מרופדי-אפסים YYYY-MM).
+- לכל קבוצה: שורת כותרת = monthLabel (text-sm font-semibold text-slate-700) +
+  chips ספירה באותה שורה, רק כש-count>0 — הצבע הוא הסטטוס, התוכן = המספר בלבד:
+    * pending_signature → amber (bg-amber-100 text-amber-800)
+    * draft → slate (bg-slate-100 text-slate-600)
+    * signed → green (bg-green-100 text-green-800)
+- כרטיסי הסיור: markup זהה לחלוטין לרשימה השטוחה (חולץ ל-renderCard). מיון פנימי
+  כפי שהשרת מחזיר (tour_date DESC).
+- כפתור "סיור חדש" + ה-empty state נשארו זהים בדיוק.
+
+STEP 2 — הפסקת refetch על כל tap
+--------------------------------
+mount של SafetyTourRunner: onChanged הוחלף מ-() => reloadTours() למיזוג מקומי
+של סיור בודד ללא רשת:
+    onChanged={(tr) => setTours((prev) => ({
+      ...prev,
+      items: (prev.items || []).map((x) => (x.id === tr.id ? tr : x)),
+    }))}
+onClose נשאר reloadTours() (מכסה drift של יצירה/מחיקה). אין שינוי בתוך
+SafetyTourRunner.js. חוסך 13+ קריאות GET /tours לכל סיור באתרים עם קליטה חלשה.
+
+DO NOT (נשמר)
+-------------
+לא נגעתי ב-SafetyTourRunner.js / SafetyTourCreateDialog.js / api.js / labels /
+backend / טאבים או רכיבים אחרים. markup הכרטיס, ה-wiring של ה-runner, ו-reloadTours
+עצמה — ללא שינוי.
 
 בדיקות
 ------
-- python -m py_compile safety_router.py → OK.
-- craco build (REACT_APP_BACKEND_URL placeholder) → EXIT=0, ללא שגיאות/אזהרות חוסמות.
+- craco build (REACT_APP_BACKEND_URL placeholder, GENERATE_SOURCEMAP=false)
+  → EXIT=0, אפס errors/warnings.
+- Architect review (evaluate_task, includeGitDiff) → PASS. אומת: קיבוץ נכון
+  (sort/reverse על YYYY-MM), לוגיקת ה-chips (count-only, >0), fallback "ללא תאריך",
+  שמירת markup הכרטיס, ומיזוג onChanged ששומר X/Y טרי בכרטיס אחרי סגירת ה-runner
+  (onClose→reloadTours מיישב totals). scope נקי — שום רכיב אחר לא נגע.
 
-Architect review (evaluate_task, includeGitDiff) → PASS.
-- אומת: guard 409, 7 מתודות ה-API, תוויות, דיאלוג היצירה, ה-runner (readOnly,
-  fail inline ללא דיאלוג מקונן, severity חובה, server-authoritative), ה-wiring
-  המלא ב-SafetyHomePage, וה-re-init effect keyed על tour?.id.
-- אבטחה: אין ממצא חמור; גבולות RBAC/readonly נשארים server-authoritative.
-- הצעה לא-חוסמת (לא בוצע, מחוץ ל-scope): getTour על פתיחת ה-runner לרעננות מרבית
-  בשימוש מקבילי גבוה.
+בדיקות מכשיר מומלצות (staging)
+------------------------------
+1. סיורים בשני חודשים → שתי כותרות בעברית, החודש החדש ראשון, chips נכונים.
+2. יצירת סיור → מופיע תחת החודש הנכון אחרי סגירת הדיאלוג.
+3. במהלך צעידה — הקשות על פריטים לא מפעילות GET /tours (רק PATCH לפריט);
+   ההתקדמות ב-runner מתעדכנת; הכרטיס מציג X/Y טרי אחרי סגירה.
+4. פרויקט ריק → empty state + כפתור יצירה ללא שינוי.
 
 השפעה / סיכון
 -------------
-- Frontend: תוסף בלבד — טאב/רכיבים/מתודות חדשים; לא שונתה התנהגות קיימת.
-- Backend: שינוי יחיד ומינימלי (guard 409) שמצמצם באג שקט; ללא שינוי חוזה.
-- אין migration, אין secret, אין תלות חדשה.
-
-לא בוצע (מכוון / מחוץ ל-scope)
-------------------------------
-- חתימות (canvas / status=signed) = batch 4c.
-- deleteTour — לא קיים ב-API ולא נוסף.
-- getTour-on-open (הצעת ה-architect) — אופציונלי, לא נדרש ב-4b.
+Frontend בלבד, קובץ יחיד. תצוגה משופרת + פחות רשת; אין שינוי חוזה, אין backend,
+אין migration, אין תלות/secret חדשים.
 ================================================================================
