@@ -1,71 +1,107 @@
-=====================================================================
-BrikOps — Safety P2 / Step 3: הפרדת "תיעוד" (observation) מ"ליקוי" (defect)
-Batch: safety-p2-step3  |  Branch: staging  |  Date: 2026-07-05
-=====================================================================
+================================================================================
+BrikOps — BATCH safety-p2-4a — Safety Tours (סיורי בטיחות) — BACKEND ONLY
+Branch: staging  |  Base HEAD: 3156a35  |  Date: 2026-07-05
+================================================================================
 
-מה נעשה (סקירה קצרה)
---------------------
-הופרד סוג רשומה חדש "תיעוד" (observation) מתוך רשומות הבטיחות הקיימות
-(defect), באמצעות שדה מבחין (discriminator) בשם `kind` על אוסף
-safety_document. תיעוד = רשומה ללא חומרה/סטטוס/אחראי, לתצוגה בלבד; ליקוי =
-כפי שהיה. רשומות ישנות ללא `kind` נשארות "ליקוי" לכל דבר.
-
-BACKEND
+מה נעשה
 -------
-- schemas.py: SafetyDocumentKind enum + שדה kind ב-SafetyDocument; severity
-  הפך ל-Optional.
-- safety_router.py:
-  * SafetyDocumentCreate: kind + severity Optional + model_validator
-    (ליקוי מחייב severity / תיעוד אוסר severity+status) עם שגיאות בעברית.
-  * create_document: כותב kind ו-severity מותנה.
-  * update_document: guard לתיעוד — 422 אם נשלח severity/status/resolved_at.
-  * list_documents: param kind — defect => kind != observation (כולל legacy),
-    observation => kind == observation.
-  * create_task: חסימת משימה מתקנת כנגד ref שהוא תיעוד.
-  * docs aggregation + score: מדלגים על תיעוד.
-  * Excel/PDF: פיצול ליקויים/תיעוד + גיליון/בלוק "תיעוד" נפרד.
-  * export_safety_filtered: param kind (ברירת מחדל — ללא סינון).
-- services/safety_pdf.py: פיצול ליקויים/תיעוד; סעיף 5 על ליקויים + "5ב. תיעוד";
-  סעיף 8 סיכומי קטגוריה על ליקויים בלבד + שורת סה"כ תיעוד.
-- server.py: backfill אידמפוטנטי ב-startup — kind='defect' לרשומות ללא kind.
+נוסף סוג ישות חדש: "סיור בטיחות" (safety_tours) — הליכת צ'קליסט באתר. כל פריט
+מסומן pass/fail/na; פריט שנכשל (fail) פותח אוטומטית ליקוי (safety_documents,
+kind=defect) מקושר חזרה לסיור דרך tour_id/tour_item_id. חתימות = batch 4c
+(רק סלוטים בסכמה; שום endpoint לא מגדיר status="signed"). Backend בלבד — אפס frontend.
 
-FRONTEND
+STEP 0 — PRE-FLIGHT
+-------------------
+origin/staging=3156a35 (=HEAD). כל העוגנים נקיים; grep "safety_tours" היה ריק
+לפני העבודה. step-3 kind logic (@535/@626) לא נגענו בו.
+
+STEP 1 — schemas.py
+-------------------
+- SafetyTourType (officer_monthly/assistant_morning/assistant_evening/custom)
+- SafetyTourStatus (draft/pending_signature/signed)
+- SafetyTourItem, SafetyTourSignature (reserved 4c), SafetyTour
+- SafetyDocument: +tour_id, +tour_item_id (Optional=None; הנתיב הידני לא נוגע בהם)
+
+STEP 2 — safety_router.py
+-------------------------
+- הרחבת import מ-schemas + הוספת Literal ל-typing import.
+- DEFAULT_TOUR_CHECKLIST (13 פריטים; כל category = ערך SafetyCategory חוקי).
+- _regen_tour_photo_urls (regen presigned per-GET, מפתחות קבועים בלבד).
+- מודלי בקשה: SafetyTourCreate / SafetyTourMetaUpdate / SafetyTourItemUpdate / SafetyTourItemAdd.
+- ולידציית פורמט tour_date (regex \d{4}-\d{2}-\d{2}) גם ב-Create וגם ב-MetaUpdate
+  (כשנשלח) → "תאריך סיור לא תקין" (הערת זהי #1).
+
+STEP 3 — endpoints (8)
+----------------------
+POST /tours (זריעת 13 פריטים, draft) ; GET /tours (status/tour_type/date_from/
+date_to, envelope, sort tour_date DESC→created_at DESC, regen) ; GET /tours/{id} ;
+PATCH /tours/{id} meta (draft בלבד, אחרת 409) ; PATCH .../items/{item_id} (הליבה) ;
+POST .../items (ad-hoc, draft) ; POST .../submit (כל הפריטים נענו אחרת 422 →
+pending_signature) ; POST .../reopen (pending_signature → draft) ;
+DELETE /tours/{id} (SAFETY_DELETERS, soft-delete, retention מ-now).
+
+סדר ב-PATCH item (הערת זהי #2 — נשמר): קודם update שדות פריט (arrayFilters ממוקד),
+ואז התביעה האטומית של ה-defect + insert. לא claim-קודם.
+
+STEP 4 — indexes
+----------------
+safety_tours: (project_id,tour_date desc) / (project_id,status) / (project_id,deletedAt).
+log עודכן ל-"23 total across 7 collections".
+
+ביקורת קוד (architect) — 2 סבבים
+--------------------------------
+סבב 1 (Fail): 3 ממצאים ב-update_tour_item — כולם טופלו:
+  1) תוצאת update שלב-1 לא נבדקה → הוספתי upd.matched_count==0 → 409
+     "לא ניתן לערוך סיור שהוגש" (מונע auto-defect כשסיור יצא מ-draft במרוץ מקבילי).
+  2) שאילתת ה-claim חסרה guard מחזור-חיים → הוספתי deletedAt:None + status:"draft"
+     בנוסף ל-$elemMatch {id, defect_id:None}.
+  3) חוסר אטומיות בין קולקשנים (defect_id יתום אם insert נכשל) → עטפתי את
+     insert ב-try/except; בכישלון מגלגל את defect_id בחזרה ל-None (targeted
+     $elemMatch על אותו defect_id) ו-re-raise → הפריט לעולם לא מצביע על ליקוי לא-קיים,
+     ו-retry יכול לפתוח מחדש.
+סבב 2 (Pass): כל 3 הממצאים אושרו כפתורים; אין רגרסיה. אידמפוטנטיות (אין ליקוי כפול)
+  נשמרת; fail→pass משאיר את הליקוי; return/audits ללא שינוי; אין ממצאי אבטחה.
+המלצה פתוחה (לא חוסמת): בדיקת אינטגרציה למרוצים המקביליים ולגלגול-החזרה.
+
+אימות שבוצע בסביבת הפיתוח
+------------------------
+- py_compile: contractor_ops/schemas.py + contractor_ops/safety_router.py → EXIT 0 (אחרי התיקונים).
+- הרכבת מודלי Pydantic חדשים בפועל: SafetyTour (status ברירת מחדל=draft),
+  SafetyTourItem (result=None), SafetyDocument.tour_id/tour_item_id=None,
+  enums (custom / pending_signature) → הכל תקין.
+
+VERIFY (HTTP אמיתי מול staging) — לביצוע ע"י זהי לאחר deploy
+-----------------------------------------------------------
+הבדיקות דורשות אימות/פרויקט/הרשאות מול staging (הסביבה של זהי; אין לי גישה
+מהפיתוח). רשימת ה-16 (מהמפרט) להרצה והדבקת פלטים כאן לאחר ship:
+ 1. POST tour (assistant_morning, today) → 201; 13 items result=None; draft; UUID strings.
+ 2. POST custom בלי custom_name → 422 עברית; עם שם → 201.
+ 3. PATCH item pass → 200, answered_at/by, אין defect.
+ 4. PATCH item fail בלי severity → 422 "יש לבחור חומרה לפריט שנכשל".
+ 5. PATCH item fail severity=2 +note+photo → 200; defect_id set; GET /documents?kind=defect
+    מציג defect עם tour_id/tour_item_id, title "סיור בטיחות: <label>", photos copied.
+ 6. PATCH אותו item fail שוב (severity=3) → 200, עדיין defect אחד (אידמפוטנטי).
+ 7. PATCH item fail→pass → 200; defect קיים; defect_id נשמר.
+ 8. POST /items ad-hoc → נוסף עם uuid; ואז לענות עליו.
+ 9. submit עם פריט לא-נענה → 422 "יש לענות על כל הפריטים לפני הגשה"; ענה על הכל → 200 pending_signature.
+10. PATCH item/meta על pending_signature → 409.
+11. reopen → draft; submit שוב → pending_signature.
+12. DELETE כ-project_manager → 204 soft; DELETE כ-management_team → 403.
+13. GET ?status=pending_signature + date_from/date_to מסננים; envelope+sort desc.
+14. photo_urls = s3:// keys; GET מחזיר photo_display_urls presigned (regen per-GET).
+15. Regression: GET /documents (2 kinds), score, Excel, פנקס PDF — ללא שינוי.
+16. CODE-SHAPE: item update ב-array_filters=[{"elem.id":...}] (לא whole-items $set);
+    defect claim ב-$elemMatch {defect_id:None} עם modified_count לפני insert.  ✓ (מאומת בקוד)
+
+מה לא נגעתי בו (DO NOT)
+----------------------
+אפס frontend; אין signatures/PDF/Excel/פנקס; אין נגיעה ב-_compute_safety_score,
+ב-documents/tasks/workers/trainings/incidents CRUD, בלוגיקת kind של step-3, או ב-exports.
+השינוי היחיד ב-safety_documents = ה-inserts מ-PATCH item + 2 שדות Optional בסכמה.
+אין status="signed" בשום מקום. קולקשן נפרד safety_tours (אין "kind" לסיורים).
+
+הבא בתור
 --------
-- safetyLabels.js: KIND_HE.
-- SafetyHomePage.js: טאב "תיעוד" (obsDocs+filteredObs), fetch שביעי
-  kind:'observation', קריאות documents שולחות kind:'defect', סינון עזר
-  לתיעוד (category+date_from+date_to), reload מרענן שתי הרשימות,
-  בורר הוספה עם כפתור "תיעוד", docForm נושא kind. רכיב ObservationsList חדש.
-- SafetyDocumentForm.js: prop kind — מסתיר severity/status/assignee, מדלג על
-  ולידציית חומרה, משמיט severity לתיעוד, שולח kind ביצירה.
-- SafetyDocumentDetail.js: כותרת/Badge ירוק "תיעוד", הסתרת severity+status.
-- SafetyFilterSheet.js: בלוק סינון תיעוד (קטגוריה+תאריכים) + EMPTY_FILTER_OBSERVATIONS.
-- SafetyExportMenu.js: יצוא מסונן מקבע kind:'defect' (ראה תיקון למטה).
-
-ביקורת קוד (architect) — ממצאים וטיפול
---------------------------------------
-תוצאה: הפיצול נכון ברוב הנתיבים (CRUD/read/score/bulk-delete/יצוא כללי),
-guard ה-422 תואם, ואין ממצאי אבטחה.
-
-ממצא חוסם יחיד שנמצא — וטופל:
-* יצוא מסונן (export_safety_filtered) לא קיבל kind מה-UI, כך שיצוא "לפי סינון"
-  של ליקויים היה עלול לכלול רשומות תיעוד שתאמו קטגוריה/תאריך.
-  תיקון: SafetyExportMenu.js מזריק kind:'defect' לפרמטרי היצוא המסונן (התפריט
-  קשור תמיד למסנן הליקויים). כך תיעוד + רשומות legacy לא דולפים ליצוא הליקויים.
-
-המלצות פתוחות (לא חוסמות, לשיקול בהמשך):
-- בדיקת אינטגרציה ל-/export/filtered שמאמתת בידוד kind.
-- בדיקת UI/מוק שמאמתת שפרמטרי היצוא כוללים kind לפי הטאב הפעיל.
-
-אימות
------
-- FE: babel parse עבר לכל הקבצים שנערכו (6 קבצים) — ללא שגיאות.
-- BE: py_compile עבר — server.py, contractor_ops/schemas.py,
-  contractor_ops/safety_router.py, services/safety_pdf.py.
-
-הערות
------
-- אין super_admin bypass; guardים בצד השרת (422) הם קו ההגנה האחרון.
-- ObservationsList משתמש ב-Badge ירוק "תיעוד" קשיח (KIND_HE לא מיובא ב-
-  SafetyHomePage כדי להימנע מ-lint של משתנה לא בשימוש).
-=====================================================================
+git/deploy/ship.sh — זהי בלבד (backend-only → EB, +CF ride-along). לאחר deploy:
+להריץ את 16 בדיקות ה-VERIFY מול staging ולהדביק פלטים כאן.
+================================================================================

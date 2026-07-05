@@ -782,6 +782,8 @@ class SafetyDocument(BaseModel):
     updated_at: Optional[str] = None
     deletedAt: Optional[str] = None
     deletedBy: Optional[str] = None
+    tour_id: Optional[str] = None         # FK → safety_tours.id (set when spawned by a tour)
+    tour_item_id: Optional[str] = None    # FK → safety_tours.items[].id
 
 
 class SafetyTask(BaseModel):
@@ -903,6 +905,70 @@ class SafetyProjectRegistrationUpsert(BaseModel):
     personnel: Optional[List[SafetyProjectPersonnel]] = None
     permit_number: Optional[str] = None
     form_4_target_date: Optional[str] = None
+
+
+# =====================================================================
+# Safety Tours (סיורי בטיחות) — Phase 2 step 4a (2026-07-05)
+# A tour = a checklist walk of the site. Each item is pass/fail/na;
+# a FAILED item auto-opens a safety defect linked back to the tour.
+# =====================================================================
+
+class SafetyTourType(str, Enum):
+    officer_monthly = "officer_monthly"      # דוח ממונה בטיחות (חודשי)
+    assistant_morning = "assistant_morning"  # דוח עוזר בטיחות — בוקר
+    assistant_evening = "assistant_evening"  # דוח עוזר בטיחות — ערב
+    custom = "custom"                        # שם חופשי ב-custom_name
+
+
+class SafetyTourStatus(str, Enum):
+    draft = "draft"
+    pending_signature = "pending_signature"
+    signed = "signed"        # set only by batch 4c — no endpoint sets it here
+
+
+class SafetyTourItem(BaseModel):
+    id: str                                   # uuid4
+    label: str
+    category: SafetyCategory
+    result: Optional[Literal["pass", "fail", "na"]] = None
+    note: Optional[str] = None
+    photo_urls: List[str] = []                # permanent S3 keys (1b pattern)
+    photo_display_urls: Optional[List[str]] = None  # server-computed per-GET; never persisted
+    defect_id: Optional[str] = None           # FK → safety_documents.id (set on fail)
+    answered_at: Optional[str] = None
+    answered_by: Optional[str] = None
+
+
+class SafetyTourSignature(BaseModel):
+    """Reserved for batch 4c — defined now so the document shape is final."""
+    user_id: str
+    name: str
+    sub_role: Optional[str] = None
+    signed_at: str
+    signature_ref: Optional[str] = None       # S3 key of the canvas PNG (4c)
+
+
+class SafetyTour(BaseModel):
+    id: str
+    project_id: str
+    tour_type: SafetyTourType
+    custom_name: Optional[str] = None
+    tour_date: str                             # ISO date "YYYY-MM-DD"
+    status: SafetyTourStatus = SafetyTourStatus.draft
+    items: List[SafetyTourItem] = []
+    # locked decision #5 — 3 named slots; all None until 4c
+    work_manager_signature: Optional[SafetyTourSignature] = None
+    safety_assistant_signature: Optional[SafetyTourSignature] = None
+    safety_officer_signature: Optional[SafetyTourSignature] = None
+    submitted_at: Optional[str] = None
+    signed_at: Optional[str] = None
+    created_at: str
+    created_by: str
+    updated_at: Optional[str] = None
+    deletedAt: Optional[str] = None
+    deletedBy: Optional[str] = None
+    deletion_reason: Optional[str] = None
+    retention_until: Optional[str] = None      # 7yr, same as other safety entities
 
 
 # =====================================================================
