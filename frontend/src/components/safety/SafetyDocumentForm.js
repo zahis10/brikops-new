@@ -22,8 +22,10 @@ const isHttp = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
 // (never the presigned url, which expires). The backend regenerates a parallel
 // photo_display_urls per-GET, which we zip into the edit preview. attachment_urls
 // (PDFs) remain out of scope → always sent as [].
-export default function SafetyDocumentForm({ projectId, document, open, onClose, onSaved }) {
+export default function SafetyDocumentForm({ projectId, document, open, onClose, onSaved, kind = 'defect' }) {
   const isEdit = !!document;
+  const docKind = isEdit ? (document?.kind || 'defect') : kind;
+  const isObservation = docKind === 'observation';
 
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('');
@@ -108,29 +110,39 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
       return;
     }
     if (!category) { toast.error('יש לבחור קטגוריה'); return; }
-    if (!severity) { toast.error('יש לבחור חומרה'); return; }
+    if (!isObservation && !severity) { toast.error('יש לבחור חומרה'); return; }
     if (!foundAt) { toast.error('יש לבחור תאריך גילוי'); return; }
 
     const payload = {
       title: t,
       category,
-      severity,
       found_at: foundAt,
       location: location.trim() || null,
       description: description.trim() || null,
       company_id: companyId || null,
-      assignee_id: assigneeId || null,
+      assignee_id: isObservation ? null : (assigneeId || null),
       photo_urls: photos.map((p) => p.key),
       attachment_urls: [],
     };
-    if (isEdit) payload.status = status;
+    if (isObservation) {
+      // תיעוד: no severity/status ever (backend guard 422). kind on create only.
+      if (!isEdit) payload.kind = 'observation';
+    } else {
+      payload.severity = severity;
+      if (!isEdit) payload.kind = 'defect';
+      if (isEdit) payload.status = status;
+    }
 
     setSubmitting(true);
     try {
       const result = isEdit
         ? await safetyService.updateDocument(projectId, document.id, payload)
         : await safetyService.createDocument(projectId, payload);
-      toast.success(isEdit ? 'ליקוי עודכן' : 'ליקוי נוסף');
+      toast.success(
+        isObservation
+          ? (isEdit ? 'תיעוד עודכן' : 'תיעוד נוסף')
+          : (isEdit ? 'ליקוי עודכן' : 'ליקוי נוסף')
+      );
       onSaved?.(result);
       onClose?.();
     } catch (err) {
@@ -144,16 +156,20 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
     <SafetyFormModal
       open={open}
       onOpenChange={(o) => { if (!o && !submitting) onClose?.(); }}
-      title={isEdit ? 'עריכת ליקוי' : 'ליקוי חדש'}
+      title={
+        isObservation
+          ? (isEdit ? 'עריכת תיעוד' : 'תיעוד חדש')
+          : (isEdit ? 'עריכת ליקוי' : 'ליקוי חדש')
+      }
       onSubmit={handleSubmit}
       submitting={submitting}
     >
       <div className="space-y-1.5">
         <Label htmlFor="sd-title">כותרת *</Label>
-        <Input id="sd-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} placeholder="תיאור קצר של הליקוי" />
+        <Input id="sd-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} placeholder={isObservation ? 'תיאור קצר של התיעוד' : 'תיאור קצר של הליקוי'} />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className={isObservation ? 'space-y-1.5' : 'grid grid-cols-1 sm:grid-cols-2 gap-3'}>
         <div className="space-y-1.5">
           <Label>קטגוריה *</Label>
           <Select value={category} onValueChange={setCategory} dir="rtl">
@@ -165,17 +181,19 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-1.5">
-          <Label>חומרה *</Label>
-          <Select value={severity} onValueChange={setSeverity} dir="rtl">
-            <SelectTrigger><SelectValue placeholder="בחר חומרה" /></SelectTrigger>
-            <SelectContent>
-              {Object.entries(SEVERITY_HE).map(([val, he]) => (
-                <SelectItem key={val} value={val}>{he}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {!isObservation && (
+          <div className="space-y-1.5">
+            <Label>חומרה *</Label>
+            <Select value={severity} onValueChange={setSeverity} dir="rtl">
+              <SelectTrigger><SelectValue placeholder="בחר חומרה" /></SelectTrigger>
+              <SelectContent>
+                {Object.entries(SEVERITY_HE).map(([val, he]) => (
+                  <SelectItem key={val} value={val}>{he}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -201,24 +219,26 @@ export default function SafetyDocumentForm({ projectId, document, open, onClose,
         </Select>
       </div>
 
-      <div className="space-y-1.5">
-        <Label>אחראי</Label>
-        <Select
-          value={assigneeId || '__none__'}
-          onValueChange={(v) => setAssigneeId(v === '__none__' ? '' : v)}
-          dir="rtl"
-        >
-          <SelectTrigger><SelectValue placeholder="בחר אחראי" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none__">ללא אחראי</SelectItem>
-            {members.map((m) => (
-              <SelectItem key={m.user_id} value={m.user_id}>{m.user_name || 'חבר צוות'}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {!isObservation && (
+        <div className="space-y-1.5">
+          <Label>אחראי</Label>
+          <Select
+            value={assigneeId || '__none__'}
+            onValueChange={(v) => setAssigneeId(v === '__none__' ? '' : v)}
+            dir="rtl"
+          >
+            <SelectTrigger><SelectValue placeholder="בחר אחראי" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">ללא אחראי</SelectItem>
+              {members.map((m) => (
+                <SelectItem key={m.user_id} value={m.user_id}>{m.user_name || 'חבר צוות'}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
-      {isEdit && (
+      {isEdit && !isObservation && (
         <div className="space-y-1.5">
           <Label>סטטוס</Label>
           <Select value={status} onValueChange={setStatus} dir="rtl">

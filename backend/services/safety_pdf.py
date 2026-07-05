@@ -290,6 +290,10 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     documents = await db.safety_documents.find(
         {"project_id": project_id, "deletedAt": None}, {"_id": 0}
     ).to_list(length=100000)
+    # Split into defects (ליקויים) and observations (תיעוד) — one collection,
+    # kind discriminator. Legacy docs (no kind) count as defects.
+    defects = [d for d in documents if d.get("kind") != "observation"]
+    observations = [d for d in documents if d.get("kind") == "observation"]
 
     tasks = await db.safety_tasks.find(
         {"project_id": project_id, "deletedAt": None}, {"_id": 0}
@@ -523,7 +527,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
 
     # Section 5: Open documents
     elems.extend(_section("5. ליקויי בטיחות פתוחים"))
-    open_docs = [d for d in documents if d.get("status") in ("open", "in_progress")]
+    open_docs = [d for d in defects if d.get("status") in ("open", "in_progress")]
     if open_docs:
         rows = []
         for d in open_docs:
@@ -541,6 +545,30 @@ async def generate_safety_register(db, project_id: str) -> bytes:
         ))
     else:
         elems.append(Paragraph(hebrew("אין ליקויים פתוחים."), body))
+    elems.append(Spacer(1, 6 * mm))
+
+    # Section 5b: Observations (תיעוד) — archival, no status filter
+    doc_sub_h = ParagraphStyle(
+        "RH3docs", fontName="Rubik-Bold", fontSize=11,
+        alignment=TA_RIGHT, textColor=SLATE_700, leading=15,
+        spaceBefore=6, spaceAfter=3,
+    )
+    elems.append(Paragraph(hebrew("5ב. תיעוד"), doc_sub_h))
+    if observations:
+        rows = []
+        for d in observations:
+            rows.append([
+                d.get("title", ""),
+                CATEGORY_HE.get(d.get("category", ""), d.get("category", "")),
+                d.get("location", "") or "—",
+                _fmt_date(d.get("found_at")),
+            ])
+        elems.append(_table(
+            ["כותרת", "קטגוריה", "מיקום", "תאריך"],
+            rows, [5 * cm, 3.5 * cm, 3.5 * cm, 3 * cm],
+        ))
+    else:
+        elems.append(Paragraph(hebrew("אין רשומות תיעוד."), body))
     elems.append(Spacer(1, 6 * mm))
 
     # Section 6: Corrective tasks
@@ -588,7 +616,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     # Section 8: Statistical summary
     elems.extend(_section("8. סיכום סטטיסטי"))
     by_category = {}
-    for d in documents:
+    for d in defects:
         cat = d.get("category", "other")
         by_category[cat] = by_category.get(cat, 0) + 1
     if by_category:
@@ -603,7 +631,8 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     for line in (
         f"סה״כ עובדים: {len(workers)}",
         f"סה״כ הדרכות: {len(trainings)}",
-        f"סה״כ ליקויים: {len(documents)}",
+        f"סה״כ ליקויים: {len(defects)}",
+        f"סה״כ רשומות תיעוד: {len(observations)}",
         f"סה״כ משימות: {len(tasks)}",
         f"סה״כ אירועים: {len(incidents)}",
     ):

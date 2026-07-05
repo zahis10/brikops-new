@@ -40,6 +40,7 @@ export default function SafetyDocumentDetail({
     : null;
 
   const photos = (doc.photo_display_urls || []).filter(isHttp);
+  const isObservation = doc.kind === 'observation';
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }} modal={false}>
@@ -55,20 +56,24 @@ export default function SafetyDocumentDetail({
               <X className="w-5 h-5" />
             </button>
           </DialogClose>
-          <DialogTitle className="text-base font-bold text-right">פרטי ליקוי</DialogTitle>
+          <DialogTitle className="text-base font-bold text-right">{isObservation ? 'פרטי תיעוד' : 'פרטי ליקוי'}</DialogTitle>
         </DialogHeader>
 
         <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
           <div className="flex items-start gap-2">
-            <Badge className={SEVERITY_COLOR[doc.severity] || 'bg-slate-100 text-slate-700'}>
-              {SEVERITY_HE[doc.severity] || '—'}
-            </Badge>
+            {isObservation ? (
+              <Badge className="bg-green-100 text-green-800">תיעוד</Badge>
+            ) : (
+              <Badge className={SEVERITY_COLOR[doc.severity] || 'bg-slate-100 text-slate-700'}>
+                {SEVERITY_HE[doc.severity] || '—'}
+              </Badge>
+            )}
             <h3 className="text-lg font-bold text-slate-900 flex-1 min-w-0">{doc.title}</h3>
           </div>
 
           <div className="grid grid-cols-2 gap-x-4 gap-y-3">
             <Field label="קטגוריה">{CATEGORY_HE[doc.category] || doc.category}</Field>
-            <Field label="סטטוס">{DOC_STATUS_HE[doc.status] || doc.status}</Field>
+            {!isObservation && <Field label="סטטוס">{DOC_STATUS_HE[doc.status] || doc.status}</Field>}
             <Field label="תאריך גילוי">{(doc.found_at || '').slice(0, 10) || null}</Field>
             <Field label="מיקום">{doc.location || null}</Field>
             <Field label="חברה">{companyName}</Field>

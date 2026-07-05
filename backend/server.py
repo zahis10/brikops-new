@@ -1246,6 +1246,18 @@ async def _deferred_db_init():
     except Exception as e:
         logger.warning(f"[STARTUP] project_companies cleanup failed (non-fatal): {e}")
 
+    # One-shot backfill (idempotent): stamp kind='defect' on pre-split safety
+    # documents so the defect/observation discriminator has a value everywhere.
+    try:
+        res = await db.safety_documents.update_many(
+            {"kind": {"$exists": False}},
+            {"$set": {"kind": "defect"}},
+        )
+        if res.modified_count:
+            logger.info(f"[STARTUP] safety_documents kind backfill: {res.modified_count} docs set to defect")
+    except Exception as e:
+        logger.warning(f"[STARTUP] safety_documents kind backfill failed (non-fatal): {e}")
+
     try:
         from contractor_ops.billing import BILLING_V1_ENABLED, apply_pending_decreases
         if BILLING_V1_ENABLED:

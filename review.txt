@@ -1,102 +1,71 @@
-═══════════════════════════════════════════════════════════════════════════
-BATCH: safety-p2-3b — סינון אדפטיבי לכל טאב (workers/tasks/trainings/incidents)
-═══════════════════════════════════════════════════════════════════════════
-תאריך: 2026-07-05
-Branch: staging
-Rollback SHA: 4651850  (=HEAD לפני הבאטץ׳; אושר ב-STEP 0)
-architect: PASS (אחרי תיקון) — ראה סעיף "סקירת architect" למטה
+=====================================================================
+BrikOps — Safety P2 / Step 3: הפרדת "תיעוד" (observation) מ"ליקוי" (defect)
+Batch: safety-p2-step3  |  Branch: staging  |  Date: 2026-07-05
+=====================================================================
 
-───────────────────────────────────────────────────────────────────────────
-מה נעשה
-───────────────────────────────────────────────────────────────────────────
-עד עכשיו כפתור "סינון" ב-SafetyHomePage עבד רק על טאב "ליקויים" (documents).
-הבאטץ׳ הזה הופך את גיליון הסינון (SafetyFilterSheet) למודע-טאב, ומוסיף סינון
-אמיתי גם לטאבים: עובדים, משימות, הדרכות, אירועים — מול הפרמטרים שכבר קיימים
-ב-safety_router.py (באטץ׳ 3a).
+מה נעשה (סקירה קצרה)
+--------------------
+הופרד סוג רשומה חדש "תיעוד" (observation) מתוך רשומות הבטיחות הקיימות
+(defect), באמצעות שדה מבחין (discriminator) בשם `kind` על אוסף
+safety_document. תיעוד = רשומה ללא חומרה/סטטוס/אחראי, לתצוגה בלבד; ליקוי =
+כפי שהיה. רשומות ישנות ללא `kind` נשארות "ליקוי" לכל דבר.
 
-*** המודיפיקציה של זהי (מיושמת במלואה) ***
-לא דורסים את הרשימות הגלובליות (workers/tasks/trainings/incidents) בתוצאה
-המסוננת. במקום זה מוחזק state תצוגה נפרד לכל טאב-עזר
-(filteredWorkers/Tasks/Trainings/Incidents, init=null). הטאב מציג את הרשימה
-המסוננת כשיש פילטר פעיל, ונופל חזרה לרשימה הגלובלית כשהפילטר ריק. כך הרשימות
-הגלובליות נשארות מקור-האמת עבור בוררי העובד/החברה בטפסים ובכרטיס העובד.
+BACKEND
+-------
+- schemas.py: SafetyDocumentKind enum + שדה kind ב-SafetyDocument; severity
+  הפך ל-Optional.
+- safety_router.py:
+  * SafetyDocumentCreate: kind + severity Optional + model_validator
+    (ליקוי מחייב severity / תיעוד אוסר severity+status) עם שגיאות בעברית.
+  * create_document: כותב kind ו-severity מותנה.
+  * update_document: guard לתיעוד — 422 אם נשלח severity/status/resolved_at.
+  * list_documents: param kind — defect => kind != observation (כולל legacy),
+    observation => kind == observation.
+  * create_task: חסימת משימה מתקנת כנגד ref שהוא תיעוד.
+  * docs aggregation + score: מדלגים על תיעוד.
+  * Excel/PDF: פיצול ליקויים/תיעוד + גיליון/בלוק "תיעוד" נפרד.
+  * export_safety_filtered: param kind (ברירת מחדל — ללא סינון).
+- services/safety_pdf.py: פיצול ליקויים/תיעוד; סעיף 5 על ליקויים + "5ב. תיעוד";
+  סעיף 8 סיכומי קטגוריה על ליקויים בלבד + שורת סה"כ תיעוד.
+- server.py: backfill אידמפוטנטי ב-startup — kind='defect' לרשומות ללא kind.
 
-───────────────────────────────────────────────────────────────────────────
-CHANGE 1 — frontend/src/components/safety/SafetyFilterSheet.js
-───────────────────────────────────────────────────────────────────────────
-• props חדשים: tab='documents' (ברירת מחדל) + workers (לרשימת בורר עובד).
-• exports חדשים: EMPTY_FILTER_WORKERS / _TASKS / _TRAININGS / _INCIDENTS,
-  ו-TAB_TITLES (export const — תוקן לפי הערת architect).
-• אופציות חדשות: TASK_STATUS_OPTIONS, INCIDENT_TYPE_OPTIONS.
-• SheetTitle דינמי: TAB_TITLES[tab].
-• renderText helper לשדות "מכיל" (מקצוע / סוג הדרכה).
-• renderEntitySelect מציג {it.name || it.full_name} (עובדים נושאים full_name).
-• handleClear מאפס את מפתחות ה-template הנוכחי ל-null (בלי דליפת מפתחות
-  documents לטאב אחר).
-• בלוק השדות עכשיו תלוי-טאב:
-   - documents: ללא שינוי (byte-for-byte בתוך {tab==='documents' && ...}).
-   - workers: מקצוע (טקסט) + חברה.
-   - tasks: סטטוס / חומרה / אחראי / חברה / איחור. ה-<select> של סטטוס
-     disabled כשנבחר "איחור" + טקסט עזר "מוצג לפי איחור".
-   - trainings: סוג הדרכה (טקסט) / עובד / תוקף (פג תוקף).
-   - incidents: סוג אירוע / חומרה / דווח לרשות / עובד נפגע / טווח תאריכים.
+FRONTEND
+--------
+- safetyLabels.js: KIND_HE.
+- SafetyHomePage.js: טאב "תיעוד" (obsDocs+filteredObs), fetch שביעי
+  kind:'observation', קריאות documents שולחות kind:'defect', סינון עזר
+  לתיעוד (category+date_from+date_to), reload מרענן שתי הרשימות,
+  בורר הוספה עם כפתור "תיעוד", docForm נושא kind. רכיב ObservationsList חדש.
+- SafetyDocumentForm.js: prop kind — מסתיר severity/status/assignee, מדלג על
+  ולידציית חומרה, משמיט severity לתיעוד, שולח kind ביצירה.
+- SafetyDocumentDetail.js: כותרת/Badge ירוק "תיעוד", הסתרת severity+status.
+- SafetyFilterSheet.js: בלוק סינון תיעוד (קטגוריה+תאריכים) + EMPTY_FILTER_OBSERVATIONS.
+- SafetyExportMenu.js: יצוא מסונן מקבע kind:'defect' (ראה תיקון למטה).
 
-───────────────────────────────────────────────────────────────────────────
-CHANGE 2 — frontend/src/pages/SafetyHomePage.js
-───────────────────────────────────────────────────────────────────────────
-• import של 4 ה-templates.
-• state: auxFilters (פילטר לכל טאב-עזר) + 4 state תצוגה מסוננת (init null).
-• useEffect list-only חדש לטאב-העזר הפעיל:
-   - מדלג על documents/overview.
-   - פילטר ריק ⇒ setFiltered(null) בלי fetch (נפילה חזרה לגלובלי).
-   - תרגום פרמטרים: overdue גובר על status; expiry='expired' ⇒
-     expires_before=today (YYYY-MM-DD); reported 'true'/'false' ⇒
-     reported_to_authority.
-   - fail-soft: toast "שגיאה בטעינת רשימה מסוננת" בכשל, בלי לרסק את הדף.
-   - deps: [projectId, activeTab, auxFilters, loading, flagOff, forbidden].
-• helpers: isDocTab / activeFilterValue / activeFilterCountTab; ורשימות
-  תצוגה workersView/tasksView/trainingsView/incidentsView (מסונן אם פעיל,
-  אחרת גלובלי).
-• כפתור "סינון" מוסתר ב-overview; badge מציג activeFilterCountTab.
-• גיליון הסינון מקבל tab={activeTab}, value=activeFilterValue,
-  workers={workers.items}; onApply/onClear מפצלים בין documents לטאב-עזר.
-• רינדור הטאבים משתמש ב-*View.items ו-*View.total. שים לב: הרשימות
-  trainings/incidents ממשיכות לקבל workers={workers.items} הגלובלי לפענוח
-  שמות (מקור-אמת), רק items עובר לתצוגה המסוננת.
+ביקורת קוד (architect) — ממצאים וטיפול
+--------------------------------------
+תוצאה: הפיצול נכון ברוב הנתיבים (CRUD/read/score/bulk-delete/יצוא כללי),
+guard ה-422 תואם, ואין ממצאי אבטחה.
 
-───────────────────────────────────────────────────────────────────────────
-VERIFY
-───────────────────────────────────────────────────────────────────────────
-• V1 @babel/parser — OK ✅ לשני הקבצים (כולל אחרי תיקון ה-export).
-• V2 greps — כל ה-exports/props/blocks/helpers/params נמצאו.
-• diff --stat — 2 קבצים בלבד:
-   SafetyFilterSheet.js | 257 ++++--
-   SafetyHomePage.js     | 154 ++--
-   (339 insertions(+), 72 deletions(-))
-• הטאב documents נשמר byte-for-byte; אין שינוי התנהגות בסינון הליקויים.
-• אין שינוי בקוד ה-backend.
+ממצא חוסם יחיד שנמצא — וטופל:
+* יצוא מסונן (export_safety_filtered) לא קיבל kind מה-UI, כך שיצוא "לפי סינון"
+  של ליקויים היה עלול לכלול רשומות תיעוד שתאמו קטגוריה/תאריך.
+  תיקון: SafetyExportMenu.js מזריק kind:'defect' לפרמטרי היצוא המסונן (התפריט
+  קשור תמיד למסנן הליקויים). כך תיעוד + רשומות legacy לא דולפים ליצוא הליקויים.
 
-───────────────────────────────────────────────────────────────────────────
-סקירת architect
-───────────────────────────────────────────────────────────────────────────
-תוצאה ראשונית: Fail — נמצא פריט מסירה חסר אחד: TAB_TITLES הוגדר כ-const
-במקום export const (המפרט ביקש לייצא אותו יחד עם EMPTY_FILTER_*).
-תיקון: הוסף export ל-TAB_TITLES; babel אומת מחדש — OK ✅.
-שאר הלוגיקה (state נפרד, אי-דריסת גלובלי, תרגום פרמטרים, list-only, הסתרת
-כפתור) אושרה כנכונה. לא נמצאו בעיות אבטחה.
+המלצות פתוחות (לא חוסמות, לשיקול בהמשך):
+- בדיקת אינטגרציה ל-/export/filtered שמאמתת בידוד kind.
+- בדיקת UI/מוק שמאמתת שפרמטרי היצוא כוללים kind לפי הטאב הפעיל.
 
-הצעת חיזוק אופציונלית של architect (לא בוצעה — מחוץ להיקף המפרט):
-לאחר יצירה/עריכה בטאב-עזר עם פילטר פעיל, ה-view המסונן עלול להיות מעט מיושן
-עד רענון. ניתן לטפל בבאטץ׳ המשך אם זהי ירצה.
+אימות
+-----
+- FE: babel parse עבר לכל הקבצים שנערכו (6 קבצים) — ללא שגיאות.
+- BE: py_compile עבר — server.py, contractor_ops/schemas.py,
+  contractor_ops/safety_router.py, services/safety_pdf.py.
 
-───────────────────────────────────────────────────────────────────────────
-המלצת בדיקה ידנית (אחרי build/deploy)
-───────────────────────────────────────────────────────────────────────────
-1. טאב "עובדים": סינון לפי מקצוע/חברה → רק העובדים התואמים; ניקוי → כל
-   העובדים חוזרים; טופס הוספת הדרכה עדיין מציג את כל העובדים בבורר.
-2. טאב "משימות": בחירת "איחור" → ה-<select> של סטטוס ננעל + "מוצג לפי איחור".
-3. טאב "הדרכות": תוקף="פג תוקף" → רק פגי-תוקף.
-4. טאב "אירועים": "דווח לרשות"=כן/לא + טווח תאריכים.
-5. טאב "ליקויים": ללא רגרסיה — מתנהג כמו קודם.
-6. overview: כפתור "סינון" מוסתר.
-═══════════════════════════════════════════════════════════════════════════
+הערות
+-----
+- אין super_admin bypass; guardים בצד השרת (422) הם קו ההגנה האחרון.
+- ObservationsList משתמש ב-Badge ירוק "תיעוד" קשיח (KIND_HE לא מיובא ב-
+  SafetyHomePage כדי להימנע מ-lint של משתנה לא בשימוש).
+=====================================================================

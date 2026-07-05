@@ -707,6 +707,11 @@ class SafetyDocumentStatus(str, Enum):
     verified = "verified"
 
 
+class SafetyDocumentKind(str, Enum):
+    defect = "defect"            # ליקוי — actionable, scored, closeable
+    observation = "observation"  # תיעוד — archival, no severity, no score
+
+
 class SafetyTaskStatus(str, Enum):
     open = "open"
     in_progress = "in_progress"
@@ -756,8 +761,9 @@ class SafetyDocument(BaseModel):
     """Safety observation/finding — the regulatory תיעוד records."""
     id: str
     project_id: str
+    kind: SafetyDocumentKind = SafetyDocumentKind.defect
     category: SafetyCategory
-    severity: SafetySeverity
+    severity: Optional[SafetySeverity] = None
     status: SafetyDocumentStatus = SafetyDocumentStatus.open
     title: str
     description: Optional[str] = None

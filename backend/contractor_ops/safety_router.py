@@ -17,7 +17,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 import io
 import time as _time
 
@@ -30,7 +30,8 @@ from contractor_ops.router import (
 )
 from contractor_ops.schemas import (
     SafetyWorker, SafetyTraining, SafetyDocument, SafetyTask, SafetyIncident,
-    SafetyCategory, SafetySeverity, SafetyDocumentStatus, SafetyTaskStatus,
+    SafetyCategory, SafetySeverity, SafetyDocumentStatus, SafetyDocumentKind,
+    SafetyTaskStatus,
 )
 from contractor_ops.upload_rate_limit import (
     check_upload_rate_limit, check_upload_bytes, check_content_length,
@@ -514,8 +515,9 @@ async def delete_training(
 # Documents CRUD + 7-dim filter
 # =====================================================================
 class SafetyDocumentCreate(BaseModel):
+    kind: SafetyDocumentKind = SafetyDocumentKind.defect
     category: SafetyCategory
-    severity: SafetySeverity
+    severity: Optional[SafetySeverity] = None
     title: str = Field(..., min_length=2, max_length=200)
     found_at: str
     description: Optional[str] = None
@@ -525,6 +527,14 @@ class SafetyDocumentCreate(BaseModel):
     assignee_id: Optional[str] = None
     photo_urls: List[str] = Field(default_factory=list)
     attachment_urls: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_kind_severity(self):
+        if self.kind == SafetyDocumentKind.defect and self.severity is None:
+            raise ValueError("יש לבחור חומרה לליקוי")
+        if self.kind == SafetyDocumentKind.observation and self.severity is not None:
+            raise ValueError("לתיעוד אין חומרה")
+        return self
 
 
 class SafetyDocumentUpdate(BaseModel):
@@ -561,8 +571,9 @@ async def create_document(
     doc = {
         "id": _new_id(),
         "project_id": project_id,
+        "kind": payload.kind.value,
         "category": payload.category.value,
-        "severity": payload.severity.value,
+        "severity": payload.severity.value if payload.severity else None,
         "status": SafetyDocumentStatus.open.value,
         "title": payload.title.strip(),
         "description": payload.description,
@@ -591,6 +602,7 @@ async def create_document(
 @router.get("/{project_id}/documents")
 async def list_documents(
     project_id: str,
+    kind: Optional[SafetyDocumentKind] = None,
     category: Optional[SafetyCategory] = None,
     severity: Optional[SafetySeverity] = None,
     status_: Optional[SafetyDocumentStatus] = Query(None, alias="status"),
@@ -611,6 +623,10 @@ async def list_documents(
     include_deleted = _resolve_include_deleted(include_deleted, user)
     if not include_deleted:
         q["deletedAt"] = None
+    if kind == SafetyDocumentKind.observation:
+        q["kind"] = "observation"
+    elif kind == SafetyDocumentKind.defect:
+        q["kind"] = {"$ne": "observation"}   # covers legacy pre-backfill docs
     if category:    q["category"] = category.value
     if severity:    q["severity"] = severity.value
     if status_:     q["status"] = status_.value
@@ -630,6 +646,7 @@ async def list_documents(
             (generate_url(k) if k else k) for k in (it.get("photo_urls") or [])
         ]
     filters_applied = {k: v for k, v in {
+        "kind": kind.value if kind else None,
         "category": category.value if category else None,
         "severity": severity.value if severity else None,
         "status": status_.value if status_ else None,
@@ -671,6 +688,13 @@ async def update_document(
         raise HTTPException(status_code=404, detail="document not found")
     if before.get("deletedAt"):
         raise HTTPException(status_code=410, detail="document deleted")
+
+    if before.get("kind", "defect") == "observation":
+        blocked = {"status", "severity", "resolved_at"} & set(
+            payload.model_dump(exclude_unset=True).keys()
+        )
+        if blocked:
+            raise HTTPException(status_code=422, detail="שדות סטטוס/חומרה אינם רלוונטיים לתיעוד")
 
     updates = payload.model_dump(exclude_unset=True)
 
@@ -804,6 +828,8 @@ async def create_task(
         })
         if not ref:
             raise HTTPException(status_code=404, detail="document_id not found or deleted")
+        if ref.get("kind", "defect") == "observation":
+            raise HTTPException(status_code=422, detail="לא ניתן לפתוח משימה מתקנת על תיעוד")
 
     if payload.company_id:
         comp = await db.project_companies.find_one({
@@ -1247,6 +1273,7 @@ async def _compute_safety_score(db, project_id: str) -> dict:
         {"$match": {
             "project_id": project_id,
             "deletedAt": None,
+            "kind": {"$ne": "observation"},
             "status": {"$in": ["open", "in_progress"]},
         }},
         {"$group": {
@@ -1596,10 +1623,15 @@ def _build_safety_excel_3sheet(
         [22, 22, 18, 18, 18],
     )
 
+    # Split into defects (ליקויים) and observations (תיעוד) — one collection,
+    # kind discriminator. Legacy docs (no kind) count as defects.
+    defects = [d for d in documents if d.get("kind") != "observation"]
+    observations = [d for d in documents if d.get("kind") == "observation"]
+
     # Sheet 3: ליקויים (safety findings / documents) — mirrors the filtered
     # documents export row logic. No photo_urls (S3 keys, not human-readable).
     document_rows = []
-    for d in documents:
+    for d in defects:
         document_rows.append([
             d.get("title", ""),
             CATEGORY_HE.get(d.get("category", ""), d.get("category", "")),
@@ -1617,6 +1649,24 @@ def _build_safety_excel_3sheet(
          "מיקום", "חברה", "אחראי", "תיאור"],
         document_rows,
         [26, 16, 12, 12, 16, 20, 20, 18, 40],
+    )
+
+    # Sheet: תיעוד (observations — archival, no severity/status)
+    observation_rows = []
+    for d in observations:
+        observation_rows.append([
+            _fmt_dt(d.get("found_at")),
+            d.get("title", ""),
+            CATEGORY_HE.get(d.get("category", ""), d.get("category", "")),
+            d.get("location", "") or "",
+            d.get("description", "") or "",
+            user_map.get(d.get("reporter_id", ""), ""),
+        ])
+    _write_sheet(
+        wb, "תיעוד",
+        ["תאריך", "כותרת", "קטגוריה", "מיקום", "תיאור", "דווח ע\"י"],
+        observation_rows,
+        [16, 26, 16, 20, 40, 18],
     )
 
     # Sheet 4: incidents
@@ -1733,6 +1783,7 @@ async def export_safety_excel(
 @router.get("/{project_id}/export/filtered")
 async def export_safety_filtered(
     project_id: str,
+    kind: Optional[SafetyDocumentKind] = None,
     category: Optional[SafetyCategory] = None,
     severity: Optional[SafetySeverity] = None,
     status_: Optional[SafetyDocumentStatus] = Query(None, alias="status"),
@@ -1756,6 +1807,10 @@ async def export_safety_filtered(
         raise HTTPException(status_code=404, detail="project not found")
 
     extra = {}
+    if kind == SafetyDocumentKind.observation:
+        extra["kind"] = "observation"
+    elif kind == SafetyDocumentKind.defect:
+        extra["kind"] = {"$ne": "observation"}
     if category:    extra["category"] = category.value
     if severity:    extra["severity"] = severity.value
     if status_:     extra["status"] = status_.value
@@ -1794,9 +1849,11 @@ async def export_safety_filtered(
 
     buf = _build_filtered_documents_excel(documents, company_map, user_map)
 
-    # Flatten the $gte/$lte range into plain date_from/date_to keys so the audit
-    # payload never contains $-prefixed field names (MongoDB rejects those on insert).
-    applied = {k: v for k, v in extra.items() if k != "found_at"}
+    # Flatten $-operator values (found_at range, kind $ne) into plain keys so the
+    # audit payload never contains $-prefixed field names (MongoDB rejects those).
+    applied = {k: v for k, v in extra.items() if k not in ("found_at", "kind")}
+    if kind:
+        applied["kind"] = kind.value
     if date_from:
         applied["date_from"] = date_from
     if date_to:

@@ -64,9 +64,11 @@ export const EMPTY_FILTER_INCIDENTS = {
   incident_type: null, severity: null, reported: null,
   injured_worker_id: null, date_from: null, date_to: null,
 };
+export const EMPTY_FILTER_OBSERVATIONS = { category: null, date_from: null, date_to: null };
 
 export const TAB_TITLES = {
   documents: 'סינון ליקויים',
+  observations: 'סינון תיעוד',
   workers: 'סינון עובדים',
   tasks: 'סינון משימות',
   trainings: 'סינון הדרכות',
@@ -198,6 +200,35 @@ export default function SafetyFilterSheet({
               <div>
                 <label className={fieldLabel}>מדווח</label>
                 {renderEntitySelect('reporter_id', users, 'הכל', 'טוען...')}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={fieldLabel}>מתאריך</label>
+                  <input
+                    type="date"
+                    className={fieldInput}
+                    value={local.date_from ?? ''}
+                    onChange={(e) => set('date_from', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className={fieldLabel}>עד תאריך</label>
+                  <input
+                    type="date"
+                    className={fieldInput}
+                    value={local.date_to ?? ''}
+                    onChange={(e) => set('date_to', e.target.value)}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
+          {tab === 'observations' && (
+            <>
+              <div>
+                <label className={fieldLabel}>קטגוריה</label>
+                {renderSelect('category', CATEGORY_OPTIONS, 'הכל')}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

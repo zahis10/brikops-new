@@ -22,6 +22,7 @@ import SafetyKpiCard from '../components/safety/SafetyKpiCard';
 import SafetyFilterSheet, {
   countActiveFilters, EMPTY_FILTER,
   EMPTY_FILTER_WORKERS, EMPTY_FILTER_TASKS, EMPTY_FILTER_TRAININGS, EMPTY_FILTER_INCIDENTS,
+  EMPTY_FILTER_OBSERVATIONS,
 } from '../components/safety/SafetyFilterSheet';
 import SafetyExportMenu from '../components/safety/SafetyExportMenu';
 import SafetyBulkActionBar from '../components/safety/SafetyBulkActionBar';
@@ -33,13 +34,13 @@ import SafetyTrainingForm from '../components/safety/SafetyTrainingForm';
 import SafetyIncidentForm from '../components/safety/SafetyIncidentForm';
 import SafetyWorkerCard from '../components/safety/SafetyWorkerCard';
 import {
-  SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE, INCIDENT_STATUS_HE,
+  CATEGORY_HE, SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE, INCIDENT_STATUS_HE,
 } from '../components/safety/safetyLabels';
 
 // Writers = the two project roles the safety backend accepts for create/edit
 // (safety_router.py SAFETY_WRITERS). The "+"/edit affordances gate on these.
 const SAFETY_WRITERS = ['project_manager', 'management_team'];
-const VALID_TABS = ['overview', 'documents', 'tasks', 'workers', 'trainings', 'incidents'];
+const VALID_TABS = ['overview', 'documents', 'observations', 'tasks', 'workers', 'trainings', 'incidents'];
 const SEVERITY_COLOR = {
   '1': 'bg-blue-100 text-blue-800',
   '2': 'bg-amber-100 text-amber-800',
@@ -53,6 +54,7 @@ export default function SafetyHomePage() {
   const [project, setProject] = useState(null);
   const [scoreData, setScoreData] = useState(null);
   const [docs, setDocs] = useState({ items: [], total: 0 });
+  const [obsDocs, setObsDocs] = useState({ items: [], total: 0 });
   const [tasks, setTasks] = useState({ items: [], total: 0 });
   const [workers, setWorkers] = useState({ items: [], total: 0 });
   const [trainings, setTrainings] = useState({ items: [], total: 0 });
@@ -76,6 +78,7 @@ export default function SafetyHomePage() {
   const [filterOpen, setFilterOpen] = useState(false);
   // Adaptive per-tab filters (documents keeps its own `filter` above).
   const [auxFilters, setAuxFilters] = useState({
+    observations: EMPTY_FILTER_OBSERVATIONS,
     workers: EMPTY_FILTER_WORKERS,
     tasks: EMPTY_FILTER_TASKS,
     trainings: EMPTY_FILTER_TRAININGS,
@@ -83,6 +86,7 @@ export default function SafetyHomePage() {
   });
   // Separate view state per aux tab so the global lists (source of truth for the
   // form/card worker & company pickers) are never overwritten by a filtered fetch.
+  const [filteredObs, setFilteredObs] = useState(null);
   const [filteredWorkers, setFilteredWorkers] = useState(null);
   const [filteredTasks, setFilteredTasks] = useState(null);
   const [filteredTrainings, setFilteredTrainings] = useState(null);
@@ -94,7 +98,7 @@ export default function SafetyHomePage() {
   const [users, setUsers] = useState([]);
 
   // Batch safety-p2-1 — create/edit modal state (one pair per entity).
-  const [docForm, setDocForm] = useState({ open: false, record: null });
+  const [docForm, setDocForm] = useState({ open: false, record: null, kind: 'defect' });
   const [workerForm, setWorkerForm] = useState({ open: false, record: null });
   const [taskForm, setTaskForm] = useState({ open: false, record: null });
   const [trainingForm, setTrainingForm] = useState({ open: false, record: null });
@@ -124,9 +128,10 @@ export default function SafetyHomePage() {
         if (cancelled) return;
         if (proj) setProject(proj);
 
-        const [scoreResp, docsResp, tasksResp, workersResp, trainingsResp, incidentsResp] = await Promise.all([
+        const [scoreResp, docsResp, obsResp, tasksResp, workersResp, trainingsResp, incidentsResp] = await Promise.all([
           safetyService.getScore(projectId).catch((e) => ({ __err: e })),
-          safetyService.listDocuments(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+          safetyService.listDocuments(projectId, { limit: 50, kind: 'defect' }).catch((e) => ({ __err: e })),
+          safetyService.listDocuments(projectId, { limit: 50, kind: 'observation' }).catch((e) => ({ __err: e })),
           safetyService.listTasks(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
           safetyService.listWorkers(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
           safetyService.listTrainings(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
@@ -134,7 +139,7 @@ export default function SafetyHomePage() {
         ]);
         if (cancelled) return;
 
-        const responses = [scoreResp, docsResp, tasksResp, workersResp, trainingsResp, incidentsResp];
+        const responses = [scoreResp, docsResp, obsResp, tasksResp, workersResp, trainingsResp, incidentsResp];
         const has404 = responses.some((r) => r?.__err?.response?.status === 404);
         const has403 = responses.some((r) => r?.__err?.response?.status === 403);
 
@@ -150,6 +155,7 @@ export default function SafetyHomePage() {
 
         setScoreData(scoreResp);
         setDocs(docsResp || { items: [], total: 0 });
+        setObsDocs(obsResp || { items: [], total: 0 });
         setTasks(tasksResp || { items: [], total: 0 });
         setWorkers(workersResp || { items: [], total: 0 });
         setTrainings(trainingsResp || { items: [], total: 0 });
@@ -214,7 +220,7 @@ export default function SafetyHomePage() {
     let cancelled = false;
     (async () => {
       try {
-        const params = { limit: 50 };
+        const params = { limit: 50, kind: 'defect' };
         Object.entries(filter).forEach(([k, v]) => {
           if (v != null && v !== '') params[k] = v;
         });
@@ -241,6 +247,7 @@ export default function SafetyHomePage() {
     if (!projectId || loading || flagOff || forbidden) return;
     if (activeTab === 'documents' || activeTab === 'overview') return;
     const setFiltered = {
+      observations: setFilteredObs,
       workers: setFilteredWorkers,
       tasks: setFilteredTasks,
       trainings: setFilteredTrainings,
@@ -251,7 +258,12 @@ export default function SafetyHomePage() {
     if (countActiveFilters(f) === 0) { setFiltered(null); return; }
 
     const params = { limit: 50 };
-    if (activeTab === 'workers') {
+    if (activeTab === 'observations') {
+      params.kind = 'observation';
+      if (f.category) params.category = f.category;
+      if (f.date_from) params.date_from = f.date_from;
+      if (f.date_to) params.date_to = f.date_to;
+    } else if (activeTab === 'workers') {
       if (f.profession) params.profession = f.profession;
       if (f.company_id) params.company_id = f.company_id;
     } else if (activeTab === 'tasks') {
@@ -277,7 +289,8 @@ export default function SafetyHomePage() {
     (async () => {
       try {
         let resp;
-        if (activeTab === 'workers') resp = await safetyService.listWorkers(projectId, params);
+        if (activeTab === 'observations') resp = await safetyService.listDocuments(projectId, params);
+        else if (activeTab === 'workers') resp = await safetyService.listWorkers(projectId, params);
         else if (activeTab === 'tasks') resp = await safetyService.listTasks(projectId, params);
         else if (activeTab === 'trainings') resp = await safetyService.listTrainings(projectId, params);
         else if (activeTab === 'incidents') resp = await safetyService.listIncidents(projectId, params);
@@ -320,6 +333,7 @@ export default function SafetyHomePage() {
   const activeFilterCountTab = isDocTab
     ? activeFilterCount
     : countActiveFilters(auxFilters[activeTab] || {});
+  const observationsView = (countActiveFilters(auxFilters.observations) > 0 && filteredObs) ? filteredObs : obsDocs;
   const workersView = (countActiveFilters(auxFilters.workers) > 0 && filteredWorkers) ? filteredWorkers : workers;
   const tasksView = (countActiveFilters(auxFilters.tasks) > 0 && filteredTasks) ? filteredTasks : tasks;
   const trainingsView = (countActiveFilters(auxFilters.trainings) > 0 && filteredTrainings) ? filteredTrainings : trainings;
@@ -370,21 +384,41 @@ export default function SafetyHomePage() {
   // the score; a worker can change the "untrained" count). Best-effort: a refresh
   // failure does not undo the save (the toast already confirmed it).
   const buildDocParams = () => {
-    const params = { limit: 50 };
+    const params = { limit: 50, kind: 'defect' };
     Object.entries(filter).forEach(([k, v]) => {
       if (v != null && v !== '') params[k] = v;
     });
     return params;
   };
 
+  const buildObsParams = () => {
+    const params = { limit: 50, kind: 'observation' };
+    const f = auxFilters.observations || {};
+    if (f.category) params.category = f.category;
+    if (f.date_from) params.date_from = f.date_from;
+    if (f.date_to) params.date_to = f.date_to;
+    return params;
+  };
+
+  // A document save can be a defect OR an observation, so refresh BOTH lists (+
+  // the score, which only defects move). Observations never affect the score but
+  // refetching the global obs list keeps the תיעוד tab in sync after an edit.
   const reloadDocuments = async () => {
     try {
-      const [docsResp, scoreResp] = await Promise.all([
+      const [docsResp, obsResp, scoreResp] = await Promise.all([
         safetyService.listDocuments(projectId, buildDocParams()),
+        safetyService.listDocuments(projectId, { limit: 50, kind: 'observation' }).catch(() => null),
         safetyService.getScore(projectId, true).catch(() => null),
       ]);
       setDocs(docsResp || { items: [], total: 0 });
+      if (obsResp) setObsDocs(obsResp);
       if (scoreResp) setScoreData(scoreResp);
+      // Keep the filtered obs view fresh when a תיעוד filter is active.
+      if (countActiveFilters(auxFilters.observations) > 0) {
+        safetyService.listDocuments(projectId, buildObsParams())
+          .then((r) => setFilteredObs(r || { items: [], total: 0 }))
+          .catch(() => {});
+      }
     } catch (e) {
       toast.error('שגיאה ברענון רשימת הליקויים');
     }
@@ -511,6 +545,12 @@ export default function SafetyHomePage() {
                 ליקויים ({docs.total})
               </TabsTrigger>
               <TabsTrigger
+                value="observations"
+                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
+              >
+                תיעוד ({observationsView.total})
+              </TabsTrigger>
+              <TabsTrigger
                 value="tasks"
                 className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
               >
@@ -546,7 +586,17 @@ export default function SafetyHomePage() {
                 hasActiveFilter={hasActiveFilter}
                 onClearFilter={clearFilter}
                 isWriter={isWriter}
-                onEdit={(d) => setDocForm({ open: true, record: d })}
+                onEdit={(d) => setDocForm({ open: true, record: d, kind: 'defect' })}
+                onOpenDetail={(d) => setDetailDoc(d)}
+              />
+            </TabsContent>
+            <TabsContent value="observations" className="p-0 m-0">
+              <ObservationsList
+                items={observationsView.items}
+                hasActiveFilter={countActiveFilters(auxFilters.observations) > 0}
+                onClearFilter={() => setAuxFilters((m) => ({ ...m, observations: EMPTY_FILTER_OBSERVATIONS }))}
+                isWriter={isWriter}
+                onEdit={(d) => setDocForm({ open: true, record: d, kind: 'observation' })}
                 onOpenDetail={(d) => setDetailDoc(d)}
               />
             </TabsContent>
@@ -662,6 +712,7 @@ export default function SafetyHomePage() {
             setFilter(EMPTY_FILTER);
           } else {
             const empties = {
+              observations: EMPTY_FILTER_OBSERVATIONS,
               workers: EMPTY_FILTER_WORKERS, tasks: EMPTY_FILTER_TASKS,
               trainings: EMPTY_FILTER_TRAININGS, incidents: EMPTY_FILTER_INCIDENTS,
             };
@@ -677,8 +728,9 @@ export default function SafetyHomePage() {
       <SafetyDocumentForm
         projectId={projectId}
         document={docForm.record}
+        kind={docForm.kind}
         open={docForm.open}
-        onClose={() => setDocForm({ open: false, record: null })}
+        onClose={() => setDocForm({ open: false, record: null, kind: 'defect' })}
         onSaved={reloadDocuments}
       />
 
@@ -688,7 +740,7 @@ export default function SafetyHomePage() {
         onClose={() => setDetailDoc(null)}
         isWriter={isWriter}
         companies={companies}
-        onEdit={(d) => { setDetailDoc(null); setDocForm({ open: true, record: d }); }}
+        onEdit={(d) => { setDetailDoc(null); setDocForm({ open: true, record: d, kind: d.kind || 'defect' }); }}
       />
 
       <SafetyWorkerForm
@@ -841,10 +893,19 @@ export default function SafetyHomePage() {
               type="button"
               variant="outline"
               className="w-full justify-start gap-3 min-h-[48px]"
-              onClick={() => { setAddChooserOpen(false); setDocForm({ open: true, record: null }); }}
+              onClick={() => { setAddChooserOpen(false); setDocForm({ open: true, record: null, kind: 'defect' }); }}
             >
               <ShieldAlert className="w-4 h-4" />
               ליקוי
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-start gap-3 min-h-[48px]"
+              onClick={() => { setAddChooserOpen(false); setDocForm({ open: true, record: null, kind: 'observation' }); }}
+            >
+              <FileText className="w-4 h-4" />
+              תיעוד
             </Button>
             <Button
               type="button"
@@ -1024,6 +1085,71 @@ function DocumentsList({
         ))}
       </ul>
     </>
+  );
+}
+
+// תיעוד (observation) list — mirrors DocumentsList chrome minus the severity/
+// status badges, the bulk-select checkboxes and the "select all" header (an
+// observation is a photo-first record with no lifecycle). Row tap opens the
+// shared read-only detail modal; a green "תיעוד" chip marks the kind.
+function ObservationsList({
+  items, hasActiveFilter, onClearFilter, isWriter, onEdit, onOpenDetail,
+}) {
+  if (!items?.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+        <FileText className="w-10 h-10 mb-2" />
+        <p className="text-sm font-medium">
+          {hasActiveFilter ? 'לא נמצא תיעוד המתאים לסינון' : 'אין תיעוד'}
+        </p>
+        {hasActiveFilter && (
+          <button
+            type="button"
+            onClick={onClearFilter}
+            className="mt-3 text-sm text-blue-600 hover:underline"
+          >
+            נקה סינון
+          </button>
+        )}
+      </div>
+    );
+  }
+  return (
+    <ul className="divide-y divide-slate-100">
+      {items.map((d) => (
+        <li
+          key={d.id}
+          role="button"
+          onClick={() => onOpenDetail(d)}
+          className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50 cursor-pointer"
+        >
+          <DocThumb url={d.photo_display_urls?.[0]} />
+          <Badge className="bg-green-100 text-green-800 shrink-0">תיעוד</Badge>
+          <div className="flex-1 min-w-0">
+            <p className="font-medium text-slate-900 truncate">{d.title}</p>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <Badge className="bg-slate-100 text-slate-700 font-normal">
+                {CATEGORY_HE[d.category] || d.category}
+              </Badge>
+              <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
+            </div>
+          </div>
+          <time className="text-xs text-slate-400 shrink-0">
+            {(d.found_at || '').slice(0, 10)}
+          </time>
+          {isWriter && (
+            <button
+              type="button"
+              aria-label="ערוך תיעוד"
+              onClick={(e) => { e.stopPropagation(); onEdit(d); }}
+              className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 

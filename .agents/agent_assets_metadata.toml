@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "סקירת באטץ׳ safety-p2-3b — סינון אדפטיבי לכל טאב"
+title = "סקירת Batch — הפרדת תיעוד מליקוי (safety-p2-step3)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"

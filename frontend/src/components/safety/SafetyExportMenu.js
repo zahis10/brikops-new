@@ -55,7 +55,10 @@ export default function SafetyExportMenu({
         response = await safetyService.exportExcel(projectId);
         fallback = `safety_${shortId}_${stamp}.xlsx`;
       } else if (type === 'filtered') {
-        const params = {};
+        // This menu is bound to the documents (defect) filter, so the filtered
+        // export is always a DEFECT export — pin kind so observations (and the
+        // backend's no-kind default) never leak into the filtered defect sheet.
+        const params = { kind: 'defect' };
         if (currentFilter) {
           Object.entries(currentFilter).forEach(([k, v]) => {
             if (v != null && v !== '') params[k] = v;
