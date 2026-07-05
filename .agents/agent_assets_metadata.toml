@@ -594,3 +594,9 @@ id = "U4XALrHoAvdEtWSoTabJI"
 uri = "file://.local/plans/safety-p2-4a-plan.txt"
 type = "text"
 title = "תוכנית Batch safety-p2-4a — סיורי בטיחות (Backend)"
+
+[[outputs]]
+id = "LREkKkpoV7Lb1nMavGJ9b"
+uri = "file://.local/plans/safety-p2-4b-plan.txt"
+type = "text"
+title = "תוכנית safety-p2-4b — Safety Tours UI (טאב סיורים + RUNNER)"
