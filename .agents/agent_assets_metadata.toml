@@ -582,3 +582,9 @@ id = "yGBKo8fZ7se_TpOWWzOiS"
 uri = "file://.local/plans/safety-p2-3b-plan.txt"
 type = "text"
 title = "safety-p2-3b — תוכנית סינון אדפטיבי לפי טאב"
+
+[[outputs]]
+id = "q9BVkFpn1kQB_4uJDbqbh"
+uri = "file://.local/plans/safety-p2-step3-plan.txt"
+type = "text"
+title = "תוכנית BATCH safety-p2-step3 — הפרדת תיעוד (observation) מליקוי (defect)"
