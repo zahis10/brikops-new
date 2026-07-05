@@ -576,3 +576,9 @@ id = "fB_HzMsNvMuTENiTwrOVf"
 uri = "file://.local/plans/safety-worker-card-plan.txt"
 type = "text"
 title = "safety-worker-card — תוכנית (ממתין תתחיל)"
+
+[[outputs]]
+id = "yGBKo8fZ7se_TpOWWzOiS"
+uri = "file://.local/plans/safety-p2-3b-plan.txt"
+type = "text"
+title = "safety-p2-3b — תוכנית סינון אדפטיבי לפי טאב"
