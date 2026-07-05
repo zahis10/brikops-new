@@ -1018,7 +1018,7 @@ export default function SafetyHomePage() {
           ...prev,
           items: (prev.items || []).map((x) => (x.id === tr.id ? tr : x)),
         }))}
-        onClose={() => { setTourRunner(null); reloadTours(); }}
+        onClose={() => { setTourRunner(null); reloadTours(); reloadDocuments(); }}
       />
     </div>
   );

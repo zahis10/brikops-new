@@ -1,72 +1,56 @@
 ================================================================================
-BrikOps — BATCH safety-p2-4b-fix1 — ToursList month grouping + no per-tap refetch
-Branch: staging  |  Base HEAD: ecfa6af  |  Date: 2026-07-05
+BrikOps — BATCH safety-p2-4b-fix2 — refresh defects when the tour runner closes (BUG)
+Branch: staging  |  Base HEAD: 0ff7fad (fix1)  |  Date: 2026-07-05
 ================================================================================
+
+הבאג (נמצא בשטח ע"י צהי)
+------------------------
+כשל בפריט סיור יוצר ליקוי בצד-שרת (4a), אבל טאב הליקויים המשיך להציג רשימה
+ישנה עד refresh ידני של הדף. שורש: onClose של ה-runner ריענן רק את רשימת
+הסיורים — spec 6i של 4b דרש שם גם reloadDocuments() וזה נשמט.
 
 מה נעשה
 -------
-תיקון קטן ל-UI של סיורי הבטיחות (4b). קובץ אחד בלבד: SafetyHomePage.js, frontend
-בלבד. (1) ToursList עברה מרשימה שטוחה לקיבוץ לפי חודש בסגנון Cemento (spec 6g
-שדולג ב-4b). (2) בזמן צעידה בסיור, כל הקשה על פריט הפסיקה לגרור refetch מלא של
-כל רשימת הסיורים.
+תיקון של שורה אחת בלבד. קובץ יחיד: SafetyHomePage.js, frontend בלבד.
 
 STEP 0 — PRE-FLIGHT
 -------------------
-HEAD = ecfa6af (=origin/staging). עוגנים תואמים:
-- function ToursList @1024
-- onChanged={() => reloadTours()} @1017
+HEAD = 0ff7fad (=checkpoint של fix1). עוגנים תואמים:
+- onClose={() => { setTourRunner(null); reloadTours(); }}  @1021
+- const reloadDocuments = async () => {  @415  (כבר קיים)
 
-STEP 1 — ToursList: קיבוץ לפי חודש
------------------------------------
-- groups: key "YYYY-MM" מתוך tour_date.slice(0,7) (ריק → "unknown").
-- monthLabel: he-IL long month + year (למשל "יולי 2026"); fallback "ללא תאריך".
-- סדר: Object.keys(groups).sort().reverse() → החודש החדש ביותר ראשון (נכון כי
-  המפתחות מרופדי-אפסים YYYY-MM).
-- לכל קבוצה: שורת כותרת = monthLabel (text-sm font-semibold text-slate-700) +
-  chips ספירה באותה שורה, רק כש-count>0 — הצבע הוא הסטטוס, התוכן = המספר בלבד:
-    * pending_signature → amber (bg-amber-100 text-amber-800)
-    * draft → slate (bg-slate-100 text-slate-600)
-    * signed → green (bg-green-100 text-green-800)
-- כרטיסי הסיור: markup זהה לחלוטין לרשימה השטוחה (חולץ ל-renderCard). מיון פנימי
-  כפי שהשרת מחזיר (tour_date DESC).
-- כפתור "סיור חדש" + ה-empty state נשארו זהים בדיוק.
+STEP 1 — התיקון
+---------------
+ב-mount של SafetyTourRunner, הוחלף:
+    onClose={() => { setTourRunner(null); reloadTours(); }}
+ב:
+    onClose={() => { setTourRunner(null); reloadTours(); reloadDocuments(); }}
 
-STEP 2 — הפסקת refetch על כל tap
---------------------------------
-mount של SafetyTourRunner: onChanged הוחלף מ-() => reloadTours() למיזוג מקומי
-של סיור בודד ללא רשת:
-    onChanged={(tr) => setTours((prev) => ({
-      ...prev,
-      items: (prev.items || []).map((x) => (x.id === tr.id ? tr : x)),
-    }))}
-onClose נשאר reloadTours() (מכסה drift של יצירה/מחיקה). אין שינוי בתוך
-SafetyTourRunner.js. חוסך 13+ קריאות GET /tours לכל סיור באתרים עם קליטה חלשה.
+reloadDocuments כבר קיים ומרענן ליקויים (kind='defect' עם פרמטרי הסינון הפעילים)
++ תצפיות (kind='observation') + score (getScore) — בדיוק מה שסיור עם פריטים
+שנכשלו משנה. onChanged (המיזוג המקומי מ-fix1) נשאר ללא שינוי.
 
 DO NOT (נשמר)
 -------------
-לא נגעתי ב-SafetyTourRunner.js / SafetyTourCreateDialog.js / api.js / labels /
-backend / טאבים או רכיבים אחרים. markup הכרטיס, ה-wiring של ה-runner, ו-reloadTours
-עצמה — ללא שינוי.
+לא נגעתי ב-runner, לא ב-reloadDocuments/reloadTours עצמן, לא ב-onChanged (מיזוג
+fix1 נשאר), ואין backend. שינוי בשורה אחת בלבד.
 
 בדיקות
 ------
 - craco build (REACT_APP_BACKEND_URL placeholder, GENERATE_SOURCEMAP=false)
   → EXIT=0, אפס errors/warnings.
-- Architect review (evaluate_task, includeGitDiff) → PASS. אומת: קיבוץ נכון
-  (sort/reverse על YYYY-MM), לוגיקת ה-chips (count-only, >0), fallback "ללא תאריך",
-  שמירת markup הכרטיס, ומיזוג onChanged ששומר X/Y טרי בכרטיס אחרי סגירת ה-runner
-  (onClose→reloadTours מיישב totals). scope נקי — שום רכיב אחר לא נגע.
+- Architect review (evaluate_task, includeGitDiff) → PASS. אומת: reloadDocuments
+  היא הפונקציה הקיימת הנכונה (מרעננת defects+observations+score), fix1 (onChanged
+  local merge) נשמר, וה-hunk משנה רק את שורת ה-onClose.
 
 בדיקות מכשיר מומלצות (staging)
 ------------------------------
-1. סיורים בשני חודשים → שתי כותרות בעברית, החודש החדש ראשון, chips נכונים.
-2. יצירת סיור → מופיע תחת החודש הנכון אחרי סגירת הדיאלוג.
-3. במהלך צעידה — הקשות על פריטים לא מפעילות GET /tours (רק PATCH לפריט);
-   ההתקדמות ב-runner מתעדכנת; הכרטיס מציג X/Y טרי אחרי סגירה.
-4. פרויקט ריק → empty state + כפתור יצירה ללא שינוי.
+1. סיור טיוטה → הכשלת פריט (חומרה + שמירה) → סגירת ה-runner → טאב הליקויים
+   מציג את הליקוי החדש ומד ה-score זז — בלי refresh ידני.
+2. סגירת runner ללא שום שינוי → אין שגיאה, הרשימות פשוט מתרעננות.
 
 השפעה / סיכון
 -------------
-Frontend בלבד, קובץ יחיד. תצוגה משופרת + פחות רשת; אין שינוי חוזה, אין backend,
-אין migration, אין תלות/secret חדשים.
+Frontend בלבד, שורה אחת. תוספת קריאת רענון אחת בסגירת ה-runner (מכוונת). אין
+שינוי חוזה, אין backend, אין migration, אין תלות/secret חדשים.
 ================================================================================
