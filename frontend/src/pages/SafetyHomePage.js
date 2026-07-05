@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
-  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter, Plus, Pencil, Camera, FileText,
+  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter, Plus, Pencil, Camera, FileText, ClipboardList,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
@@ -33,14 +33,17 @@ import SafetyTaskForm from '../components/safety/SafetyTaskForm';
 import SafetyTrainingForm from '../components/safety/SafetyTrainingForm';
 import SafetyIncidentForm from '../components/safety/SafetyIncidentForm';
 import SafetyWorkerCard from '../components/safety/SafetyWorkerCard';
+import SafetyTourCreateDialog from '../components/safety/SafetyTourCreateDialog';
+import SafetyTourRunner from '../components/safety/SafetyTourRunner';
 import {
   CATEGORY_HE, SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE, INCIDENT_STATUS_HE,
+  TOUR_TYPE_HE, TOUR_STATUS_HE,
 } from '../components/safety/safetyLabels';
 
 // Writers = the two project roles the safety backend accepts for create/edit
 // (safety_router.py SAFETY_WRITERS). The "+"/edit affordances gate on these.
 const SAFETY_WRITERS = ['project_manager', 'management_team'];
-const VALID_TABS = ['overview', 'documents', 'observations', 'tasks', 'workers', 'trainings', 'incidents'];
+const VALID_TABS = ['overview', 'documents', 'observations', 'tours', 'tasks', 'workers', 'trainings', 'incidents'];
 const SEVERITY_COLOR = {
   '1': 'bg-blue-100 text-blue-800',
   '2': 'bg-amber-100 text-amber-800',
@@ -109,6 +112,10 @@ export default function SafetyHomePage() {
   const [trainingCardLock, setTrainingCardLock] = useState(null);
   // Batch safety-p2-1d — read-only detail modal (row tap opens it).
   const [detailDoc, setDetailDoc] = useState(null);
+  // Batch safety-p2-4b — safety tours (list + create dialog + checklist runner).
+  const [tours, setTours] = useState({ items: [], total: 0 });
+  const [tourRunner, setTourRunner] = useState(null);
+  const [tourCreateOpen, setTourCreateOpen] = useState(false);
 
   // Skip the filter useEffect's initial run — main useEffect's Promise.all
   // already fetched documents. The ref flips to false after the first real run.
@@ -128,7 +135,7 @@ export default function SafetyHomePage() {
         if (cancelled) return;
         if (proj) setProject(proj);
 
-        const [scoreResp, docsResp, obsResp, tasksResp, workersResp, trainingsResp, incidentsResp] = await Promise.all([
+        const [scoreResp, docsResp, obsResp, tasksResp, workersResp, trainingsResp, incidentsResp, toursResp] = await Promise.all([
           safetyService.getScore(projectId).catch((e) => ({ __err: e })),
           safetyService.listDocuments(projectId, { limit: 50, kind: 'defect' }).catch((e) => ({ __err: e })),
           safetyService.listDocuments(projectId, { limit: 50, kind: 'observation' }).catch((e) => ({ __err: e })),
@@ -136,10 +143,11 @@ export default function SafetyHomePage() {
           safetyService.listWorkers(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
           safetyService.listTrainings(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
           safetyService.listIncidents(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+          safetyService.listTours(projectId, { limit: 100 }).catch((e) => ({ __err: e })),
         ]);
         if (cancelled) return;
 
-        const responses = [scoreResp, docsResp, obsResp, tasksResp, workersResp, trainingsResp, incidentsResp];
+        const responses = [scoreResp, docsResp, obsResp, tasksResp, workersResp, trainingsResp, incidentsResp, toursResp];
         const has404 = responses.some((r) => r?.__err?.response?.status === 404);
         const has403 = responses.some((r) => r?.__err?.response?.status === 403);
 
@@ -160,6 +168,7 @@ export default function SafetyHomePage() {
         setWorkers(workersResp || { items: [], total: 0 });
         setTrainings(trainingsResp || { items: [], total: 0 });
         setIncidents(incidentsResp || { items: [], total: 0 });
+        setTours(toursResp || { items: [], total: 0 });
       } catch (err) {
         if (!cancelled) toast.error('שגיאה בטעינת נתונים');
       } finally {
@@ -245,7 +254,7 @@ export default function SafetyHomePage() {
   // LIST-ONLY (no score refetch), fail-soft.
   useEffect(() => {
     if (!projectId || loading || flagOff || forbidden) return;
-    if (activeTab === 'documents' || activeTab === 'overview') return;
+    if (activeTab === 'documents' || activeTab === 'overview' || activeTab === 'tours') return;
     const setFiltered = {
       observations: setFilteredObs,
       workers: setFilteredWorkers,
@@ -472,6 +481,15 @@ export default function SafetyHomePage() {
     }
   };
 
+  const reloadTours = async () => {
+    try {
+      const toursResp = await safetyService.listTours(projectId, { limit: 100 });
+      setTours(toursResp || { items: [], total: 0 });
+    } catch (e) {
+      toast.error('שגיאה ברענון רשימת הסיורים');
+    }
+  };
+
   return (
     <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
       <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-2 sticky top-0 z-20">
@@ -505,7 +523,7 @@ export default function SafetyHomePage() {
           hasActiveFilter={hasActiveFilter}
         />
 
-        {activeTab !== 'overview' && (
+        {activeTab !== 'overview' && activeTab !== 'tours' && (
           <button
             type="button"
             onClick={() => setFilterOpen(true)}
@@ -549,6 +567,12 @@ export default function SafetyHomePage() {
                 className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
               >
                 תיעוד ({observationsView.total})
+              </TabsTrigger>
+              <TabsTrigger
+                value="tours"
+                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
+              >
+                סיורים ({tours.total})
               </TabsTrigger>
               <TabsTrigger
                 value="tasks"
@@ -598,6 +622,14 @@ export default function SafetyHomePage() {
                 isWriter={isWriter}
                 onEdit={(d) => setDocForm({ open: true, record: d, kind: 'observation' })}
                 onOpenDetail={(d) => setDetailDoc(d)}
+              />
+            </TabsContent>
+            <TabsContent value="tours" className="p-0 m-0">
+              <ToursList
+                items={tours.items}
+                isWriter={isWriter}
+                onOpen={(tr) => setTourRunner(tr)}
+                onCreate={() => setTourCreateOpen(true)}
               />
             </TabsContent>
             <TabsContent value="tasks" className="p-0 m-0">
@@ -943,6 +975,15 @@ export default function SafetyHomePage() {
               <AlertCircle className="w-4 h-4" />
               אירוע
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-start gap-3 min-h-[48px]"
+              onClick={() => { setAddChooserOpen(false); setTourCreateOpen(true); }}
+            >
+              <ClipboardList className="w-4 h-4" />
+              סיור
+            </Button>
           </div>
           <DialogFooter className="flex flex-row-reverse gap-2 sm:justify-start">
             <Button
@@ -956,6 +997,72 @@ export default function SafetyHomePage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SafetyTourCreateDialog
+        projectId={projectId}
+        open={tourCreateOpen}
+        onClose={() => setTourCreateOpen(false)}
+        onCreated={(tour) => {
+          setTourCreateOpen(false);
+          reloadTours();
+          setTourRunner(tour);   // jump straight into the checklist
+        }}
+      />
+
+      <SafetyTourRunner
+        projectId={projectId}
+        tour={tourRunner}
+        open={!!tourRunner}
+        isWriter={isWriter}
+        onChanged={() => reloadTours()}
+        onClose={() => { setTourRunner(null); reloadTours(); }}
+      />
+    </div>
+  );
+}
+
+function ToursList({ items = [], isWriter, onOpen, onCreate }) {
+  const TOUR_STATUS_BADGE = {
+    draft: 'bg-slate-100 text-slate-700',
+    pending_signature: 'bg-amber-100 text-amber-800',
+    signed: 'bg-green-100 text-green-800',
+  };
+  return (
+    <div className="p-4 space-y-3">
+      {isWriter && (
+        <button
+          type="button"
+          onClick={onCreate}
+          className="w-full min-h-[48px] rounded-xl border-2 border-dashed border-blue-300 bg-blue-50 text-blue-700 font-medium text-sm hover:bg-blue-100 flex items-center justify-center gap-2"
+        >
+          <Plus className="w-4 h-4" /> סיור חדש
+        </button>
+      )}
+      {items.length === 0 ? (
+        <div className="text-center py-12 text-slate-400 text-sm">אין סיורים עדיין</div>
+      ) : (
+        items.map((tr) => {
+          const title = tr.tour_type === 'custom' ? (tr.custom_name || 'סיור מותאם') : (TOUR_TYPE_HE[tr.tour_type] || 'סיור');
+          const total = (tr.items || []).length;
+          const answered = (tr.items || []).filter((it) => it.result != null).length;
+          return (
+            <button
+              key={tr.id}
+              type="button"
+              onClick={() => onOpen(tr)}
+              className="w-full text-right rounded-xl border border-slate-200 bg-white p-4 hover:bg-slate-50 transition-colors flex items-start justify-between gap-3"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-slate-800 truncate">{title}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{tr.tour_date} · נענו {answered}/{total}</p>
+              </div>
+              <span className={`shrink-0 text-[11px] font-medium rounded-full px-2 py-0.5 ${TOUR_STATUS_BADGE[tr.status] || TOUR_STATUS_BADGE.draft}`}>
+                {TOUR_STATUS_HE[tr.status] || tr.status}
+              </span>
+            </button>
+          );
+        })
+      )}
     </div>
   );
 }

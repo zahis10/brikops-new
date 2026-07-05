@@ -1573,10 +1573,15 @@ async def add_tour_item(
         "result": None, "note": None, "photo_urls": [], "defect_id": None,
         "answered_at": None, "answered_by": None,
     }
-    await db.safety_tours.update_one(
+    upd = await db.safety_tours.update_one(
         {"id": tour_id, "project_id": project_id, "deletedAt": None, "status": "draft"},
         {"$push": {"items": new_item}, "$set": {"updated_at": _now()}},
     )
+    # The top-of-handler read saw draft, but a concurrent submit could have moved
+    # the tour out of draft before this $push landed — refuse rather than silently
+    # no-op with a 200 + "item_added" audit (mirrors update_tour_item's guard).
+    if upd.matched_count == 0:
+        raise HTTPException(status_code=409, detail="לא ניתן לערוך סיור שהוגש")
     after = await db.safety_tours.find_one({"id": tour_id, "project_id": project_id})
     await _audit("safety_tour", tour_id, "item_added", user["id"], {
         "project_id": project_id, "item_id": new_item["id"], "label": new_item["label"],

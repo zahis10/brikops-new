@@ -581,6 +581,41 @@ export const safetyService = {
     const r = await axios.post(`${API}/safety/${projectId}/upload`, fd, { headers: getAuthHeader() });
     return r.data;   // { url (presigned preview), stored_ref (permanent key), ... }
   },
+
+  // Safety Tours (batch safety-p2-4b) — checklist walks; a failed item auto-opens
+  // a linked defect server-side (4a). Same axios + getAuthHeader style as above.
+  async listTours(projectId, params = {}) {
+    const r = await axios.get(`${API}/safety/${projectId}/tours`, { headers: getAuthHeader(), params });
+    return r.data;
+  },
+  async createTour(projectId, payload) {
+    const r = await axios.post(`${API}/safety/${projectId}/tours`, payload, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async getTour(projectId, tourId) {
+    const r = await axios.get(`${API}/safety/${projectId}/tours/${tourId}`, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async updateTourItem(projectId, tourId, itemId, payload) {
+    const r = await axios.patch(
+      `${API}/safety/${projectId}/tours/${tourId}/items/${itemId}`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+  async addTourItem(projectId, tourId, payload) {
+    const r = await axios.post(`${API}/safety/${projectId}/tours/${tourId}/items`, payload, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async submitTour(projectId, tourId) {
+    const r = await axios.post(`${API}/safety/${projectId}/tours/${tourId}/submit`, {}, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async reopenTour(projectId, tourId) {
+    const r = await axios.post(`${API}/safety/${projectId}/tours/${tourId}/reopen`, {}, { headers: getAuthHeader() });
+    return r.data;
+  },
 };
 
 export const buildingService = {

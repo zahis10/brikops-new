@@ -32,3 +32,14 @@ export const INCIDENT_TYPE_HE = { near_miss: 'כמעט-תאונה', injury: 'פ�
 
 // Safety incident status (display-only; server owns transitions).
 export const INCIDENT_STATUS_HE = { draft: 'טיוטה', reported: 'דווח', closed: 'סגור' };
+
+// Safety tour type (schemas.py SafetyTourType) — batch safety-p2-4b.
+export const TOUR_TYPE_HE = {
+  officer_monthly: 'דוח ממונה בטיחות',
+  assistant_morning: 'דוח עוזר בטיחות — בוקר',
+  assistant_evening: 'דוח עוזר בטיחות — ערב',
+  custom: 'סיור מותאם',
+};
+
+// Safety tour status (schemas.py SafetyTourStatus). signed = batch 4c.
+export const TOUR_STATUS_HE = { draft: 'טיוטה', pending_signature: 'ממתין לחתימה', signed: 'חתום' };
