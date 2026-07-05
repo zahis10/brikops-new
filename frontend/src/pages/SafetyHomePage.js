@@ -19,7 +19,10 @@ import { Button } from '../components/ui/button';
 import { safetyService, projectService, projectCompanyService } from '../services/api';
 import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
 import SafetyKpiCard from '../components/safety/SafetyKpiCard';
-import SafetyFilterSheet, { countActiveFilters, EMPTY_FILTER } from '../components/safety/SafetyFilterSheet';
+import SafetyFilterSheet, {
+  countActiveFilters, EMPTY_FILTER,
+  EMPTY_FILTER_WORKERS, EMPTY_FILTER_TASKS, EMPTY_FILTER_TRAININGS, EMPTY_FILTER_INCIDENTS,
+} from '../components/safety/SafetyFilterSheet';
 import SafetyExportMenu from '../components/safety/SafetyExportMenu';
 import SafetyBulkActionBar from '../components/safety/SafetyBulkActionBar';
 import SafetyWorkerForm from '../components/safety/SafetyWorkerForm';
@@ -71,6 +74,19 @@ export default function SafetyHomePage() {
   // Part 5 — filter / selection / bulk state
   const [filter, setFilter] = useState(EMPTY_FILTER);
   const [filterOpen, setFilterOpen] = useState(false);
+  // Adaptive per-tab filters (documents keeps its own `filter` above).
+  const [auxFilters, setAuxFilters] = useState({
+    workers: EMPTY_FILTER_WORKERS,
+    tasks: EMPTY_FILTER_TASKS,
+    trainings: EMPTY_FILTER_TRAININGS,
+    incidents: EMPTY_FILTER_INCIDENTS,
+  });
+  // Separate view state per aux tab so the global lists (source of truth for the
+  // form/card worker & company pickers) are never overwritten by a filtered fetch.
+  const [filteredWorkers, setFilteredWorkers] = useState(null);
+  const [filteredTasks, setFilteredTasks] = useState(null);
+  const [filteredTrainings, setFilteredTrainings] = useState(null);
+  const [filteredIncidents, setFilteredIncidents] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
@@ -217,6 +233,63 @@ export default function SafetyHomePage() {
     if (activeTab !== 'documents') setSelectedIds(new Set());
   }, [activeTab]);
 
+  // Aux per-tab filter refetch (workers/tasks/trainings/incidents). Mirrors the
+  // documents effect but writes to a SEPARATE view state; when a tab's filter is
+  // empty the view is cleared (null) and the tab falls back to the global list.
+  // LIST-ONLY (no score refetch), fail-soft.
+  useEffect(() => {
+    if (!projectId || loading || flagOff || forbidden) return;
+    if (activeTab === 'documents' || activeTab === 'overview') return;
+    const setFiltered = {
+      workers: setFilteredWorkers,
+      tasks: setFilteredTasks,
+      trainings: setFilteredTrainings,
+      incidents: setFilteredIncidents,
+    }[activeTab];
+    if (!setFiltered) return;
+    const f = auxFilters[activeTab] || {};
+    if (countActiveFilters(f) === 0) { setFiltered(null); return; }
+
+    const params = { limit: 50 };
+    if (activeTab === 'workers') {
+      if (f.profession) params.profession = f.profession;
+      if (f.company_id) params.company_id = f.company_id;
+    } else if (activeTab === 'tasks') {
+      if (f.overdue === 'overdue') params.overdue = true;   // overdue wins; omit status
+      else if (f.status) params.status = f.status;
+      if (f.severity) params.severity = f.severity;
+      if (f.assignee_id) params.assignee_id = f.assignee_id;
+      if (f.company_id) params.company_id = f.company_id;
+    } else if (activeTab === 'trainings') {
+      if (f.training_type) params.training_type = f.training_type;
+      if (f.worker_id) params.worker_id = f.worker_id;
+      if (f.expiry === 'expired') params.expires_before = new Date().toISOString().slice(0, 10);
+    } else if (activeTab === 'incidents') {
+      if (f.incident_type) params.incident_type = f.incident_type;
+      if (f.severity) params.severity = f.severity;
+      if (f.reported != null) params.reported_to_authority = f.reported;  // 'true'/'false' → bool
+      if (f.injured_worker_id) params.injured_worker_id = f.injured_worker_id;
+      if (f.date_from) params.date_from = f.date_from;
+      if (f.date_to) params.date_to = f.date_to;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        let resp;
+        if (activeTab === 'workers') resp = await safetyService.listWorkers(projectId, params);
+        else if (activeTab === 'tasks') resp = await safetyService.listTasks(projectId, params);
+        else if (activeTab === 'trainings') resp = await safetyService.listTrainings(projectId, params);
+        else if (activeTab === 'incidents') resp = await safetyService.listIncidents(projectId, params);
+        if (cancelled || !resp) return;
+        setFiltered(resp);
+      } catch (e) {
+        if (!cancelled) toast.error('שגיאה בטעינת רשימה מסוננת');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [projectId, activeTab, auxFilters, loading, flagOff, forbidden]);
+
   if (loading) return <SafetySkeleton />;
   if (forbidden) return <SafetyForbidden onBack={() => navigate(`/projects/${projectId}/control?workMode=structure`)} />;
   if (flagOff) return <SafetyFlagOff onBack={() => navigate(`/projects/${projectId}/control?workMode=structure`)} />;
@@ -239,6 +312,18 @@ export default function SafetyHomePage() {
   const activeFilterCount = countActiveFilters(filter);
   const hasActiveFilter = activeFilterCount > 0;
   const isWriter = SAFETY_WRITERS.includes(project?.my_role);
+
+  // Adaptive filter: current tab's filter value + count, and the list each aux
+  // tab shows (filtered view when a filter is active, else the global list).
+  const isDocTab = activeTab === 'documents';
+  const activeFilterValue = isDocTab ? filter : (auxFilters[activeTab] || {});
+  const activeFilterCountTab = isDocTab
+    ? activeFilterCount
+    : countActiveFilters(auxFilters[activeTab] || {});
+  const workersView = (countActiveFilters(auxFilters.workers) > 0 && filteredWorkers) ? filteredWorkers : workers;
+  const tasksView = (countActiveFilters(auxFilters.tasks) > 0 && filteredTasks) ? filteredTasks : tasks;
+  const trainingsView = (countActiveFilters(auxFilters.trainings) > 0 && filteredTrainings) ? filteredTrainings : trainings;
+  const incidentsView = (countActiveFilters(auxFilters.incidents) > 0 && filteredIncidents) ? filteredIncidents : incidents;
 
   const docItems = docs.items || [];
   const allSelected = docItems.length > 0 && docItems.every((d) => selectedIds.has(d.id));
@@ -386,19 +471,21 @@ export default function SafetyHomePage() {
           hasActiveFilter={hasActiveFilter}
         />
 
-        <button
-          type="button"
-          onClick={() => setFilterOpen(true)}
-          className="px-3 py-2 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1 min-h-[44px]"
-        >
-          <Filter className="w-4 h-4" />
-          סינון
-          {activeFilterCount > 0 && (
-            <span className="bg-blue-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
-              {activeFilterCount}
-            </span>
-          )}
-        </button>
+        {activeTab !== 'overview' && (
+          <button
+            type="button"
+            onClick={() => setFilterOpen(true)}
+            className="px-3 py-2 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1 min-h-[44px]"
+          >
+            <Filter className="w-4 h-4" />
+            סינון
+            {activeFilterCountTab > 0 && (
+              <span className="bg-blue-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                {activeFilterCountTab}
+              </span>
+            )}
+          </button>
+        )}
 
         {cacheAge > 0 && (
           <p className="hidden sm:block text-[11px] text-slate-400 ml-1">
@@ -427,25 +514,25 @@ export default function SafetyHomePage() {
                 value="tasks"
                 className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
               >
-                משימות ({tasks.total})
+                משימות ({tasksView.total})
               </TabsTrigger>
               <TabsTrigger
                 value="workers"
                 className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
               >
-                עובדים ({workers.total})
+                עובדים ({workersView.total})
               </TabsTrigger>
               <TabsTrigger
                 value="trainings"
                 className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
               >
-                הדרכות ({trainings.total})
+                הדרכות ({trainingsView.total})
               </TabsTrigger>
               <TabsTrigger
                 value="incidents"
                 className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
               >
-                אירועים ({incidents.total})
+                אירועים ({incidentsView.total})
               </TabsTrigger>
             </TabsList>
 
@@ -465,14 +552,14 @@ export default function SafetyHomePage() {
             </TabsContent>
             <TabsContent value="tasks" className="p-0 m-0">
               <TasksList
-                items={tasks.items}
+                items={tasksView.items}
                 isWriter={isWriter}
                 onEdit={(t) => setTaskForm({ open: true, record: t })}
               />
             </TabsContent>
             <TabsContent value="workers" className="p-0 m-0">
               <WorkersList
-                items={workers.items}
+                items={workersView.items}
                 isWriter={isWriter}
                 onEdit={(w) => setWorkerForm({ open: true, record: w })}
                 onOpenCard={(w) => setWorkerCard(w)}
@@ -480,7 +567,7 @@ export default function SafetyHomePage() {
             </TabsContent>
             <TabsContent value="trainings" className="p-0 m-0">
               <TrainingsList
-                items={trainings.items}
+                items={trainingsView.items}
                 workers={workers.items}
                 isWriter={isWriter}
                 onEdit={(t) => setTrainingForm({ open: true, record: t })}
@@ -488,7 +575,7 @@ export default function SafetyHomePage() {
             </TabsContent>
             <TabsContent value="incidents" className="p-0 m-0">
               <IncidentsList
-                items={incidents.items}
+                items={incidentsView.items}
                 workers={workers.items}
                 isWriter={isWriter}
                 onEdit={(i) => setIncidentForm({ open: true, record: i })}
@@ -563,11 +650,28 @@ export default function SafetyHomePage() {
       <SafetyFilterSheet
         open={filterOpen}
         onOpenChange={setFilterOpen}
-        value={filter}
-        onApply={(next) => { setFilter(next); setFilterOpen(false); }}
-        onClear={clearFilter}
+        tab={activeTab}
+        value={activeFilterValue}
+        onApply={(next) => {
+          if (isDocTab) setFilter(next);
+          else setAuxFilters((m) => ({ ...m, [activeTab]: next }));
+          setFilterOpen(false);
+        }}
+        onClear={() => {
+          if (isDocTab) {
+            setFilter(EMPTY_FILTER);
+          } else {
+            const empties = {
+              workers: EMPTY_FILTER_WORKERS, tasks: EMPTY_FILTER_TASKS,
+              trainings: EMPTY_FILTER_TRAININGS, incidents: EMPTY_FILTER_INCIDENTS,
+            };
+            setAuxFilters((m) => ({ ...m, [activeTab]: empties[activeTab] }));
+          }
+          setFilterOpen(false);
+        }}
         companies={companies}
         users={users}
+        workers={workers.items}
       />
 
       <SafetyDocumentForm

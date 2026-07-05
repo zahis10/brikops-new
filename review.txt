@@ -1,120 +1,102 @@
-========================================================================
-REVIEW — BATCH safety-worker-card
-  לחיצה על שורת עובד → כרטיס עובד קריאה-בלבד
-  (פרטים + ההדרכות שלו + האירועים שלו + הוספה מהירה)
-========================================================================
-STATUS: ⛔ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-Date: 2026-07-03 · Branch: staging (NOT main) · Severity: P2
-Scope: FRONTEND-ONLY · Capgo OTA · אין שינוי backend · אין תלות חדשה
-Depends on: 3a (trainings?worker_id, incidents?injured_worker_id) — כבר ב-PROD.
-Rollback SHA: df22bee (= HEAD לפני העריכה, אומת ב-STEP 0)
-קבצים (2, git diff --stat + untracked):
-  ADD  frontend/src/components/safety/SafetyWorkerCard.js   (חדש)
-  EDIT frontend/src/pages/SafetyHomePage.js                  (33+ / 6-)
+═══════════════════════════════════════════════════════════════════════════
+BATCH: safety-p2-3b — סינון אדפטיבי לכל טאב (workers/tasks/trainings/incidents)
+═══════════════════════════════════════════════════════════════════════════
+תאריך: 2026-07-05
+Branch: staging
+Rollback SHA: 4651850  (=HEAD לפני הבאטץ׳; אושר ב-STEP 0)
+architect: PASS (אחרי תיקון) — ראה סעיף "סקירת architect" למטה
 
-------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT RESULTS (read-only) — HEAD df22bee
-------------------------------------------------------------------------
-0.1 ✅ WorkersList @947; שורת <li> ללא onClick; עיפרון עם stopPropagation+onEdit.
-    Call-site @471-475 (workers tab).
-0.2 ✅ תבנית chrome = SafetyDocumentDetail: Dialog modal={false}, header כהה,
-    X (DialogClose), [&>button]:hidden, onInteractOutside/onPointerDownOutside
-    preventDefault, body max-h scroll, Field helper מסתיר ערכים ריקים.
-0.3 ✅ api.js listTrainings/listIncidents(projectId, params) — params ב-axios,
-    מחזירים response.data (.items).
-0.4 ✅ SafetyTrainingForm תומך ב-lockedWorker: preset (@37) + picker
-    disabled (@113) + כותרת `הדרכה לעובד ${name}` (@107). בעמוד lockedWorker
-    היה מ-workerChain בלבד; chain מתאפס ב-"לא עכשיו"; ask-dialog תלוי
-    ב-(!!workerChain && !trainingForm.open); onSaved מגדיל count.
-0.5 ✅ companies state @76 — הועבר כ-prop לכרטיס.
-0.6 ⚠ PII: list_workers projection = find(q, {"_id":0}) → ה-FE מקבל גם
-    id_number(=None) + id_number_hash. הכרטיס לא מרנדר אותם בשום מקום.
-    notes + created_at זמינים (תאריך כניסה = created_at.slice(0,10)).
+───────────────────────────────────────────────────────────────────────────
+מה נעשה
+───────────────────────────────────────────────────────────────────────────
+עד עכשיו כפתור "סינון" ב-SafetyHomePage עבד רק על טאב "ליקויים" (documents).
+הבאטץ׳ הזה הופך את גיליון הסינון (SafetyFilterSheet) למודע-טאב, ומוסיף סינון
+אמיתי גם לטאבים: עובדים, משימות, הדרכות, אירועים — מול הפרמטרים שכבר קיימים
+ב-safety_router.py (באטץ׳ 3a).
 
-------------------------------------------------------------------------
-מה בוצע
-------------------------------------------------------------------------
-CHANGE 1 — SafetyWorkerCard.js (חדש, קריאה-בלבד):
-  · chrome תואם SafetyDocumentDetail: Dialog modal={false}, dir="rtl",
-    [&>button]:hidden, header כהה "כרטיס עובד" + X, outside-close prevented,
-    body max-h-[70vh] scroll, Field helper מסתיר ריקים.
-  · fetch fail-soft ב-useEffect [open, worker?.id, projectId]:
-    Promise.allSettled([listTrainings{worker_id}, listIncidents{injured_worker_id}]);
-    call שנכשל → [] (לא מרוקן את השני); דגל cancelled מונע setState אחרי unmount;
-    (ליטוש) איפוס trainings/incidents ל-[] בתחילת ה-effect כדי למנוע הבזק שורות
-    ישנות בהחלפת עובד.
-  · גוף: שם+מקצוע; Field חברה/טלפון/תאריך-כניסה; הערות (אם קיימות);
-    "הדרכות (n)" (training_type + trained_at + "בתוקף עד" + Badge "פג תוקף"
-    אדום כש-expires_at<today + קישור "תעודה" טאב חדש rel=noopener); "אירועים (n)"
-    (INCIDENT_TYPE_HE + Badge severity + occurred_at + location); ריק → "אין…" עמום.
-  · footer (isWriter בלבד): [ערוך עובד]→onEditWorker; [הוסף הדרכה]→onAddTraining.
-  · ❌ אין id_number/id_number_hash; אין lightbox; אין writes; אין console PII.
-CHANGE 2 — SafetyHomePage.js:
-  · import SafetyWorkerCard; state workerCard + trainingCardLock.
-  · WorkersList: prop onOpenCard; <li> role="button" + onClick(onOpenCard) +
-    cursor-pointer; העיפרון שומר stopPropagation (עריכה בלי לפתוח כרטיס).
-    Call-site: onOpenCard={(w)=>setWorkerCard(w)}.
-  · render <SafetyWorkerCard>: onEditWorker (סוגר כרטיס→פותח WorkerForm),
-    onAddTraining (סוגר כרטיס→setWorkerChain(null)→setTrainingCardLock(w)→
-    פותח TrainingForm record:null).
-  · ⭐ lockedWorker דו-מקורי, CARD-LOCK ראשון ואז השרשרת:
-    trainingCardLock ? {id, name:full_name} : workerChain ? {...} : null.
-  · trainingCardLock מנוקה גם ב-onClose וגם ב-onSaved של TrainingForm → לא
-    דולף להוספה עתידית לא-מהכרטיס. onAddTraining מאפס workerChain → ask-dialog
-    (תלוי workerChain) לא נפתח ל-card-add.
+*** המודיפיקציה של זהי (מיושמת במלואה) ***
+לא דורסים את הרשימות הגלובליות (workers/tasks/trainings/incidents) בתוצאה
+המסוננת. במקום זה מוחזק state תצוגה נפרד לכל טאב-עזר
+(filteredWorkers/Tasks/Trainings/Incidents, init=null). הטאב מציג את הרשימה
+המסוננת כשיש פילטר פעיל, ונופל חזרה לרשימה הגלובלית כשהפילטר ריק. כך הרשימות
+הגלובליות נשארות מקור-האמת עבור בוררי העובד/החברה בטפסים ובכרטיס העובד.
 
-------------------------------------------------------------------------
-DO NOT — נשמרו
-------------------------------------------------------------------------
-✅ אין רינדור id_number/id_number_hash (למרות שה-API מחזיר אותם).
-✅ אין שינוי backend — רק endpoints קיימים (3a).
-✅ card-add לא מוזג ל-counter/ask-dialog של שרשרת 2d (חד-פעמי).
-✅ הכרטיס לא ניתן לעריכה — עריכות דרך WorkerForm.
-✅ אין lightbox (תעודה בטאב חדש); Radix modal={false}; עברית; בלי
-   WebkitOverflowScrolling; בלי console PII.
+───────────────────────────────────────────────────────────────────────────
+CHANGE 1 — frontend/src/components/safety/SafetyFilterSheet.js
+───────────────────────────────────────────────────────────────────────────
+• props חדשים: tab='documents' (ברירת מחדל) + workers (לרשימת בורר עובד).
+• exports חדשים: EMPTY_FILTER_WORKERS / _TASKS / _TRAININGS / _INCIDENTS,
+  ו-TAB_TITLES (export const — תוקן לפי הערת architect).
+• אופציות חדשות: TASK_STATUS_OPTIONS, INCIDENT_TYPE_OPTIONS.
+• SheetTitle דינמי: TAB_TITLES[tab].
+• renderText helper לשדות "מכיל" (מקצוע / סוג הדרכה).
+• renderEntitySelect מציג {it.name || it.full_name} (עובדים נושאים full_name).
+• handleClear מאפס את מפתחות ה-template הנוכחי ל-null (בלי דליפת מפתחות
+  documents לטאב אחר).
+• בלוק השדות עכשיו תלוי-טאב:
+   - documents: ללא שינוי (byte-for-byte בתוך {tab==='documents' && ...}).
+   - workers: מקצוע (טקסט) + חברה.
+   - tasks: סטטוס / חומרה / אחראי / חברה / איחור. ה-<select> של סטטוס
+     disabled כשנבחר "איחור" + טקסט עזר "מוצג לפי איחור".
+   - trainings: סוג הדרכה (טקסט) / עובד / תוקף (פג תוקף).
+   - incidents: סוג אירוע / חומרה / דווח לרשות / עובד נפגע / טווח תאריכים.
 
-------------------------------------------------------------------------
-CODE REVIEW (architect, includeGitDiff) — PASS
-------------------------------------------------------------------------
-אומת: fetch fail-soft + cancel-guard + deps יציבים (אין refetch loop);
-lockedWorker card-first נכון; trainingCardLock מנוקה ב-close AND save (אין דליפה);
-onAddTraining מאפס workerChain → אין ask-dialog loop ל-card-add; שרשרת onboarding
-ללא רגרסיה; row-tap vs עיפרון (stopPropagation) תקינים; non-writer בלי footer/עיפרון;
-אין id_number; house rules/hooks תקינים. הליטוש (איפוס רשימות בהחלפת עובד) —
-הצעת ה-UX של architect — יושם.
+───────────────────────────────────────────────────────────────────────────
+CHANGE 2 — frontend/src/pages/SafetyHomePage.js
+───────────────────────────────────────────────────────────────────────────
+• import של 4 ה-templates.
+• state: auxFilters (פילטר לכל טאב-עזר) + 4 state תצוגה מסוננת (init null).
+• useEffect list-only חדש לטאב-העזר הפעיל:
+   - מדלג על documents/overview.
+   - פילטר ריק ⇒ setFiltered(null) בלי fetch (נפילה חזרה לגלובלי).
+   - תרגום פרמטרים: overdue גובר על status; expiry='expired' ⇒
+     expires_before=today (YYYY-MM-DD); reported 'true'/'false' ⇒
+     reported_to_authority.
+   - fail-soft: toast "שגיאה בטעינת רשימה מסוננת" בכשל, בלי לרסק את הדף.
+   - deps: [projectId, activeTab, auxFilters, loading, flagOff, forbidden].
+• helpers: isDocTab / activeFilterValue / activeFilterCountTab; ורשימות
+  תצוגה workersView/tasksView/trainingsView/incidentsView (מסונן אם פעיל,
+  אחרת גלובלי).
+• כפתור "סינון" מוסתר ב-overview; badge מציג activeFilterCountTab.
+• גיליון הסינון מקבל tab={activeTab}, value=activeFilterValue,
+  workers={workers.items}; onApply/onClear מפצלים בין documents לטאב-עזר.
+• רינדור הטאבים משתמש ב-*View.items ו-*View.total. שים לב: הרשימות
+  trainings/incidents ממשיכות לקבל workers={workers.items} הגלובלי לפענוח
+  שמות (מקור-אמת), רק items עובר לתצוגה המסוננת.
 
-------------------------------------------------------------------------
+───────────────────────────────────────────────────────────────────────────
 VERIFY
-------------------------------------------------------------------------
-V1 ✅ Babel parse (jsx) לשני הקבצים — OK.
-V2 ✅ greps: card מכיל modal={false} + [&>button]:hidden; listTrainings{worker_id}
-   + listIncidents{injured_worker_id}; אין id_number בכרטיס; page: workerCard
-   state @88 + onOpenCard @478 + row onClick @978; lockedWorker בודק
-   trainingCardLock @626 לפני workerChain @631; setTrainingCardLock(null) ב-onClose
-   @617 וב-onSaved @619; onAddTraining setWorkerChain(null) @652.
-V5b ✅ git diff/status = 2 קבצים (SafetyHomePage.js 33+/6-, SafetyWorkerCard.js חדש).
+───────────────────────────────────────────────────────────────────────────
+• V1 @babel/parser — OK ✅ לשני הקבצים (כולל אחרי תיקון ה-export).
+• V2 greps — כל ה-exports/props/blocks/helpers/params נמצאו.
+• diff --stat — 2 קבצים בלבד:
+   SafetyFilterSheet.js | 257 ++++--
+   SafetyHomePage.js     | 154 ++--
+   (339 insertions(+), 72 deletions(-))
+• הטאב documents נשמר byte-for-byte; אין שינוי התנהגות בסינון הליקויים.
+• אין שינוי בקוד ה-backend.
 
-⚠ דורש staging חי (אחרי deploy אצל זאהי):
-V3 ⭐ tap עובד → כרטיס עם פרטים + הדרכות (תעודה + פג תוקף) + אירועים; ספירות
-   נכונות; מקטעים ריקים "אין…".
-V4 מהכרטיס "הוסף הדרכה" → טופס נעול (picker disabled, כותרת "הדרכה לעובד <שם>"),
-   שמירה → ההדרכה מופיעה; אין ask-dialog loop. "ערוך עובד" → טופס עריכה.
-V5 ⭐ Edge (modal={false}): עובד חדש → ask-dialog נפתח → מעבר לטאב עובדים →
-   פתיחת כרטיס של עובד אחר → "הוסף הדרכה" → נעילה לעובד מהכרטיס (לא מהשרשרת),
-   ואחרי שמירה אין ask-dialog loop.
-V6 עיפרון עורך ישירות בלי לפתוח כרטיס; non-writer רואה כרטיס קריאה-בלבד
-   בלי כפתורי footer ובלי עיפרון.
-V7 Regression: שרשרת onboarding (עובד חדש → ask-dialog → הוספת הדרכות, count)
-   עדיין עובדת בפני עצמה.
+───────────────────────────────────────────────────────────────────────────
+סקירת architect
+───────────────────────────────────────────────────────────────────────────
+תוצאה ראשונית: Fail — נמצא פריט מסירה חסר אחד: TAB_TITLES הוגדר כ-const
+במקום export const (המפרט ביקש לייצא אותו יחד עם EMPTY_FILTER_*).
+תיקון: הוסף export ל-TAB_TITLES; babel אומת מחדש — OK ✅.
+שאר הלוגיקה (state נפרד, אי-דריסת גלובלי, תרגום פרמטרים, list-only, הסתרת
+כפתור) אושרה כנכונה. לא נמצאו בעיות אבטחה.
 
-------------------------------------------------------------------------
-פתוח לזאהי
-------------------------------------------------------------------------
-- הערת PII (defense-in-depth, מחוץ ל-scope FE): projection של list_workers
-  מחזיר id_number(null)+id_number_hash ל-FE. הכרטיס לא נוגע בהם, אך אפשר batch
-  נפרד להדק את ה-projection בבקאנד (להחריג id_number_hash).
-- אזהרה: אם .git/index.lock ריק/תקוע → `rm -f .git/index.lock` לפני commit.
-- זכור: SafetyWorkerCard.js הוא קובץ חדש (untracked) — `git add` לפני commit.
-- commit מוצע:
-  feat(safety): worker card with his trainings + incidents + quick add-training
-========================================================================
+הצעת חיזוק אופציונלית של architect (לא בוצעה — מחוץ להיקף המפרט):
+לאחר יצירה/עריכה בטאב-עזר עם פילטר פעיל, ה-view המסונן עלול להיות מעט מיושן
+עד רענון. ניתן לטפל בבאטץ׳ המשך אם זהי ירצה.
+
+───────────────────────────────────────────────────────────────────────────
+המלצת בדיקה ידנית (אחרי build/deploy)
+───────────────────────────────────────────────────────────────────────────
+1. טאב "עובדים": סינון לפי מקצוע/חברה → רק העובדים התואמים; ניקוי → כל
+   העובדים חוזרים; טופס הוספת הדרכה עדיין מציג את כל העובדים בבורר.
+2. טאב "משימות": בחירת "איחור" → ה-<select> של סטטוס ננעל + "מוצג לפי איחור".
+3. טאב "הדרכות": תוקף="פג תוקף" → רק פגי-תוקף.
+4. טאב "אירועים": "דווח לרשות"=כן/לא + טווח תאריכים.
+5. טאב "ליקויים": ללא רגרסיה — מתנהג כמו קודם.
+6. overview: כפתור "סינון" מוסתר.
+═══════════════════════════════════════════════════════════════════════════
