@@ -1,59 +1,135 @@
-סקירת עבודה — BATCH safety-p2-4c2 — תמונות פריט שנכשל: הטמעה ב‑PDF + ממוזערות בשורה
-==================================================================================
+סקירת עבודה — BATCH safety-p3a — כשירות ציוד (Equipment fitness) — BACKEND בלבד
+==============================================================================
 ענף: staging (לא main)
-בסיס: HEAD מקומי = 3fab113 (git fetch חסום ל‑main agent; Zahi יאמת origin/staging)
-היקף: backend/services/safety_pdf.py + frontend SafetyTourRunner.js.
-      ללא שינויי router / api.js / schema. Deploy נוגע ב‑backend → EB + Cloudflare (Zahi).
+בסיס: HEAD מקומי = 093b9ee (git fetch חסום ל‑main agent; Zahi יאמת origin/staging)
+היקף: backend בלבד — schemas.py + safety_router.py. ללא frontend (3b).
+Deploy: נוגע ב‑backend → EB (+ CF ride-along) — Zahi.
+diff: safety_router.py +498/-1, schemas.py +61 (סה"כ 558+, 1-).
 
-מה נעשה
-=======
+⚠️ אזהרת רגולציה חובה (verbatim)
+================================
+"period_days are placeholder regulatory values; check_status/expiry math
+ depends on them; verify before customer-facing use."
+הערכים ב‑DEFAULT_EQUIPMENT_CHECKS הם טיוטה שממתינה לאימות מול התקנות בפועל.
+אותה אזהרה מופיעה כהערת‑קוד מעל הקבוע בקוד. tower_crane תסקיר=425 יום (≈14 חודש).
 
-STEP 1 — safety_pdf.py: תמונות תחת מקטע 2 (ליקויים שנמצאו)
----------------------------------------------------------
-1a. _load_signature_image שימש שוב כפי שהוא (helper גנרי "permanent key → BytesIO,
-    fail-soft פר‑תמונה" מאז fix1). נוספה שורת docstring אחת בלבד המציינת שהוא משרת
-    גם תמונות ראיה של פריט שנכשל. השם והגוף לא שונו.
-1b. ב‑generate_tour_report, בשלב ה‑pre-load (ליד sig_images): נבנה
-    fail_photos: dict  (item_id → [BytesIO, ...]). רק פריטים עם result=="fail"
-    ו‑photo_urls; כל תמונה נטענת fail-soft בנפרד; אפס טעינות → הפריט לא נכנס ל‑dict.
-1c. בלולאת מקטע 2, אחרי ה‑note של כל פריט שנכשל (ולפני ה‑Spacer הקיים):
-    התמונות מרונדרות בשורות של עד 4 עם ה‑idiom המאומת
-    Image(io.BytesIO, width=4*cm, height=3*cm, kind='proportional')
-    בטבלה colWidths=[4.4*cm]*len, hAlign="RIGHT", padding=2 מכל צד, + Spacer 2mm.
-    שאר הסדר/Spacer של הבלוק ללא שינוי.
+STEP 0 — PRE-FLIGHT (קריאה בלבד) ✔
+----------------------------------
+- HEAD=093b9ee. grep safety_equipment (backend+frontend) → ריק.
+- דפוס trainings (347‑512), ensure_safety_indexes(2693), SafetyTour(957),
+  helpers (SAFETY_WRITERS/DELETERS, _retention_date, _resolve_include_deleted,
+  SoftDeleteBody, generate_url) — כולם קיימים, אף anchor לא זז >15 שורות.
 
-STEP 2 — SafetyTourRunner.js: ממוזערות על שורת הפריט
-----------------------------------------------------
-בכל שורת פריט (כל הסטטוסים, כולל readOnly — תכונת READ), מתחת לבלוק
-label/category/badge ומעל כפתורי ה‑result:
-    rowPhotos = (item.photo_display_urls || []).filter(isHttp)
-    כאשר יש — רצועת ממוזערות 12x12, כל אחת כפתור שפותח את המקור בטאב חדש
-    (window.open(u,'_blank','noopener')) עם e.stopPropagation כדי לא להפעיל
-    handlers ברמת השורה. isHttp הקיים נוצל. פאנל הכשל (preview strip) לא שונה.
+STEP 1 — schemas.py (אחרי אשכול SafetyTour)
+-------------------------------------------
+- EQUIPMENT_CATEGORIES: 10 קטגוריות קבועות (עגורן רגיל ≠ עגורן צריח — נפרדות).
+- SafetyEquipment: category + is_custom_category(server-derived), internal_code,
+  description/serial/manufacturer, status active|decommissioned, שדות soft-delete.
+- SafetyEquipmentCheck (append-only): check_name, period_days?, performed_at,
+  expires_at?, performed_by_name?, license_number?, result pass|fail|conditional,
+  notes?, document_ref(permanent key), document_display_url(per-GET, לא נשמר),
+  retention_until (7yr).
 
-מה לא שונה (לפי DO NOT)
-=======================
-- אין הטמעת תמונות ל‑pass/na ב‑PDF (רק failed).
-- _load_signature_image (גוף), בלוק חתימות, לוגו, שער, מספור מקטעים — ללא שינוי.
-- router, api.js, schemas, SafetyHomePage, פאנל הכשל — ללא שינוי.
-- אין תלויות חדשות, אין lightbox, אין cap מעבר לשורות‑של‑4.
+STEP 2/3 — safety_router.py: מקטע "Equipment CRUD — Phase 3a" (אחרי Tours, לפני Score)
+------------------------------------------------------------------------------------
+- DEFAULT_EQUIPMENT_CHECKS מדויק מה‑spec; custom → אין defaults.
+- Request models: Create/Update/CheckCreate עם אורכים מה‑spec; CheckCreate כולל
+  model_validator לרגקס YYYY-MM-DD על performed_at + expires_at (דפוס tour_date).
+- 9 endpoints (מיושרים לסגנון trainings verbatim: _now/_new_id/_audit/envelope):
+  3a POST /equipment (201, WRITERS): is_custom_category=category∉CATEGORIES;
+     uniqueness internal_code case-insensitive strip ל‑non-deleted → 409
+     "קוד פריט כבר קיים בפרויקט"; audit "created".
+  3b GET /equipment (member): category/status(alias)/q($or re.escape על
+     internal_code|description)/limit(≤500)/offset/include_deleted; sort
+     category,internal_code; envelope; check_status מחושב לכל פריט.
+  3c GET /equipment/summary (member): מונים per-קטגוריה {category,is_custom,
+     total,expired,ok}, active בלבד. "expired" כולל missing (מכוון).
+  3d GET /equipment/{id}: פריט + check_status; 404 "equipment not found".
+  3e PATCH (WRITERS): exclude_unset; category→מחשב is_custom_category; uniqueness
+     internal_code כשמשתנה; audit "updated".
+  3f DELETE (204, DELETERS): reason חובה (סגנון incidents, 400
+     "deletion_reason is required"); soft-delete + retention 7yr; היסטוריית
+     checks לא נמחקת.
+  3g POST /checks (201, WRITERS): פריט חייב active אחרת 409
+     "לא ניתן לרשום בדיקה לפריט שהוצא משימוש"; expires_at: explicit גובר, אחרת
+     performed_at+period_days, אחרת None; guard expires_at<=performed_at → 422
+     "תאריך תפוגה חייב להיות אחרי תאריך הבדיקה"; retention 7yr מ‑performed_at;
+     audit "check_recorded" {check_name,result,has_document}.
+  3h GET /checks (member): היסטוריה newest-first, envelope, document_display_url
+     regen per row; 404 אם הציוד נמחק (לפי design).
+  3i DELETE /checks/{id} (204, DELETERS, reason חובה): soft, audit "check_deleted".
 
-אימות
-=====
-- python py_compile של safety_pdf.py: PY_COMPILE_OK.
-- sandbox repro תחת reportlab==4.4.10, 2 PNG בעלי יחסי‑גובה‑רוחב שונים בשורת
-  Table אחת עם ה‑idiom המדויק:
-    פלט הרצה:
-      PY_COMPILE_OK
-      reportlab 4.4.10
-      PHOTO_ROW_BUILD_OK bytes= 1981
-  כלומר Image(io.BytesIO(png), 4*cm, 3*cm, kind='proportional') בטבלה נבנה ללא שגיאה.
-- craco build (production, CI=false): EXIT=0, "Compiled successfully", אפס אזהרות.
+STEP 4 — indexes
+----------------
+- safety_equipment ×3: (project_id,category),(project_id,internal_code),
+  (project_id,deletedAt).
+- safety_equipment_checks ×2: (project_id,equipment_id,performed_at desc),
+  (equipment_id,check_name).
+- שורת log עודכנה ל‑"28 total across 9 collections".
 
-בדיקות מכשיר (staging) — לביצוע ע"י Zahi:
-2. כשל פריט עם 2 תמונות → שמירה → ממוזערות גלויות על השורה אחרי כיווץ הפאנל;
-   גלויות גם ב‑pending וב‑signed (readOnly); לחיצה פותחת מסך מלא בטאב חדש.
-3. PDF מאותו סיור: מקטע 2 מציג את התמונות תחת הפריט, יחס נשמר, עד 4 בשורה;
-   בלוק חתימות ללא שינוי.
-4. PDF מסיור שהפריט שנכשל בו ללא תמונות → כמו היום.
-5. שבירת מפתח תמונה אחד → PDF עדיין מרונדר, ללא שורת תמונה (fail-soft), ללא שגיאה.
+חישוב check_status — אגרגציה יחידה (דרישת #12 — pipeline verbatim)
+-----------------------------------------------------------------
+_equipment_latest_checks מריץ אגרגציה אחת בלבד לכל בקשה (list/summary/single),
+ללא N+1:
+  [
+    {"$match": {"project_id": <pid>, "equipment_id": {"$in": <page_ids>},
+                "deletedAt": None}},
+    {"$sort":  {"performed_at": -1, "created_at": -1}},
+    {"$group": {"_id": {"equipment_id":"$equipment_id","check_name":"$check_name"},
+                "doc": {"$first": "$$ROOT"}}}
+  ]
+_build_check_status מאחד default tracks + tracks שקיימים בהיסטוריה; state:
+missing (מעולם לא בוצע) | valid (ללא תוקף או expires_at>=today) | expired.
+"today" = _now()[:10] (מקור הזמן האחיד בקוד; ללא now_il לפי DO NOT).
+
+DO NOT — נשמרו
+-------------
+ללא frontend / score / exports / template-CRUD / org-pool / building_id. לא נגעתי
+ב‑tours/documents/tasks/trainings/incidents/step-3 kind. ללא upload endpoint חדש
+(document_ref = permanent key מ‑/upload הקיים). ללא ObjectId/now_il/שמירת presigned.
+UUID מחרוזת, _now(), _audit על כל write, envelope. check_status = אגרגציה אחת.
+
+ממצאי code review (architect) + הכרעה מול ה‑spec הנעול
+=====================================================
+הבודק סימן "Fail" על 3 סעיפים; בדקתי כל אחד מול ה‑spec:
+1. הצעה להוסיף unique index ל‑internal_code — נדחה: STEP 4 מגדיר במפורש 3
+   אינדקסים לא‑ייחודיים, וה‑spec מתאר guard ברמת‑אפליקציה בלבד. הוספת unique
+   index = חריגה מה‑spec הנעול + סיכון כשל על נתוני legacy כפולים.
+   ⚠️ מגבלה שיורית ידועה (תואמת spec): guard האפליקציה אינו אטומי — שתי יצירות
+   במקביל עם אותו internal_code יכולות לעקוף אותו. אם Zahi רוצה אחריות‑ברזל,
+   זו החלטת אינדקס נפרדת (partial-unique על non-deleted) לבאטצ' עתידי.
+2. "מחרוזות שגיאה עברית" — קריאה שגויה: ה‑spec עצמו כותב "equipment not found"/
+   "check not found" באנגלית, ו‑reason-required בסגנון incidents. שלוש העבריות
+   שה‑spec כן קבע (קוד פריט/הוצא משימוש/תאריך תפוגה) — verbatim. תואם spec מילה‑במילה.
+3. בדיקות מרוץ/חוזה — נכון, אך מחוץ להיקף באטצ' backend; מכוסה ב‑VERIFY של Zahi.
+
+אימות שבוצע כאן
+===============
+- python -m py_compile schemas.py + safety_router.py → PY_COMPILE_OK.
+- בדיקת לוגיקת _build_check_status עצמאית (2026-07-06):
+  panel: yearly=missing, weekly(today+7)=valid ✓
+  backdated weekly (בוצע לפני 30 יום, period 7) → expired ✓
+  formwork event-based עם בדיקה → valid; ללא בדיקה → missing ✓
+- route ordering: /equipment/summary (לפני) /equipment/{id} ✓.
+
+VERIFY (HTTP אמיתי על staging — Zahi)
+=====================================
+1. POST equipment (electrical_panel, "לוח-A1") → 201 is_custom=false; שוב אותו קוד
+   → 409 עברית; פרויקט אחר לא מושפע.
+2. POST category "מערבל בטון" (custom) → 201 is_custom=true.
+3. GET list: הלוח מציג check_status עם שני ה‑tracks (חשמלאי שנתי + פחת שבועי),
+   שניהם state="missing".
+4. POST check (פחת, היום, period 7) → 201, expires_at=today+7; ה‑track valid, השני missing.
+5. Backdate check (לפני 30 יום, period 7) → state=expired.
+6. expires_at מפורש גובר על period; expires_at<=performed_at → 422 עברית.
+7. summary: electrical_panel total=1, expired לפי ה‑tracks; custom מופיע בשורה משלו.
+8. q מוצא לפי internal_code וגם description (עברית).
+9. decommission (PATCH status) → POST check → 409; הפריט מוחרג ממוני summary (active בלבד).
+10. DELETE item (reason חובה, PM בלבד) → 204. התנהגות צפויה (verbatim): היסטוריית
+    ה‑checks נשמרת ב‑DB לחלון הרגולטורי 7yr (checks לעולם לא נמחקים קשיח), אך endpoint
+    ה‑checks הרגיל מחזיר 404 ברגע שהציוד נמחק — ההיסטוריה בלתי‑נגישה דרך ה‑API by
+    design. גישת אחזור admin/רגולטורית, אם תידרש, היא באטצ' עתידי נפרד.
+11. document: upload דרך /upload → POST check עם document_ref → GET history מחזיר
+    document_display_url presigned; Mongo מחזיק key בלבד.
+12. Mongo profiler/קוד: list מריץ אגרגציית checks אחת ללא תלות בגודל הדף (pipeline למעלה).
+13. Regression: tours + documents + score + exports ללא שינוי.

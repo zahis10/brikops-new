@@ -978,6 +978,67 @@ class SafetyTour(BaseModel):
 
 
 # =====================================================================
+# Equipment fitness (כשירות ציוד) — Phase 3a
+# Item collection + append-only check history (trainings pattern; 7yr on checks).
+# Per-project scoping; 10 fixed Cemento categories + free-text custom.
+# =====================================================================
+EQUIPMENT_CATEGORIES = (          # the 10 fixed Cemento categories
+    "lifting_accessories",   # אביזרי הרמה
+    "lifting_platform",      # במת הרמה
+    "electrical_panel",      # לוח חשמל ראשי / משני
+    "air_compressor",        # קולט אוויר
+    "formwork",              # טפסות
+    "forklift",              # מלגזה
+    "temporary_power",       # מתקן חשמל ארעי
+    "crane_regular",         # עגורן (לא עגורן צריח)
+    "tower_crane",           # עגורן צריח
+    "scaffolding",           # פיגומים
+)
+
+
+class SafetyEquipment(BaseModel):
+    id: str
+    project_id: str
+    category: str                       # one of EQUIPMENT_CATEGORIES OR free-text custom (≤60)
+    is_custom_category: bool = False    # server-derived, never client-set
+    internal_code: str                  # "א.ג-03", "1594"...
+    description: Optional[str] = None   # incl. פסילה notes per Cemento usage
+    serial_number: Optional[str] = None
+    manufacturer: Optional[str] = None
+    status: Literal["active", "decommissioned"] = "active"
+    created_at: str
+    created_by: str
+    updated_at: Optional[str] = None
+    deletedAt: Optional[str] = None
+    deletedBy: Optional[str] = None
+    deletion_reason: Optional[str] = None
+    retention_until: Optional[str] = None
+
+
+class SafetyEquipmentCheck(BaseModel):
+    """One PERFORMED inspection — append-only history (trainings pattern)."""
+    id: str
+    project_id: str
+    equipment_id: str                   # FK → safety_equipment.id
+    check_name: str                     # e.g. "תסקיר בודק מוסמך"
+    period_days: Optional[int] = None   # None = event-based, no expiry
+    performed_at: str                   # ISO date "YYYY-MM-DD"
+    expires_at: Optional[str] = None    # computed or explicit
+    performed_by_name: Optional[str] = None
+    license_number: Optional[str] = None
+    result: Literal["pass", "fail", "conditional"] = "pass"
+    notes: Optional[str] = None
+    document_ref: Optional[str] = None  # permanent S3 key (1b pattern)
+    document_display_url: Optional[str] = None  # per-GET; never persisted
+    created_at: str
+    created_by: str
+    deletedAt: Optional[str] = None
+    deletedBy: Optional[str] = None
+    deletion_reason: Optional[str] = None
+    retention_until: Optional[str] = None   # 7yr — regulatory
+
+
+# =====================================================================
 # Execution Matrix (Batch Execution Matrix Phase 1, 2026-05-04)
 # PMs / execution engineers track project state in a 2D grid
 # (units × stages) with 6 status values + custom columns.
