@@ -600,3 +600,9 @@ id = "LREkKkpoV7Lb1nMavGJ9b"
 uri = "file://.local/plans/safety-p2-4b-plan.txt"
 type = "text"
 title = "תוכנית safety-p2-4b — Safety Tours UI (טאב סיורים + RUNNER)"
+
+[[outputs]]
+id = "D8BDsOgnG7Dwyz1SYMN5O"
+uri = "file://.local/plans/safety-p2-4c-plan.txt"
+type = "text"
+title = "safety-p2-4c — tour signatures + auto-signed + tour PDF — תוכנית"
