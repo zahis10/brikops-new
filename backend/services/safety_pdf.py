@@ -160,6 +160,7 @@ async def _load_signature_image(ref):
     """Tour signature PNG (permanent S3 key) → presigned URL → io.BytesIO for
     the platypus Image flowable (Image() rejects ImageReader in reportlab 4.4.x);
     fail-soft None.
+    Also serves failed-item evidence photos (same permanent-key → BytesIO shape).
     PER-IMAGE fail-soft (modeled on _load_client_logo): ANY failure returns
     None so the caller falls back to a name-only row and the PDF still renders.
     A single unreachable image must never abort the whole report."""
@@ -813,6 +814,20 @@ async def generate_tour_report(db, project_id: str, tour_id: str) -> bytes:
         if sig and sig.get("signature_type") == "canvas" and sig.get("signature_ref"):
             sig_images[slot] = await _load_signature_image(sig.get("signature_ref"))
 
+    # Pre-load failed-item evidence photos (per-image fail-soft) BEFORE the sync
+    # build. Only failed items carry photos; a broken key is silently skipped and
+    # an item with zero loadable photos gets no photo row (never an error).
+    fail_photos: dict = {}          # item_id → [BytesIO, ...]
+    for it in items:
+        if it.get("result") == "fail" and it.get("photo_urls"):
+            loaded = []
+            for ref in it["photo_urls"]:
+                img = await _load_signature_image(ref)
+                if img is not None:
+                    loaded.append(img)
+            if loaded:
+                fail_photos[it.get("id")] = loaded
+
     SLATE_700 = colors.HexColor("#334155")
     SLATE_500 = colors.HexColor("#64748B")
     SLATE_200 = colors.HexColor("#E2E8F0")
@@ -951,6 +966,21 @@ async def generate_tour_report(db, project_id: str, tour_id: str) -> bytes:
                     hebrew(f"נפתח ליקוי: {defect_title_map[did] or did}"), body))
             if it.get("note"):
                 elems.append(Paragraph(hebrew(f"הערה: {it['note']}"), body))
+            iid = it.get("id")
+            if iid in fail_photos:
+                imgs = [Image(b, width=4 * cm, height=3 * cm, kind='proportional')
+                        for b in fail_photos[iid]]
+                for chunk in [imgs[i:i + 4] for i in range(0, len(imgs), 4)]:
+                    pt = Table([chunk], colWidths=[4.4 * cm] * len(chunk), hAlign="RIGHT")
+                    pt.setStyle(TableStyle([
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                        ("TOPPADDING", (0, 0), (-1, -1), 2),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                    ]))
+                    elems.append(pt)
+                elems.append(Spacer(1, 2 * mm))
             elems.append(Spacer(1, 3 * mm))
         elems.append(Spacer(1, 4 * mm))
 

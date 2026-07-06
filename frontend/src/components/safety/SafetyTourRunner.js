@@ -398,6 +398,24 @@ export default function SafetyTourRunner({ projectId, tour, open, onClose, onCha
                     </button>
                   )}
                 </div>
+                {(() => {
+                  const rowPhotos = (item.photo_display_urls || []).filter(isHttp);
+                  return rowPhotos.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-1.5">
+                      {rowPhotos.map((u, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); window.open(u, '_blank', 'noopener'); }}
+                          className="w-12 h-12 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 shrink-0"
+                          aria-label="הצג תמונה"
+                        >
+                          <img src={u} alt="" className="w-full h-full object-cover" />
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
                 <div className="flex gap-2">
                   {resultBtn(item, 'pass', 'תקין', 'border-green-500 bg-green-500 text-white')}
                   {resultBtn(item, 'fail', 'נכשל', 'border-red-500 bg-red-500 text-white')}

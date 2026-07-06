@@ -1,48 +1,59 @@
-סקירת עבודה — BATCH safety-p2-4c-fix1 — תיקון 500 בייצוא PDF של סיור בטיחות
-==========================================================================
+סקירת עבודה — BATCH safety-p2-4c2 — תמונות פריט שנכשל: הטמעה ב‑PDF + ממוזערות בשורה
+==================================================================================
 ענף: staging (לא main)
-בסיס: HEAD מקומי = 5943831 (git fetch חסום ל‑main agent; Zahi יאמת origin/staging)
-היקף: פונקציה אחת — backend/services/safety_pdf.py (_load_signature_image). BACKEND בלבד.
+בסיס: HEAD מקומי = 3fab113 (git fetch חסום ל‑main agent; Zahi יאמת origin/staging)
+היקף: backend/services/safety_pdf.py + frontend SafetyTourRunner.js.
+      ללא שינויי router / api.js / schema. Deploy נוגע ב‑backend → EB + Cloudflare (Zahi).
 
-הבאג
-----
-platypus.Image(...) ב‑reportlab 4.4.x דוחה ImageReader:
-  TypeError: expected str, bytes or os.PathLike object, not ImageReader
-_load_signature_image החזירה ImageReader, ו‑generate_tour_report מזינה אותו
-ל‑flowable מסוג Image (שורה 965). הקריסה קרתה בבניית ה‑flowable / doc.build —
-מחוץ ל‑try/except של ה‑helper — ולכן כל הייצוא נכשל ב‑500 וה‑FE הציג
-"ייצוא PDF נכשל". משוחזר רק בסיורים עם חתימת CANVAS אחת לפחות.
+מה נעשה
+=======
 
-התיקון (STEP 1)
----------------
-_load_signature_image כעת מחזירה FILE-LIKE (io.BytesIO) במקום ImageReader:
-- ענף http:  return io.BytesIO(resp.content)              (היה ImageReader(BytesIO(...)))
-- ענף local: with open(str(url), "rb") as f: return io.BytesIO(f.read())
-             (היה ImageReader(str(url)) — במתכונת _load_client_logo)
-- ה‑try/except העוטף → None + logger.warning נשמרו בדיוק כפי שהיו (fail-soft פר‑תמונה).
-- ה‑import של ImageReader הוסר מתוך ה‑helper בלבד (השימוש של _load_client_logo לא נגע).
-- ה‑docstring עודכן להסביר את החזרת io.BytesIO ואת הסיבה (reportlab 4.4.x).
+STEP 1 — safety_pdf.py: תמונות תחת מקטע 2 (ליקויים שנמצאו)
+---------------------------------------------------------
+1a. _load_signature_image שימש שוב כפי שהוא (helper גנרי "permanent key → BytesIO,
+    fail-soft פר‑תמונה" מאז fix1). נוספה שורת docstring אחת בלבד המציינת שהוא משרת
+    גם תמונות ראיה של פריט שנכשל. השם והגוף לא שונו.
+1b. ב‑generate_tour_report, בשלב ה‑pre-load (ליד sig_images): נבנה
+    fail_photos: dict  (item_id → [BytesIO, ...]). רק פריטים עם result=="fail"
+    ו‑photo_urls; כל תמונה נטענת fail-soft בנפרד; אפס טעינות → הפריט לא נכנס ל‑dict.
+1c. בלולאת מקטע 2, אחרי ה‑note של כל פריט שנכשל (ולפני ה‑Spacer הקיים):
+    התמונות מרונדרות בשורות של עד 4 עם ה‑idiom המאומת
+    Image(io.BytesIO, width=4*cm, height=3*cm, kind='proportional')
+    בטבלה colWidths=[4.4*cm]*len, hAlign="RIGHT", padding=2 מכל צד, + Spacer 2mm.
+    שאר הסדר/Spacer של הבלוק ללא שינוי.
 
-שורת הצרכן (965) `Image(sig_images[slot], width=3.2*cm, height=1.2*cm)` לא שונתה —
-כעת מקבלת BytesIO. _load_client_logo / _load_brikops_logo (נתיב canvas.drawImage)
-לא נגעו — ImageReader נכון שם.
+STEP 2 — SafetyTourRunner.js: ממוזערות על שורת הפריט
+----------------------------------------------------
+בכל שורת פריט (כל הסטטוסים, כולל readOnly — תכונת READ), מתחת לבלוק
+label/category/badge ומעל כפתורי ה‑result:
+    rowPhotos = (item.photo_display_urls || []).filter(isHttp)
+    כאשר יש — רצועת ממוזערות 12x12, כל אחת כפתור שפותח את המקור בטאב חדש
+    (window.open(u,'_blank','noopener')) עם e.stopPropagation כדי לא להפעיל
+    handlers ברמת השורה. isHttp הקיים נוצל. פאנל הכשל (preview strip) לא שונה.
+
+מה לא שונה (לפי DO NOT)
+=======================
+- אין הטמעת תמונות ל‑pass/na ב‑PDF (רק failed).
+- _load_signature_image (גוף), בלוק חתימות, לוגו, שער, מספור מקטעים — ללא שינוי.
+- router, api.js, schemas, SafetyHomePage, פאנל הכשל — ללא שינוי.
+- אין תלויות חדשות, אין lightbox, אין cap מעבר לשורות‑של‑4.
 
 אימות
 =====
 - python py_compile של safety_pdf.py: PY_COMPILE_OK.
-- sandbox repro תחת reportlab==4.4.10 (הגרסה המוצמדת בדיוק):
-  פלט הרצה:
-    PY_COMPILE_OK
-    reportlab 4.4.10
-    PDF_BUILD_OK bytes= 2031
-    CONFIRMED ImageReader rejected: expected str, bytes or os.PathLike object, not ImageReader
-  כלומר: platypus Image(io.BytesIO(<png>), 3.2*cm, 1.2*cm) נבנה ללא שגיאה,
-  ובקרת‑נגד מוכיחה ש‑ImageReader אכן נדחה (שורש הבעיה).
+- sandbox repro תחת reportlab==4.4.10, 2 PNG בעלי יחסי‑גובה‑רוחב שונים בשורת
+  Table אחת עם ה‑idiom המדויק:
+    פלט הרצה:
+      PY_COMPILE_OK
+      reportlab 4.4.10
+      PHOTO_ROW_BUILD_OK bytes= 1981
+  כלומר Image(io.BytesIO(png), 4*cm, 3*cm, kind='proportional') בטבלה נבנה ללא שגיאה.
+- craco build (production, CI=false): EXIT=0, "Compiled successfully", אפס אזהרות.
 
 בדיקות מכשיר (staging) — לביצוע ע"י Zahi:
-2. סיור חתום עם שתי חתימות מצוירות → ייצוא PDF יורד; שתי תמונות החתימה מופיעות בטבלה.
-3. סיור עם חתימת typed בלבד → עדיין מייצא (רגרסיה).
-4. Kill-switch: signature_ref שבור אחד → PDF עדיין מייצא, אותה שורה שם‑בלבד
-   (fail-soft פר‑תמונה שמור).
-
-הערה: לא שונו generate_tour_report, generate_safety_register, ה‑router, או קבצי frontend.
+2. כשל פריט עם 2 תמונות → שמירה → ממוזערות גלויות על השורה אחרי כיווץ הפאנל;
+   גלויות גם ב‑pending וב‑signed (readOnly); לחיצה פותחת מסך מלא בטאב חדש.
+3. PDF מאותו סיור: מקטע 2 מציג את התמונות תחת הפריט, יחס נשמר, עד 4 בשורה;
+   בלוק חתימות ללא שינוי.
+4. PDF מסיור שהפריט שנכשל בו ללא תמונות → כמו היום.
+5. שבירת מפתח תמונה אחד → PDF עדיין מרונדר, ללא שורת תמונה (fail-soft), ללא שגיאה.
