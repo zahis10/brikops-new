@@ -606,3 +606,9 @@ id = "D8BDsOgnG7Dwyz1SYMN5O"
 uri = "file://.local/plans/safety-p2-4c-plan.txt"
 type = "text"
 title = "safety-p2-4c — tour signatures + auto-signed + tour PDF — תוכנית"
+
+[[outputs]]
+id = "u7SvJrSir27zMQZvG0krV"
+uri = "file://.local/plans/safety-p2-4c-fix1-plan.txt"
+type = "text"
+title = "תוכנית — safety-p2-4c-fix1 (PDF 500 fix)"
