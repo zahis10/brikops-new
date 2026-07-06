@@ -157,7 +157,9 @@ async def _load_client_logo(db, org_id):
 
 
 async def _load_signature_image(ref):
-    """Tour signature PNG (permanent S3 key) → presigned URL → ImageReader.
+    """Tour signature PNG (permanent S3 key) → presigned URL → io.BytesIO for
+    the platypus Image flowable (Image() rejects ImageReader in reportlab 4.4.x);
+    fail-soft None.
     PER-IMAGE fail-soft (modeled on _load_client_logo): ANY failure returns
     None so the caller falls back to a name-only row and the PDF still renders.
     A single unreachable image must never abort the whole report."""
@@ -165,7 +167,6 @@ async def _load_signature_image(ref):
         return None
     try:
         from services.object_storage import generate_url
-        from reportlab.lib.utils import ImageReader
         url = generate_url(ref)
         if not url:
             return None
@@ -173,9 +174,10 @@ async def _load_signature_image(ref):
             import requests
             resp = requests.get(url, timeout=8)
             if resp.status_code == 200 and resp.content:
-                return ImageReader(io.BytesIO(resp.content))
+                return io.BytesIO(resp.content)
         elif os.path.exists(str(url)):
-            return ImageReader(str(url))
+            with open(str(url), "rb") as f:
+                return io.BytesIO(f.read())
     except Exception as e:
         logger.warning(f"[SAFETY-PDF] tour signature load failed: {e}")
     return None
