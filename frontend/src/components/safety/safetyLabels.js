@@ -43,3 +43,25 @@ export const TOUR_TYPE_HE = {
 
 // Safety tour status (schemas.py SafetyTourStatus). signed = batch 4c.
 export const TOUR_STATUS_HE = { draft: 'טיוטה', pending_signature: 'ממתין לחתימה', signed: 'חתום' };
+
+// Equipment fitness (batch safety-p3b). Order mirrors schemas.py EQUIPMENT_CATEGORIES.
+export const EQUIPMENT_CATEGORY_HE = {
+  lifting_accessories: 'אביזרי הרמה',
+  lifting_platform: 'במת הרמה',
+  electrical_panel: 'לוח חשמל ראשי / משני',
+  air_compressor: 'קולט אוויר',
+  formwork: 'טפסות',
+  forklift: 'מלגזה',
+  temporary_power: 'מתקן חשמל ארעי',
+  crane_regular: 'עגורן (לא עגורן צריח)',
+  tower_crane: 'עגורן צריח',
+  scaffolding: 'פיגומים',
+};
+
+export const EQUIPMENT_STATUS_HE = { active: 'פעיל', decommissioned: 'הוצא משימוש' };
+
+// result of a PERFORMED check (safety_equipment_checks.result)
+export const CHECK_RESULT_HE = { pass: 'תקין', conditional: 'מותנה', fail: 'נכשל' };
+
+// computed state of a check TRACK (check_status[].state)
+export const CHECK_STATE_HE = { valid: 'בתוקף', expired: 'פג תוקף', missing: 'לא בוצע' };

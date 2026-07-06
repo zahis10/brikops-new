@@ -654,6 +654,31 @@ export const safetyService = {
     );
     return response;
   },
+  // Equipment fitness (batch safety-p3b) — consumes the 3a endpoints.
+  async getEquipmentSummary(projectId) {
+    const r = await axios.get(`${API}/safety/${projectId}/equipment/summary`, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async listEquipment(projectId, params = {}) {
+    const r = await axios.get(`${API}/safety/${projectId}/equipment`, { headers: getAuthHeader(), params });
+    return r.data;
+  },
+  async createEquipment(projectId, payload) {
+    const r = await axios.post(`${API}/safety/${projectId}/equipment`, payload, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async updateEquipment(projectId, equipmentId, payload) {
+    const r = await axios.patch(`${API}/safety/${projectId}/equipment/${equipmentId}`, payload, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async createEquipmentCheck(projectId, equipmentId, payload) {
+    const r = await axios.post(`${API}/safety/${projectId}/equipment/${equipmentId}/checks`, payload, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async listEquipmentChecks(projectId, equipmentId, params = {}) {
+    const r = await axios.get(`${API}/safety/${projectId}/equipment/${equipmentId}/checks`, { headers: getAuthHeader(), params });
+    return r.data;
+  },
 };
 
 export const buildingService = {

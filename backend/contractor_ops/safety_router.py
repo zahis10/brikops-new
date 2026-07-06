@@ -1959,9 +1959,9 @@ class SafetyEquipmentCheckCreate(BaseModel):
     @model_validator(mode="after")
     def _validate_dates(self):
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", self.performed_at or ""):
-            raise ValueError("performed_at must be YYYY-MM-DD")
+            raise ValueError("תאריך ביצוע לא תקין (נדרש YYYY-MM-DD)")
         if self.expires_at is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", self.expires_at):
-            raise ValueError("expires_at must be YYYY-MM-DD")
+            raise ValueError("תאריך תפוגה לא תקין (נדרש YYYY-MM-DD)")
         return self
 
 
@@ -2368,7 +2368,8 @@ async def delete_equipment_check(
         raise HTTPException(status_code=404, detail="check not found")
     now = _now()
     await db.safety_equipment_checks.update_one(
-        {"id": check_id, "deletedAt": None}, {"$set": {
+        {"id": check_id, "project_id": project_id,
+         "equipment_id": equipment_id, "deletedAt": None}, {"$set": {
             "deletedAt": now,
             "deletedBy": user["id"],
             "deletion_reason": body.reason.strip(),

@@ -35,6 +35,7 @@ import SafetyIncidentForm from '../components/safety/SafetyIncidentForm';
 import SafetyWorkerCard from '../components/safety/SafetyWorkerCard';
 import SafetyTourCreateDialog from '../components/safety/SafetyTourCreateDialog';
 import SafetyTourRunner from '../components/safety/SafetyTourRunner';
+import SafetyEquipmentTab from '../components/safety/SafetyEquipmentTab';
 import {
   CATEGORY_HE, SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE, INCIDENT_STATUS_HE,
   TOUR_TYPE_HE, TOUR_STATUS_HE,
@@ -43,7 +44,7 @@ import {
 // Writers = the two project roles the safety backend accepts for create/edit
 // (safety_router.py SAFETY_WRITERS). The "+"/edit affordances gate on these.
 const SAFETY_WRITERS = ['project_manager', 'management_team'];
-const VALID_TABS = ['overview', 'documents', 'observations', 'tours', 'tasks', 'workers', 'trainings', 'incidents'];
+const VALID_TABS = ['overview', 'documents', 'observations', 'tours', 'tasks', 'workers', 'trainings', 'incidents', 'equipment'];
 const SEVERITY_COLOR = {
   '1': 'bg-blue-100 text-blue-800',
   '2': 'bg-amber-100 text-amber-800',
@@ -116,6 +117,9 @@ export default function SafetyHomePage() {
   const [tours, setTours] = useState({ items: [], total: 0 });
   const [tourRunner, setTourRunner] = useState(null);
   const [tourCreateOpen, setTourCreateOpen] = useState(false);
+  // Batch safety-p3b — equipment (ציוד). Page owns ONLY the summary (tab
+  // counter + category counters); item lists are fetched inside the tab.
+  const [equipSummary, setEquipSummary] = useState({ items: [], total: 0 });
 
   // Skip the filter useEffect's initial run — main useEffect's Promise.all
   // already fetched documents. The ref flips to false after the first real run.
@@ -135,7 +139,7 @@ export default function SafetyHomePage() {
         if (cancelled) return;
         if (proj) setProject(proj);
 
-        const [scoreResp, docsResp, obsResp, tasksResp, workersResp, trainingsResp, incidentsResp, toursResp] = await Promise.all([
+        const [scoreResp, docsResp, obsResp, tasksResp, workersResp, trainingsResp, incidentsResp, toursResp, equipResp] = await Promise.all([
           safetyService.getScore(projectId).catch((e) => ({ __err: e })),
           safetyService.listDocuments(projectId, { limit: 50, kind: 'defect' }).catch((e) => ({ __err: e })),
           safetyService.listDocuments(projectId, { limit: 50, kind: 'observation' }).catch((e) => ({ __err: e })),
@@ -144,10 +148,11 @@ export default function SafetyHomePage() {
           safetyService.listTrainings(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
           safetyService.listIncidents(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
           safetyService.listTours(projectId, { limit: 100 }).catch((e) => ({ __err: e })),
+          safetyService.getEquipmentSummary(projectId).catch((e) => ({ __err: e })),
         ]);
         if (cancelled) return;
 
-        const responses = [scoreResp, docsResp, obsResp, tasksResp, workersResp, trainingsResp, incidentsResp, toursResp];
+        const responses = [scoreResp, docsResp, obsResp, tasksResp, workersResp, trainingsResp, incidentsResp, toursResp, equipResp];
         const has404 = responses.some((r) => r?.__err?.response?.status === 404);
         const has403 = responses.some((r) => r?.__err?.response?.status === 403);
 
@@ -169,6 +174,7 @@ export default function SafetyHomePage() {
         setTrainings(trainingsResp || { items: [], total: 0 });
         setIncidents(incidentsResp || { items: [], total: 0 });
         setTours(toursResp || { items: [], total: 0 });
+        setEquipSummary(equipResp || { items: [], total: 0 });
       } catch (err) {
         if (!cancelled) toast.error('שגיאה בטעינת נתונים');
       } finally {
@@ -254,7 +260,7 @@ export default function SafetyHomePage() {
   // LIST-ONLY (no score refetch), fail-soft.
   useEffect(() => {
     if (!projectId || loading || flagOff || forbidden) return;
-    if (activeTab === 'documents' || activeTab === 'overview' || activeTab === 'tours') return;
+    if (activeTab === 'documents' || activeTab === 'overview' || activeTab === 'tours' || activeTab === 'equipment') return;
     const setFiltered = {
       observations: setFilteredObs,
       workers: setFilteredWorkers,
@@ -490,6 +496,15 @@ export default function SafetyHomePage() {
     }
   };
 
+  const reloadEquipmentSummary = async () => {
+    try {
+      const resp = await safetyService.getEquipmentSummary(projectId);
+      setEquipSummary(resp || { items: [], total: 0 });
+    } catch (e) {
+      toast.error('שגיאה ברענון נתוני ציוד');
+    }
+  };
+
   return (
     <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
       <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-2 sticky top-0 z-20">
@@ -523,7 +538,7 @@ export default function SafetyHomePage() {
           hasActiveFilter={hasActiveFilter}
         />
 
-        {activeTab !== 'overview' && activeTab !== 'tours' && (
+        {activeTab !== 'overview' && activeTab !== 'tours' && activeTab !== 'equipment' && (
           <button
             type="button"
             onClick={() => setFilterOpen(true)}
@@ -598,6 +613,12 @@ export default function SafetyHomePage() {
               >
                 אירועים ({incidentsView.total})
               </TabsTrigger>
+              <TabsTrigger
+                value="equipment"
+                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
+              >
+                ציוד ({equipSummary.total})
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="documents" className="p-0 m-0">
@@ -661,6 +682,14 @@ export default function SafetyHomePage() {
                 workers={workers.items}
                 isWriter={isWriter}
                 onEdit={(i) => setIncidentForm({ open: true, record: i })}
+              />
+            </TabsContent>
+            <TabsContent value="equipment" className="p-0 m-0">
+              <SafetyEquipmentTab
+                projectId={projectId}
+                isWriter={isWriter}
+                summary={equipSummary}
+                onChanged={reloadEquipmentSummary}
               />
             </TabsContent>
           </Card>
