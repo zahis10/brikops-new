@@ -616,6 +616,44 @@ export const safetyService = {
     const r = await axios.post(`${API}/safety/${projectId}/tours/${tourId}/reopen`, {}, { headers: getAuthHeader() });
     return r.data;
   },
+  async deleteTourItem(projectId, tourId, itemId) {
+    const r = await axios.delete(
+      `${API}/safety/${projectId}/tours/${tourId}/items/${itemId}`,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+  async markRemainingPass(projectId, tourId) {
+    const r = await axios.post(
+      `${API}/safety/${projectId}/tours/${tourId}/items/mark-remaining-pass`,
+      {},
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+  // Tour signatures (batch 4c). slot ∈ work_manager | safety_assistant | safety_officer.
+  // multipart — do NOT set Content-Type manually so the browser adds the boundary.
+  async signTourSlot(projectId, tourId, slot, { signerName, signatureType, typedName, signerUserId, blob }) {
+    const fd = new FormData();
+    fd.append('signer_name', signerName || '');
+    fd.append('signature_type', signatureType || '');
+    if (typedName) fd.append('typed_name', typedName);
+    if (signerUserId) fd.append('signer_user_id', signerUserId);
+    if (blob) fd.append('signature_image', blob, 'signature.png');
+    const r = await axios.post(
+      `${API}/safety/${projectId}/tours/${tourId}/signatures/${slot}`,
+      fd,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+  async exportTourPdf(projectId, tourId) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/tours/${tourId}/export/pdf`,
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    return response;
+  },
 };
 
 export const buildingService = {

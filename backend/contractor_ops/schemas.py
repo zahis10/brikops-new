@@ -940,12 +940,18 @@ class SafetyTourItem(BaseModel):
 
 
 class SafetyTourSignature(BaseModel):
-    """Reserved for batch 4c — defined now so the document shape is final."""
-    user_id: str
+    """Tour signature (batch 4c). Shared-device reality: the connected WRITER
+    captures the signature (captured_by); the SIGNER is a chosen project member
+    (user_id) or a free-typed name (user_id None)."""
+    user_id: Optional[str] = None             # chosen member; None for a typed-name signer
     name: str
-    sub_role: Optional[str] = None
+    sub_role: Optional[str] = None            # signer's sub_role at signing time
     signed_at: str
-    signature_ref: Optional[str] = None       # S3 key of the canvas PNG (4c)
+    signature_ref: Optional[str] = None       # permanent S3 key of the canvas PNG
+    signature_type: Optional[Literal["canvas", "typed"]] = None
+    typed_name: Optional[str] = None
+    captured_by: Optional[str] = None         # the connected writer who captured it
+    signature_display_url: Optional[str] = None  # server-computed per-GET; never persisted
 
 
 class SafetyTour(BaseModel):

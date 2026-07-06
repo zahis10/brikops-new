@@ -156,6 +156,31 @@ async def _load_client_logo(db, org_id):
     return None
 
 
+async def _load_signature_image(ref):
+    """Tour signature PNG (permanent S3 key) → presigned URL → ImageReader.
+    PER-IMAGE fail-soft (modeled on _load_client_logo): ANY failure returns
+    None so the caller falls back to a name-only row and the PDF still renders.
+    A single unreachable image must never abort the whole report."""
+    if not ref:
+        return None
+    try:
+        from services.object_storage import generate_url
+        from reportlab.lib.utils import ImageReader
+        url = generate_url(ref)
+        if not url:
+            return None
+        if str(url).startswith("http"):
+            import requests
+            resp = requests.get(url, timeout=8)
+            if resp.status_code == 200 and resp.content:
+                return ImageReader(io.BytesIO(resp.content))
+        elif os.path.exists(str(url)):
+            return ImageReader(str(url))
+    except Exception as e:
+        logger.warning(f"[SAFETY-PDF] tour signature load failed: {e}")
+    return None
+
+
 class _NumberedCanvas:
     """
     Two-pass page-X-of-Y footer canvas. Buffers each page's state during
@@ -695,6 +720,287 @@ async def generate_safety_register(db, project_id: str) -> bytes:
         elems.append(line)
         elems.append(Paragraph(hebrew("שם, תאריך וחתימה"), sub))
         elems.append(Spacer(1, 8 * mm))
+
+    elems.append(Spacer(1, 6 * mm))
+    elems.append(Paragraph(hebrew("נוצר באמצעות BrikOps · brikops.com"), sub))
+
+    brikops_logo = _load_brikops_logo()
+    client_logo = await _load_client_logo(db, project.get("org_id"))
+
+    def make_canvas(*a, **k):
+        cv = _NumberedCanvas(*a, **k)
+        cv._brikops_logo = brikops_logo
+        cv._client_logo = client_logo
+        return cv
+
+    doc.build(elems, canvasmaker=make_canvas)
+    out.seek(0)
+    return out.getvalue()
+
+
+# =====================================================================
+# Safety Tour Report PDF (Batch 4c 2026-07-06)
+# Per-tour report: header, per-item results, failed-item defect refs, and
+# the 3-slot signature block. Any tour status is exportable. Reuses the
+# same fonts / brand canvas / _table conventions as generate_safety_register.
+# =====================================================================
+
+_TOUR_TYPE_HE = {
+    "officer_monthly": "דוח ממונה בטיחות",
+    "assistant_morning": "דוח עוזר בטיחות — בוקר",
+    "assistant_evening": "דוח עוזר בטיחות — ערב",
+    "custom": "סיור מותאם",
+}
+_TOUR_STATUS_HE = {"draft": "טיוטה", "pending_signature": "ממתין לחתימה", "signed": "חתום"}
+_TOUR_RESULT_HE = {"pass": "תקין", "fail": "נכשל", "na": "לא רלוונטי"}
+_SUB_ROLE_HE = {
+    "safety_officer": "ממונה בטיחות",
+    "safety_assistant": "עוזר בטיחות",
+    "work_manager": "מנהל עבודה",
+    "project_manager": "מנהל פרויקט",
+    "management_team": "צוות ניהולי",
+}
+
+
+async def generate_tour_report(db, project_id: str, tour_id: str) -> bytes:
+    """Build the per-tour safety report PDF for `tour_id`.
+
+    Exportable at ANY status (draft / pending_signature / signed). PII fields
+    are never selected. Signature images are loaded per-image fail-soft.
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import cm, mm
+    from reportlab.platypus import (
+        Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, HRFlowable, Image
+    )
+
+    _register_fonts_once()
+
+    project = await db.projects.find_one({"id": project_id}, {"_id": 0}) or {}
+    tour = await db.safety_tours.find_one(
+        {"id": tour_id, "project_id": project_id, "deletedAt": None}, {"_id": 0}
+    ) or {}
+    items = tour.get("items") or []
+
+    creator_name = None
+    if tour.get("created_by"):
+        u = await db.users.find_one({"id": tour["created_by"]}, {"_id": 0, "name": 1})
+        creator_name = (u or {}).get("name")
+
+    # Failed-item defect titles (fail-soft — a missing defect just drops the ref).
+    defect_ids = [it.get("defect_id") for it in items if it.get("defect_id")]
+    defect_title_map: dict = {}
+    if defect_ids:
+        for d in await db.safety_documents.find(
+            {"id": {"$in": defect_ids}}, {"_id": 0, "id": 1, "title": 1}
+        ).to_list(length=10000):
+            defect_title_map[d["id"]] = d.get("title", "")
+
+    # Pre-load canvas signature images (per-image fail-soft) BEFORE the sync build.
+    slot_defs = [
+        ("work_manager", "מנהל עבודה *", True),
+        ("safety_assistant", "עוזר בטיחות *", True),
+        ("safety_officer", "ממונה בטיחות", False),
+    ]
+    sig_images: dict = {}
+    for slot, _lbl, _mand in slot_defs:
+        sig = tour.get(f"{slot}_signature")
+        if sig and sig.get("signature_type") == "canvas" and sig.get("signature_ref"):
+            sig_images[slot] = await _load_signature_image(sig.get("signature_ref"))
+
+    SLATE_700 = colors.HexColor("#334155")
+    SLATE_500 = colors.HexColor("#64748B")
+    SLATE_200 = colors.HexColor("#E2E8F0")
+    NAVY = colors.HexColor("#1E293B")
+    ORANGE = colors.HexColor("#F97316")
+    SLATE_50 = colors.HexColor("#F8FAFC")
+    RED_700 = colors.HexColor("#B91C1C")
+
+    title_style = ParagraphStyle(
+        "TTitle", fontName="Rubik-Bold", fontSize=20,
+        alignment=TA_CENTER, textColor=SLATE_700, leading=26,
+    )
+    h2 = ParagraphStyle(
+        "TH2", fontName="Rubik-Bold", fontSize=13,
+        alignment=TA_RIGHT, textColor=SLATE_700, leading=18,
+        spaceBefore=8, spaceAfter=4,
+    )
+    body = ParagraphStyle(
+        "TBody", fontName="Rubik", fontSize=10,
+        alignment=TA_RIGHT, textColor=SLATE_700, leading=14,
+    )
+    sub = ParagraphStyle(
+        "TSub", fontName="Rubik", fontSize=9,
+        alignment=TA_CENTER, textColor=SLATE_500, leading=12,
+    )
+    cell = ParagraphStyle(
+        "TCell", fontName="Rubik", fontSize=9,
+        alignment=TA_RIGHT, textColor=SLATE_700, leading=12,
+    )
+    cell_hdr_white = ParagraphStyle(
+        "TCellHdrW", fontName="Rubik-Bold", fontSize=9,
+        alignment=TA_RIGHT, textColor=colors.white, leading=12,
+    )
+
+    def _table(headers, rows, col_widths):
+        # RTL: reverse headers/rows/widths ONCE so logical col 0 renders rightmost.
+        data = [[Paragraph(hebrew(h), cell_hdr_white) for h in reversed(headers)]]
+        for r in rows:
+            data.append([Paragraph(hebrew(c), cell) for c in reversed(list(r))])
+        t = Table(data, colWidths=list(reversed(col_widths)), repeatRows=1)
+        t.setStyle(TableStyle([
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, SLATE_50]),
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("GRID", (0, 0), (-1, -1), 0.3, SLATE_200),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        return t
+
+    def _section(t):
+        return [
+            Paragraph(hebrew(t), h2),
+            HRFlowable(width="100%", thickness=2, color=ORANGE,
+                       spaceBefore=1, spaceAfter=6, lineCap="round"),
+        ]
+
+    out = io.BytesIO()
+    doc = SimpleDocTemplate(
+        out, pagesize=A4,
+        leftMargin=1.5 * cm, rightMargin=1.5 * cm,
+        topMargin=3.0 * cm, bottomMargin=2.4 * cm,
+        title="דוח סיור בטיחות",
+    )
+    elems = []
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    ttype = tour.get("tour_type", "")
+    type_label = _TOUR_TYPE_HE.get(ttype, ttype)
+    if ttype == "custom" and tour.get("custom_name"):
+        type_label = tour["custom_name"]
+
+    # Cover panel
+    cover_lines = [f"סוג סיור: {type_label}"]
+    if project.get("name"):
+        cover_lines.append(f"פרויקט: {project['name']}")
+    cover_lines.append(f"תאריך סיור: {_fmt_date(tour.get('tour_date'))}")
+    cover_lines.append(f"סטטוס: {_TOUR_STATUS_HE.get(tour.get('status'), tour.get('status', '—'))}")
+    if creator_name:
+        cover_lines.append(f"נוצר על ידי: {creator_name}")
+    cover_lines.append(f"תאריך הפקה: {today}")
+
+    panel_rows = [[Paragraph(hebrew("דוח סיור בטיחות"), title_style)]]
+    for line in cover_lines:
+        panel_rows.append([Paragraph(hebrew(line), sub)])
+    cover_panel = Table(panel_rows, colWidths=[16 * cm])
+    cover_panel.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), SLATE_50),
+        ("BOX", (0, 0), (-1, -1), 0.5, SLATE_200),
+        ("ROUNDEDCORNERS", [10, 10, 10, 10]),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 16),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+        ("TOPPADDING", (0, 0), (-1, -1), 14),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
+    ]))
+    elems.append(Spacer(1, 6 * mm))
+    elems.append(cover_panel)
+    elems.append(Spacer(1, 8 * mm))
+
+    # Section 1: item results
+    elems.extend(_section("1. תוצאות הסיור"))
+    if items:
+        item_rows = []
+        for it in items:
+            item_rows.append([
+                it.get("label", "") or "—",
+                CATEGORY_HE.get(it.get("category", ""), it.get("category", "") or "—"),
+                _TOUR_RESULT_HE.get(it.get("result"), "—"),
+                it.get("note", "") or "—",
+            ])
+        elems.append(_table(
+            ["פריט", "קטגוריה", "תוצאה", "הערה"],
+            item_rows, [5.5 * cm, 3.5 * cm, 2.5 * cm, 4.5 * cm],
+        ))
+    else:
+        elems.append(Paragraph(hebrew("לא הוזנו פריטים בסיור זה."), body))
+    elems.append(Spacer(1, 6 * mm))
+
+    # Section 2: failed items (only when any exist)
+    failed = [it for it in items if it.get("result") == "fail"]
+    if failed:
+        elems.extend(_section("2. ליקויים שנמצאו"))
+        fail_style = ParagraphStyle(
+            "TFail", fontName="Rubik", fontSize=10,
+            alignment=TA_RIGHT, textColor=RED_700, leading=15,
+        )
+        for it in failed:
+            label = it.get("label", "") or "—"
+            elems.append(Paragraph(hebrew(f"• {label}"), fail_style))
+            did = it.get("defect_id")
+            if did and did in defect_title_map:
+                elems.append(Paragraph(
+                    hebrew(f"נפתח ליקוי: {defect_title_map[did] or did}"), body))
+            if it.get("note"):
+                elems.append(Paragraph(hebrew(f"הערה: {it['note']}"), body))
+            elems.append(Spacer(1, 3 * mm))
+        elems.append(Spacer(1, 4 * mm))
+
+    # Section: signatures (3 fixed slots)
+    sec_num = "3" if failed else "2"
+    elems.extend(_section(f"{sec_num}. חתימות"))
+
+    sig_rows = []
+    for slot, slot_label, mandatory in slot_defs:
+        sig = tour.get(f"{slot}_signature")
+        if sig:
+            stype = sig.get("signature_type")
+            if stype == "canvas" and sig_images.get(slot) is not None:
+                sig_cell = Image(sig_images[slot], width=3.2 * cm, height=1.2 * cm)
+            elif stype == "canvas":
+                sig_cell = Paragraph(hebrew("חתימה גרפית"), cell)
+            elif stype == "typed":
+                tn = sig.get("typed_name") or sig.get("name") or ""
+                sig_cell = Paragraph(hebrew(f"חתימה מוקלדת: {tn}"), cell)
+            else:
+                sig_cell = Paragraph(hebrew("נחתם"), cell)
+            name_bits = [sig.get("name", "") or "—"]
+            if sig.get("sub_role"):
+                name_bits.append(f"({_SUB_ROLE_HE.get(sig['sub_role'], sig['sub_role'])})")
+            name_cell = Paragraph(hebrew(" ".join(name_bits)), cell)
+            date_cell = Paragraph(hebrew(_fmt_date(sig.get("signed_at"))), cell)
+        else:
+            sig_cell = Paragraph(
+                hebrew("טרם נחתם" if mandatory else "לא נחתם (אופציונלי)"), cell)
+            name_cell = Paragraph(hebrew("—"), cell)
+            date_cell = Paragraph(hebrew("—"), cell)
+        role_cell = Paragraph(hebrew(slot_label), cell)
+        # logical order: תפקיד | חתימה | חותם | תאריך → reversed for RTL
+        sig_rows.append(list(reversed([role_cell, sig_cell, name_cell, date_cell])))
+
+    hdr = [Paragraph(hebrew(h), cell_hdr_white)
+           for h in reversed(["תפקיד", "חתימה", "חותם", "תאריך"])]
+    sig_widths = list(reversed([4 * cm, 4.5 * cm, 4.5 * cm, 3 * cm]))
+    sig_table = Table([hdr] + sig_rows, colWidths=sig_widths, repeatRows=1)
+    sig_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, SLATE_50]),
+        ("GRID", (0, 0), (-1, -1), 0.3, SLATE_200),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    elems.append(sig_table)
+    elems.append(Spacer(1, 4 * mm))
+    elems.append(Paragraph(hebrew("* חתימת חובה"), sub))
 
     elems.append(Spacer(1, 6 * mm))
     elems.append(Paragraph(hebrew("נוצר באמצעות BrikOps · brikops.com"), sub))

@@ -1,56 +1,57 @@
-================================================================================
-BrikOps — BATCH safety-p2-4b-fix2 — refresh defects when the tour runner closes (BUG)
-Branch: staging  |  Base HEAD: 0ff7fad (fix1)  |  Date: 2026-07-05
-================================================================================
+סקירת עבודה — Safety P2: 4b2 + 4c
+====================================
+ענף: staging
+בסיס (HEAD לפני העבודה): fa03a3e
 
-הבאג (נמצא בשטח ע"י צהי)
-------------------------
-כשל בפריט סיור יוצר ליקוי בצד-שרת (4a), אבל טאב הליקויים המשיך להציג רשימה
-ישנה עד refresh ידני של הדף. שורש: onClose של ה-runner ריענן רק את רשימת
-הסיורים — spec 6i של 4b דרש שם גם reloadDocuments() וזה נשמט.
+הערה חשובה על מצב לפני העבודה
+------------------------------
+בתחילת הסשן התגלה ש‑4b2 היה חסר לחלוטין מהקוד (לא מומש בסשן קודם למרות שסומן).
+לכן סשן זה מימש קודם את 4b2 במלואו, ורק אז בנה את 4c מעליו.
 
 מה נעשה
--------
-תיקון של שורה אחת בלבד. קובץ יחיד: SafetyHomePage.js, frontend בלבד.
+=======
 
-STEP 0 — PRE-FLIGHT
--------------------
-HEAD = 0ff7fad (=checkpoint של fix1). עוגנים תואמים:
-- onClose={() => { setTourRunner(null); reloadTours(); }}  @1021
-- const reloadDocuments = async () => {  @415  (כבר קיים)
+4b2 — עריכת פריטי סיור בטיחות (מומש מחדש, היה חסר)
+---------------------------------------------------
+Backend (safety_router.py):
+- מחיקת פריט בודד: DELETE /tours/{tour_id}/items/{item_id}
+  * מותר רק במצב draft, נחסמת מחיקת פריט המקושר לליקוי.
+- סימון גורף "סמן הכל תקין": mark_remaining_pass — מעדכן רק פריטים שטרם נענו
+  (arrayFilters), לא נוגע בפריטים שכבר סומנו כולל נכשלים.
 
-STEP 1 — התיקון
----------------
-ב-mount של SafetyTourRunner, הוחלף:
-    onClose={() => { setTourRunner(null); reloadTours(); }}
-ב:
-    onClose={() => { setTourRunner(null); reloadTours(); reloadDocuments(); }}
+Frontend:
+- api.js: deleteTourItem, markRemainingPass.
+- SafetyTourRunner.js: כפתור מחיקה (Trash2) לכל שורה + כפתור "סמן הכל תקין" גורף,
+  שני דיאלוגי אישור (Radix) עם מצבי disabled ורענון מהשרת (applyTour).
 
-reloadDocuments כבר קיים ומרענן ליקויים (kind='defect' עם פרמטרי הסינון הפעילים)
-+ תצפיות (kind='observation') + score (getScore) — בדיוק מה שסיור עם פריטים
-שנכשלו משנה. onChanged (המיזוג המקומי מ-fix1) נשאר ללא שינוי.
+4c — זרימת חתימות לסיור בטיחות (נבנה מעל 4b2)
+---------------------------------------------
+Backend:
+- schemas.py: SafetyTourSignature הורחב/רוכך לתמיכה בחתימות canvas/typed.
+- safety_router.py:
+  * sign_tour_slot — POST /tours/{tour_id}/signatures/{slot} (multipart):
+    תפיסת slot אטומית, ולידציית סוג חתימה, snapshot של sub_role בצורת fail-soft,
+    מעבר סטטוס אוטומטי ל‑signed כששני ה‑slots המנדטוריים מלאים.
+  * reopen_tour — רק מ‑pending_signature; מנקה את 3 החתימות + signed_at,
+    ורושם אירוע audit signatures_cleared.
+  * export_tour_pdf — GET /tours/{tour_id}/export/pdf.
+- safety_pdf.py: generate_tour_report + _load_signature_image (fail-soft להטמעת
+  תמונת חתימה), כולל טבלת 3 slots, מקטע פריטים שנכשלו, ומפות תרגום עברית.
 
-DO NOT (נשמר)
--------------
-לא נגעתי ב-runner, לא ב-reloadDocuments/reloadTours עצמן, לא ב-onChanged (מיזוג
-fix1 נשאר), ואין backend. שינוי בשורה אחת בלבד.
+Frontend:
+- api.js: signTourSlot (FormData, ללא Content-Type ידני), exportTourPdf (blob).
+- SafetySignaturePad.js (חדש): מודל Radix dir=rtl, טאבים ציור/הקלדה, ללא ת"ז.
+- SafetyTourRunner.js: מקטע חתימות (3 slots: מנהל עבודה*, עוזר בטיחות*,
+  ממונה בטיחות אופציונלי), כפתור ייצוא PDF במצבי pending_signature ו‑signed,
+  דיאלוג אישור לפתיחה‑מחדש שמזהיר שהחתימות יימחקו.
+  שיבוץ signer_user_id רק כשהשם התואם אושר (מונע snapshot שגוי של sub_role).
 
-בדיקות
-------
-- craco build (REACT_APP_BACKEND_URL placeholder, GENERATE_SOURCEMAP=false)
-  → EXIT=0, אפס errors/warnings.
-- Architect review (evaluate_task, includeGitDiff) → PASS. אומת: reloadDocuments
-  היא הפונקציה הקיימת הנכונה (מרעננת defects+observations+score), fix1 (onChanged
-  local merge) נשמר, וה-hunk משנה רק את שורת ה-onClose.
+אימות
+=====
+- python py_compile: עבר עבור safety_router.py, safety_pdf.py, schemas.py.
+- craco build (production, CI=false): EXIT=0, Compiled successfully, אפס אזהרות.
+- code review (architect, evaluate_task + git diff): PASS — אין ליקויים חוסמים,
+  אין בעיות אבטחה בהיקף. הצעות אופציונליות בלבד (אטומיות מלאה תחת מרוץ מחיקות,
+  ושתי בדיקות אינטגרציה/FE לנעילת התנהגות) — לא חוסמות.
 
-בדיקות מכשיר מומלצות (staging)
-------------------------------
-1. סיור טיוטה → הכשלת פריט (חומרה + שמירה) → סגירת ה-runner → טאב הליקויים
-   מציג את הליקוי החדש ומד ה-score זז — בלי refresh ידני.
-2. סגירת runner ללא שום שינוי → אין שגיאה, הרשימות פשוט מתרעננות.
-
-השפעה / סיכון
--------------
-Frontend בלבד, שורה אחת. תוספת קריאת רענון אחת בסגירת ה-runner (מכוונת). אין
-שינוי חוזה, אין backend, אין migration, אין תלות/secret חדשים.
-================================================================================
+הערה: SafetyHomePage.js לא שונה (לפי התוכנית).

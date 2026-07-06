@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { safetyService } from '../../services/api';
+import { safetyService, projectService } from '../../services/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -9,9 +9,28 @@ import { Badge } from '../ui/badge';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/select';
 import { CATEGORY_HE, SEVERITY_HE, TOUR_TYPE_HE, TOUR_STATUS_HE } from './safetyLabels';
 import { compressImage } from '../../utils/imageCompress';
-import { Camera, X, Loader2, Plus } from 'lucide-react';
+import { Camera, X, Loader2, Plus, Trash2, FileDown, PenLine } from 'lucide-react';
+import SafetySignaturePad from './SafetySignaturePad';
 
 const isHttp = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
+
+const fmtSigDate = (iso) => {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleDateString('he-IL');
+  } catch {
+    return String(iso).slice(0, 10);
+  }
+};
+
+// The 3 tour signature slots (batch 4c). subRole is used to auto-suggest the
+// signer from the project's memberships; the two mandatory slots gate the flip
+// to "signed", the safety_officer slot is optional and may sign post-signature.
+const SIG_SLOTS = [
+  { key: 'work_manager', field: 'work_manager_signature', label: 'מנהל עבודה', subRole: 'work_manager', mandatory: true },
+  { key: 'safety_assistant', field: 'safety_assistant_signature', label: 'עוזר בטיחות', subRole: 'safety_assistant', mandatory: true },
+  { key: 'safety_officer', field: 'safety_officer_signature', label: 'ממונה בטיחות', subRole: 'safety_officer', mandatory: false },
+];
 
 const STATUS_BADGE = {
   draft: 'bg-slate-100 text-slate-700',
@@ -38,6 +57,17 @@ export default function SafetyTourRunner({ projectId, tour, open, onClose, onCha
   const [confirmSubmit, setConfirmSubmit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [reopening, setReopening] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(null);   // item pending removal
+  const [removing, setRemoving] = useState(false);
+  const [confirmBulk, setConfirmBulk] = useState(false);
+  const [bulkPending, setBulkPending] = useState(false);
+  // 4c signatures
+  const [members, setMembers] = useState([]);
+  const [signPadSlot, setSignPadSlot] = useState(null);       // the SIG_SLOTS entry being signed
+  const [padSuggested, setPadSuggested] = useState(null);     // auto-matched member for that slot
+  const [signing, setSigning] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [confirmReopen, setConfirmReopen] = useState(false);
 
   // Re-init ONLY when a different tour opens — key on the id, not the object
   // reference, or the onChanged echo (runner → parent → prop) re-runs on every
@@ -51,6 +81,22 @@ export default function SafetyTourRunner({ projectId, tour, open, onClose, onCha
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tour?.id]);
+
+  // Fetch project members once per open — used to auto-suggest a signer (and its
+  // sub_role) per slot. Fail-soft: a memberships failure just leaves the pad with
+  // an empty default name (the writer can still type a name freely).
+  useEffect(() => {
+    if (!open || !projectId) return;
+    let cancelled = false;
+    projectService.getMemberships(projectId)
+      .then((mv) => {
+        if (cancelled) return;
+        const list = Array.isArray(mv) ? mv : (mv?.items || []);
+        setMembers(list.filter((m) => m.status !== 'pending'));
+      })
+      .catch(() => { if (!cancelled) setMembers([]); });
+    return () => { cancelled = true; };
+  }, [open, projectId]);
 
   if (!open || !t) return null;
 
@@ -166,10 +212,102 @@ export default function SafetyTourRunner({ projectId, tour, open, onClose, onCha
     try {
       const updated = await safetyService.reopenTour(projectId, t.id);
       applyTour(updated);
+      setConfirmReopen(false);
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'פתיחה מחדש נכשלה');
     } finally {
       setReopening(false);
+    }
+  };
+
+  const canSignSlot = (slot) => (
+    slot.key === 'safety_officer'
+      ? (t.status === 'pending_signature' || t.status === 'signed')
+      : t.status === 'pending_signature'
+  );
+
+  const openSignPad = (slot) => {
+    const suggested = members.find((m) => m.sub_role === slot.subRole) || null;
+    setPadSuggested(suggested);
+    setSignPadSlot(slot);
+  };
+
+  const onSaveSignature = async (data) => {
+    const slot = signPadSlot;
+    if (!slot) return;
+    setSigning(true);
+    try {
+      // Only attach signer_user_id when the confirmed name still matches the
+      // auto-suggested member — otherwise the sub_role snapshot would be wrong.
+      const signerUserId = (padSuggested && data.signerName === padSuggested.user_name)
+        ? padSuggested.user_id : null;
+      const updated = await safetyService.signTourSlot(projectId, t.id, slot.key, {
+        signerName: data.signerName,
+        signatureType: data.signatureType,
+        typedName: data.typedName,
+        signerUserId,
+        blob: data.blob,
+      });
+      applyTour(updated);
+      setSignPadSlot(null);
+      setPadSuggested(null);
+      toast.success('החתימה נשמרה');
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'שמירת החתימה נכשלה');
+    } finally {
+      setSigning(false);
+    }
+  };
+
+  const onExportPdf = async () => {
+    setExporting(true);
+    try {
+      const res = await safetyService.exportTourPdf(projectId, t.id);
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `safety_tour_${String(t.id).slice(0, 8)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error('ייצוא PDF נכשל');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const onRemoveItem = async () => {
+    const item = confirmRemove;
+    if (!item) return;
+    setRemoving(true);
+    setPendingItemId(item.id);   // lock the row while deleting
+    try {
+      const updated = await safetyService.deleteTourItem(projectId, t.id, item.id);
+      applyTour(updated);
+      setConfirmRemove(null);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'הסרת הפריט נכשלה');
+    } finally {
+      setRemoving(false);
+      setPendingItemId(null);
+    }
+  };
+
+  const onMarkRemaining = async () => {
+    const n = unanswered;
+    setBulkPending(true);
+    try {
+      const updated = await safetyService.markRemainingPass(projectId, t.id);
+      applyTour(updated);
+      setConfirmBulk(false);
+      toast.success(`סומנו ${n} פריטים כתקינים`);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'סימון הפריטים נכשל');
+    } finally {
+      setBulkPending(false);
     }
   };
 
@@ -225,6 +363,17 @@ export default function SafetyTourRunner({ projectId, tour, open, onClose, onCha
           </DialogHeader>
 
           <div className="px-5 py-4 space-y-3">
+            {!readOnly && unanswered > 0 && (
+              <button
+                type="button"
+                disabled={bulkPending || !!pendingItemId}
+                onClick={() => setConfirmBulk(true)}
+                className="w-full min-h-[44px] rounded-xl border border-slate-300 bg-slate-50 text-sm font-medium text-slate-700 hover:bg-slate-100 flex items-center justify-center gap-1.5 disabled:opacity-60"
+              >
+                {bulkPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                סמן הכל תקין ({unanswered})
+              </button>
+            )}
             {items.map((item) => (
               <div key={item.id} className="rounded-xl border border-slate-200 p-3">
                 <div className="flex items-start justify-between gap-2 mb-2">
@@ -237,6 +386,17 @@ export default function SafetyTourRunner({ projectId, tour, open, onClose, onCha
                       <Badge className="mr-1 mt-1 bg-red-100 text-red-700 hover:bg-red-100 align-middle">ליקוי נפתח</Badge>
                     )}
                   </div>
+                  {!readOnly && !item.defect_id && (
+                    <button
+                      type="button"
+                      aria-label="הסר פריט"
+                      disabled={!!pendingItemId || bulkPending}
+                      onClick={() => setConfirmRemove(item)}
+                      className="shrink-0 w-8 h-8 rounded-full text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center disabled:opacity-40"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   {resultBtn(item, 'pass', 'תקין', 'border-green-500 bg-green-500 text-white')}
@@ -385,6 +545,61 @@ export default function SafetyTourRunner({ projectId, tour, open, onClose, onCha
                 </button>
               )
             )}
+
+            {t.status !== 'draft' && (
+              <div className="pt-3 mt-1 border-t border-slate-100 space-y-2">
+                <p className="text-sm font-semibold text-slate-800">חתימות</p>
+                {SIG_SLOTS.map((slot) => {
+                  const sig = t[slot.field];
+                  return (
+                    <div key={slot.key} className="rounded-xl border border-slate-200 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-800">
+                            {slot.label}{slot.mandatory && <span className="text-red-500"> *</span>}
+                          </p>
+                          {sig ? (
+                            <p className="text-xs text-slate-500 mt-0.5 truncate">
+                              {sig.name}{sig.signed_at ? ` · ${fmtSigDate(sig.signed_at)}` : ''}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              {slot.mandatory ? 'טרם נחתם' : 'לא נחתם (אופציונלי)'}
+                            </p>
+                          )}
+                        </div>
+                        {sig ? (
+                          <span className="shrink-0 text-[11px] font-medium rounded-full px-2 py-0.5 bg-green-100 text-green-800">נחתם</span>
+                        ) : (
+                          isWriter && canSignSlot(slot) && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="shrink-0 min-h-[40px] gap-1"
+                              onClick={() => openSignPad(slot)}
+                            >
+                              <PenLine className="w-4 h-4" /> חתום
+                            </Button>
+                          )
+                        )}
+                      </div>
+                      {sig && sig.signature_type === 'canvas' && isHttp(sig.signature_display_url) && (
+                        <img
+                          src={sig.signature_display_url}
+                          alt="חתימה"
+                          className="mt-2 h-14 object-contain border border-slate-100 rounded bg-white"
+                        />
+                      )}
+                      {sig && sig.signature_type === 'typed' && (
+                        <div className="mt-2 text-slate-800" style={{ fontFamily: "'Caveat', cursive", fontSize: '26px' }}>
+                          {sig.typed_name || sig.name}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <DialogFooter className="px-5 py-4 border-t sticky bottom-0 bg-white flex-col gap-2 sm:flex-col">
@@ -405,14 +620,23 @@ export default function SafetyTourRunner({ projectId, tour, open, onClose, onCha
             )}
             {t.status === 'pending_signature' && (
               <>
-                <p className="text-xs text-amber-700 text-center w-full">ממתין לחתימות — החתימות יתווספו בגרסה הבאה</p>
+                <p className="text-xs text-amber-700 text-center w-full">ממתין לחתימות</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full min-h-[44px] gap-1"
+                  disabled={exporting}
+                  onClick={onExportPdf}
+                >
+                  <FileDown className="w-4 h-4" /> {exporting ? 'מייצא…' : 'ייצוא PDF'}
+                </Button>
                 {isWriter && (
                   <Button
                     type="button"
                     variant="outline"
                     className="w-full min-h-[44px]"
                     disabled={reopening}
-                    onClick={onReopen}
+                    onClick={() => setConfirmReopen(true)}
                   >
                     {reopening ? 'פותח…' : 'פתח מחדש לעריכה'}
                   </Button>
@@ -420,7 +644,18 @@ export default function SafetyTourRunner({ projectId, tour, open, onClose, onCha
               </>
             )}
             {t.status === 'signed' && (
-              <p className="text-xs text-green-700 text-center w-full">הסיור חתום</p>
+              <>
+                <p className="text-xs text-green-700 text-center w-full">הסיור חתום</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full min-h-[44px] gap-1"
+                  disabled={exporting}
+                  onClick={onExportPdf}
+                >
+                  <FileDown className="w-4 h-4" /> {exporting ? 'מייצא…' : 'ייצוא PDF'}
+                </Button>
+              </>
             )}
           </DialogFooter>
         </DialogContent>
@@ -447,6 +682,83 @@ export default function SafetyTourRunner({ projectId, tour, open, onClose, onCha
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!confirmRemove} onOpenChange={(o) => { if (!o && !removing) setConfirmRemove(null); }} modal={false}>
+        <DialogContent
+          dir="rtl"
+          className="max-w-sm w-[calc(100%-2rem)] [&>button]:hidden"
+          onInteractOutside={(e) => e.preventDefault()}
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-right">הסרת פריט</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">להסיר את הפריט '{confirmRemove?.label}'?</p>
+          <DialogFooter className="flex-row-reverse gap-2 sm:gap-2">
+            <Button type="button" className="min-h-[44px] bg-red-600 hover:bg-red-700" disabled={removing} onClick={onRemoveItem}>
+              {removing ? 'מסיר…' : 'הסר'}
+            </Button>
+            <Button type="button" variant="outline" className="min-h-[44px]" disabled={removing} onClick={() => setConfirmRemove(null)}>
+              ביטול
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmBulk} onOpenChange={(o) => { if (!o && !bulkPending) setConfirmBulk(false); }} modal={false}>
+        <DialogContent
+          dir="rtl"
+          className="max-w-sm w-[calc(100%-2rem)] [&>button]:hidden"
+          onInteractOutside={(e) => e.preventDefault()}
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-right">סימון כתקין</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">לסמן {unanswered} פריטים שטרם נענו כ'תקין'? פריטים שכבר סומנו (כולל נכשלים) לא ישתנו.</p>
+          <DialogFooter className="flex-row-reverse gap-2 sm:gap-2">
+            <Button type="button" className="min-h-[44px]" disabled={bulkPending} onClick={onMarkRemaining}>
+              {bulkPending ? 'מסמן…' : 'סמן הכל תקין'}
+            </Button>
+            <Button type="button" variant="outline" className="min-h-[44px]" disabled={bulkPending} onClick={() => setConfirmBulk(false)}>
+              ביטול
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmReopen} onOpenChange={(o) => { if (!o && !reopening) setConfirmReopen(false); }} modal={false}>
+        <DialogContent
+          dir="rtl"
+          className="max-w-sm w-[calc(100%-2rem)] [&>button]:hidden"
+          onInteractOutside={(e) => e.preventDefault()}
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-right">פתיחה מחדש לעריכה</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">
+            פתיחה מחדש תמחק את כל החתימות שנאספו ותחזיר את הסיור למצב טיוטה לעריכה. לא ניתן לבטל פעולה זו. להמשיך?
+          </p>
+          <DialogFooter className="flex-row-reverse gap-2 sm:gap-2">
+            <Button type="button" className="min-h-[44px] bg-red-600 hover:bg-red-700" disabled={reopening} onClick={onReopen}>
+              {reopening ? 'פותח…' : 'פתח מחדש'}
+            </Button>
+            <Button type="button" variant="outline" className="min-h-[44px]" disabled={reopening} onClick={() => setConfirmReopen(false)}>
+              ביטול
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <SafetySignaturePad
+        open={!!signPadSlot}
+        onClose={() => { if (!signing) { setSignPadSlot(null); setPadSuggested(null); } }}
+        slotLabel={signPadSlot?.label || ''}
+        defaultName={padSuggested?.user_name || ''}
+        saving={signing}
+        onSave={onSaveSignature}
+      />
     </>
   );
 }
