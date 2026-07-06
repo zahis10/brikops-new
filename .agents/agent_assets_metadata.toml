@@ -624,3 +624,9 @@ id = "cQmu2VgmUazPW2E5Rr7Vw"
 uri = "file://.local/plans/safety-p3a-plan.txt"
 type = "text"
 title = "תוכנית — safety-p3a (כשירות ציוד — backend)"
+
+[[outputs]]
+id = "jd2wi4f8BozizLCRO82Hp"
+uri = "file://.local/plans/safety-p3b-plan.txt"
+type = "text"
+title = "תוכנית — safety-p3b (Equipment UI — טאב ציוד)"
