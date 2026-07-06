@@ -1,177 +1,90 @@
 ================================================================================
-BATCH safety-p3b — Equipment (ציוד) FRONTEND + 2 Backend nits
+BATCH safety-p3b-fix1 — "פריט ציוד" in the global "+ הוסף" chooser
 מצב: הושלם יישום + אימות בסביבה שלי. ממתין לאישור זהי.
 ================================================================================
 
 ROLLBACK SHA
 ------------
-d1624153b317a39b8de169b27f288f692658bd0f  (short d162415)
-לחזרה מלאה: git reset --hard d162415  (מריץ זהי, לא אני)
+71e1a55  (base = p3b batch checkpoint)
+לחזרה מלאה: git reset --hard 71e1a55  (מריץ זהי, לא אני)
 
-STEP 0 — PRE-FLIGHT
--------------------
-branch          = staging
-HEAD            = d162415
-git status (לפני העבודה נקי; אחרי היישום):
-  M backend/contractor_ops/safety_router.py
-  M frontend/src/components/safety/safetyLabels.js
-  M frontend/src/pages/SafetyHomePage.js
-  M frontend/src/services/api.js
-  ?? frontend/src/components/safety/SafetyEquipmentCheckModal.js
-  ?? frontend/src/components/safety/SafetyEquipmentForm.js
-  ?? frontend/src/components/safety/SafetyEquipmentHistory.js
-  ?? frontend/src/components/safety/SafetyEquipmentTab.js
+STEP 0 — PRE-FLIGHT (מול HEAD; כל העוגנים תאמו → GO)
+----------------------------------------------------
+HEAD                                = 71e1a55                         [MATCH base]
+Dialog open={addChooserOpen}        = שורה 942   (צפוי ~942)          [MATCH]
+chooser last option "סיור"          = שורה 1014  (צפוי ~1014)         [MATCH]  ציוד נוסף אחריו
+reloadEquipmentSummary helper       = שורה 499   (צפוי ~499)          [MATCH]  קיים מ‑p3b
+import SafetyEquipmentTab           = שורה 38    (צפוי ~38)           [MATCH]
+Wrench (lucide import)              = שורה 5                           [MATCH]  כבר מיובא
+<SafetyIncidentForm mount           = שורה 850                         [MATCH]
+addChooserOpen state                = שורה 110   (צפוי ~108)          [MATCH]
+setSearchParams({ literal (לפני)    = 0 hits                          [CLEAN]
+useSearchParams / clone pattern     = שורה 69 / שורה 74               [MATCH]
 git fetch — חסום ל‑main agent (לא נדרש).
+→ אין mismatch. התוכנית יושמה כפי שנכתבה.
 
 ================================================================================
-סיכום DIFF לפי קובץ
+DIFF — קובץ יחיד: frontend/src/pages/SafetyHomePage.js
 ================================================================================
-diff --stat:
-  backend/contractor_ops/safety_router.py        |  7 +++--
-  frontend/src/components/safety/safetyLabels.js | 22 +++++++++++++++
-  frontend/src/pages/SafetyHomePage.js           | 39 ++++++++++++++++++++++----
-  frontend/src/services/api.js                   | 25 +++++++++++++++++
-  4 files changed, 85 insertions(+), 8 deletions(-)
-  + 4 קבצי קומפוננטה חדשים (untracked).
+git diff --stat:
+  frontend/src/pages/SafetyHomePage.js | 26 ++++++++++++++++++++++++++
+  1 file changed, 26 insertions(+), 0 deletions
 
-1) backend/contractor_ops/safety_router.py  (2 עריכות תוך‑פונקציה בלבד — ללא שינוי route/signature)
-   • nit 1.1 (@~1962/1964): מחרוזות ההודעה ב‑model_validator של SafetyEquipmentCheckCreate
-     שונו לעברית: "תאריך ביצוע לא תקין (נדרש YYYY-MM-DD)" / "תאריך תפוגה לא תקין (נדרש YYYY-MM-DD)".
-     (המבנה/הזריקה של ValueError כבר היו קיימים — שונה טקסט בלבד.)
-   • nit 1.2 (@~2371): פילטר delete_equipment_check הוקשח — נוסף project_id + equipment_id
-     לתנאי ה‑update_one (מונע מחיקה חוצת‑פרויקט/פריט).
-
-2) frontend/src/services/api.js
-   נוספו 6 מתודות safetyService אחרי exportTourPdf: getEquipmentSummary, listEquipment,
-   createEquipment, updateEquipment, createEquipmentCheck, listEquipmentChecks.
-   (אין deleteEquipment — אין UI מחיקה. סדר תואם ל‑backend p3a.)
-
-3) frontend/src/components/safety/safetyLabels.js
-   נוספו בסוף: EQUIPMENT_CATEGORY_HE (10 מפתחות, סדר מאומת מול schemas.py EQUIPMENT_CATEGORIES),
-   EQUIPMENT_STATUS_HE, CHECK_RESULT_HE, CHECK_STATE_HE.
-
-4) frontend/src/pages/SafetyHomePage.js  (7 עריכות מדויקות)
-   3.1 VALID_TABS += 'equipment'.
-   3.2 state חדש equipSummary אחרי בלוק tours.
-   3.3 קריאה 9 ל‑Promise.all: equipResp = getEquipmentSummary; נוסף ל‑destructure + responses + setEquipSummary.
-   3.4 early-return של aux-filter: נוסף "|| activeTab === 'equipment'".
-   3.5 filter gate: נוסף "&& activeTab !== 'equipment'".
-   3.6 reloadEquipmentSummary() חדש אחרי reloadTours().
-   3.7 TabsTrigger "ציוד ({equipSummary.total})" אחרי incidents + TabsContent<SafetyEquipmentTab/> לפני </Card> + import.
-
-5) קבצים חדשים:
-   • SafetyEquipmentForm.js — create/edit; Select קטגוריה (10 קבועות + "מותאמת אישית…"),
-     קוד פריט/תיאור/מספר סידורי/יצרן, סטטוס (עריכה בלבד). is_custom_category לא נשלח (server-derived).
-   • SafetyEquipmentCheckModal.js — רישום בדיקה/חידוש; דפוס העלאת תסקיר כמו SafetyTrainingForm
-     (image→compressImage, pdf→as-is, stored_ref); ולידציית תאריכים בצד לקוח; helper לחישוב תפוגה אוטומטי.
-   • SafetyEquipmentHistory.js — Radix Dialog קריא‑בלבד (chrome של SafetyDocumentDetail); listEquipmentChecks.
-   • SafetyEquipmentTab.js — מסך קטגוריות (+חיפוש חוצה‑קטגוריות) → מסך פריטים; drill-down ב‑URL
-     (?equipCat=) לתמיכה בכפתור BACK; NEVER setSearchParams({...}) — שכפול+set/delete מפתח יחיד.
+4 מיקומים (הוספות בלבד — אפס מחיקות, אפס שינוי בקוד קיים):
+1) import (שורה 39): import SafetyEquipmentForm from '../components/safety/SafetyEquipmentForm';
+2) state (שורה 112): const [equipForm, setEquipForm] = useState({ open: false });
+3) אופציית chooser 8 (אחרי כפתור "סיור", ~1021-1029): כפתור "פריט ציוד" עם אייקון Wrench,
+   chrome זהה לשאר האופציות; onClick סוגר chooser + פותח equipForm.
+4) mount ברמת עמוד (אחרי <SafetyIncidentForm/>, ~864-877): <SafetyEquipmentForm
+   item={null} presetCategory={null}/> — onSaved קורא reloadEquipmentSummary ואז
+   clone-and-set של searchParams (tab=equipment + equipCat=saved.category) בקריאת
+   setSearchParams יחידה. אין setSearchParams({...}) literal.
 
 ================================================================================
-VERIFY 1-13
+VERIFY
 ================================================================================
-בעלות (תיקון זהי): אני מריץ הכל שרץ בסביבה שלי; רק תלויי‑מכשיר נדחים לזהי.
+1. "+ הוסף" → "פריט ציוד" → טופס נפתח עם Select קטגוריה ריק → שמירת פריט קטגוריה
+   קבועה → onSaved מבצע reloadEquipmentSummary + ניווט ל‑tab=equipment&equipCat=<cat>
+   דרך clone-and-set. הזרימה מאומתת בקוד (item=null, presetCategory=null; onSaved
+   מקבל את תגובת השרת כולל category — נבדק ב‑p3b). מונה הטאב נגזר מ‑equipSummary.total.
+   [PASS — code-verified; אימות UI במכשיר נדחה לזהי]
+2. אותה זרימה עם קטגוריה מותאמת → equipCat=<custom> → נחיתה בתצוגת הקטגוריה המותאמת.
+   [PASS — code-verified] (saved.category מוגדר גם לקטגוריה מותאמת.)
+3. Cancel path: פתיחה → ביטול → onClose מאפס equipForm ל-{open:false} בלבד; אין ניווט,
+   אין דליפת state. [PASS — code-verified]
+4. grep "setSearchParams({" SafetyHomePage.js → 0 hits. [PASS]
+5. craco build (CI=false, GENERATE_SOURCEMAP=false) → BUILD_EXIT=0, ללא warnings. [PASS]
+6. שאר 7 אופציות ה‑chooser (ליקוי/תיעוד/משימה/עובד/הדרכה/אירוע/סיור) — לא נגעו;
+   ה‑diff הוא +26 שורות הוספה בלבד, אפס מחיקות. [PASS]
 
-VERIFY 1  — [נדחה לזהי] רצף hardware/browser BACK (Android). תלוי‑מכשיר.
+DO NOT TOUCH — נשמר:
+  • SafetyEquipmentTab/Form/CheckModal/History — אפס עריכות קומפוננטה.
+  • 7 האופציות הקיימות, tours state, aux-filter effect, filter gate — ללא שינוי.
+  • אין imports חדשים מעבר ל‑SafetyEquipmentForm (Wrench כבר היה מיובא).
 
-VERIFY 2  — aux-filter regression: PASS (code)
-   grep "activeTab === 'equipment'" = בדיוק שורת ה‑early-return (SafetyHomePage:263).
-   filter gate (:544) כולל "activeTab !== 'equipment'" → אין sheet פילטר לטאב ציוד.
-
-VERIFY 3  — מסך קטגוריות + custom: PASS
-   summary API (V3 להלן) מחזיר {category,is_custom,total,expired,ok}. דוגמה בפועל:
-   scaffolding = {total:1, expired:1, ok:0}. UI code-verified (build EXIT=0).
-
-VERIFY 4  — item create/edit/409/decommission: PASS (API)
-   V4a create -> 201.
-   V4b edit -> 200 (description עודכן).
-   V4c custom category -> 201, is_custom_category=True.
-   V4d duplicate code -> 409 "קוד פריט כבר קיים בפרויקט".
-   V4e decommission (PATCH status) -> 200.
-
-VERIFY 5  — renewal happy path + עדכון summary/מונה: PASS (API)
-   V5  createEquipmentCheck -> 201; expires מחושב אוטומטית: 2026-07-01 + 365 = 2027-07-01.
-   V5b get item: track state=valid לאחר החידוש.
-   (summary V3 מראה total/expired/ok — מונה הטאב = equipSummary.total.)
-
-VERIFY 6  — ולידציות renewal + הודעת עברית: PASS (validator) / ⚠ ראה ממצא
-   V6a המודל SafetyEquipmentCheckCreate דוחה performed_at="not-a-date" עם
-       "תאריך ביצוע לא תקין (נדרש YYYY-MM-DD)" (nit 1.1 — עובד).
-   ⚠ ממצא קדם‑קיים (מחוץ לתחום, לא נגעתי): מסלול ה‑HTTP מחזיר 500 ולא 422 על תאריך
-     פגום. הסיבה: server.py `_validation_exception_handler` (~שורה 63) עושה
-     JSONResponse(content={"detail": exc.errors()}) בלי jsonable_encoder — כש‑custom
-     validator זורק ValueError, exc.errors() מכיל אובייקט ValueError ב‑ctx שאינו JSON-serializable
-     → TypeError → 500. זה משפיע על כל ה‑custom validators באפליקציה (גם "תאריך סיור לא תקין"
-     ו‑"יש לבחור חומרה"), לא רק על ציוד, והוא קדם ל‑batch הזה (nit 1.1 שינה טקסט בלבד).
-     בפועל לא נצפה כי ה‑UI תמיד שולח date-input תקין. תיקון מומלץ (טעון אישורך, נגיעה גלובלית):
-       return JSONResponse(status_code=422, content=jsonable_encoder({"detail": exc.errors()}))
-     לא ביצעתי — זה מחוץ ל‑2 המיקומים המאושרים ובעל blast-radius כלל‑אפליקטיבי.
-
-VERIFY 7  — upload PDF/image: PASS (doc pass-through) + code
-   V8/V7 (להלן) — document_ref נשמר ומוחזר בהיסטוריה. זרימת ההעלאה עצמה זהה לדפוס תעודת
-   ההדרכה של SafetyTrainingForm (compressImage לתמונה, PDF as-is, uploadDocumentFile→stored_ref).
-
-VERIFY 8  — history: PASS (API)
-   V8 listEquipmentChecks -> 200, count=1, כולל document_ref.
-
-VERIFY 9  — 409 עברית על בדיקה לפריט decommissioned: PASS (API)
-   V9 POST check אחרי decommission -> 409 "לא ניתן לרשום בדיקה לפריט שהוצא משימוש".
-
-VERIFY 10 — search cross-category: PASS (API)
-   V10 list?q=מערבל -> 200, נמצא הפריט בקטגוריה המותאמת "מערבל בטון".
-
-VERIFY 11 — route-table BEFORE==AFTER: PASS
-   9 routes של equipment רשומים (POST/GET/summary/GET-id/PATCH/DELETE + checks POST/GET/DELETE).
-   שתי העריכות ב‑safety_router הן תוך‑פונקציה בלבד — אף route/signature לא השתנה.
-
-VERIFY 12 — house-rules greps (טבלת סיווג): PASS — כל ה‑hits = 0
-   ┌─────────────────────────────┬───────┬──────────────────────────────┐
-   │ תבנית                        │ hits  │ קבצים                        │
-   ├─────────────────────────────┼───────┼──────────────────────────────┤
-   │ WebkitOverflowScrolling      │   0   │ frontend/src (כל העץ)        │
-   │ window.confirm               │   0   │ SafetyEquipment*.js          │
-   │ <select                      │   0   │ SafetyEquipment*.js          │
-   │ modal={true}                 │   0   │ SafetyEquipment*.js          │
-   │ localStorage                 │   0   │ SafetyEquipment*.js          │
-   │ setSearchParams({ (literal)  │   0   │ SafetyEquipment*.js          │
-   └─────────────────────────────┴───────┴──────────────────────────────┘
-   בנוסף: "פג תוקף" מופיע רק ב‑track-chip (SafetyEquipmentTab:37), לא בתוויות aggregate
-   (aggregate = "לא תקין"/"תקין"/"הוצא משימוש"). LOCKED semantics נשמר.
-
-VERIFY 13 — [נדחה לזהי] mobile RTL 390px. תלוי‑מכשיר.
-
-בדיקות סטטיות נוספות:
-   • python -m py_compile safety_router.py + schemas.py -> PY_COMPILE_OK.
-   • craco build (CI=false, GENERATE_SOURCEMAP=false) -> BUILD_EXIT=0, ללא warnings.
-
-הרמת אימות ה‑API: TestClient/httpx.ASGITransport ב‑loop יחיד מול Mongo מקומי, עם
-dependency-override ל‑get_current_user (מנהל פרויקט) + זריעת project+membership; ניקוי מלא
-בסוף. תוצאה: 12/12 PASS. ה‑harness ב‑/tmp נמחק (אין קבצי בדיקה בעץ).
+MICRO-EDGE מתועד (מקובל — לא "מתקנים"):
+  אם המשתמש כבר נמצא בתצוגת הפריטים של אותה קטגוריה בדיוק ומשתמש בבורר הגלובלי
+  (במקום כפתור ה‑in-tab), רשימת הפריטים לא תרענן (equipCat ללא שינוי → effect לא
+  מופעל מחדש). מונים/summary כן מתעדכנים. BACK → כניסה חוזרת מציגה את הפריט.
 
 ================================================================================
 סטיות מהתוכנית
 ================================================================================
-1) VERIFY 6 (ראה למעלה): מסלול ה‑HTTP לתאריך פגום מחזיר 500 בגלל באג קדם‑קיים ב‑
-   server.py (global validation handler). אימתתי את nit 1.1 ברמת המודל (ההודעה בעברית
-   נכונה). לא תיקנתי את ה‑handler — מחוץ ל‑2 המיקומים המאושרים + נגיעה גלובלית. טעון החלטתך.
-2) אין סטיות אחרות. LOCKED semantics, DO-NOT-TOUCH, ואיסורי house-rules נשמרו במלואם.
+אין. יושם בדיוק לפי safety-p3b-fix1-plan.txt. מודע: batch זה מהפך את LOCKED
+semantics #6 של p3b (ציוד היה מוחרג מהבורר הגלובלי) — לבקשתך המפורשת. כפתור
+ה‑in-tab per-category נשאר כפי שהיה.
 
 ================================================================================
 COMMIT MESSAGE (נשמר גם ב‑.local/.commit_message)
 ================================================================================
-feat(safety): equipment (ציוד) tab UI + 2 backend nits
+feat(safety): add equipment item option to the global add chooser
 
-- Frontend equipment experience: category screen (+cross-category search) →
-  items screen → create/edit form, renewal (check) modal, read-only history.
-- URL-synced drill-down (?equipCat=) for hardware BACK support.
-- safetyService: 6 equipment methods; safetyLabels: 4 HE label maps.
-- SafetyHomePage: 9th summary fetch, equipment tab trigger/content, aux-filter
-  + filter-gate exclusions, reloadEquipmentSummary.
-- Backend nit 1.1: Hebrew messages in SafetyEquipmentCheckCreate date validator.
-- Backend nit 1.2: harden delete_equipment_check filter (+project_id +equipment_id).
+8th chooser option opens the equipment create form page-level; on save
+navigates into the equipment tab at the saved item's category (single
+clone-and-set of tab+equipCat). Reverses p3b locked-semantics #6 per
+Zahi's request; in-tab per-category add button unchanged.
 
-Batch safety-p3b. Rollback: d162415.
+Batch safety-p3b-fix1. Rollback: 71e1a55.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

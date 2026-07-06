@@ -36,6 +36,7 @@ import SafetyWorkerCard from '../components/safety/SafetyWorkerCard';
 import SafetyTourCreateDialog from '../components/safety/SafetyTourCreateDialog';
 import SafetyTourRunner from '../components/safety/SafetyTourRunner';
 import SafetyEquipmentTab from '../components/safety/SafetyEquipmentTab';
+import SafetyEquipmentForm from '../components/safety/SafetyEquipmentForm';
 import {
   CATEGORY_HE, SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE, INCIDENT_STATUS_HE,
   TOUR_TYPE_HE, TOUR_STATUS_HE,
@@ -108,6 +109,7 @@ export default function SafetyHomePage() {
   const [trainingForm, setTrainingForm] = useState({ open: false, record: null });
   const [incidentForm, setIncidentForm] = useState({ open: false, record: null });
   const [addChooserOpen, setAddChooserOpen] = useState(false);
+  const [equipForm, setEquipForm] = useState({ open: false });
   const [workerChain, setWorkerChain] = useState(null);
   const [workerCard, setWorkerCard] = useState(null);
   const [trainingCardLock, setTrainingCardLock] = useState(null);
@@ -856,6 +858,21 @@ export default function SafetyHomePage() {
         workers={workers.items}
       />
 
+      <SafetyEquipmentForm
+        projectId={projectId}
+        item={null}
+        presetCategory={null}
+        open={equipForm.open}
+        onClose={() => setEquipForm({ open: false })}
+        onSaved={(saved) => {
+          reloadEquipmentSummary();
+          const next = new URLSearchParams(searchParams);
+          next.set('tab', 'equipment');
+          if (saved?.category) next.set('equipCat', saved.category);
+          setSearchParams(next);
+        }}
+      />
+
       <SafetyWorkerCard
         projectId={projectId}
         worker={workerCard}
@@ -1012,6 +1029,15 @@ export default function SafetyHomePage() {
             >
               <ClipboardList className="w-4 h-4" />
               סיור
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-start gap-3 min-h-[48px]"
+              onClick={() => { setAddChooserOpen(false); setEquipForm({ open: true }); }}
+            >
+              <Wrench className="w-4 h-4" />
+              פריט ציוד
             </Button>
           </div>
           <DialogFooter className="flex flex-row-reverse gap-2 sm:justify-start">
