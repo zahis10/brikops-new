@@ -1,90 +1,115 @@
 ================================================================================
-BATCH safety-p3b-fix1 — "פריט ציוד" in the global "+ הוסף" chooser
+BATCH safety-p3b-fix2 — checks for custom-category items ("רישום בדיקה")
 מצב: הושלם יישום + אימות בסביבה שלי. ממתין לאישור זהי.
 ================================================================================
 
 ROLLBACK SHA
 ------------
-71e1a55  (base = p3b batch checkpoint)
-לחזרה מלאה: git reset --hard 71e1a55  (מריץ זהי, לא אני)
+a560163  (base = p3b-fix1 batch checkpoint)
+לחזרה מלאה: git reset --hard a560163  (מריץ זהי, לא אני)
 
 STEP 0 — PRE-FLIGHT (מול HEAD; כל העוגנים תאמו → GO)
 ----------------------------------------------------
-HEAD                                = 71e1a55                         [MATCH base]
-Dialog open={addChooserOpen}        = שורה 942   (צפוי ~942)          [MATCH]
-chooser last option "סיור"          = שורה 1014  (צפוי ~1014)         [MATCH]  ציוד נוסף אחריו
-reloadEquipmentSummary helper       = שורה 499   (צפוי ~499)          [MATCH]  קיים מ‑p3b
-import SafetyEquipmentTab           = שורה 38    (צפוי ~38)           [MATCH]
-Wrench (lucide import)              = שורה 5                           [MATCH]  כבר מיובא
-<SafetyIncidentForm mount           = שורה 850                         [MATCH]
-addChooserOpen state                = שורה 110   (צפוי ~108)          [MATCH]
-setSearchParams({ literal (לפני)    = 0 hits                          [CLEAN]
-useSearchParams / clone pattern     = שורה 69 / שורה 74               [MATCH]
+HEAD                                      = a560163                    [MATCH base]
+T: function ItemCard(...onRenew)          = שורה 48                    [MATCH]
+T: badge chain (הוצא/לא תקין/תקין)        = שורות 51-56                [MATCH]
+T: per-track "חידוש" onRenew(item,{...})  = שורה 115                   [MATCH]  נשמר
+T: onRenew handler → setCheckModal(track) = שורות 263 / 341           [MATCH]  track=null נתמך
+T: History icon-button / isWriter         = שורות 83 / 78            [MATCH]
+T: isWriter && !decommissioned            = שורה 110                   [MATCH]
+M: null-track Select "בדיקה *"            = שורות 127-132             [MATCH]
+M: onPickTrack                            = שורה 48                    [MATCH]
+M: checkName / periodDays state           = שורות 23 / 24            [MATCH]
+M: submit guard '!checkName'              = שורה 71                    [MATCH]
+M: payload check_name / period_days       = שורות 79 / 80            [MATCH]
+M: newName state                          = לא קיים                   [נוסף]
 git fetch — חסום ל‑main agent (לא נדרש).
-→ אין mismatch. התוכנית יושמה כפי שנכתבה.
+→ אין mismatch. יושם כפי שנכתב.
 
 ================================================================================
-DIFF — קובץ יחיד: frontend/src/pages/SafetyHomePage.js
+DIFF — 2 קבצים (frontend בלבד; אפס שינוי backend)
 ================================================================================
 git diff --stat:
-  frontend/src/pages/SafetyHomePage.js | 26 ++++++++++++++++++++++++++
-  1 file changed, 26 insertions(+), 0 deletions
+  frontend/src/components/safety/SafetyEquipmentCheckModal.js | 52 +++++++-----
+  frontend/src/components/safety/SafetyEquipmentTab.js        | 16 +++++
+  2 files changed, 57 insertions(+), 11 deletions(-)
 
-4 מיקומים (הוספות בלבד — אפס מחיקות, אפס שינוי בקוד קיים):
-1) import (שורה 39): import SafetyEquipmentForm from '../components/safety/SafetyEquipmentForm';
-2) state (שורה 112): const [equipForm, setEquipForm] = useState({ open: false });
-3) אופציית chooser 8 (אחרי כפתור "סיור", ~1021-1029): כפתור "פריט ציוד" עם אייקון Wrench,
-   chrome זהה לשאר האופציות; onClick סוגר chooser + פותח equipForm.
-4) mount ברמת עמוד (אחרי <SafetyIncidentForm/>, ~864-877): <SafetyEquipmentForm
-   item={null} presetCategory={null}/> — onSaved קורא reloadEquipmentSummary ואז
-   clone-and-set של searchParams (tab=equipment + equipCat=saved.category) בקריאת
-   setSearchParams יחידה. אין setSearchParams({...}) literal.
+FILE 1 — SafetyEquipmentTab.js (ItemCard בלבד, 3 שינויים):
+  1) badge chain: נוסף const noTracks; ענף חדש בעדיפות שנייה (אחרי decommissioned)
+     — פריט active עם check_status ריק → תג אפור "ללא בדיקות" (bg-slate-100
+     text-slate-600). סדר: הוצא משימוש → ללא בדיקות → לא תקין → תקין. טקסטים
+     קיימים לא שונו.
+  2) גוף empty-tracks: כש‑noTracks מוצגת שורה עמומה "לא הוגדרו בדיקות לפריט זה"
+     (text-xs text-slate-400) לפני רשימת ה‑tracks (שממילא ריקה).
+  3) כפתור חדש "רישום בדיקה" (Button outline, h-8 px-3 text-xs) בשורת הפעולות
+     של הכותרת, גלוי ל‑isWriter && !decommissioned; onClick={() => onRenew(item, null)}
+     (null track = מצב גנרי; onRenew קיים וזורם ל‑setCheckModal({track:null})).
+
+FILE 2 — SafetyEquipmentCheckModal.js (מצב null-track נעשה שמיש):
+  1) state חדש newName (''); sentinel ל‑Select: '__new__'. reset ב‑open: newName=''.
+  2) onPickTrack: אם name==='__new__' → periodDays=null ו‑return (לא מחפש track).
+  3) ענף null-track:
+       • יש tracks: Select כמו קודם + פריט אחרון value='__new__' label='בדיקה חדשה…'.
+       • אין tracks כלל: מדלגים על ה‑Select ומציגים ישירות את מצב הטקסט החופשי.
+       • כש-'__new__' פעיל / אין tracks: Input "שם הבדיקה *" (maxLength 120, ל‑newName)
+         + Input type="number" "תקופה בימים" (min 1 max 3650, אופציונלי, parseInt
+         NaN→null, ל‑periodDays; helper "ריק = ללא תקופה קבועה").
+  4) submit: effectiveName = ('__new__' או אין tracks) ? newName.trim() : checkName;
+     ולידציה !effectiveName → toast 'יש להזין שם בדיקה'; payload.check_name=effectiveName;
+     period_days נשאר periodDays ?? null.
+  מסלול track!=null ("חידוש" מ‑chip) — ללא שינוי (שורת תצוגה נעולה, אותו payload).
 
 ================================================================================
 VERIFY
 ================================================================================
-1. "+ הוסף" → "פריט ציוד" → טופס נפתח עם Select קטגוריה ריק → שמירת פריט קטגוריה
-   קבועה → onSaved מבצע reloadEquipmentSummary + ניווט ל‑tab=equipment&equipCat=<cat>
-   דרך clone-and-set. הזרימה מאומתת בקוד (item=null, presetCategory=null; onSaved
-   מקבל את תגובת השרת כולל category — נבדק ב‑p3b). מונה הטאב נגזר מ‑equipSummary.total.
+1. פריט קטגוריה מותאמת (0 tracks): הכרטיס מציג תג אפור "ללא בדיקות" +
+   "לא הוגדרו בדיקות לפריט זה" + כפתור "רישום בדיקה" (writer). לחיצה פותחת את
+   המודל ישירות במצב טקסט חופשי (tracks.length===0 → אין Select, שם חופשי מיד).
    [PASS — code-verified; אימות UI במכשיר נדחה לזהי]
-2. אותה זרימה עם קטגוריה מותאמת → equipCat=<custom> → נחיתה בתצוגת הקטגוריה המותאמת.
-   [PASS — code-verified] (saved.category מוגדר גם לקטגוריה מותאמת.)
-3. Cancel path: פתיחה → ביטול → onClose מאפס equipForm ל-{open:false} בלבד; אין ניווט,
-   אין דליפת state. [PASS — code-verified]
-4. grep "setSearchParams({" SafetyHomePage.js → 0 hits. [PASS]
-5. craco build (CI=false, GENERATE_SOURCEMAP=false) → BUILD_EXIT=0, ללא warnings. [PASS]
-6. שאר 7 אופציות ה‑chooser (ליקוי/תיעוד/משימה/עובד/הדרכה/אירוע/סיור) — לא נגעו;
-   ה‑diff הוא +26 שורות הוספה בלבד, אפס מחיקות. [PASS]
+2. רישום "תסקיר שנתי" תקופה 365 להיום → הבקאנד יוצר track חדש (מקבל שם חופשי,
+   p3b harness אימת שם חופשי → 201 + חישוב תפוגה performed+365); הכרטיס יציג את
+   שורת ה‑track עם chip ירוק + כפתור "חידוש"; התג יתהפך ל"תקין"; היסטוריה תרשום.
+   [PASS — לוגיקה code-verified + p3b API harness]
+3. אותו פריט, תקופה ריקה + ללא expires_at → chip "בתוקף" (ללא תאריך), רמז "לפי אירוע".
+   [PASS — code-verified; period_days=null נשלח כ‑null]
+4. פריט קטגוריה קבועה: "רישום בדיקה" → Select מציג tracks ברירת מחדל + "בדיקה חדשה…";
+   בחירת track קיים = זרימת ה‑chip (מאמץ period_days); שם חופשי חדש מוסיף track לצד
+   הברירות. [PASS — code-verified]
+5. פריט decommissioned: אין כפתור "רישום בדיקה" (isWriter && !decommissioned).
+   [PASS — code-verified]
+6. משתמש שאינו writer: אין כפתור. [PASS — code-verified]
+7. craco build EXIT=0; grep window.confirm/<select/localStorage בשני הקבצים → 0.
+   [PASS] (per-file counts: 0 / 0)
 
 DO NOT TOUCH — נשמר:
-  • SafetyEquipmentTab/Form/CheckModal/History — אפס עריכות קומפוננטה.
-  • 7 האופציות הקיימות, tours state, aux-filter effect, filter gate — ללא שינוי.
-  • אין imports חדשים מעבר ל‑SafetyEquipmentForm (Wrench כבר היה מיובא).
+  • backend — אפס שינוי. SafetyEquipmentForm / History / SafetyHomePage — לא נגעו.
+  • כפתורי "חידוש" per-track + TrackChip — ללא שינוי.
+  • טקסטים "לא תקין"/"תקין"/"הוצא משימוש" — ללא שינוי (רק ענף ה‑zero-track נוסף).
+  • ללא deps חדשים; Radix Select בלבד; אין window.confirm/<select/localStorage.
 
 MICRO-EDGE מתועד (מקובל — לא "מתקנים"):
-  אם המשתמש כבר נמצא בתצוגת הפריטים של אותה קטגוריה בדיוק ומשתמש בבורר הגלובלי
-  (במקום כפתור ה‑in-tab), רשימת הפריטים לא תרענן (equipCat ללא שינוי → effect לא
-  מופעל מחדש). מונים/summary כן מתעדכנים. BACK → כניסה חוזרת מציגה את הפריט.
+  ה‑backend summary סופר פריט ללא tracks בדלי "ok" → מונה הקטגוריה יאמר "תקין"
+  בעוד הכרטיס אומר "ללא בדיקות". סמנטיקת המונה חיה ב‑3a backend — מחוץ לתחום כאן.
 
 ================================================================================
 סטיות מהתוכנית
 ================================================================================
-אין. יושם בדיוק לפי safety-p3b-fix1-plan.txt. מודע: batch זה מהפך את LOCKED
-semantics #6 של p3b (ציוד היה מוחרג מהבורר הגלובלי) — לבקשתך המפורשת. כפתור
-ה‑in-tab per-category נשאר כפי שהיה.
+אין סטיות מהותיות. יושם בדיוק לפי safety-p3b-fix2-plan.txt. הערת מימוש: כאשר
+אין tracks כלל, נמנעת כפילות תוויות — התווית החיצונית "בדיקה *" מוצגת רק כשקיים
+Select; במצב טקסט חופשי מוצגת "שם הבדיקה *" בלבד (עקבי עם כוונת התוכנית).
 
 ================================================================================
 COMMIT MESSAGE (נשמר גם ב‑.local/.commit_message)
 ================================================================================
-feat(safety): add equipment item option to the global add chooser
+feat(safety): first-check flow for equipment — generic "רישום בדיקה" button
 
-8th chooser option opens the equipment create form page-level; on save
-navigates into the equipment tab at the saved item's category (single
-clone-and-set of tab+equipCat). Reverses p3b locked-semantics #6 per
-Zahi's request; in-tab per-category add button unchanged.
+Custom-category items had no way to record inspections (no default tracks →
+no חידוש button) and showed a misleading green badge. Adds a generic record-
+check button on every active item, a new-check free-text mode in the check
+modal (name + optional period), a gray "ללא בדיקות" badge and empty-tracks
+line. Frontend-only; backend already accepts arbitrary check names.
 
-Batch safety-p3b-fix1. Rollback: 71e1a55.
+Batch safety-p3b-fix2. Rollback: a560163.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

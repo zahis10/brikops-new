@@ -21,6 +21,7 @@ export default function SafetyEquipmentCheckModal({ projectId, equipment, track,
   const tracks = equipment?.check_status || [];
 
   const [checkName, setCheckName] = useState('');
+  const [newName, setNewName] = useState('');
   const [periodDays, setPeriodDays] = useState(null);
   const [performedAt, setPerformedAt] = useState(today());
   const [performedBy, setPerformedBy] = useState('');
@@ -35,6 +36,7 @@ export default function SafetyEquipmentCheckModal({ projectId, equipment, track,
   useEffect(() => {
     if (!open) return;
     setCheckName(track?.check_name || '');
+    setNewName('');
     setPeriodDays(track ? (track.period_days ?? null) : null);
     setPerformedAt(today());
     setPerformedBy('');
@@ -47,6 +49,7 @@ export default function SafetyEquipmentCheckModal({ projectId, equipment, track,
 
   const onPickTrack = (name) => {
     setCheckName(name);
+    if (name === '__new__') { setPeriodDays(null); return; }
     const t = tracks.find((x) => x.check_name === name);
     setPeriodDays(t ? (t.period_days ?? null) : null);
   };
@@ -68,7 +71,9 @@ export default function SafetyEquipmentCheckModal({ projectId, equipment, track,
 
   const handleSubmit = async () => {
     if (uploading) { toast.error('המתן לסיום העלאת המסמך'); return; }
-    if (!checkName) { toast.error('יש לבחור בדיקה'); return; }
+    const isNewCheck = checkName === '__new__' || tracks.length === 0;
+    const effectiveName = isNewCheck ? newName.trim() : checkName;
+    if (!effectiveName) { toast.error('יש להזין שם בדיקה'); return; }
     if (!performedAt) { toast.error('יש להזין תאריך ביצוע'); return; }
     if (expiresAt && expiresAt <= performedAt) {
       toast.error('תאריך תפוגה חייב להיות אחרי תאריך הבדיקה');
@@ -76,7 +81,7 @@ export default function SafetyEquipmentCheckModal({ projectId, equipment, track,
     }
 
     const payload = {
-      check_name: checkName,
+      check_name: effectiveName,
       period_days: periodDays ?? null,
       performed_at: performedAt,
       performed_by_name: performedBy.trim() || null,
@@ -124,15 +129,40 @@ export default function SafetyEquipmentCheckModal({ projectId, equipment, track,
         </div>
       ) : (
         <div className="space-y-1.5">
-          <Label>בדיקה *</Label>
-          <Select value={checkName} onValueChange={onPickTrack} dir="rtl">
-            <SelectTrigger><SelectValue placeholder="בחר בדיקה" /></SelectTrigger>
-            <SelectContent>
-              {tracks.map((t) => (
-                <SelectItem key={t.check_name} value={t.check_name}>{t.check_name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {tracks.length > 0 && (
+            <>
+              <Label>בדיקה *</Label>
+              <Select value={checkName} onValueChange={onPickTrack} dir="rtl">
+                <SelectTrigger><SelectValue placeholder="בחר בדיקה" /></SelectTrigger>
+                <SelectContent>
+                  {tracks.map((t) => (
+                    <SelectItem key={t.check_name} value={t.check_name}>{t.check_name}</SelectItem>
+                  ))}
+                  <SelectItem value="__new__">בדיקה חדשה…</SelectItem>
+                </SelectContent>
+              </Select>
+            </>
+          )}
+          {(checkName === '__new__' || tracks.length === 0) && (
+            <div className="space-y-3 pt-1">
+              <div className="space-y-1.5">
+                <Label htmlFor="chk-newname">שם הבדיקה *</Label>
+                <Input id="chk-newname" value={newName} maxLength={120} onChange={(e) => setNewName(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="chk-period">תקופה בימים</Label>
+                <Input
+                  id="chk-period"
+                  type="number"
+                  min={1}
+                  max={3650}
+                  value={periodDays ?? ''}
+                  onChange={(e) => { const n = parseInt(e.target.value, 10); setPeriodDays(Number.isNaN(n) ? null : n); }}
+                />
+                <p className="text-xs text-slate-400">ריק = ללא תקופה קבועה</p>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

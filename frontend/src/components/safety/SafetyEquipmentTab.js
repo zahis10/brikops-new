@@ -47,9 +47,12 @@ function TrackChip({ track }) {
 
 function ItemCard({ item, showCategory, isWriter, onEdit, onHistory, onRenew }) {
   const decommissioned = item.status === 'decommissioned';
+  const noTracks = (item.check_status || []).length === 0;
   let badge;
   if (decommissioned) {
     badge = { cls: 'bg-slate-200 text-slate-700', text: 'הוצא משימוש' };
+  } else if (noTracks) {
+    badge = { cls: 'bg-slate-100 text-slate-600', text: 'ללא בדיקות' };
   } else if ((item.check_status || []).some((t) => t.state === 'expired' || t.state === 'missing')) {
     badge = { cls: 'bg-red-100 text-red-800', text: 'לא תקין' };
   } else {
@@ -75,6 +78,16 @@ function ItemCard({ item, showCategory, isWriter, onEdit, onHistory, onRenew }) 
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {isWriter && !decommissioned && (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-8 px-3 text-xs"
+              onClick={() => onRenew(item, null)}
+            >
+              רישום בדיקה
+            </Button>
+          )}
           {isWriter && (
             <button type="button" aria-label="ערוך" onClick={() => onEdit(item)} className="p-2 rounded-lg hover:bg-slate-100">
               <Pencil className="w-4 h-4 text-slate-600" />
@@ -87,6 +100,9 @@ function ItemCard({ item, showCategory, isWriter, onEdit, onHistory, onRenew }) 
       </div>
 
       <div className="space-y-1.5 border-t border-slate-100 pt-2">
+        {noTracks && (
+          <p className="text-xs text-slate-400">לא הוגדרו בדיקות לפריט זה</p>
+        )}
         {(item.check_status || []).map((track) => (
           <div key={track.check_name} className="flex items-center justify-between gap-2 flex-wrap">
             <div className="min-w-0">
