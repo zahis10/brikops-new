@@ -37,6 +37,7 @@ import SafetyTourCreateDialog from '../components/safety/SafetyTourCreateDialog'
 import SafetyTourRunner from '../components/safety/SafetyTourRunner';
 import SafetyEquipmentTab from '../components/safety/SafetyEquipmentTab';
 import SafetyEquipmentForm from '../components/safety/SafetyEquipmentForm';
+import SafetySignaturePad from '../components/safety/SafetySignaturePad';
 import {
   CATEGORY_HE, SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE, INCIDENT_STATUS_HE,
   TOUR_TYPE_HE, TOUR_STATUS_HE,
@@ -106,13 +107,15 @@ export default function SafetyHomePage() {
   const [docForm, setDocForm] = useState({ open: false, record: null, kind: 'defect' });
   const [workerForm, setWorkerForm] = useState({ open: false, record: null });
   const [taskForm, setTaskForm] = useState({ open: false, record: null });
-  const [trainingForm, setTrainingForm] = useState({ open: false, record: null });
+  const [trainingForm, setTrainingForm] = useState({ open: false, record: null, renewFrom: null });
   const [incidentForm, setIncidentForm] = useState({ open: false, record: null });
   const [addChooserOpen, setAddChooserOpen] = useState(false);
   const [equipForm, setEquipForm] = useState({ open: false });
   const [workerChain, setWorkerChain] = useState(null);
   const [workerCard, setWorkerCard] = useState(null);
   const [trainingCardLock, setTrainingCardLock] = useState(null);
+  const [trainingSignFor, setTrainingSignFor] = useState(null);
+  const [trainingSigning, setTrainingSigning] = useState(false);
   // Batch safety-p2-1d — read-only detail modal (row tap opens it).
   const [detailDoc, setDetailDoc] = useState(null);
   // Batch safety-p2-4b — safety tours (list + create dialog + checklist runner).
@@ -675,7 +678,9 @@ export default function SafetyHomePage() {
                 items={trainingsView.items}
                 workers={workers.items}
                 isWriter={isWriter}
-                onEdit={(t) => setTrainingForm({ open: true, record: t })}
+                onEdit={(t) => setTrainingForm({ open: true, record: t, renewFrom: null })}
+                onRenew={(t) => setTrainingForm({ open: true, record: null, renewFrom: t })}
+                onSign={(t) => setTrainingSignFor(t)}
               />
             </TabsContent>
             <TabsContent value="incidents" className="p-0 m-0">
@@ -832,21 +837,46 @@ export default function SafetyHomePage() {
       <SafetyTrainingForm
         projectId={projectId}
         training={trainingForm.record}
+        renewFrom={trainingForm.renewFrom}
         open={trainingForm.open}
-        onClose={() => { setTrainingForm({ open: false, record: null }); setTrainingCardLock(null); }}
-        onSaved={() => {
+        onClose={() => { setTrainingForm({ open: false, record: null, renewFrom: null }); setTrainingCardLock(null); }}
+        onSaved={(saved) => {
+          const wasRenewal = !!trainingForm.renewFrom;
           setTrainingCardLock(null);
           reloadTrainings();
-          if (!trainingForm.record && workerChain) {
+          if (!trainingForm.record && !wasRenewal && workerChain) {
             setWorkerChain((prev) => (prev ? { ...prev, count: prev.count + 1 } : prev));
           }
+          if (wasRenewal && saved?.id) setTrainingSignFor(saved);
         }}
         workers={workers.items}
-        lockedWorker={(!trainingForm.record && trainingCardLock)
+        lockedWorker={(!trainingForm.record && !trainingForm.renewFrom && trainingCardLock)
           ? { id: trainingCardLock.id, name: trainingCardLock.full_name }
-          : (!trainingForm.record && workerChain)
+          : (!trainingForm.record && !trainingForm.renewFrom && workerChain)
             ? { id: workerChain.workerId, name: workerChain.workerName }
             : null}
+      />
+
+      <SafetySignaturePad
+        open={!!trainingSignFor}
+        onClose={() => { if (!trainingSigning) setTrainingSignFor(null); }}
+        slotLabel={`חתימת העובד — ${workers.items?.find((w) => w.id === trainingSignFor?.worker_id)?.full_name || ''}`}
+        defaultName={workers.items?.find((w) => w.id === trainingSignFor?.worker_id)?.full_name || ''}
+        saving={trainingSigning}
+        onSave={async ({ signerName, signatureType, typedName, blob }) => {
+          setTrainingSigning(true);
+          try {
+            await safetyService.signTraining(projectId, trainingSignFor.id, { signerName, signatureType, typedName, blob });
+            toast.success('החתימה נשמרה');
+            setTrainingSignFor(null);
+            reloadTrainings();
+          } catch (e) {
+            const d = e?.response?.data?.detail;
+            toast.error(typeof d === 'string' ? d : 'שגיאה בשמירת החתימה');
+          } finally {
+            setTrainingSigning(false);
+          }
+        }}
       />
 
       <SafetyIncidentForm
@@ -885,7 +915,7 @@ export default function SafetyHomePage() {
           setWorkerCard(null);
           setWorkerChain(null);
           setTrainingCardLock(w);
-          setTrainingForm({ open: true, record: null });
+          setTrainingForm({ open: true, record: null, renewFrom: null });
         }}
       />
 
@@ -940,7 +970,7 @@ export default function SafetyHomePage() {
             <Button
               type="button"
               className="min-h-[44px]"
-              onClick={() => setTrainingForm({ open: true, record: null })}
+              onClick={() => setTrainingForm({ open: true, record: null, renewFrom: null })}
             >
               הוסף הדרכה
             </Button>
@@ -1007,7 +1037,7 @@ export default function SafetyHomePage() {
               type="button"
               variant="outline"
               className="w-full justify-start gap-3 min-h-[48px]"
-              onClick={() => { setAddChooserOpen(false); setTrainingForm({ open: true, record: null }); }}
+              onClick={() => { setAddChooserOpen(false); setTrainingForm({ open: true, record: null, renewFrom: null }); }}
             >
               <GraduationCap className="w-4 h-4" />
               הדרכה
@@ -1440,7 +1470,7 @@ function WorkersList({ items, isWriter, onEdit, onOpenCard }) {
   );
 }
 
-function TrainingsList({ items, workers, isWriter, onEdit }) {
+function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign }) {
   if (!items?.length) return <EmptyState icon={GraduationCap} text="אין הדרכות רשומות" />;
   const nameById = new Map((workers || []).map((w) => [w.id, w.full_name]));
   const today = new Date().toISOString().slice(0, 10);
@@ -1475,16 +1505,55 @@ function TrainingsList({ items, workers, isWriter, onEdit }) {
                 )}
               </div>
             </div>
-            {isWriter && (
-              <button
-                type="button"
-                aria-label="ערוך הדרכה"
-                onClick={(e) => { e.stopPropagation(); onEdit(tr); }}
-                className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
-              >
-                <Pencil className="w-4 h-4" />
-              </button>
-            )}
+            <div className="flex items-center gap-1 shrink-0">
+              {tr.worker_signature ? (
+                tr.worker_signature.signature_display_url ? (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); window.open(tr.worker_signature.signature_display_url, '_blank', 'noopener'); }}
+                    className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800"
+                  >
+                    חתום
+                  </button>
+                ) : (
+                  <span
+                    title={tr.worker_signature.typed_name || tr.worker_signature.name || ''}
+                    className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800"
+                  >
+                    חתום
+                  </span>
+                )
+              ) : (isWriter && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-8 px-3 text-xs"
+                  onClick={(e) => { e.stopPropagation(); onSign(tr); }}
+                >
+                  החתמה
+                </Button>
+              ))}
+              {isWriter && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-8 px-3 text-xs"
+                  onClick={(e) => { e.stopPropagation(); onRenew(tr); }}
+                >
+                  חידוש
+                </Button>
+              )}
+              {isWriter && (
+                <button
+                  type="button"
+                  aria-label="ערוך הדרכה"
+                  onClick={(e) => { e.stopPropagation(); onEdit(tr); }}
+                  className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           </li>
         );
       })}

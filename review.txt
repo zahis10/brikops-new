@@ -1,96 +1,115 @@
-================================================================================
-BATCH safety-p3b-fix3 — פריט ללא check tracks נספר כ"לא תקין" (לא "תקין")
-מצב: הושלם יישום + אימות בסביבה שלי. ממתין לאישור זהי.
-================================================================================
-Severity: P1 (זהי מצא בשטח — מונה כשירות שגוי)
-נגיעה בבקאנד → פריסה תדרוש EB + Cloudflare (מריץ זהי).
+BATCH safety-p3c — חידוש הדרכה (Training Renewal) + חתימת עובד (Worker Signature)
+==============================================================================
+ROLLBACK SHA (base): 18a39c9
+Branch: staging
+Status: AWAITING ZAHI APPROVAL — implementation complete, verified locally.
 
-ROLLBACK SHA
-------------
-a342d0c  (base = p3b-fix2 batch checkpoint)
-לחזרה מלאה: git reset --hard a342d0c  (מריץ זהי, לא אני)
+------------------------------------------------------------------------------
+STEP 0 — PRE-FLIGHT (all matched HEAD=18a39c9 before edits)
+------------------------------------------------------------------------------
+- backend/contractor_ops/safety_router.py    — trainings CRUD block + sign_tour_slot hardening chain present as expected.
+- backend/contractor_ops/schemas.py          — SafetyTraining model present, ended at deletedBy.
+- frontend/src/services/api.js               — safetyService ended after listEquipmentChecks.
+- frontend/src/components/safety/SafetyTrainingForm.js — create+edit form, onSaved?.(result) present.
+- frontend/src/pages/SafetyHomePage.js       — trainingForm state + TrainingsList + mounts present.
+- frontend/src/components/safety/SafetySignaturePad.js — props {open,onClose,slotLabel,defaultName,saving,onSave}; onSave({signerName,signatureType,typedName,blob}). NOT EDITED.
 
-STEP 0 — PRE-FLIGHT (מול HEAD; כל העוגנים תאמו → GO)
-----------------------------------------------------
-HEAD                                                       = a342d0c        [MATCH base]
-safety_router.py: bucket comment ("...INCLUDES missing")   = שורה 2150      [MATCH]
-safety_router.py: if any(s["state"] in ("expired","missing")= שורה 2151     [MATCH, hit יחיד]
-SafetyEquipmentTab.js: badge "ללא בדיקות" (fix2)           = שורה 55        [MATCH]
-  cls נוכחי = 'bg-slate-100 text-slate-600'                                 [MATCH]
-git fetch — חסום ל‑main agent (לא נדרש).
-→ אין mismatch. יושם כפי שנכתב.
+------------------------------------------------------------------------------
+WHAT CHANGED — PER FILE
+------------------------------------------------------------------------------
 
-================================================================================
-DIFF — 2 קבצים
-================================================================================
-git diff --stat:
-  backend/contractor_ops/safety_router.py              | 6 ++++--
-  frontend/src/components/safety/SafetyEquipmentTab.js | 2 +-
-  2 files changed, 5 insertions(+), 3 deletions(-)
+FILE 1 — backend/contractor_ops/schemas.py
+  * SafetyTraining: +worker_signature: Optional[dict] = None
+    (holds {name, signed_at, signature_ref, signature_type, typed_name, captured_by};
+     signature_display_url is added per-GET, never persisted).
 
-FILE 1 — backend/contractor_ops/safety_router.py (equipment_summary bucket, 1 תנאי):
-  לפני:
-    # "expired" bucket deliberately INCLUDES missing tracks (never-checked = not fit).
-    if any(s["state"] in ("expired", "missing") for s in statuses):
-  אחרי:
-    # "expired" bucket deliberately INCLUDES missing tracks AND zero-track
-    # items (never-checked = not fit; zero tracks possible only in custom
-    # categories — Zahi 2026-07-07).
-    if not statuses or any(s["state"] in ("expired", "missing") for s in statuses):
-  אין שינוי route/signature; אין שינוי אחר בפונקציה.
+FILE 2 — backend/contractor_ops/safety_router.py
+  2.1 create_training(): doc now sets "worker_signature": None.
+  2.2 list_trainings(): per-item, if worker_signature.signature_ref → regen
+      signature_display_url (fail-soft try/except → None on error).
+  2.3 get_training(): same fail-soft signature_display_url regen.
+  2.4 NEW endpoint POST /{project_id}/trainings/{training_id}/signature
+      → sign_training(), placed immediately after delete_training.
+      - Roles: require_roles(*SAFETY_WRITERS); _check_project_access.
+      - 404 if training missing/deleted; 409 if already signed ("ההדרכה כבר חתומה").
+      - 422 empty signer name; canvas branch mirrors sign_tour_slot upload-hardening
+        chain EXACTLY (check_upload_rate_limit → validate_upload → read → empty-check
+        → check_upload_bytes → org lookup → check_storage_quota → save_bytes →
+        record_upload). s3_key = safety/{pid}/trainings/{tid}/sig_worker_{uuid}.png.
+      - typed branch requires typed_name; else 422 "סוג חתימה לא מוכר".
+      - ATOMIC claim: update_one filter includes worker_signature:None (also matches
+        legacy rows missing the field) → concurrent signer loses race → 409.
+      - Audit event "signature_added"; returns SafetyTraining with per-GET
+        signature_display_url.
 
-FILE 2 — frontend/src/components/safety/SafetyEquipmentTab.js (ItemCard, ענף zero-track):
-  לפני:  badge = { cls: 'bg-slate-100 text-slate-600', text: 'ללא בדיקות' };
-  אחרי:  badge = { cls: 'border border-red-300 text-red-700 bg-white', text: 'ללא בדיקות' };
-  הטקסט זהה ("ללא בדיקות"); רק הסגנון הפך ל‑red-outline לקישור ויזואלי למונה האדום.
+FILE 3 — frontend/src/services/api.js
+  * safetyService.signTraining(projectId, trainingId, {signerName, signatureType,
+    typedName, blob}) added after listEquipmentChecks. FormData, mirrors signTourSlot.
 
-================================================================================
-VERIFY
-================================================================================
-1. API — קטגוריה מותאמת עם פריט 1 track-תקין + פריט 1 zero-track:
-   התנאי `not statuses` מוסיף את הפריט חסר ה‑tracks לדלי expired →
-   {total:2, expired:1, ok:1}  (היה {expired:0, ok:2}).
-   [PASS — code-verified: statuses=[] → `not statuses`=True → b["expired"]+=1]
-2. קטגוריות קבועות ללא פגיעה: לכל פריט שם יש DEFAULT_EQUIPMENT_CHECKS →
-   _build_check_status תמיד מחזיר ≥1 → `not statuses` לעולם לא True → short-circuit;
-   ההתנהגות זהה לקודם. [PASS — code-verified]
-3. UI — כרטיס קטגוריה מותאמת: pill "1 לא תקין" (אדום) + "1 תקין" (ירוק);
-   תג הכרטיס של פריט ה‑zero-track = red-outline "ללא בדיקות".
-   [PASS — code-verified; אימות UI במכשיר נדחה לזהי]
-4. רישום בדיקה ראשונה על פריט ה‑zero-track (זרימת fix2) → statuses נהיה לא ריק +
-   מצב valid → הפריט עובר לדלי ok → המונים מתהפכים ל"2 תקין".
-   [PASS — code-verified: מסלול expired מותנה כעת ב‑not statuses שכבר לא מתקיים]
-5. python -m py_compile safety_router.py → PY_OK; craco build EXIT=0;
-   grep window.confirm/<select/localStorage בקובץ ה‑FE → 0.
-   [PASS]
+FILE 4 — frontend/src/components/safety/SafetyTrainingForm.js
+  * +renewFrom prop; renewalMode = !training && !!renewFrom.
+  * computeRenewExpiry(oldTrained, oldExpires, newTrained): new expiry =
+    newTrained + (oldExpires − oldTrained), only when BOTH old dates valid ISO;
+    '' otherwise (no expiry).
+  * init effect: renewal prefill — worker LOCKED (from renewFrom.worker_id),
+    training_type/instructor/duration/location copied, trained_at=today,
+    expires_at=computeRenewExpiry, certificate cleared.
+  * title: renewal → 'חידוש הדרכה'.
+  * worker Select disabled adds || renewalMode.
+  * onSaved?.(result) already passed result for BOTH create+edit (no change needed).
 
-DO NOT TOUCH — נשמר:
-  • _build_check_status, list_equipment, get_equipment, checks endpoints,
-    DEFAULT_EQUIPMENT_CHECKS + DRAFT comment — ללא שינוי.
-  • לוגיקת aggregate האדום/ירוק ב‑FE וכל ענפי ה‑badge האחרים — ללא שינוי.
-  • CheckModal / Form / History / SafetyHomePage — אפס עריכות.
-  • ללא deps חדשים.
+FILE 5 — frontend/src/pages/SafetyHomePage.js
+  * import SafetySignaturePad.
+  * state: trainingForm shape +renewFrom (all 6 setTrainingForm sites updated:
+    initial state, TrainingsList onEdit, TrainingForm onClose, worker-card
+    onAddTraining, chain "הוסף הדרכה", add-chooser "הדרכה"). +trainingSignFor,
+    +trainingSigning state.
+  * TrainingsList: +onRenew/+onSign props; per row — signed → green chip "חתום"
+    (opens signature_display_url via window.open(url,'_blank','noopener') when
+    image, else typed title=name/typed_name, no click); unsigned + writer →
+    "החתמה" button → onSign; "חידוש" outline button → onRenew (writers); edit
+    pencil preserved.
+  * SafetyTrainingForm mount: +renewFrom={trainingForm.renewFrom}; onSaved now
+    receives (saved) — preserves trainingCardLock reset + workerChain increment
+    (only when NOT renewal), and if renewal & saved.id → open signature pad on the
+    fresh record. lockedWorker guards extended with !trainingForm.renewFrom.
+  * SafetySignaturePad mounted once: bound to trainingSignFor; worker name resolved
+    from workers.items; onSave calls safetyService.signTraining then reloads.
 
-הערה — פותר את ה‑MICRO-EDGE שתועד ב‑fix2: המונה כבר לא יאמר "תקין" בעוד הכרטיס
-אומר "ללא בדיקות"; שניהם עכשיו אדומים ועקביים.
+------------------------------------------------------------------------------
+VERIFICATION — V1..V10
+------------------------------------------------------------------------------
+V1  py_compile safety_router.py        → PY_OK
+V2  py_compile schemas.py              → PY_OK
+V3  craco production build             → EXIT=0 (build folder ready) [device: build server]
+V4  grep window.confirm (3 FE files)   → NONE
+V5  grep "<select" (3 FE files)        → NONE
+V6  grep localStorage (3 FE files)     → only PRE-EXISTING token handling in api.js
+                                          (lines 197/267/1291); NOT in p3c code. PASS.
+V7  grep WebkitOverflowScrolling       → NONE
+V8  grep "setSearchParams({" (3 files) → NONE
+V9  SafetySignaturePad contract check  → onSave({signerName,signatureType,typedName,
+                                          blob}) matches api.signTraining. PASS.
+V10 atomic-claim + fail-soft regen mirror sign_tour_slot chain → confirmed by read.
 
-================================================================================
-סטיות מהתוכנית
-================================================================================
-אין. יושם בדיוק לפי safety-p3b-fix3-plan.txt.
+------------------------------------------------------------------------------
+DEVIATIONS FROM PLAN
+------------------------------------------------------------------------------
+- onSaved merge (FILE 5): plan's snippet showed only reloadTrainings + renewal
+  auto-sign, but the EXISTING onSaved carried trainingCardLock reset + workerChain
+  increment. Both preserved; workerChain increment now guarded to skip on renewal
+  (a renewal is not a chain add). No behavior regression for the non-renewal path.
+- lockedWorker guards extended with !trainingForm.renewFrom so a renewal never also
+  triggers the card-lock/chain lockedWorker path (renewFrom drives the lock inside
+  the form via renewalMode). Defensive; renew is invoked from the list row where
+  cardLock/chain are already null.
+- signature_display_url regen wrapped in try/except (fail-soft) so a dead/expired
+  S3 key never 500s a list/GET — matches the tour signature fail-soft posture.
 
-================================================================================
-COMMIT MESSAGE (נשמר גם ב‑.local/.commit_message)
-================================================================================
-fix(safety): count zero-track equipment items as not-fit in summary
+------------------------------------------------------------------------------
+COMMIT MESSAGE
+------------------------------------------------------------------------------
+feat(safety): training renewal + worker signature (p3c)
 
-A custom-category item with no check tracks was counted in the "ok"
-bucket ("2 תקין" while one item was never checked). Zero-track items now
-join the expired/missing red bucket (never-checked = not fit); the FE
-zero-track badge restyled red-outline to match the counter.
-
-Batch safety-p3b-fix3. Rollback: a342d0c.
-
-================================================================================
+------------------------------------------------------------------------------
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================

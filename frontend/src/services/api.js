@@ -679,6 +679,19 @@ export const safetyService = {
     const r = await axios.get(`${API}/safety/${projectId}/equipment/${equipmentId}/checks`, { headers: getAuthHeader(), params });
     return r.data;
   },
+  async signTraining(projectId, trainingId, { signerName, signatureType, typedName, blob }) {
+    const fd = new FormData();
+    fd.append('signer_name', signerName || '');
+    fd.append('signature_type', signatureType || '');
+    if (typedName) fd.append('typed_name', typedName);
+    if (blob) fd.append('signature_image', blob, 'signature.png');
+    const r = await axios.post(
+      `${API}/safety/${projectId}/trainings/${trainingId}/signature`,
+      fd,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
 };
 
 export const buildingService = {

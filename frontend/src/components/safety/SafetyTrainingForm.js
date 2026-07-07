@@ -17,8 +17,20 @@ import SafetyFormModal from './SafetyFormModal';
 // pattern; future).
 const isHttp = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
 
-export default function SafetyTrainingForm({ projectId, training, open, onClose, onSaved, workers, lockedWorker }) {
+// Renewal: new expiry = new trained_at + (old expires_at − old trained_at),
+// only when BOTH old dates are valid ISO dates; otherwise no expiry.
+const computeRenewExpiry = (oldTrained, oldExpires, newTrained) => {
+  if (!oldTrained || !oldExpires) return '';
+  const ot = new Date(oldTrained);
+  const oe = new Date(oldExpires);
+  const nt = new Date(newTrained);
+  if (Number.isNaN(ot.getTime()) || Number.isNaN(oe.getTime()) || Number.isNaN(nt.getTime())) return '';
+  return new Date(nt.getTime() + (oe.getTime() - ot.getTime())).toISOString().slice(0, 10);
+};
+
+export default function SafetyTrainingForm({ projectId, training, open, onClose, onSaved, workers, lockedWorker, renewFrom }) {
   const isEdit = !!training;
+  const renewalMode = !training && !!renewFrom;
 
   const [workerId, setWorkerId] = useState('');
   const [trainingType, setTrainingType] = useState('');
@@ -34,6 +46,19 @@ export default function SafetyTrainingForm({ projectId, training, open, onClose,
 
   useEffect(() => {
     if (!open) return;
+    if (renewalMode) {
+      const today = new Date().toISOString().slice(0, 10);
+      setWorkerId(renewFrom.worker_id || '');
+      setTrainingType(renewFrom.training_type || '');
+      setTrainedAt(today);
+      setExpiresAt(computeRenewExpiry(renewFrom.trained_at, renewFrom.expires_at, today));
+      setInstructorName(renewFrom.instructor_name || '');
+      setDurationMinutes(renewFrom.duration_minutes != null ? String(renewFrom.duration_minutes) : '');
+      setLocation(renewFrom.location || '');
+      setCert({ key: null, preview: null, isPdf: false });
+      setCertImgBroken(false);
+      return;
+    }
     setWorkerId(training?.worker_id || lockedWorker?.id || '');
     setTrainingType(training?.training_type || '');
     setTrainedAt((training?.trained_at || '').slice(0, 10) || '');
@@ -48,7 +73,7 @@ export default function SafetyTrainingForm({ projectId, training, open, onClose,
       isPdf: !!key && key.toLowerCase().endsWith('.pdf'),
     });
     setCertImgBroken(false);
-  }, [open, training, lockedWorker]);
+  }, [open, training, lockedWorker, renewalMode, renewFrom]);
 
   const handleCert = async (file) => {
     if (!file) return;
@@ -104,13 +129,13 @@ export default function SafetyTrainingForm({ projectId, training, open, onClose,
     <SafetyFormModal
       open={open}
       onOpenChange={(o) => { if (!o && !submitting) onClose?.(); }}
-      title={isEdit ? 'עריכת הדרכה' : (lockedWorker ? `הדרכה לעובד ${lockedWorker.name}` : 'הדרכה חדשה')}
+      title={isEdit ? 'עריכת הדרכה' : (renewalMode ? 'חידוש הדרכה' : (lockedWorker ? `הדרכה לעובד ${lockedWorker.name}` : 'הדרכה חדשה'))}
       onSubmit={handleSubmit}
       submitting={submitting}
     >
       <div className="space-y-1.5">
         <Label>עובד *</Label>
-        <Select value={workerId} onValueChange={setWorkerId} dir="rtl" disabled={isEdit || !!lockedWorker}>
+        <Select value={workerId} onValueChange={setWorkerId} dir="rtl" disabled={isEdit || !!lockedWorker || renewalMode}>
           <SelectTrigger><SelectValue placeholder="בחר עובד" /></SelectTrigger>
           <SelectContent>
             {workers.map((w) => (

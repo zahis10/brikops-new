@@ -751,6 +751,9 @@ class SafetyTraining(BaseModel):
     expires_at: Optional[str] = None     # ISO date; null = no expiry
     certificate_url: Optional[str] = None  # R2/S3 URL if uploaded
     certificate_display_url: Optional[str] = None  # server-computed per-GET; never persisted
+    worker_signature: Optional[dict] = None  # {name, signed_at, signature_ref,
+                                             #  signature_type, typed_name, captured_by};
+                                             # signature_display_url added per-GET
     created_at: str
     created_by: str
     deletedAt: Optional[str] = None
