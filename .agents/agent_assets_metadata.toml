@@ -654,3 +654,9 @@ id = "eMj-yo16A6C5xs0nU3et2"
 uri = "file://.local/plans/safety-p3c-plan.txt"
 type = "text"
 title = "תוכנית safety-p3c — חידוש הדרכה + חתימת עובד (STEP 0 תאם — ממתין ל֪֪חיל)"
+
+[[outputs]]
+id = "Qb5ob4wk8AivtFMQpZuMV"
+uri = "file://.local/plans/safety-p3c-fix1-plan.txt"
+type = "text"
+title = "PLAN — safety-p3c-fix1: group training renewals (latest + collapse old)"
