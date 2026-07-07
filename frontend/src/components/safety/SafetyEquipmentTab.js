@@ -52,7 +52,7 @@ function ItemCard({ item, showCategory, isWriter, onEdit, onHistory, onRenew }) 
   if (decommissioned) {
     badge = { cls: 'bg-slate-200 text-slate-700', text: 'הוצא משימוש' };
   } else if (noTracks) {
-    badge = { cls: 'bg-slate-100 text-slate-600', text: 'ללא בדיקות' };
+    badge = { cls: 'border border-red-300 text-red-700 bg-white', text: 'ללא בדיקות' };
   } else if ((item.check_status || []).some((t) => t.state === 'expired' || t.state === 'missing')) {
     badge = { cls: 'bg-red-100 text-red-800', text: 'לא תקין' };
   } else {

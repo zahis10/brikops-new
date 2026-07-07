@@ -2147,8 +2147,10 @@ async def equipment_summary(
         })
         b["total"] += 1
         statuses = _build_check_status(cat, latest_map.get(it["id"], {}), today)
-        # "expired" bucket deliberately INCLUDES missing tracks (never-checked = not fit).
-        if any(s["state"] in ("expired", "missing") for s in statuses):
+        # "expired" bucket deliberately INCLUDES missing tracks AND zero-track
+        # items (never-checked = not fit; zero tracks possible only in custom
+        # categories — Zahi 2026-07-07).
+        if not statuses or any(s["state"] in ("expired", "missing") for s in statuses):
             b["expired"] += 1
         else:
             b["ok"] += 1
