@@ -1,88 +1,87 @@
 ================================================================================
-REVIEW — BATCH safety-p3c-fix1
-Trainings list: group renewals → show latest, collapse older (DISPLAY-ONLY)
+REVIEW — BATCH safety-p3c-fix2
+Trainings tab counter = current trainings (groups), not raw records
 ================================================================================
 Date:        2026-07-07
 Branch:      staging
-Rollback SHA (base): 5d25e0f
-Severity:    P1 (Zahi field feedback — renewals pile up as flat duplicate rows)
-Scope:       FRONTEND ONLY — 1 file, TrainingsList component only.
-Build:       craco build EXIT=0 (REACT_APP_BACKEND_URL provided for the env guard;
-             that guard is pre-existing and unrelated to this change).
+Rollback SHA (base): bbf0343
+Severity:    P2 (Zahi field feedback — counter says 5, grouped list shows 3)
+Scope:       2 files — 1 backend + 1 frontend
+Build:       py_compile OK · craco build EXIT=0 (REACT_APP_BACKEND_URL provided
+             for the pre-existing env guard; unrelated to this change).
 
 --------------------------------------------------------------------------------
 STEP 0 — PRE-FLIGHT (read-only, ALL MATCHED)
 --------------------------------------------------------------------------------
-  git HEAD                                                 → 5d25e0f            ✓
-  function TrainingsList(...)                              → line 1473          ✓
-    props = { items, workers, isWriter, onEdit, onRenew, onSign }              ✓
-  "אין הדרכות רשומות" empty state                          → line 1474          ✓
-  onSign(tr) / onRenew(tr) row buttons                    → 1531 / 1536-1545   ✓
-  server sort("trained_at", -1) (DESC)                    → line 438           ✓
+  git HEAD                                                       → bbf0343      ✓
+  async def list_trainings(                                      → line 413     ✓
+  total = await db.safety_trainings.count_documents(q)           → line 437     ✓
+  return {"items": items, "total": total, ...}                   → line 449     ✓
+  "הדרכות ({trainingsView.total})" TabsTrigger label             → line 613     ✓
 
 --------------------------------------------------------------------------------
 WHAT CHANGED
 --------------------------------------------------------------------------------
-File: frontend/src/pages/SafetyHomePage.js  (+129 / -81, TrainingsList only)
+1) backend/contractor_ops/safety_router.py  (list_trainings; +7 / -1)
+   After the existing count_documents(q), one aggregation on the SAME q:
+       group_agg = await db.safety_trainings.aggregate([
+           {"$match": q},
+           {"$group": {"_id": {"w": "$worker_id", "t": "$training_type"}}},
+           {"$count": "n"},
+       ]).to_list(length=1)
+       group_total = group_agg[0]["n"] if group_agg else 0
+   Return dict now carries "group_total": group_total (server-side count of
+   distinct worker+type groups). Same q → respects the tab's filters and
+   include_deleted resolution. ONE aggregation, no N+1. Count is server-side so
+   it stays correct past the limit-50 fetch window (client-side grouping would
+   under-count).
 
-1) Added local expansion state (hooks moved ABOVE the empty-state guard so the
-   Rules of Hooks are respected):
-     const [expandedKeys, setExpandedKeys] = useState(() => new Set());
-     const toggle = (key) => () => setExpandedKeys(prev => …toggle key…);
+2) frontend/src/pages/SafetyHomePage.js  (trainings TabsTrigger label; +1 / -1)
+       הדרכות ({trainingsView.group_total ?? trainingsView.total})
+   The `??` fallback keeps the label sane if a stale response shape (no
+   group_total) is briefly in memory during the deploy window.
 
-2) Client-side grouping by `${worker_id}|${training_type}`. Server returns
-   trained_at DESC, so the first record seen per key is the newest (= latest);
-   the rest go to older[]. Defensive swap (string compare on the YYYY-MM-DD
-   prefix, NO full re-sort) promotes a newer record if items arrive unsorted.
-
-3) Extracted the existing <li> body VERBATIM into renderRow(tr, { isOld }).
-   Two isOld deltas ONLY:
-     - <li> className gains ' opacity-60 bg-slate-50' (muted look).
-     - "חידוש" button rendered only when !isOld (renewal from newest record only).
-   "החתמה" (unsigned && isWriter), the "חתום" chip and the edit pencil are
-   IDENTICAL on old rows — late signature capture on an old record stays legit.
-
-4) <ul> body now renders per group: latest row → "הצג קודמות (N)" / "הסתר קודמות"
-   expander (only when older.length>0) → expanded older rows (muted). Empty
-   state and <ul> wrapper unchanged.
-
-DATA MODEL / SCORE / EXPORTS: untouched. Renewal still creates a new
-legal-register record; the score still keys off the in-force record per
-worker/required-type. This is purely how the list is rendered.
+NO schema change (group_total is a response field). Score, exports, the fix1
+list/grouping render, the aux filter effect, and other tabs' counters untouched.
 
 --------------------------------------------------------------------------------
 DIFF (summary)
 --------------------------------------------------------------------------------
- frontend/src/pages/SafetyHomePage.js | 210 ++++++++++++++++--------------
- 1 file changed, 129 insertions(+), 81 deletions(-)
+ backend/contractor_ops/safety_router.py  | +7 / -1
+ frontend/src/pages/SafetyHomePage.js     | +1 / -1
 
 --------------------------------------------------------------------------------
 VERIFY
 --------------------------------------------------------------------------------
-V1 [device — Zahi] Worker w/ 3 same-type records → ONE row (newest) + "הצג קודמות
-   (2)"; expand → 2 muted rows, no חידוש, pencil present (+החתמה where unsigned).
-   Logic confirmed in code: latest = first DESC record; older length = 2 →
-   expander label "הצג קודמות (2)"; isOld rows drop חידוש + gain opacity-60.
-V2 [device — Zahi] Renewal from visible row → new record (newest trained_at)
-   becomes group's latest; previous latest demoted into older[] (count bumps).
-   Confirmed by the grouping + defensive-swap logic.
-V3 [logic — agent] Two types / same worker → two keys → two rows (no cross-type
-   grouping). Two workers / same type → two keys → two rows. Key is
-   worker_id|training_type — verified in code.
-V4 [device — Zahi] Signature flow available from latest row AND expanded old row
-   (onSign(tr) wired in renderRow for both; חתום chip opens display url).
-V5 [agent env] craco build EXIT=0. House greps on the edited region
-   (window.confirm | localStorage | native <select>) → CLEAN. No new deps.
+Functional probe (verification-only, ran in this env): drives the REAL
+list_trainings coroutine against REAL local Mongo (mongodb://localhost:27017 /
+contractor_ops). Scaffolding patched to no-op (disclosed): _check_project_access,
+router.get_db/sr.get_db. Harness: backend/tests/probe_p3c_fix2_group_total.py.
+Command: cd backend && MONGO_URL=mongodb://localhost:27017 DB_NAME=contractor_ops \
+         python tests/probe_p3c_fix2_group_total.py    → 3/3 PASS
+
+  [PASS] V1 5 records in 3 (worker,type) groups → total=5, group_total=3
+  [PASS] V3a add record to EXISTING group        → total=6, group_total=3
+  [PASS] V3b add record of a NEW type            → total=7, group_total=4
+  V2 [device — Zahi] tab reads הדרכות (3); expand/collapse doesn't change it
+     (label bound to trainingsView.group_total; grouping is client-render only).
+  V4 [device — Zahi] aux filter active (e.g. training_type) → filtered fetch's
+     group_total drives the label (same q filters the aggregation server-side).
+  V5 [agent env] py_compile safety_router.py OK; craco build EXIT=0.
+
+Note on semantics (as specified): an EXPIRED training that is its group's newest
+still counts (live obligation to renew); only SUPERSEDED records stop counting —
+this follows naturally from counting distinct (worker,type) groups.
+
+Env note: local mongod had stopped between batches; restarted the "Start
+application" workflow to bring it back up before running the probe (local
+verification only — no deploy).
 
 --------------------------------------------------------------------------------
-NOTES (no action)
+DO NOT TOUCH — honored
 --------------------------------------------------------------------------------
-- Tab counter "הדרכות (N)" still counts RECORDS, not groups — correct (register).
-- The aux "expiry" filter passes server-filtered items through the same grouping;
-  an expired OLD record shows as its group's latest only when the newer record
-  was filtered out — that is the filter doing its job. No special-casing.
-- DO NOT TOUCH honored: backend, mount props/wiring, SafetyTrainingForm,
-  SafetySignaturePad — all untouched.
+- fix1 list/grouping render, aux filter effect, score, exports — untouched.
+- No schema change; other tabs' counters unchanged.
 
 --------------------------------------------------------------------------------
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

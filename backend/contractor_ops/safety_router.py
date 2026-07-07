@@ -435,6 +435,12 @@ async def list_trainings(
         q["expires_at"] = {"$ne": None, "$lt": expires_before}
 
     total = await db.safety_trainings.count_documents(q)
+    group_agg = await db.safety_trainings.aggregate([
+        {"$match": q},
+        {"$group": {"_id": {"w": "$worker_id", "t": "$training_type"}}},
+        {"$count": "n"},
+    ]).to_list(length=1)
+    group_total = group_agg[0]["n"] if group_agg else 0
     cursor = db.safety_trainings.find(q, {"_id": 0}).sort("trained_at", -1).skip(offset).limit(limit)
     items = await cursor.to_list(length=limit)
     for it in items:
@@ -446,7 +452,7 @@ async def list_trainings(
                 sig["signature_display_url"] = generate_url(sig["signature_ref"])
             except Exception:
                 sig["signature_display_url"] = None
-    return {"items": items, "total": total, "limit": limit, "offset": offset}
+    return {"items": items, "total": total, "group_total": group_total, "limit": limit, "offset": offset}
 
 
 @router.get("/{project_id}/trainings/{training_id}", response_model=SafetyTraining)

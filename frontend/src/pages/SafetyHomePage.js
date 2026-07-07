@@ -610,7 +610,7 @@ export default function SafetyHomePage() {
                 value="trainings"
                 className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
               >
-                הדרכות ({trainingsView.total})
+                הדרכות ({trainingsView.group_total ?? trainingsView.total})
               </TabsTrigger>
               <TabsTrigger
                 value="incidents"
