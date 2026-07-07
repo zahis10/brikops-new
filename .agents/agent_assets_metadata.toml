@@ -648,3 +648,9 @@ id = "z1a4A93BMcFsTrHs8nI2o"
 uri = "file://.local/plans/safety-p3b-fix3-plan.txt"
 type = "text"
 title = "תוכנית safety-p3b-fix3 — פריט ללא בדיקות נספר כ\"לא תקין\" (STEP 0 תאם — ממתין ל֪֪חיל)"
+
+[[outputs]]
+id = "eMj-yo16A6C5xs0nU3et2"
+uri = "file://.local/plans/safety-p3c-plan.txt"
+type = "text"
+title = "תוכנית safety-p3c — חידוש הדרכה + חתימת עובד (STEP 0 תאם — ממתין ל֪֪חיל)"
