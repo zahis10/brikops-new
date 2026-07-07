@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "safety-p3c — Review + Functional Probes (12/12 PASS)"
+title = "safety-p3c-fix1 — Review (group renewals: latest + collapse old, build EXIT=0)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"

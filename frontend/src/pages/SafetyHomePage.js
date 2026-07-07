@@ -1471,92 +1471,140 @@ function WorkersList({ items, isWriter, onEdit, onOpenCard }) {
 }
 
 function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign }) {
+  const [expandedKeys, setExpandedKeys] = useState(() => new Set());
+  const toggle = (key) => () => setExpandedKeys((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
   if (!items?.length) return <EmptyState icon={GraduationCap} text="אין הדרכות רשומות" />;
   const nameById = new Map((workers || []).map((w) => [w.id, w.full_name]));
   const today = new Date().toISOString().slice(0, 10);
+
+  // Group by worker+type. Server returns trained_at DESC, so the first record
+  // seen per key is the newest; the rest collapse under an expander. Defensive
+  // swap (no full re-sort) in case items arrive unsorted.
+  const groups = [];
+  const byKey = new Map();
+  (items || []).forEach((tr) => {
+    const key = `${tr.worker_id}|${tr.training_type}`;
+    const g = byKey.get(key);
+    if (!g) {
+      const ng = { key, latest: tr, older: [] };
+      byKey.set(key, ng);
+      groups.push(ng);
+    } else {
+      const a = (tr.trained_at || '').slice(0, 10);
+      const b = (g.latest.trained_at || '').slice(0, 10);
+      if (a > b) { g.older.push(g.latest); g.latest = tr; }
+      else { g.older.push(tr); }
+    }
+  });
+
+  const renderRow = (tr, { isOld }) => {
+    const expired = tr.expires_at && tr.expires_at.slice(0, 10) < today;
+    return (
+      <li
+        key={tr.id}
+        className={`px-4 py-3 flex items-start gap-3 hover:bg-slate-50${isOld ? ' opacity-60 bg-slate-50' : ''}`}
+      >
+        <div className="flex-1 min-w-0">
+          <p className="font-medium text-slate-900 truncate">{tr.training_type}</p>
+          <p className="text-xs text-slate-500 truncate mt-0.5">
+            {nameById.get(tr.worker_id) || '—'}
+            {tr.instructor_name && ` · מדריך: ${tr.instructor_name}`}
+          </p>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <span className="text-xs text-slate-500">{(tr.trained_at || '').slice(0, 10)}</span>
+            {tr.expires_at && (
+              <span className="text-xs text-slate-500">בתוקף עד {tr.expires_at.slice(0, 10)}</span>
+            )}
+            {expired && <Badge className="bg-red-100 text-red-800">פג תוקף</Badge>}
+            {tr.certificate_display_url && (
+              <a
+                href={tr.certificate_display_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 text-xs text-purple-700 hover:underline"
+              >
+                <FileText className="w-3.5 h-3.5" /> תעודה
+              </a>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {tr.worker_signature ? (
+            tr.worker_signature.signature_display_url ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); window.open(tr.worker_signature.signature_display_url, '_blank', 'noopener'); }}
+                className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800"
+              >
+                חתום
+              </button>
+            ) : (
+              <span
+                title={tr.worker_signature.typed_name || tr.worker_signature.name || ''}
+                className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800"
+              >
+                חתום
+              </span>
+            )
+          ) : (isWriter && (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-8 px-3 text-xs"
+              onClick={(e) => { e.stopPropagation(); onSign(tr); }}
+            >
+              החתמה
+            </Button>
+          ))}
+          {isWriter && !isOld && (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-8 px-3 text-xs"
+              onClick={(e) => { e.stopPropagation(); onRenew(tr); }}
+            >
+              חידוש
+            </Button>
+          )}
+          {isWriter && (
+            <button
+              type="button"
+              aria-label="ערוך הדרכה"
+              onClick={(e) => { e.stopPropagation(); onEdit(tr); }}
+              className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </li>
+    );
+  };
+
   return (
     <ul className="divide-y divide-slate-100">
-      {items.map((tr) => {
-        const expired = tr.expires_at && tr.expires_at.slice(0, 10) < today;
-        return (
-          <li key={tr.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
-            <div className="flex-1 min-w-0">
-              <p className="font-medium text-slate-900 truncate">{tr.training_type}</p>
-              <p className="text-xs text-slate-500 truncate mt-0.5">
-                {nameById.get(tr.worker_id) || '—'}
-                {tr.instructor_name && ` · מדריך: ${tr.instructor_name}`}
-              </p>
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
-                <span className="text-xs text-slate-500">{(tr.trained_at || '').slice(0, 10)}</span>
-                {tr.expires_at && (
-                  <span className="text-xs text-slate-500">בתוקף עד {tr.expires_at.slice(0, 10)}</span>
-                )}
-                {expired && <Badge className="bg-red-100 text-red-800">פג תוקף</Badge>}
-                {tr.certificate_display_url && (
-                  <a
-                    href={tr.certificate_display_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="inline-flex items-center gap-1 text-xs text-purple-700 hover:underline"
-                  >
-                    <FileText className="w-3.5 h-3.5" /> תעודה
-                  </a>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center gap-1 shrink-0">
-              {tr.worker_signature ? (
-                tr.worker_signature.signature_display_url ? (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); window.open(tr.worker_signature.signature_display_url, '_blank', 'noopener'); }}
-                    className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800"
-                  >
-                    חתום
-                  </button>
-                ) : (
-                  <span
-                    title={tr.worker_signature.typed_name || tr.worker_signature.name || ''}
-                    className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800"
-                  >
-                    חתום
-                  </span>
-                )
-              ) : (isWriter && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-8 px-3 text-xs"
-                  onClick={(e) => { e.stopPropagation(); onSign(tr); }}
-                >
-                  החתמה
-                </Button>
-              ))}
-              {isWriter && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-8 px-3 text-xs"
-                  onClick={(e) => { e.stopPropagation(); onRenew(tr); }}
-                >
-                  חידוש
-                </Button>
-              )}
-              {isWriter && (
-                <button
-                  type="button"
-                  aria-label="ערוך הדרכה"
-                  onClick={(e) => { e.stopPropagation(); onEdit(tr); }}
-                  className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
-                >
-                  <Pencil className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          </li>
-        );
-      })}
+      {groups.map((g) => (
+        <React.Fragment key={g.key}>
+          {renderRow(g.latest, { isOld: false })}
+          {g.older.length > 0 && (
+            <li className="px-4 py-1">
+              <button
+                type="button"
+                onClick={toggle(g.key)}
+                className="text-xs text-slate-500 hover:text-slate-700"
+              >
+                {expandedKeys.has(g.key) ? 'הסתר קודמות' : `הצג קודמות (${g.older.length})`}
+              </button>
+            </li>
+          )}
+          {expandedKeys.has(g.key) && g.older.map((tr) => renderRow(tr, { isOld: true }))}
+        </React.Fragment>
+      ))}
     </ul>
   );
 }

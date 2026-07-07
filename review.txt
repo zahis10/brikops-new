@@ -1,157 +1,88 @@
-BATCH safety-p3c — חידוש הדרכה (Training Renewal) + חתימת עובד (Worker Signature)
-==============================================================================
-ROLLBACK SHA (base): 18a39c9
-Branch: staging
-Status: AWAITING ZAHI APPROVAL — implementation complete, verified locally.
+================================================================================
+REVIEW — BATCH safety-p3c-fix1
+Trainings list: group renewals → show latest, collapse older (DISPLAY-ONLY)
+================================================================================
+Date:        2026-07-07
+Branch:      staging
+Rollback SHA (base): 5d25e0f
+Severity:    P1 (Zahi field feedback — renewals pile up as flat duplicate rows)
+Scope:       FRONTEND ONLY — 1 file, TrainingsList component only.
+Build:       craco build EXIT=0 (REACT_APP_BACKEND_URL provided for the env guard;
+             that guard is pre-existing and unrelated to this change).
 
-------------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT (all matched HEAD=18a39c9 before edits)
-------------------------------------------------------------------------------
-- backend/contractor_ops/safety_router.py    — trainings CRUD block + sign_tour_slot hardening chain present as expected.
-- backend/contractor_ops/schemas.py          — SafetyTraining model present, ended at deletedBy.
-- frontend/src/services/api.js               — safetyService ended after listEquipmentChecks.
-- frontend/src/components/safety/SafetyTrainingForm.js — create+edit form, onSaved?.(result) present.
-- frontend/src/pages/SafetyHomePage.js       — trainingForm state + TrainingsList + mounts present.
-- frontend/src/components/safety/SafetySignaturePad.js — props {open,onClose,slotLabel,defaultName,saving,onSave}; onSave({signerName,signatureType,typedName,blob}). NOT EDITED.
+--------------------------------------------------------------------------------
+STEP 0 — PRE-FLIGHT (read-only, ALL MATCHED)
+--------------------------------------------------------------------------------
+  git HEAD                                                 → 5d25e0f            ✓
+  function TrainingsList(...)                              → line 1473          ✓
+    props = { items, workers, isWriter, onEdit, onRenew, onSign }              ✓
+  "אין הדרכות רשומות" empty state                          → line 1474          ✓
+  onSign(tr) / onRenew(tr) row buttons                    → 1531 / 1536-1545   ✓
+  server sort("trained_at", -1) (DESC)                    → line 438           ✓
 
-------------------------------------------------------------------------------
-WHAT CHANGED — PER FILE
-------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+WHAT CHANGED
+--------------------------------------------------------------------------------
+File: frontend/src/pages/SafetyHomePage.js  (+129 / -81, TrainingsList only)
 
-FILE 1 — backend/contractor_ops/schemas.py
-  * SafetyTraining: +worker_signature: Optional[dict] = None
-    (holds {name, signed_at, signature_ref, signature_type, typed_name, captured_by};
-     signature_display_url is added per-GET, never persisted).
+1) Added local expansion state (hooks moved ABOVE the empty-state guard so the
+   Rules of Hooks are respected):
+     const [expandedKeys, setExpandedKeys] = useState(() => new Set());
+     const toggle = (key) => () => setExpandedKeys(prev => …toggle key…);
 
-FILE 2 — backend/contractor_ops/safety_router.py
-  2.1 create_training(): doc now sets "worker_signature": None.
-  2.2 list_trainings(): per-item, if worker_signature.signature_ref → regen
-      signature_display_url (fail-soft try/except → None on error).
-  2.3 get_training(): same fail-soft signature_display_url regen.
-  2.4 NEW endpoint POST /{project_id}/trainings/{training_id}/signature
-      → sign_training(), placed immediately after delete_training.
-      - Roles: require_roles(*SAFETY_WRITERS); _check_project_access.
-      - 404 if training missing/deleted; 409 if already signed ("ההדרכה כבר חתומה").
-      - 422 empty signer name; canvas branch mirrors sign_tour_slot upload-hardening
-        chain EXACTLY (check_upload_rate_limit → validate_upload → read → empty-check
-        → check_upload_bytes → org lookup → check_storage_quota → save_bytes →
-        record_upload). s3_key = safety/{pid}/trainings/{tid}/sig_worker_{uuid}.png.
-      - typed branch requires typed_name; else 422 "סוג חתימה לא מוכר".
-      - ATOMIC claim: update_one filter includes worker_signature:None (also matches
-        legacy rows missing the field) → concurrent signer loses race → 409.
-      - Audit event "signature_added"; returns SafetyTraining with per-GET
-        signature_display_url.
+2) Client-side grouping by `${worker_id}|${training_type}`. Server returns
+   trained_at DESC, so the first record seen per key is the newest (= latest);
+   the rest go to older[]. Defensive swap (string compare on the YYYY-MM-DD
+   prefix, NO full re-sort) promotes a newer record if items arrive unsorted.
 
-FILE 3 — frontend/src/services/api.js
-  * safetyService.signTraining(projectId, trainingId, {signerName, signatureType,
-    typedName, blob}) added after listEquipmentChecks. FormData, mirrors signTourSlot.
+3) Extracted the existing <li> body VERBATIM into renderRow(tr, { isOld }).
+   Two isOld deltas ONLY:
+     - <li> className gains ' opacity-60 bg-slate-50' (muted look).
+     - "חידוש" button rendered only when !isOld (renewal from newest record only).
+   "החתמה" (unsigned && isWriter), the "חתום" chip and the edit pencil are
+   IDENTICAL on old rows — late signature capture on an old record stays legit.
 
-FILE 4 — frontend/src/components/safety/SafetyTrainingForm.js
-  * +renewFrom prop; renewalMode = !training && !!renewFrom.
-  * computeRenewExpiry(oldTrained, oldExpires, newTrained): new expiry =
-    newTrained + (oldExpires − oldTrained), only when BOTH old dates valid ISO;
-    '' otherwise (no expiry).
-  * init effect: renewal prefill — worker LOCKED (from renewFrom.worker_id),
-    training_type/instructor/duration/location copied, trained_at=today,
-    expires_at=computeRenewExpiry, certificate cleared.
-  * title: renewal → 'חידוש הדרכה'.
-  * worker Select disabled adds || renewalMode.
-  * onSaved?.(result) already passed result for BOTH create+edit (no change needed).
+4) <ul> body now renders per group: latest row → "הצג קודמות (N)" / "הסתר קודמות"
+   expander (only when older.length>0) → expanded older rows (muted). Empty
+   state and <ul> wrapper unchanged.
 
-FILE 5 — frontend/src/pages/SafetyHomePage.js
-  * import SafetySignaturePad.
-  * state: trainingForm shape +renewFrom (all 6 setTrainingForm sites updated:
-    initial state, TrainingsList onEdit, TrainingForm onClose, worker-card
-    onAddTraining, chain "הוסף הדרכה", add-chooser "הדרכה"). +trainingSignFor,
-    +trainingSigning state.
-  * TrainingsList: +onRenew/+onSign props; per row — signed → green chip "חתום"
-    (opens signature_display_url via window.open(url,'_blank','noopener') when
-    image, else typed title=name/typed_name, no click); unsigned + writer →
-    "החתמה" button → onSign; "חידוש" outline button → onRenew (writers); edit
-    pencil preserved.
-  * SafetyTrainingForm mount: +renewFrom={trainingForm.renewFrom}; onSaved now
-    receives (saved) — preserves trainingCardLock reset + workerChain increment
-    (only when NOT renewal), and if renewal & saved.id → open signature pad on the
-    fresh record. lockedWorker guards extended with !trainingForm.renewFrom.
-  * SafetySignaturePad mounted once: bound to trainingSignFor; worker name resolved
-    from workers.items; onSave calls safetyService.signTraining then reloads.
+DATA MODEL / SCORE / EXPORTS: untouched. Renewal still creates a new
+legal-register record; the score still keys off the in-force record per
+worker/required-type. This is purely how the list is rendered.
 
-------------------------------------------------------------------------------
-VERIFICATION — V1..V10
-------------------------------------------------------------------------------
-V1  py_compile safety_router.py        → PY_OK
-V2  py_compile schemas.py              → PY_OK
-V3  craco production build             → EXIT=0 (build folder ready) [device: build server]
-V4  grep window.confirm (3 FE files)   → NONE
-V5  grep "<select" (3 FE files)        → NONE
-V6  grep localStorage (3 FE files)     → only PRE-EXISTING token handling in api.js
-                                          (lines 197/267/1291); NOT in p3c code. PASS.
-V7  grep WebkitOverflowScrolling       → NONE
-V8  grep "setSearchParams({" (3 files) → NONE
-V9  SafetySignaturePad contract check  → onSave({signerName,signatureType,typedName,
-                                          blob}) matches api.signTraining. PASS.
-V10 atomic-claim + fail-soft regen mirror sign_tour_slot chain → confirmed by read.
+--------------------------------------------------------------------------------
+DIFF (summary)
+--------------------------------------------------------------------------------
+ frontend/src/pages/SafetyHomePage.js | 210 ++++++++++++++++--------------
+ 1 file changed, 129 insertions(+), 81 deletions(-)
 
-------------------------------------------------------------------------------
-DEVIATIONS FROM PLAN
-------------------------------------------------------------------------------
-- onSaved merge (FILE 5): plan's snippet showed only reloadTrainings + renewal
-  auto-sign, but the EXISTING onSaved carried trainingCardLock reset + workerChain
-  increment. Both preserved; workerChain increment now guarded to skip on renewal
-  (a renewal is not a chain add). No behavior regression for the non-renewal path.
-- lockedWorker guards extended with !trainingForm.renewFrom so a renewal never also
-  triggers the card-lock/chain lockedWorker path (renewFrom drives the lock inside
-  the form via renewalMode). Defensive; renew is invoked from the list row where
-  cardLock/chain are already null.
-- signature_display_url regen wrapped in try/except (fail-soft) so a dead/expired
-  S3 key never 500s a list/GET — matches the tour signature fail-soft posture.
+--------------------------------------------------------------------------------
+VERIFY
+--------------------------------------------------------------------------------
+V1 [device — Zahi] Worker w/ 3 same-type records → ONE row (newest) + "הצג קודמות
+   (2)"; expand → 2 muted rows, no חידוש, pencil present (+החתמה where unsigned).
+   Logic confirmed in code: latest = first DESC record; older length = 2 →
+   expander label "הצג קודמות (2)"; isOld rows drop חידוש + gain opacity-60.
+V2 [device — Zahi] Renewal from visible row → new record (newest trained_at)
+   becomes group's latest; previous latest demoted into older[] (count bumps).
+   Confirmed by the grouping + defensive-swap logic.
+V3 [logic — agent] Two types / same worker → two keys → two rows (no cross-type
+   grouping). Two workers / same type → two keys → two rows. Key is
+   worker_id|training_type — verified in code.
+V4 [device — Zahi] Signature flow available from latest row AND expanded old row
+   (onSign(tr) wired in renderRow for both; חתום chip opens display url).
+V5 [agent env] craco build EXIT=0. House greps on the edited region
+   (window.confirm | localStorage | native <select>) → CLEAN. No new deps.
 
-------------------------------------------------------------------------------
-COMMIT MESSAGE
-------------------------------------------------------------------------------
-feat(safety): training renewal + worker signature (p3c)
+--------------------------------------------------------------------------------
+NOTES (no action)
+--------------------------------------------------------------------------------
+- Tab counter "הדרכות (N)" still counts RECORDS, not groups — correct (register).
+- The aux "expiry" filter passes server-filtered items through the same grouping;
+  an expired OLD record shows as its group's latest only when the newer record
+  was filtered out — that is the filter doing its job. No special-casing.
+- DO NOT TOUCH honored: backend, mount props/wiring, SafetyTrainingForm,
+  SafetySignaturePad — all untouched.
 
-------------------------------------------------------------------------------
-FUNCTIONAL PROBES (per Zahi request — verification only, ran in this env)
-------------------------------------------------------------------------------
-Harness: backend/tests/probe_p3c_signature.py — drives the REAL safety_router
-coroutines against REAL local Mongo (mongodb://localhost:27017 / contractor_ops)
-with REAL local object-storage (FILES_STORAGE_BACKEND=local: save_bytes writes a
-file + returns the storage ref; generate_url echoes it). validate_upload (PNG
-ext/mime) kept REAL. Scaffolding NOT under test and patched to no-op (disclosed):
-_check_project_access, check_upload_rate_limit, check_upload_bytes,
-check_storage_quota, record_upload, and router.get_db/sr.get_db → probe Mongo.
-P6 harness: /tmp/probe_p6.mjs — computeRenewExpiry copied VERBATIM from
-SafetyTrainingForm.js (lines 25-32).
-
-Command: cd backend && FILES_STORAGE_BACKEND=local MONGO_URL=mongodb://localhost:27017 \
-         DB_NAME=contractor_ops python tests/probe_p3c_signature.py   → 8/8 PASS
-         node /tmp/probe_p6.mjs                                        → 4/4 PASS
-Storage-mode note: probes ran in LOCAL mode (no AWS bucket in this env). Stored
-signature_ref is the storage REF, NOT a presigned/ephemeral URL; display URL is
-recomputed per-GET via generate_url. In S3 mode the SAME code stores "s3://<key>"
-and generate_url presigns — key-only-at-rest invariant is identical.
-
-  [PASS] create sets worker_signature=None
-  [PASS] P1 canvas signature → 200; response carries worker_signature.signature_display_url
-         (e.g. /api/uploads/safety/{pid}/trainings/{tid}/sig_worker_{uuid}.png)
-  [PASS] P1 Mongo stores storage REF/KEY only — signature_ref present, NOT an http presigned URL
-  [PASS] P1 signature_display_url is NOT persisted — Mongo sig keys = {captured_by, name,
-         signature_ref, signature_type, signed_at, typed_name}
-  [PASS] P2 re-sign same training → 409 "ההדרכה כבר חתומה"
-  [PASS] P3 legacy row inserted WITHOUT worker_signature key → sign → 200
-         (atomic claim filter {worker_signature: None} matches the missing key)
-  [PASS] P4 typed signature → 200; typed_name="ישראל ישראלי", signature_ref=None
-  [PASS] P5 PATCH /trainings/{id} with worker_signature in body → field dropped by
-         SafetyTrainingUpdate (dumped keys = {training_type}) AND stored worker_signature
-         unchanged
-  [PASS] P6a computeRenewExpiry(2026-01-01, 2026-12-31, 2026-07-07) → 2027-07-06 (today + 364d)
-  [PASS] P6b old without expires_at → ''
-  [PASS] P6c old without trained_at → ''  (bonus)
-  [PASS] P6d invalid date → ''            (bonus)
-
-TOTAL: 12/12 probes passed. No app-code changes made (probe harness added under
-backend/tests/ only; SafetySignaturePad.js untouched).
-
-------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
