@@ -112,4 +112,46 @@ COMMIT MESSAGE
 feat(safety): training renewal + worker signature (p3c)
 
 ------------------------------------------------------------------------------
+FUNCTIONAL PROBES (per Zahi request — verification only, ran in this env)
+------------------------------------------------------------------------------
+Harness: backend/tests/probe_p3c_signature.py — drives the REAL safety_router
+coroutines against REAL local Mongo (mongodb://localhost:27017 / contractor_ops)
+with REAL local object-storage (FILES_STORAGE_BACKEND=local: save_bytes writes a
+file + returns the storage ref; generate_url echoes it). validate_upload (PNG
+ext/mime) kept REAL. Scaffolding NOT under test and patched to no-op (disclosed):
+_check_project_access, check_upload_rate_limit, check_upload_bytes,
+check_storage_quota, record_upload, and router.get_db/sr.get_db → probe Mongo.
+P6 harness: /tmp/probe_p6.mjs — computeRenewExpiry copied VERBATIM from
+SafetyTrainingForm.js (lines 25-32).
+
+Command: cd backend && FILES_STORAGE_BACKEND=local MONGO_URL=mongodb://localhost:27017 \
+         DB_NAME=contractor_ops python tests/probe_p3c_signature.py   → 8/8 PASS
+         node /tmp/probe_p6.mjs                                        → 4/4 PASS
+Storage-mode note: probes ran in LOCAL mode (no AWS bucket in this env). Stored
+signature_ref is the storage REF, NOT a presigned/ephemeral URL; display URL is
+recomputed per-GET via generate_url. In S3 mode the SAME code stores "s3://<key>"
+and generate_url presigns — key-only-at-rest invariant is identical.
+
+  [PASS] create sets worker_signature=None
+  [PASS] P1 canvas signature → 200; response carries worker_signature.signature_display_url
+         (e.g. /api/uploads/safety/{pid}/trainings/{tid}/sig_worker_{uuid}.png)
+  [PASS] P1 Mongo stores storage REF/KEY only — signature_ref present, NOT an http presigned URL
+  [PASS] P1 signature_display_url is NOT persisted — Mongo sig keys = {captured_by, name,
+         signature_ref, signature_type, signed_at, typed_name}
+  [PASS] P2 re-sign same training → 409 "ההדרכה כבר חתומה"
+  [PASS] P3 legacy row inserted WITHOUT worker_signature key → sign → 200
+         (atomic claim filter {worker_signature: None} matches the missing key)
+  [PASS] P4 typed signature → 200; typed_name="ישראל ישראלי", signature_ref=None
+  [PASS] P5 PATCH /trainings/{id} with worker_signature in body → field dropped by
+         SafetyTrainingUpdate (dumped keys = {training_type}) AND stored worker_signature
+         unchanged
+  [PASS] P6a computeRenewExpiry(2026-01-01, 2026-12-31, 2026-07-07) → 2027-07-06 (today + 364d)
+  [PASS] P6b old without expires_at → ''
+  [PASS] P6c old without trained_at → ''  (bonus)
+  [PASS] P6d invalid date → ''            (bonus)
+
+TOTAL: 12/12 probes passed. No app-code changes made (probe harness added under
+backend/tests/ only; SafetySignaturePad.js untouched).
+
+------------------------------------------------------------------------------
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
