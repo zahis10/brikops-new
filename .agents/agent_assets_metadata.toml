@@ -660,3 +660,9 @@ id = "Qb5ob4wk8AivtFMQpZuMV"
 uri = "file://.local/plans/safety-p3c-fix1-plan.txt"
 type = "text"
 title = "PLAN — safety-p3c-fix1: group training renewals (latest + collapse old)"
+
+[[outputs]]
+id = "01BRMMGRFsk4DIAZckBEI"
+uri = "file://.local/plans/safety-p3c-fix2-plan.txt"
+type = "text"
+title = "PLAN — safety-p3c-fix2: trainings tab counts groups (current), not records"
