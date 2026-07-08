@@ -6,7 +6,7 @@ ROLLBACK: single commit → git revert <sha> && ./deploy.sh --stag
 ================================================================================
 
 WHAT CHANGED
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 backend/contractor_ops/safety/            NEW package (12 modules, 3,706 lines):
   _shared.py      159   single shared APIRouter + constants + helpers + imports
   healthz.py       19   sections moved VERBATIM as line-slices from the
