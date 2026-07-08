@@ -1,0 +1,2 @@
+- [Mongo partial-index null limits](mongo-partial-index-null.md) — partialFilterExpression can't express {field: null}; use a compound unique index including the soft-delete field instead.
+- [Draft-only mutation race pattern](draft-mutation-atomicity.md) — read-time status checks aren't enough; every draft-only update must re-assert status inside the update_one filter.

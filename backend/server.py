@@ -26,7 +26,7 @@ from config import (
     OTP_TTL_SECONDS, OTP_MAX_ATTEMPTS, OTP_RATE_LIMIT_SECONDS,
     STEPUP_EMAIL, SMTP_USER, SMTP_PASS,
     ENABLE_DEMO_USERS, DEMO_DEFAULT_PASSWORD, DEMO_RESET_PASSWORDS,
-    ENABLE_SAFETY_MODULE,
+    ENABLE_SAFETY_MODULE, ENABLE_WORK_DIARY,
 )
 
 logging.basicConfig(
@@ -464,6 +464,18 @@ if ENABLE_SAFETY_MODULE:
     logger.info("Safety module ENABLED — router registered at /api/safety")
 else:
     logger.info("Safety module disabled (ENABLE_SAFETY_MODULE=false)")
+
+# -----------------------------------------------------------------
+# Work Diary (יומן עבודה) D1 — feature-gated, mirrors the safety pattern.
+# When ENABLE_WORK_DIARY is False, router is NEVER imported and
+# endpoints 404.
+# -----------------------------------------------------------------
+if ENABLE_WORK_DIARY:
+    from contractor_ops.work_diary_router import router as work_diary_router
+    app.include_router(work_diary_router)
+    logger.info("Work Diary ENABLED — router registered at /api/work-diary")
+else:
+    logger.info("Work Diary disabled (ENABLE_WORK_DIARY=false)")
 
 from contractor_ops.debug_router import router as debug_router
 app.include_router(debug_router)
@@ -1194,6 +1206,14 @@ async def _deferred_db_init():
                 await ensure_safety_indexes(db)
             except Exception as e:
                 logger.error(f"Failed to ensure safety indices: {e}")
+                # Do NOT crash startup — module will still function, queries just slower
+        # Work Diary indices (guarded by feature flag)
+        if ENABLE_WORK_DIARY:
+            from contractor_ops.work_diary_router import ensure_work_diary_indexes
+            try:
+                await ensure_work_diary_indexes(db)
+            except Exception as e:
+                logger.error(f"Failed to ensure work diary indices: {e}")
                 # Do NOT crash startup — module will still function, queries just slower
     except Exception as e:
         logger.warning(f"[STARTUP] Index creation failed (non-fatal): {e}")

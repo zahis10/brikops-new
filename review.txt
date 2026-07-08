@@ -1,156 +1,158 @@
 ================================================================================
-BATCH: refactor-safety-split — split safety_router.py (3,397 lines) into
-       contractor_ops/safety/ package + facade  |  branch: staging
-DATE: 2026-07-08  |  ROLLBACK SHA (pre-batch HEAD): 3fe85d7
-ROLLBACK: single commit → git revert <sha> && ./deploy.sh --stag
+REVIEW — BATCH diary-d1: Work Diary backend (יומן עבודה, D1 of 4)
+Date: 2026-07-08  |  Branch: staging (HEAD 57c9f73 + this work, uncommitted)
 ================================================================================
 
-WHAT CHANGED
--------------------------------------------------------------------------------
-backend/contractor_ops/safety/            NEW package (12 modules, 3,706 lines):
-  _shared.py      159   single shared APIRouter + constants + helpers + imports
-  healthz.py       19   sections moved VERBATIM as line-slices from the
-  workers.py      203   monolith (MOVE, never edit), each with a generated
-  trainings.py    301   explicit `from contractor_ops.safety._shared import
-  documents.py    272   (...)` header. Zero cross-section helper promotions
-  tasks.py        277   were needed.
-  incidents.py    260
-  tours.py        720
-  equipment.py    508   (DRAFT comment + DEFAULT_EQUIPMENT_CHECKS verbatim)
-  score_exports.py 738
-  uploads.py       92
-  indexes.py      139
-  __init__.py      18   imports submodules in ORIGINAL section order — this IS
-                        the route registration order (summary-before-/{id}).
-                        DO NOT REORDER.
-backend/contractor_ops/safety_router.py   3,397 → 35 lines. Now a facade that
-  re-exports exactly the consumer-audited surface (explicit, no import *):
-  router, ensure_safety_indexes, SAFETY_WRITERS, SAFETY_DELETERS,
-  _hash_id_number, _new_id, get_db, _now, _audit, _check_project_access,
-  require_roles, check_upload_rate_limit, check_upload_bytes,
-  check_storage_quota, record_upload, create_training, list_trainings,
-  update_training, sign_training, SafetyTrainingCreate, SafetyTrainingUpdate.
-backend/tests/probe_p3c_signature.py      +10/-6  (approved Option-A amendment
-backend/tests/probe_p3c_fix2_group_total.py +6/-2  — patch targets only, see
-                                                     PROBE DIFF section)
-backend/tests/refactor_identity.py        NEW verification-only tool (P-A/B/C)
-docs/refactor-backlog.md                  +45 (#21 DONE + queue #22-#24)
-UNTOUCHED (per batch rules): server.py, schemas.py, safety_pdf.py, all frontend.
-
-CONSUMER AUDIT TABLE (defines the facade surface; re-verified AFTER — P-F)
+STEP 0 — PRE-FLIGHT (all anchors matched before writing code)
 --------------------------------------------------------------------------------
-server.py:456                       from contractor_ops.safety_router import router
-server.py:1192                      ... import ensure_safety_indexes
-safety_registration_router.py:20    SAFETY_WRITERS, _hash_id_number, _new_id, ...
-tests/probe_p3c_signature.py        safety_router as sr (coroutines+models+helpers)
-tests/probe_p3c_fix2_group_total.py safety_router as sr (same style)
-tests/refactor_identity.py          router (verification tool)
-All resolve through the facade — zero broken imports.
+✓ server.py:455 safety flag-gate block + :1191 startup-index block — mirrored.
+✓ config.py:71 ENABLE_SAFETY_MODULE pattern — ENABLE_WORK_DIARY added below it.
+✓ safety/trainings.py:225 sign_training — 3c chain mirrored helper-for-helper.
+✓ safety/_shared.py:54 SAFETY_WRITERS = ("project_manager","management_team").
+✓ grep "work_diary" backend/ → was EMPTY (green field).
+✓ utils/timezone.py israel_today() — entered_late day boundary.
+✓ Derivation source fields verified in live code (workers.company_id,
+  equipment.status, incidents.occurred_at, tours.tour_date, documents.kind/
+  status/created_at/updated_at, trainings.trained_at/worker_id, project_companies).
+⚠ Flagged in plan: concept doc future-features/work-diary-concept-2026-07-08.md
+  does not exist in repo; the batch's own quoted decisions 1-9 were followed.
 
-IDENTITY BATTERY — ALL PASS
+FILES CHANGED (5 modified, 1 new production file, 2 new probe files)
 --------------------------------------------------------------------------------
-P-A  Route table (method+path+name+status_code, sorted):    BYTE-IDENTICAL
-P-B  OpenAPI schema (flag on, canonical JSON):               BYTE-IDENTICAL
-P-C  Function bodies: 77/77 sha256 body hashes moved-identical (incl. the two
-     duplicate-named `_validate` pydantic validators, hashed per-body);
-     6/6 constants identical (incl. DEFAULT_TOUR_CHECKLIST,
-     DEFAULT_EQUIPMENT_CHECKS via AnnAssign handling).       IDENTICAL
-     Artifacts: .local/artifacts/refactor-safety-split/ (before/after + diffs)
-P-D  Probe suites re-run (local mongod):
-       probe_p3c_signature.py        RESULT: 8/8 probes passed
-       probe_p3c_fix2_group_total.py RESULT: 3/3 probes passed
-       probe_validation_handler.py   RESULT: 4/4 probes passed
-     NOTE on "expected 12/12": transcript of the original p3c run shows the
-     12/12 figure was 8 backend (this file) + 4 JS (frontend harness, removed
-     after that batch per its own cleanup). The Python probe's own original
-     count was 8/8 — today's 8/8 is an exact match, not a shortfall.
-     ENV NOTE: probes require `MONGO_URL=mongodb://localhost:27017
-     DB_NAME=contractor_ops` on the command line (shell env carries the Atlas
-     SRV URL, which is unresolvable from this sandbox). Command-line override
-     only — probe line 64 (os.environ read) was NOT edited.
-P-E  Boot + healthz:
-       flag ON  (TestClient, auth overridden to PM): GET /api/safety/healthz
-         → 200 {"ok": true, "module": "safety", "enabled": true}
-       unauthenticated → 401 — PRE-EXISTING BY DESIGN (endpoint has
-         Depends(get_current_user): "never expose module existence to
-         unauthenticated scanners"). Behavior identical before/after.
-       flag OFF (real workflow restart): clean boot, "Safety module disabled",
-         all startup migrations/indexes OK, SPA served.
-P-F  Consumer grep re-run + live import of facade symbols: OK, 54 routes on
-     the shared router. py_compile + pyflakes across the package: zero
-     undefined names.
+1. backend/contractor_ops/work_diary_router.py  — NEW (production), ~460 lines
+   Router prefix /api/work-diary, tags=["work-diary"], flag-gated in server.py.
+   7 endpoints (route table below). NO delete endpoint by design (evidence
+   posture — documented in module docstring).
+2. backend/contractor_ops/schemas.py            — APPEND-ONLY (+81 lines)
+   WorkDiaryEntry / WorkDiaryCreate / WorkDiaryUpdate / WorkDiaryAddendumCreate.
+   Existing models untouched (diff is pure append at EOF).
+   WorkDiaryUpdate deliberately EXCLUDES diary_date / entered_late /
+   worker_signature / second_signature / addendums / status.
+3. backend/config.py                            — +3 lines after safety flag:
+   ENABLE_WORK_DIARY = env('ENABLE_WORK_DIARY', 'false') == 'true'
+4. backend/server.py                            — +22/-1 lines, 3 spots:
+   • line 32: ENABLE_WORK_DIARY added to the existing `from config import (` list
+   • ~line 476: mirror of the safety gate — router imported+included ONLY when
+     flag on; log line both ways
+   • ~line 1214: startup ensure_work_diary_indexes(db) inside the flag,
+     try/except non-fatal (identical posture to safety indices)
+5. backend/.env.production.template             — +1: ENABLE_WORK_DIARY=false
+   backend/.env.example                         — +3: flags section + same line
+   (NOTE, pre-existing: ENABLE_SAFETY_MODULE appears in NEITHER template —
+   left as-is, out of scope.)
+6. backend/tests/probe_diary_d1.py              — NEW probe harness (V1-V6+V5b)
+   backend/tests/probe_diary_d1_boot.py         — NEW boot probe (V7)
 
-PROBE DIFF (approved Option-A amendment — patch-target module paths ONLY)
+KEY IMPLEMENTATION DECISIONS
 --------------------------------------------------------------------------------
-Rationale: unittest.mock must patch where a name is LOOKED UP. The trainings
-coroutines now execute inside contractor_ops.safety.trainings, so patches on
-the facade would no longer intercept. Assertions untouched.
+• Uniqueness (decision 1): Mongo partialFilterExpression CANNOT express
+  {deletedAt: null} → unique COMPOUND index (project_id, diary_date, deletedAt)
+  instead. With no delete endpoint in D1 every doc has deletedAt=None, so
+  active-per-day uniqueness is exact. Friendly Hebrew 409 via pre-check;
+  DuplicateKeyError caught → same 409 (index closes the race window).
+• Derivation (decisions 6+9): 7 sections derived at create; EVERY source wrapped
+  in its own try/except → failure yields an empty section, never a 500. Zero
+  coupling to ENABLE_SAFETY_MODULE — empty collections simply derive empty.
+  Every derived item carries source:"derived"; manual items carry "manual".
+• defect_counts (documented heuristic per batch): opened = defects created that
+  date; closed = same-day updated_at with status ∈ resolved/verified. No audit
+  scan.
+• entered_late (decision 4): diary_date < israel_today(), server-computed at
+  create, absent from the PATCH model → immutable.
+• Signature (decision 2): mirrors sign_training 3c chain EXACTLY — rate-limit →
+  validate_upload → read → empty-check → check_upload_bytes →
+  check_storage_quota(org) → save_bytes(diaries/{pid}/{eid}/sig_{uuid}.png) →
+  record_upload; typed variant; Hebrew 422s. ATOMIC claim: update_one filter
+  {status:"draft", worker_signature:None} → modified==0 → 409. Key-only at
+  rest; signature_display_url regenerated per-GET, never persisted.
+• Signed immutability (decision 5): PATCH + refresh-derived ALSO re-assert
+  status:"draft" INSIDE their update_one filter (matched==0 → 409) — this
+  closes the read→write race vs a concurrent signer. Added after architect
+  review flagged the window; race probes added (V5b).
+• second_signature: reserved field, stored as None, NO setter anywhere (D1).
+• SAFETY_WRITERS imported from safety._shared — role-tuple import only; module
+  import has no route side effects when the safety flag is off (verified V7).
+• Audit entity "work_diary": created / updated / derived_refreshed / signed /
+  addendum_added.
 
---- a/backend/tests/probe_p3c_fix2_group_total.py
-+++ b/backend/tests/probe_p3c_fix2_group_total.py
-@@ -18,6 +18,10 @@
- from motor.motor_asyncio import AsyncIOMotorClient
- from contractor_ops import safety_router as sr
- from contractor_ops import router as cr
-+# Batch refactor-safety-split (Option A amendment, patch targets only): the
-+# trainings coroutines now live in contractor_ops.safety.trainings — patches
-+# must target the module where the functions are DEFINED, not the facade.
-+from contractor_ops.safety import trainings as st
-@@ -52,9 +56,9 @@
--        patch.object(sr, "get_db", return_value=db),
-+        patch.object(st, "get_db", return_value=db),
-         patch.object(cr, "get_db", return_value=db),
--        patch.object(sr, "_check_project_access", new=AsyncMock()),
-+        patch.object(st, "_check_project_access", new=AsyncMock()),
-
---- a/backend/tests/probe_p3c_signature.py
-+++ b/backend/tests/probe_p3c_signature.py
-@@ -29,6 +29,10 @@
- from contractor_ops import safety_router as sr
- from contractor_ops import router as cr
-+# Batch refactor-safety-split (Option A amendment, patch targets only): the
-+# trainings coroutines now live in contractor_ops.safety.trainings — patches
-+# must target the module where the functions are DEFINED, not the facade.
-+from contractor_ops.safety import trainings as st
-@@ -66,13 +70,13 @@
--        patch.object(sr, "get_db", return_value=db),
-+        patch.object(st, "get_db", return_value=db),
-         patch.object(cr, "get_db", return_value=db),  # _audit() resolves get_db in router module
--        patch.object(sr, "_check_project_access", new=AsyncMock()),
--        patch.object(sr, "check_upload_rate_limit", new=lambda *a, **k: None),
--        patch.object(sr, "check_upload_bytes", new=lambda *a, **k: None),
--        patch.object(sr, "check_storage_quota", new=AsyncMock()),
--        patch.object(sr, "record_upload", new=AsyncMock()),
-+        patch.object(st, "_check_project_access", new=AsyncMock()),
-+        patch.object(st, "check_upload_rate_limit", new=lambda *a, **k: None),
-+        patch.object(st, "check_upload_bytes", new=lambda *a, **k: None),
-+        patch.object(st, "check_storage_quota", new=AsyncMock()),
-+        patch.object(st, "record_upload", new=AsyncMock()),
-
-BUGS OBSERVED — NOT FIXED (per FEAR CONTRACT: MOVE never edit)
+VERIFY — V1..V8 RESULTS (all PASS)
 --------------------------------------------------------------------------------
-1. incidents.py:207 — pyflakes: f-string without placeholders. Pre-existing in
-   the monolith; moved verbatim. Cosmetic.
-2. probe_p3c_signature P1 uploads a real PNG to the prod S3 bucket
-   (brikops-prod-files) under safety/probe-*/... — pre-existing probe
-   behavior, unchanged. Consider a cleanup/backlog note if it bothers you.
+Harness scaffolding (DISCLOSED): probes drive the REAL router coroutines
+against REAL local Mongo (mongodb://localhost:27017/contractor_ops). Patched
+to no-op, NOT under test: _check_project_access (RBAC plumbing),
+check_upload_rate_limit, check_upload_bytes, check_storage_quota,
+record_upload. validate_upload kept REAL. require_roles is a Depends factory →
+coroutines called directly with user=project_manager (p3c convention).
+Storage backend in this env resolves to S3 → refs stored as s3://diaries/…
+(still a key, not a presigned URL — the 3c invariant holds).
 
-ARCHITECT REVIEW: PASS
+tests/probe_diary_d1.py — 31/31 PASS:
+V1 (9): workers_by_company 2 workers grouped (named company + "ללא חברה"),
+   all source:"derived"; equipment active-only (EQ-1 in, decommissioned EQ-2
+   out); subcontractors from project_companies; today's incident; today's
+   tour; defect_counts {opened:1, closed:1}; trainings with resolved
+   worker_name "עובד אחד"; EMPTY-safety project → all sections empty, entry
+   valid (decision 9); no_work=true → derivation skipped, auto description
+   "לא בוצעה עבודה — גשם".
+V2 (2): duplicate date → 409 "כבר קיים יומן לתאריך זה"; same date on a second
+   project → both created (index scoped per project).
+V3 (3): yesterday → entered_late=true; today → false; PATCH with a smuggled
+   entered_late → field ignored by model, value stays false.
+V4 (5): draft PATCH sets work_description; refresh-derived → manual item
+   ("קבלן ידני", source:manual) SURVIVES + derived count updates 2→3 after a
+   new worker; manual free-text untouched; signed PATCH → 409
+   "היומן חתום — ניתן להוסיף תוספת בלבד"; refresh on signed → same 409.
+V5 (5+3): sign without work_description (no_work=false) → 422 "יש למלא תיאור
+   עבודות לפני חתימה"; canvas sign → key-only at rest under diaries/…, no
+   display_url persisted; response carries signature_display_url (per-GET
+   presign); second sign → 409 "היומן כבר חתום"; pre-set-signature race → 409;
+   DB-level atomic filter matches 0 docs once signature exists.
+   V5b race closure (post-architect): stale-draft PATCH after concurrent
+   sign → 409; stale-draft refresh → 409; signed doc byte-untouched.
+V6 (3): addendum on signed appends (text+created_at+created_by); all other
+   fields byte-equal before/after; addendum on draft → 409
+   "היומן עדיין טיוטה — ערוך אותו ישירות".
+
+tests/probe_diary_d1_boot.py (fresh interpreter per flag value) — V7 PASS:
+   flag OFF: total 356 routes, 0 × /api/work-diary, boot clean, log line
+     "Work Diary disabled (ENABLE_WORK_DIARY=false)".
+   flag ON: 363 routes = 356 invariant + 7 diary endpoints; boot clean;
+     ensure_work_diary_indexes ran for real; unique index verified:
+     [('project_id',1),('diary_date',1),('deletedAt',1)] unique=True;
+     raw duplicate insert → DuplicateKeyError.
+V8: py_compile clean (server, config, router, schemas, both probes).
+   Non-diary route count IDENTICAL flag-off vs flag-on (356 = 356) → zero
+   changes to existing routers' tables. Dev workflow restarted → boots clean
+   with flag off (default).
+
+NEW ROUTER ROUTE TABLE (flag ON only; writers = PM/management_team)
 --------------------------------------------------------------------------------
-No blocking findings. Confirmed: single shared-router instance correct;
-import-order registration guard coherent; no circular import (router.py does
-not import safety_router); decorators/side-effects preserved by package import
-model; facade surface complete for all in-repo consumers; probe retarget is
-the correct minimal fix. Suggestions (NOT done — future backlog): CI snapshot
-of route order; smoke test locking the facade export contract.
+POST   /api/work-diary/{project_id}/entries                          [writers]
+GET    /api/work-diary/{project_id}/entries          (?month=YYYY-MM) [members]
+GET    /api/work-diary/{project_id}/entries/{entry_id}                [members]
+PATCH  /api/work-diary/{project_id}/entries/{entry_id}               [writers]
+POST   /api/work-diary/{project_id}/entries/{entry_id}/refresh-derived [writers]
+POST   /api/work-diary/{project_id}/entries/{entry_id}/signature     [writers]
+POST   /api/work-diary/{project_id}/entries/{entry_id}/addendums     [writers]
 
-BACKLOG UPDATED (docs/refactor-backlog.md)
+ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-#21 DONE — safety_router split (this batch, pattern documented for reuse)
-#22 queued — SafetyHomePage.js (1,748 lines)
-#23 queued — api.js (2,258 lines)
-#24 queued — qc_router.py (3,972) + handover_router.py (2,822)
+Round 1: flagged ONE material issue — PATCH/refresh checked "signed" at read
+time but their update filters didn't re-assert draft → concurrent-sign race
+could mutate a just-signed diary. FIXED (atomic status:"draft" filter + 409 on
+matched==0) and locked with 3 new race probes (V5b). All other areas passed:
+atomic sign claim correct, uniqueness strategy acceptable for D1, fail-soft
+derivation isolated, RBAC aligned, no injection/data-leak findings.
 
-================================================================================
+DO-NOT-TOUCH COMPLIANCE
+--------------------------------------------------------------------------------
+Safety package: import-only (role tuple + _new_id). Existing schemas: pure
+append. Frontend: untouched. No second_signature setter, no delete, no weather
+API, no PDF, no UI. No new dependencies. UTC via _now(); IL boundary via
+existing timezone util.
+
+ROLLBACK: single commit → git revert. Flag defaults false everywhere → zero
+production surface until explicitly enabled.
+
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================

@@ -1154,3 +1154,84 @@ class MatrixSavedView(BaseModel):
     filters: MatrixSavedViewFilters
     created_at: str
     updated_at: Optional[str] = None
+
+
+# =====================================================================
+# Work Diary (יומן עבודה) — Batch diary-d1 (backend only; UI is D2).
+# Implements the 9 locked concept decisions (2026-07-08). One entry per
+# project per day; signed = immutable; addendum-only after signing.
+# =====================================================================
+from pydantic import model_validator as _wd_model_validator  # local to this section
+
+
+class WorkDiaryCreate(BaseModel):
+    diary_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    no_work: bool = False                              # decision 3 — one-tap no-work day
+    no_work_reason: Optional[str] = Field(None, max_length=120)
+
+
+class WorkDiaryUpdate(BaseModel):
+    """Draft-only PATCH body. diary_date / entered_late / signatures /
+    addendums are deliberately ABSENT — immutable or endpoint-managed."""
+    no_work: Optional[bool] = None
+    no_work_reason: Optional[str] = Field(None, max_length=120)
+    workers_by_company: Optional[List[dict]] = None
+    equipment_list: Optional[List[dict]] = None
+    subcontractors: Optional[List[dict]] = None
+    work_description: Optional[str] = Field(None, max_length=2000)
+    materials: Optional[List[str]] = Field(None, max_length=40)
+    special_instructions: Optional[str] = Field(None, max_length=1000)
+    incidents_summary: Optional[List[dict]] = None
+    tours_summary: Optional[List[dict]] = None
+    defect_counts: Optional[dict] = None
+    trainings_summary: Optional[List[dict]] = None
+    inspector_visit: Optional[dict] = None
+    photo_refs: Optional[List[str]] = None
+    weather: Optional[dict] = None
+
+    @_wd_model_validator(mode="after")
+    def _material_item_len(self):
+        for m in (self.materials or []):
+            if len(m) > 120:
+                raise ValueError("פריט חומרים ארוך מדי (מקסימום 120 תווים)")
+        return self
+
+
+class WorkDiaryAddendumCreate(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
+
+
+class WorkDiaryEntry(BaseModel):
+    id: str
+    project_id: str
+    diary_date: str                          # YYYY-MM-DD; unique per project (active)
+    status: Literal["draft", "signed"] = "draft"
+    no_work: bool = False
+    no_work_reason: Optional[str] = None
+    entered_late: bool = False               # decision 4 — server-derived, immutable
+    # --- sections: derived-at-create, editable while draft (decisions 6+9) ---
+    workers_by_company: List[dict] = []
+    equipment_list: List[dict] = []
+    subcontractors: List[dict] = []
+    work_description: Optional[str] = None
+    materials: List[str] = []
+    special_instructions: Optional[str] = None
+    incidents_summary: List[dict] = []
+    tours_summary: List[dict] = []
+    defect_counts: Optional[dict] = None
+    trainings_summary: List[dict] = []
+    inspector_visit: Optional[dict] = None
+    photo_refs: List[str] = []
+    weather: Optional[dict] = None
+    # --- signature (decision 2; 3c dict shape) + addendum (decision 5) ---
+    worker_signature: Optional[dict] = None  # the WORK MANAGER's signature
+    second_signature: Optional[dict] = None  # reserved — NOT settable in D1
+    addendums: List[dict] = []               # append-only, signed-only
+    created_at: str
+    created_by: str
+    updated_at: Optional[str] = None
+    signed_at: Optional[str] = None
+    deletedAt: Optional[str] = None          # 7yr retention pattern; NO delete endpoint in D1
+    deletedBy: Optional[str] = None
+    deletion_reason: Optional[str] = None
+    retention_until: Optional[str] = None

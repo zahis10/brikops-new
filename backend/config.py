@@ -69,6 +69,9 @@ WA_INVITE_ENABLED = os.environ.get('WA_INVITE_ENABLED', 'false').lower() == 'tru
 # Safety module Phase 1 — default off, opt-in per environment.
 # When off, safety router is NOT registered and endpoints 404.
 ENABLE_SAFETY_MODULE = os.environ.get('ENABLE_SAFETY_MODULE', 'false').lower() == 'true'
+# Work Diary (יומן עבודה) D1 — default off, opt-in per environment.
+# When off, work_diary router is NOT registered and endpoints 404.
+ENABLE_WORK_DIARY = os.environ.get('ENABLE_WORK_DIARY', 'false').lower() == 'true'
 WHATSAPP_PROVIDER = os.environ.get('WHATSAPP_PROVIDER', 'meta')
 WA_ACCESS_TOKEN = os.environ.get('WA_ACCESS_TOKEN', '')
 WA_PHONE_NUMBER_ID = os.environ.get('WA_PHONE_NUMBER_ID', '')
