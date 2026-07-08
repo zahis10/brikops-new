@@ -666,3 +666,9 @@ id = "01BRMMGRFsk4DIAZckBEI"
 uri = "file://.local/plans/safety-p3c-fix2-plan.txt"
 type = "text"
 title = "PLAN — safety-p3c-fix2: trainings tab counts groups (current), not records"
+
+[[outputs]]
+id = "OCwcPDycuDK01NopcsR4t"
+uri = "file://.local/plans/hotfix-validation-handler-plan.txt"
+type = "text"
+title = "PLAN — hotfix-validation-handler: dev-mode 422 via jsonable_encoder"
