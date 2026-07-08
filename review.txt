@@ -1,77 +1,101 @@
 ================================================================================
-REVIEW — BATCH hotfix-validation-handler
-Dev-mode 500 on custom-validator errors → 422 with the real Hebrew message
+REVIEW — BATCH safety-tabs-overflow
+Mobile tab-strip: overflow affordance + active-tab auto-scroll
 ================================================================================
 Date:        2026-07-07
 Branch:      staging
-Rollback SHA (base): ecaf98a
-Severity:    P3 — DEV-ONLY. Prod NOT affected: the prod branch deliberately
-             returns generic 422 "נתונים לא תקינים" (post-pentest posture) and
-             was NOT touched.
-Scope:       1 file — backend/server.py (+4 / -1: one import, one line, comment)
-Build:       py_compile OK.
+Rollback SHA (base): b0455ba   (validation-handler hotfix landed first — queue
+                                order honored, single batch in flight)
+Severity:    P1 — 5 of 9 safety tabs undiscoverable on iPhone (RTL strip
+             overflows left with zero visual affordance).
+Scope:       1 file — frontend/src/pages/SafetyHomePage.js (+48 / -1)
+             components/ui/tabs.js NOT touched (see STEP 0).
+Build:       craco build EXIT=0.
 
 --------------------------------------------------------------------------------
-STEP 0 — PRE-FLIGHT (read-only, ALL MATCHED)
+STEP 0 — PRE-FLIGHT (run against HEAD b0455ba — ALL MATCHED)
 --------------------------------------------------------------------------------
-  git HEAD                                                → ecaf98a             ✓
-  _validation_exception_handler                           → line 61             ✓
-  if APP_MODE == 'dev': (dev branch of the handler)       → line 62             ✓
-  from fastapi.encoders import jsonable_encoder           → was MISSING (added) ✓
+  TabsList className="w-full justify-start..."  → line 572 (batch said ~581 —
+      minor drift, className byte-identical)                                 ✓
+  const activeTab = VALID_TABS...               → line 73 (batch said ~71)   ✓
+  ChevronLeft in page import                    → was MISSING → added        ✓
+  useRef                                        → already imported (line 1)  ✓
+  ui/tabs wrapper                               → TabsList already
+      React.forwardRef (line 8) → NO wrapper change needed                   ✓
+  Effect deps exist: loading / flagOff / forbidden (lines 68-70)             ✓
 
 --------------------------------------------------------------------------------
-WHAT CHANGED — backend/server.py only
+WHAT CHANGED — SafetyHomePage.js only
 --------------------------------------------------------------------------------
-1) Import added next to the existing fastapi imports (line 2):
-     from fastapi.encoders import jsonable_encoder
+1) Import: ChevronLeft added to the page's lucide-react import list.
 
-2) Dev branch of _validation_exception_handler:
-     if APP_MODE == 'dev':
-         # jsonable_encoder is required: pydantic v2 puts the raised ValueError
-         # OBJECT in ctx.error → raw JSONResponse crashes with TypeError (500).
-         return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
+2) State/refs: tabsListRef (useRef) + tabsOverflow (useState false).
 
-   PROD branch untouched — verified byte-identical (V4 below).
+3) Overflow detection effect:
+   - hasOverflow = scrollWidth > clientWidth + 4
+   - RTL note in code: Chrome/WebKit report scrollLeft 0 → negative when
+     scrolling; Math.abs() normalizes; atEnd = |scrollLeft| >=
+     scrollWidth - clientWidth - 4; indicator shows only while
+     hasOverflow && !atEnd.
+   - Wiring: run once + passive scroll listener on the strip + window resize
+     listener; full cleanup; deps [loading, flagOff, forbidden] so it
+     re-attaches after skeleton → real render.
 
-WHY: pydantic v2 places the raised ValueError object itself in
-errors()[i].ctx.error; returning exc.errors() through JSONResponse without
-jsonable_encoder → TypeError → 500, masking the real validation message during
-development (equipment check dates, tour_date, severity choice — any
-@model_validator raising ValueError). Fix shape sandbox-verified on our exact
-versions (fastapi==0.115.14, pydantic==2.12.5).
+4) Active-tab auto-scroll effect on [activeTab, loading]:
+   querySelector('[data-state="active"]') → scrollIntoView({ block:'nearest',
+   inline:'nearest' }) — instant (no smooth), never fights user scroll.
+   Covers deep links (?tab=...), BACK restore, and KPI-card setActiveTab.
+
+5) Markup: TabsList wrapped in <div className="relative">, ref added,
+   className kept EXACTLY as before; overlay rendered only when tabsOverflow:
+   pointer-events-none absolute inset-y-0 left-0 w-10 with gradient
+   (from-slate-50 via-slate-50/80 to-transparent) + ChevronLeft (w-4 h-4
+   text-slate-400). pointer-events-none keeps the last visible tab tappable.
 
 --------------------------------------------------------------------------------
 DIFF (summary)
 --------------------------------------------------------------------------------
- backend/server.py | +4 / -1   (import + encoded dev-branch return + 2 comment lines)
-
---------------------------------------------------------------------------------
-VERIFY — all run in this env (dev mode)
---------------------------------------------------------------------------------
-Functional probe (verification-only): boots the REAL FastAPI app in-process
-(ENABLE_SAFETY_MODULE=true, APP_MODE=dev, local Mongo forced — the shell env
-carries an Atlas SRV URL that doesn't resolve here) and fires REAL HTTP requests
-via fastapi.testclient through the REAL handler. Scaffolding disclosed:
-get_current_user dependency-overridden to a PM user (validation errors raise
-during body parsing, before endpoint/DB logic).
-Harness: backend/tests/probe_validation_handler.py     → 4/4 PASS
-
-  [PASS] V1 POST equipment check performed_at="not-a-date" → 422 (was 500)
-  [PASS] V1 detail[0].msg = "Value error, תאריך ביצוע לא תקין (נדרש YYYY-MM-DD)"
-  [PASS] V2 POST tour tour_date="07/07/2026" → 422,
-         msg = "Value error, תאריך סיור לא תקין" (payload uses a valid
-         tour_type=officer_monthly so the date validator is what fires)
-  [PASS] V3 POST trainings {} (missing required fields) → 422, standard
-         detail list shape (loc/msg/type per error, n_errors=3) — unchanged
-  V4 grep: prod branch line byte-identical:
-     return JSONResponse(status_code=422, content={"detail": "נתונים לא תקינים"})
-  V5 python -m py_compile backend/server.py → OK
+ frontend/src/pages/SafetyHomePage.js | +48 / -1
+   (import +1, refs/state +2, two effects +~32 incl. comments, markup wrap +7)
 
 --------------------------------------------------------------------------------
 DO NOT TOUCH — honored
 --------------------------------------------------------------------------------
-- Prod branch of the handler, APP_MODE logic, all other handlers — untouched.
-- No changes anywhere else.
+- All 9 TabsTrigger children, order, labels, counters — byte-untouched.
+- Card/TabsContent structure, aux-filter effect, equipCat logic — untouched.
+- components/ui/tabs.js — NOT touched (forwardRef already present, verified).
+- No new deps; no scroll-snap; no WebkitOverflowScrolling.
+
+--------------------------------------------------------------------------------
+VERIFY
+--------------------------------------------------------------------------------
+V1 [device — ZAHI, iPhone] Fresh load on סקירה → fade+chevron at left edge;
+   scroll strip to end → indicator disappears; scroll back → reappears.
+V2 [device — ZAHI] Deep link ...?tab=equipment → ציוד trigger visible on load
+   (auto-scrolled); indicator hidden when strip is at its end.
+V3 [agent — DISCLOSED LIMITATION] A live narrow-viewport browser probe was NOT
+   possible in this env: the running dev server has ENABLE_SAFETY_MODULE=false
+   (safety routes 404) and the preview screenshot tool has a fixed viewport.
+   Verified instead by: (a) code inspection of the KPI-card path — "עובדים ללא
+   הדרכה" calls setActiveTab('workers') → activeTab changes → the auto-scroll
+   effect fires; (b) independent architect code review (below). Please include
+   the KPI-card tap in your device pass.
+V4 [agent — same limitation] No-overflow case verified by logic: tabsOverflow
+   requires scrollWidth > clientWidth + 4; wide viewport → false → overlay not
+   rendered at all ({tabsOverflow && ...}).
+V5 [agent] craco build EXIT=0 (CI=false, REACT_APP_BACKEND_URL set).
+   House greps on SafetyHomePage.js — all 0:
+     WebkitOverflowScrolling=0  window.confirm=0  localStorage=0
+     setSearchParams({=0
+V6 [agent] ui/tabs wrapper untouched — no consumer audit needed.
+
+Architect code review (independent subagent): PASS.
+  - Ref forwarding valid; listener lifecycle sound (attach/cleanup correct);
+    regression risk low (no trigger/routing changes).
+  - Non-blocking caveat: Math.abs(scrollLeft) is correct for WebKit/Blink
+    (the iPhone target) but Firefox uses a positive RTL scroll model — the
+    indicator may hide early there. Out of scope per batch (iPhone-focused);
+    flag if cross-browser RTL is desired later.
 
 --------------------------------------------------------------------------------
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

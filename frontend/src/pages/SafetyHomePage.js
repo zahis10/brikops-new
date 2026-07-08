@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
   Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter, Plus, Pencil, Camera, FileText, ClipboardList,
+  ChevronLeft,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
@@ -129,6 +130,45 @@ export default function SafetyHomePage() {
   // Skip the filter useEffect's initial run — main useEffect's Promise.all
   // already fetched documents. The ref flips to false after the first real run.
   const filterFetchFirstRun = useRef(true);
+
+  // Batch safety-tabs-overflow — mobile tab-strip affordance. The 9-tab strip
+  // overflows left (RTL) on phones with no visual cue; tabsOverflow drives a
+  // gradient+chevron indicator shown only while more tabs remain.
+  const tabsListRef = useRef(null);
+  const [tabsOverflow, setTabsOverflow] = useState(false);
+
+  useEffect(() => {
+    const updateTabsOverflow = () => {
+      const el = tabsListRef.current;
+      if (!el) return;
+      const hasOverflow = el.scrollWidth > el.clientWidth + 4;
+      // RTL: Chrome/WebKit report scrollLeft as 0 → negative when scrolling.
+      // Math.abs() normalizes; "at end" = scrolled the full overflow distance.
+      const atEnd = Math.abs(el.scrollLeft) >= el.scrollWidth - el.clientWidth - 4;
+      setTabsOverflow(hasOverflow && !atEnd);
+    };
+    updateTabsOverflow();
+    const el = tabsListRef.current;
+    if (!el) return undefined;
+    el.addEventListener('scroll', updateTabsOverflow, { passive: true });
+    window.addEventListener('resize', updateTabsOverflow);
+    return () => {
+      el.removeEventListener('scroll', updateTabsOverflow);
+      window.removeEventListener('resize', updateTabsOverflow);
+    };
+  }, [loading, flagOff, forbidden]); // re-attach after skeleton → real render
+
+  // Auto-scroll the active trigger into view — covers deep links (?tab=...),
+  // BACK restore, and programmatic setActiveTab from KPI cards. Instant (no
+  // smooth) so it never fights the user's own scroll.
+  useEffect(() => {
+    const el = tabsListRef.current;
+    if (!el) return;
+    const active = el.querySelector('[data-state="active"]');
+    if (active && typeof active.scrollIntoView === 'function') {
+      active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  }, [activeTab, loading]);
 
   // Initial load: project + safety data + best-effort companies/memberships.
   useEffect(() => {
@@ -569,7 +609,8 @@ export default function SafetyHomePage() {
       <div className="max-w-6xl mx-auto px-4 py-5 space-y-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl" className="space-y-6">
           <Card className="p-0 overflow-hidden bg-white shadow-sm">
-            <TabsList className="w-full justify-start rounded-none border-b bg-slate-50 p-0 h-auto overflow-x-auto flex">
+            <div className="relative">
+            <TabsList ref={tabsListRef} className="w-full justify-start rounded-none border-b bg-slate-50 p-0 h-auto overflow-x-auto flex">
               <TabsTrigger
                 value="overview"
                 className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
@@ -625,6 +666,12 @@ export default function SafetyHomePage() {
                 ציוד ({equipSummary.total})
               </TabsTrigger>
             </TabsList>
+            {tabsOverflow && (
+              <div className="pointer-events-none absolute inset-y-0 left-0 w-10 flex items-center justify-start bg-gradient-to-r from-slate-50 via-slate-50/80 to-transparent">
+                <ChevronLeft className="w-4 h-4 text-slate-400" />
+              </div>
+            )}
+            </div>
 
             <TabsContent value="documents" className="p-0 m-0">
               <DocumentsList
