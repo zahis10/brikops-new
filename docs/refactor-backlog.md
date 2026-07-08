@@ -351,3 +351,46 @@ of these files (Boy Scout Rule).
 **Estimated time:** [hours]
 **Fold into batch X when:** [next-touched suggestion]
 ```
+
+## #21 — DONE (2026-07-07): `safety_router.py` split into `contractor_ops/safety/`
+
+**Batch:** refactor-safety-split. The 3,397-line monolith moved into 12
+section modules (`_shared.py` + healthz/workers/trainings/documents/
+tasks/incidents/tours/equipment/score_exports/uploads/indexes) with a
+single shared `APIRouter` (submodule import order in `__init__.py` IS
+the route registration order) and a ~35-line facade at the old import
+path. Identity proven: route table, OpenAPI schema, 77 per-function
+body hashes, 6 constants — all byte-identical; probe suites re-run
+green (8/8, 3/3, 4/4). Pattern to reuse for the queue below.
+
+## #22 — Split `SafetyHomePage.js` (1,748 lines) — facade pattern
+
+**File(s):** `frontend/src/pages/SafetyHomePage.js`
+**Severity:** Medium
+**What's wrong (data, not feeling):** 1,748 lines; page owns 9 tabs'
+state + inline list components (DocumentsList, ObservationsList...).
+**Proposed fix:** Same mechanical-move discipline as #21: extract
+inline list components to `components/safety/`, page keeps state.
+**Estimated time:** 3-4 hours incl. identity checks.
+**Fold into batch X when:** next batch heavily touching the page.
+
+## #23 — Split `api.js` (2,258 lines) — service-per-domain
+
+**File(s):** `frontend/src/services/api.js`
+**Severity:** Medium
+**What's wrong:** All 20+ service objects in one file.
+**Proposed fix:** One module per service + `api.js` facade re-export
+(same import-path-preserving pattern as #21).
+**Estimated time:** 2-3 hours.
+**Fold into batch X when:** dedicated refactor batch.
+
+## #24 — Split `qc_router.py` (3,972) and `handover_router.py` (2,822)
+
+**File(s):** `backend/contractor_ops/qc_router.py`,
+`backend/contractor_ops/handover_router.py`
+**Severity:** Medium (largest remaining backend monoliths)
+**Proposed fix:** Exact #21 recipe: section modules + shared router +
+facade; identity battery (route table / OpenAPI / body hashes) is now
+reusable via `backend/tests/refactor_identity.py` (parameterize paths).
+**Estimated time:** 4-6 hours each.
+**Fold into batch X when:** dedicated refactor batches, one rides alone.

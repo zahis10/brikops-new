@@ -29,6 +29,10 @@ from fastapi import HTTPException
 
 from contractor_ops import safety_router as sr
 from contractor_ops import router as cr
+# Batch refactor-safety-split (Option A amendment, patch targets only): the
+# trainings coroutines now live in contractor_ops.safety.trainings — patches
+# must target the module where the functions are DEFINED, not the facade.
+from contractor_ops.safety import trainings as st
 
 RESULTS = []
 
@@ -66,13 +70,13 @@ async def main():
     })
 
     patches = [
-        patch.object(sr, "get_db", return_value=db),
+        patch.object(st, "get_db", return_value=db),
         patch.object(cr, "get_db", return_value=db),  # _audit() resolves get_db in router module
-        patch.object(sr, "_check_project_access", new=AsyncMock()),
-        patch.object(sr, "check_upload_rate_limit", new=lambda *a, **k: None),
-        patch.object(sr, "check_upload_bytes", new=lambda *a, **k: None),
-        patch.object(sr, "check_storage_quota", new=AsyncMock()),
-        patch.object(sr, "record_upload", new=AsyncMock()),
+        patch.object(st, "_check_project_access", new=AsyncMock()),
+        patch.object(st, "check_upload_rate_limit", new=lambda *a, **k: None),
+        patch.object(st, "check_upload_bytes", new=lambda *a, **k: None),
+        patch.object(st, "check_storage_quota", new=AsyncMock()),
+        patch.object(st, "record_upload", new=AsyncMock()),
     ]
     for p in patches:
         p.start()
