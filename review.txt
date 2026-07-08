@@ -1,87 +1,77 @@
 ================================================================================
-REVIEW — BATCH safety-p3c-fix2
-Trainings tab counter = current trainings (groups), not raw records
+REVIEW — BATCH hotfix-validation-handler
+Dev-mode 500 on custom-validator errors → 422 with the real Hebrew message
 ================================================================================
 Date:        2026-07-07
 Branch:      staging
-Rollback SHA (base): bbf0343
-Severity:    P2 (Zahi field feedback — counter says 5, grouped list shows 3)
-Scope:       2 files — 1 backend + 1 frontend
-Build:       py_compile OK · craco build EXIT=0 (REACT_APP_BACKEND_URL provided
-             for the pre-existing env guard; unrelated to this change).
+Rollback SHA (base): ecaf98a
+Severity:    P3 — DEV-ONLY. Prod NOT affected: the prod branch deliberately
+             returns generic 422 "נתונים לא תקינים" (post-pentest posture) and
+             was NOT touched.
+Scope:       1 file — backend/server.py (+4 / -1: one import, one line, comment)
+Build:       py_compile OK.
 
 --------------------------------------------------------------------------------
 STEP 0 — PRE-FLIGHT (read-only, ALL MATCHED)
 --------------------------------------------------------------------------------
-  git HEAD                                                       → bbf0343      ✓
-  async def list_trainings(                                      → line 413     ✓
-  total = await db.safety_trainings.count_documents(q)           → line 437     ✓
-  return {"items": items, "total": total, ...}                   → line 449     ✓
-  "הדרכות ({trainingsView.total})" TabsTrigger label             → line 613     ✓
+  git HEAD                                                → ecaf98a             ✓
+  _validation_exception_handler                           → line 61             ✓
+  if APP_MODE == 'dev': (dev branch of the handler)       → line 62             ✓
+  from fastapi.encoders import jsonable_encoder           → was MISSING (added) ✓
 
 --------------------------------------------------------------------------------
-WHAT CHANGED
+WHAT CHANGED — backend/server.py only
 --------------------------------------------------------------------------------
-1) backend/contractor_ops/safety_router.py  (list_trainings; +7 / -1)
-   After the existing count_documents(q), one aggregation on the SAME q:
-       group_agg = await db.safety_trainings.aggregate([
-           {"$match": q},
-           {"$group": {"_id": {"w": "$worker_id", "t": "$training_type"}}},
-           {"$count": "n"},
-       ]).to_list(length=1)
-       group_total = group_agg[0]["n"] if group_agg else 0
-   Return dict now carries "group_total": group_total (server-side count of
-   distinct worker+type groups). Same q → respects the tab's filters and
-   include_deleted resolution. ONE aggregation, no N+1. Count is server-side so
-   it stays correct past the limit-50 fetch window (client-side grouping would
-   under-count).
+1) Import added next to the existing fastapi imports (line 2):
+     from fastapi.encoders import jsonable_encoder
 
-2) frontend/src/pages/SafetyHomePage.js  (trainings TabsTrigger label; +1 / -1)
-       הדרכות ({trainingsView.group_total ?? trainingsView.total})
-   The `??` fallback keeps the label sane if a stale response shape (no
-   group_total) is briefly in memory during the deploy window.
+2) Dev branch of _validation_exception_handler:
+     if APP_MODE == 'dev':
+         # jsonable_encoder is required: pydantic v2 puts the raised ValueError
+         # OBJECT in ctx.error → raw JSONResponse crashes with TypeError (500).
+         return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
 
-NO schema change (group_total is a response field). Score, exports, the fix1
-list/grouping render, the aux filter effect, and other tabs' counters untouched.
+   PROD branch untouched — verified byte-identical (V4 below).
+
+WHY: pydantic v2 places the raised ValueError object itself in
+errors()[i].ctx.error; returning exc.errors() through JSONResponse without
+jsonable_encoder → TypeError → 500, masking the real validation message during
+development (equipment check dates, tour_date, severity choice — any
+@model_validator raising ValueError). Fix shape sandbox-verified on our exact
+versions (fastapi==0.115.14, pydantic==2.12.5).
 
 --------------------------------------------------------------------------------
 DIFF (summary)
 --------------------------------------------------------------------------------
- backend/contractor_ops/safety_router.py  | +7 / -1
- frontend/src/pages/SafetyHomePage.js     | +1 / -1
+ backend/server.py | +4 / -1   (import + encoded dev-branch return + 2 comment lines)
 
 --------------------------------------------------------------------------------
-VERIFY
+VERIFY — all run in this env (dev mode)
 --------------------------------------------------------------------------------
-Functional probe (verification-only, ran in this env): drives the REAL
-list_trainings coroutine against REAL local Mongo (mongodb://localhost:27017 /
-contractor_ops). Scaffolding patched to no-op (disclosed): _check_project_access,
-router.get_db/sr.get_db. Harness: backend/tests/probe_p3c_fix2_group_total.py.
-Command: cd backend && MONGO_URL=mongodb://localhost:27017 DB_NAME=contractor_ops \
-         python tests/probe_p3c_fix2_group_total.py    → 3/3 PASS
+Functional probe (verification-only): boots the REAL FastAPI app in-process
+(ENABLE_SAFETY_MODULE=true, APP_MODE=dev, local Mongo forced — the shell env
+carries an Atlas SRV URL that doesn't resolve here) and fires REAL HTTP requests
+via fastapi.testclient through the REAL handler. Scaffolding disclosed:
+get_current_user dependency-overridden to a PM user (validation errors raise
+during body parsing, before endpoint/DB logic).
+Harness: backend/tests/probe_validation_handler.py     → 4/4 PASS
 
-  [PASS] V1 5 records in 3 (worker,type) groups → total=5, group_total=3
-  [PASS] V3a add record to EXISTING group        → total=6, group_total=3
-  [PASS] V3b add record of a NEW type            → total=7, group_total=4
-  V2 [device — Zahi] tab reads הדרכות (3); expand/collapse doesn't change it
-     (label bound to trainingsView.group_total; grouping is client-render only).
-  V4 [device — Zahi] aux filter active (e.g. training_type) → filtered fetch's
-     group_total drives the label (same q filters the aggregation server-side).
-  V5 [agent env] py_compile safety_router.py OK; craco build EXIT=0.
-
-Note on semantics (as specified): an EXPIRED training that is its group's newest
-still counts (live obligation to renew); only SUPERSEDED records stop counting —
-this follows naturally from counting distinct (worker,type) groups.
-
-Env note: local mongod had stopped between batches; restarted the "Start
-application" workflow to bring it back up before running the probe (local
-verification only — no deploy).
+  [PASS] V1 POST equipment check performed_at="not-a-date" → 422 (was 500)
+  [PASS] V1 detail[0].msg = "Value error, תאריך ביצוע לא תקין (נדרש YYYY-MM-DD)"
+  [PASS] V2 POST tour tour_date="07/07/2026" → 422,
+         msg = "Value error, תאריך סיור לא תקין" (payload uses a valid
+         tour_type=officer_monthly so the date validator is what fires)
+  [PASS] V3 POST trainings {} (missing required fields) → 422, standard
+         detail list shape (loc/msg/type per error, n_errors=3) — unchanged
+  V4 grep: prod branch line byte-identical:
+     return JSONResponse(status_code=422, content={"detail": "נתונים לא תקינים"})
+  V5 python -m py_compile backend/server.py → OK
 
 --------------------------------------------------------------------------------
 DO NOT TOUCH — honored
 --------------------------------------------------------------------------------
-- fix1 list/grouping render, aux filter effect, score, exports — untouched.
-- No schema change; other tabs' counters unchanged.
+- Prod branch of the handler, APP_MODE logic, all other handlers — untouched.
+- No changes anywhere else.
 
 --------------------------------------------------------------------------------
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

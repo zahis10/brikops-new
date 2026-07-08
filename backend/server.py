@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
@@ -60,7 +61,9 @@ import time as _time
 @app.exception_handler(RequestValidationError)
 async def _validation_exception_handler(request: Request, exc: RequestValidationError):
     if APP_MODE == 'dev':
-        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+        # jsonable_encoder is required: pydantic v2 puts the raised ValueError
+        # OBJECT in ctx.error → raw JSONResponse crashes with TypeError (500).
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
     return JSONResponse(status_code=422, content={"detail": "נתונים לא תקינים"})
 
 _server_start_time = _time.time()
