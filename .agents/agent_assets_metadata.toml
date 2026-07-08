@@ -690,3 +690,9 @@ id = "UZDHzcNJiEzwWcB5btOCn"
 uri = "file://.local/plans/safety-w1-alerts-phase-g-report.txt"
 type = "text"
 title = "PHASE G — safety-w1-alerts: אינוונטר תבניות + המלצה"
+
+[[outputs]]
+id = "z07wUW2j57TBtHMID6XcV"
+uri = "file://.local/plans/diary-d1-plan.txt"
+type = "text"
+title = "PLAN — diary-d1: Work Diary backend (יומן עבודה, D1)"
