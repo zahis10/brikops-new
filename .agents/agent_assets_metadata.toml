@@ -684,3 +684,9 @@ id = "cJbmWZ5R5uRzK5yo8t-pv"
 uri = "file://.local/plans/refactor-safety-split-plan.txt"
 type = "text"
 title = "refactor-safety-split — Plan (BEFORE artifacts מוכנים; ⚠️ הכרעה נדרשת על P-D)"
+
+[[outputs]]
+id = "UZDHzcNJiEzwWcB5btOCn"
+uri = "file://.local/plans/safety-w1-alerts-phase-g-report.txt"
+type = "text"
+title = "PHASE G — safety-w1-alerts: אינוונטר תבניות + המלצה"
