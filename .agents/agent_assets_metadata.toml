@@ -678,3 +678,9 @@ id = "QoRlDkMLYjNAj3Vb71FJs"
 uri = "file://.local/plans/safety-tabs-overflow-plan.txt"
 type = "text"
 title = "safety-tabs-overflow — Plan (STEP 0 תואם, ui/tabs לא ייגע)"
+
+[[outputs]]
+id = "cJbmWZ5R5uRzK5yo8t-pv"
+uri = "file://.local/plans/refactor-safety-split-plan.txt"
+type = "text"
+title = "refactor-safety-split — Plan (BEFORE artifacts מוכנים; ⚠️ הכרעה נדרשת על P-D)"
