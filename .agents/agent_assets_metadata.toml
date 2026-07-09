@@ -708,3 +708,9 @@ id = "5O-RXLOpjBsHC0rBsXbY0"
 uri = "file://.local/plans/diary-d2-plan.txt"
 type = "text"
 title = "PLAN — diary-d2: Work Diary UI (ממתין לאישור)"
+
+[[outputs]]
+id = "FcosFeGsYbCgV34kB7g9m"
+uri = "file://.local/plans/diary-d3-plan.txt"
+type = "text"
+title = "PLAN — diary-d3: PDF + תמונות + קריאה לבעלים + paywall"
