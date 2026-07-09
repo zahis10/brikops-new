@@ -696,3 +696,9 @@ id = "z07wUW2j57TBtHMID6XcV"
 uri = "file://.local/plans/diary-d1-plan.txt"
 type = "text"
 title = "PLAN — diary-d1: Work Diary backend (יומן עבודה, D1)"
+
+[[outputs]]
+id = "9PbtqUTJ1J5LoURMfqoxW"
+uri = "file://.local/plans/safety-1-7-plan.txt"
+type = "text"
+title = "PLAN — safety-1.7: worker profile photo (ממתין לאישור)"
