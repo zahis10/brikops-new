@@ -31,6 +31,7 @@ export const SECTION_TITLES = {
   defect_counts: 'ליקויים',
   inspector_visit: 'ביקורת מפקח',
   special_instructions: 'הוראות מיוחדות',
+  photos: 'תמונות',
   addendums: 'תוספות',
 };
 

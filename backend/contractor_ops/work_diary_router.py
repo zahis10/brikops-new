@@ -20,18 +20,20 @@ When the flag is off, this module is never imported and endpoints 404.
 NO DELETE endpoint by design (evidence posture — the diary is a legal
 record; a future admin batch may add soft-delete with retention).
 """
+import io
 import logging
 import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from pymongo.errors import DuplicateKeyError
 
 from services.object_storage import generate_url
 
 from contractor_ops.router import (
     get_current_user, get_db, _now, _audit,
-    _check_project_access, require_roles,
+    _check_project_access, _is_super_admin, require_roles,
 )
 from contractor_ops.schemas import (
     WorkDiaryEntry, WorkDiaryCreate, WorkDiaryUpdate, WorkDiaryAddendumCreate,
@@ -50,6 +52,31 @@ from contractor_ops.utils.timezone import israel_today
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/work-diary", tags=["work-diary"])
+
+# D3 read-widen (Zahi approved 2026-07-09): owner/admin may READ the diary
+# (list / get / export-pdf). WRITES stay SAFETY_WRITERS — byte-identical gates.
+DIARY_READERS = ("owner", "admin", "project_manager", "management_team")
+
+
+async def _check_diary_read_access(user: dict, project_id: str):
+    """Shape-identical to router._check_project_access (super_admin bypass
+    first, same membership query, no status filter) — but with the widened
+    read-role set. LOCAL to the diary; safety reads are untouched.
+    Known out-of-scope edge (consistent app-wide): an org owner with NO
+    project_membership row is still 403."""
+    if _is_super_admin(user):
+        return True
+    db = get_db()
+    membership = await db.project_memberships.find_one({
+        'user_id': user['id'],
+        'project_id': project_id,
+    })
+    if not membership:
+        raise HTTPException(status_code=403, detail='אין לך הרשאה לצפות בפרויקט זה')
+    if membership.get('role') not in DIARY_READERS:
+        raise HTTPException(status_code=403, detail='Insufficient permissions')
+    return True
+
 
 # Sections the derivation engine owns. Lists merge per-item by source;
 # defect_counts is a dict replaced only when still source=="derived".
@@ -206,13 +233,23 @@ async def _derive_sections(db, project_id: str, diary_date: str) -> dict:
 
 
 def _with_display_url(entry: dict) -> dict:
-    """3c pattern: signature key at rest, presigned display URL per-GET only."""
+    """3c pattern: keys at rest, presigned display URLs per-GET only."""
     s = entry.get("worker_signature")
     if s and s.get("signature_ref"):
         try:
             s["signature_display_url"] = generate_url(s["signature_ref"])
         except Exception:
             s["signature_display_url"] = None
+    # D3 photos: photo_refs → parallel photo_display_urls list (same length,
+    # per-item fail-soft None) — equipment display-url pattern, never persisted.
+    refs = entry.get("photo_refs") or []
+    urls = []
+    for ref in refs:
+        try:
+            urls.append(generate_url(ref) if ref else None)
+        except Exception:
+            urls.append(None)
+    entry["photo_display_urls"] = urls
     return entry
 
 
@@ -312,7 +349,7 @@ async def list_diary_entries(
     user: dict = Depends(get_current_user),
 ):
     db = get_db()
-    await _check_project_access(user, project_id)
+    await _check_diary_read_access(user, project_id)
 
     q = {"project_id": project_id, "deletedAt": None}
     if month:
@@ -333,9 +370,41 @@ async def get_diary_entry(
     user: dict = Depends(get_current_user),
 ):
     db = get_db()
-    await _check_project_access(user, project_id)
+    await _check_diary_read_access(user, project_id)
     entry = await _get_entry_or_404(db, project_id, entry_id)
     return _with_display_url(entry)
+
+
+# =====================================================================
+# 2.2b EXPORT PDF (D3) — READ gate (owner/admin allowed). Any status:
+# a draft PDF carries the "טיוטה — לא חתום" watermark inside the doc.
+# =====================================================================
+@router.get("/{project_id}/entries/{entry_id}/export/pdf")
+async def export_diary_entry_pdf(
+    project_id: str,
+    entry_id: str,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    await _check_diary_read_access(user, project_id)
+    entry = await _get_entry_or_404(db, project_id, entry_id)
+
+    from services.work_diary_pdf import generate_work_diary_pdf
+    pdf_bytes = await generate_work_diary_pdf(db, project_id, entry_id)
+
+    await _audit("work_diary", entry_id, "pdf_exported", user["id"], {
+        "project_id": project_id,
+        "diary_date": entry.get("diary_date"),
+        "status": entry.get("status"),
+        "size_bytes": len(pdf_bytes),
+    })
+
+    filename = f"diary_{entry.get('diary_date', entry_id[:8])}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # =====================================================================

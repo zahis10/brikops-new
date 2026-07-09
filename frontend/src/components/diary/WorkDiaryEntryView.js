@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ArrowRight, RefreshCw, X, Plus, PenLine, Check,
+  ArrowRight, RefreshCw, X, Plus, PenLine, Check, FileDown, ImagePlus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '../ui/card';
@@ -14,7 +14,8 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../ui/select';
 import { useAuth } from '../../contexts/AuthContext';
-import { diaryService } from '../../services/api';
+import { diaryService, safetyService } from '../../services/api';
+import { compressImage } from '../../utils/imageCompress';
 import SafetySignaturePad from '../safety/SafetySignaturePad';
 import {
   WEATHER_OPTIONS, STATUS_HE, SECTION_TITLES, DERIVED_HINT,
@@ -39,6 +40,9 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
   const [addendumOpen, setAddendumOpen] = useState(false);
   const [addendumText, setAddendumText] = useState('');
   const [addingAddendum, setAddingAddendum] = useState(false);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const photoInputRef = useRef(null);
   // "+ הוסף שורה" scratch inputs
   const [newWorkerName, setNewWorkerName] = useState('');
   const [newWorkerCount, setNewWorkerCount] = useState('');
@@ -124,12 +128,81 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
   };
 
   const openSign = async () => {
+    if (uploadingPhotos) {
+      toast.error('המתן לסיום העלאת התמונות');
+      return;
+    }
     if (!local.no_work && !(local.work_description || '').trim()) {
       toast.error('יש למלא תיאור עבודות לפני חתימה');
       return;
     }
     const ok = await flush();
     if (ok) setPadOpen(true);
+  };
+
+  // ---------- D3: photos (reuses safety upload → keys under safety/{pid}/) ----------
+  const MAX_PHOTOS = 12;
+
+  const handlePhotoFiles = async (fileList) => {
+    const files = Array.from(fileList || []).filter((f) => f.type?.startsWith('image/'));
+    if (!files.length) return;
+    const room = MAX_PHOTOS - (local.photo_refs || []).length;
+    if (room <= 0) { toast.error(`הגעת למגבלת ${MAX_PHOTOS} תמונות`); return; }
+    const batch = files.slice(0, room);
+    if (batch.length < files.length) toast.error(`ניתן להוסיף עד ${MAX_PHOTOS} תמונות — הועלו הראשונות בלבד`);
+    setUploadingPhotos(true);
+    try {
+      const refs = [];
+      const urls = [];
+      for (const file of batch) {
+        const compressed = await compressImage(file);
+        const res = await safetyService.uploadDocumentFile(projectId, compressed);
+        refs.push(res.stored_ref);
+        urls.push(res.url || null);
+      }
+      // Display URLs are per-GET only (never PATCHed) — merge locally so the
+      // thumbs appear now; server truth returns the parallel list on next GET.
+      setLocal((prev) => ({
+        ...prev,
+        photo_display_urls: [...(prev.photo_display_urls || []), ...urls],
+      }));
+      queueSave({ photo_refs: [...(local.photo_refs || []), ...refs] });
+    } catch (err) {
+      detailToast(err, 'העלאת התמונות נכשלה — נסה שוב');
+    } finally {
+      setUploadingPhotos(false);
+      if (photoInputRef.current) photoInputRef.current.value = '';
+    }
+  };
+
+  const removePhoto = (idx) => {
+    setLocal((prev) => ({
+      ...prev,
+      photo_display_urls: (prev.photo_display_urls || []).filter((_, i) => i !== idx),
+    }));
+    queueSave({ photo_refs: (local.photo_refs || []).filter((_, i) => i !== idx) });
+  };
+
+  // ---------- D3: PDF export (mirrors SafetyTourRunner.onExportPdf) ----------
+  const onExportPdf = async () => {
+    setExporting(true);
+    try {
+      await flush(); // the PDF should reflect what the user sees
+      const res = await diaryService.exportEntryPdf(projectId, entry.id);
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `diary_${local.diary_date}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error('ייצוא PDF נכשל');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const doSign = async ({ signerName, signatureType, typedName, blob }) => {
@@ -287,6 +360,16 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
               {saveState === 'saving' ? 'שומר…' : (<><Check className="w-3.5 h-3.5 text-green-600" />נשמר</>)}
             </span>
           )}
+          <button
+            type="button"
+            onClick={onExportPdf}
+            disabled={exporting}
+            className="p-2 rounded-lg hover:bg-slate-100 disabled:opacity-50 shrink-0"
+            aria-label="הורד PDF"
+            title="הורד PDF"
+          >
+            <FileDown className={`w-5 h-5 text-slate-700 ${exporting ? 'animate-pulse' : ''}`} />
+          </button>
         </div>
         {local.status === 'signed' && (
           <div className="px-4 pb-3 flex items-center gap-3">
@@ -494,6 +577,73 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
               {[inspector.visitor, inspector.checked, inspector.notes].filter(Boolean).join(' · ') || '—'}
             </p>
           )
+        ))}
+
+        {(editable || (local.photo_refs || []).length > 0) && sectionCard('photos', (
+          <>
+            <div className="flex flex-wrap gap-2">
+              {(local.photo_refs || []).map((ref, idx) => {
+                const url = (local.photo_display_urls || [])[idx];
+                return (
+                  <div key={`${ref}-${idx}`} className="relative">
+                    {url ? (
+                      <button
+                        type="button"
+                        onClick={() => window.open(url, '_blank')}
+                        aria-label={`תמונה ${idx + 1}`}
+                      >
+                        <img
+                          src={url}
+                          alt={`תמונה ${idx + 1}`}
+                          className="w-20 h-20 object-cover rounded-lg border border-slate-200 bg-white"
+                        />
+                      </button>
+                    ) : (
+                      <div className="w-20 h-20 rounded-lg border border-slate-200 bg-slate-100 flex items-center justify-center">
+                        <ImagePlus className="w-5 h-5 text-slate-300" />
+                      </div>
+                    )}
+                    {editable && (
+                      <button
+                        type="button"
+                        onClick={() => removePhoto(idx)}
+                        aria-label="הסר תמונה"
+                        className="absolute -top-1.5 -left-1.5 bg-white border border-slate-200 rounded-full p-0.5 text-slate-500 hover:text-slate-800 shadow-sm"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              {!(local.photo_refs || []).length && !editable && (
+                <p className="text-xs text-slate-400">—</p>
+              )}
+            </div>
+            {editable && (
+              <>
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => handlePhotoFiles(e.target.files)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5"
+                  disabled={uploadingPhotos}
+                  onClick={() => photoInputRef.current?.click()}
+                >
+                  <ImagePlus className="w-3.5 h-3.5" />
+                  {uploadingPhotos ? 'מעלה…' : 'הוסף תמונות'}
+                </Button>
+              </>
+            )}
+          </>
         ))}
 
         {sectionCard('special_instructions', (

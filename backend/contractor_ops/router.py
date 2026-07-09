@@ -494,6 +494,7 @@ _ORG_URL_PATTERNS = [
     (_re.compile(r'^/api/buildings/([^/]+)'), 'buildings', 'project_id'),
     (_re.compile(r'^/api/floors/([^/]+)'),    'floors',    'project_id'),
     (_re.compile(r'^/api/units/([^/]+)'),     'units',     'project_id'),
+    (_re.compile(r'^/api/work-diary/([^/]+)'), 'projects', 'org_id'),
 ]
 
 

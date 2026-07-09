@@ -735,6 +735,14 @@ export const diaryService = {
     const r = await axios.post(`${API}/work-diary/${projectId}/entries/${entryId}/addendums`, { text }, { headers: getAuthHeader() });
     return r.data;
   },
+  // D3 — mirrors safetyService.exportTourPdf (blob response, caller downloads).
+  async exportEntryPdf(projectId, entryId) {
+    const response = await axios.get(
+      `${API}/work-diary/${projectId}/entries/${entryId}/export/pdf`,
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    return response;
+  },
 };
 
 export const buildingService = {
