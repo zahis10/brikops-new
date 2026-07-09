@@ -23,7 +23,7 @@ import {
   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
   RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
   Zap, Check, CheckCircle, Archive, Undo2, ClipboardCheck, FileSignature, Clock, ListTodo,
-  Package, ShieldAlert
+  Package, ShieldAlert, NotebookPen
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -3640,6 +3640,7 @@ const ProjectControlPage = () => {
     { id: 'defects', label: 'ליקויים', icon: AlertTriangle },
     { id: 'handover', label: 'מסירות', icon: FileSignature, hidden: !['owner', 'admin', 'project_manager', 'management_team', 'contractor'].includes(myRole) },
     { id: 'safety', label: 'בטיחות', icon: ShieldAlert, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+    { id: 'diary', label: 'יומן עבודה', icon: NotebookPen, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
     { id: 'plans', label: 'תוכניות', icon: FileText },
   ].filter(t => !t.hidden);
 
@@ -3648,6 +3649,7 @@ const ProjectControlPage = () => {
     if (id === 'qc') { navigate(`/projects/${projectId}/qc`); return; }
     if (id === 'handover') { navigate(`/projects/${projectId}/handover`); return; }
     if (id === 'safety') { navigate(`/projects/${projectId}/safety`); return; }
+    if (id === 'diary') { navigate(`/projects/${projectId}/diary`); return; }
     if (id === 'plans') { navigate(`/projects/${projectId}/plans`); return; }
     setWorkMode(id);
     if (id !== 'structure') setActiveTab('');

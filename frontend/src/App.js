@@ -75,6 +75,7 @@ const HandoverProtocolPage = React.lazy(() => import('./pages/HandoverProtocolPa
 const HandoverSectionPage = React.lazy(() => import('./pages/HandoverSectionPage'));
 const SafetyHomePage = React.lazy(() => import('./pages/SafetyHomePage'));
 const SafetyProjectRegistrationPage = React.lazy(() => import('./pages/SafetyProjectRegistrationPage'));
+const WorkDiaryPage = React.lazy(() => import('./pages/WorkDiaryPage'));
 
 const INTENDED_PATH_KEY = 'intendedPath';
 
@@ -449,6 +450,14 @@ const AppRoutes = () => {
           element={
             <ProtectedRoute>
               <SafetyProjectRegistrationPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/diary"
+          element={
+            <ProtectedRoute allowedRoles={['project_manager', 'management_team', 'owner', 'admin']}>
+              <WorkDiaryPage />
             </ProtectedRoute>
           }
         />

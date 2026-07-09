@@ -694,6 +694,49 @@ export const safetyService = {
   },
 };
 
+// Work Diary (יומן עבודה) — batch diary-d2. Wraps the 7 flag-gated D1
+// endpoints. signEntry mirrors safetyService.signTraining verbatim (same
+// FormData field names — the backend chain is shared).
+export const diaryService = {
+  async createEntry(projectId, payload) {
+    const r = await axios.post(`${API}/work-diary/${projectId}/entries`, payload, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async listEntries(projectId, params = {}) {
+    const r = await axios.get(`${API}/work-diary/${projectId}/entries`, { headers: getAuthHeader(), params });
+    return r.data;
+  },
+  async getEntry(projectId, entryId) {
+    const r = await axios.get(`${API}/work-diary/${projectId}/entries/${entryId}`, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async updateEntry(projectId, entryId, payload) {
+    const r = await axios.patch(`${API}/work-diary/${projectId}/entries/${entryId}`, payload, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async refreshDerived(projectId, entryId) {
+    const r = await axios.post(`${API}/work-diary/${projectId}/entries/${entryId}/refresh-derived`, null, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async signEntry(projectId, entryId, { signerName, signatureType, typedName, blob }) {
+    const fd = new FormData();
+    fd.append('signer_name', signerName || '');
+    fd.append('signature_type', signatureType || '');
+    if (typedName) fd.append('typed_name', typedName);
+    if (blob) fd.append('signature_image', blob, 'signature.png');
+    const r = await axios.post(
+      `${API}/work-diary/${projectId}/entries/${entryId}/signature`,
+      fd,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+  async addAddendum(projectId, entryId, { text }) {
+    const r = await axios.post(`${API}/work-diary/${projectId}/entries/${entryId}/addendums`, { text }, { headers: getAuthHeader() });
+    return r.data;
+  },
+};
+
 export const buildingService = {
   async getFloors(buildingId) {
     const response = await axios.get(`${API}/buildings/${buildingId}/floors`, { headers: getAuthHeader() });
