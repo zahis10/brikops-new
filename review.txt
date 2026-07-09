@@ -1,155 +1,178 @@
 ================================================================================
-REVIEW — BATCH diary-d2: Work Diary frontend (יומן עבודה, D2 of 4)
-Date: 2026-07-09  |  Branch: staging  |  Backend: UNTOUCHED (probe file only)
+REVIEW — BATCH diary-d3: Work Diary PDF + photos + read-widen + paywall (D3 of 4)
+Date: 2026-07-09  |  Branch: staging  |  Flag: ENABLE_WORK_DIARY (default false)
 ================================================================================
 
-STEP 0 — PRE-FLIGHT (all anchors matched before writing code)
+SCOPE (4 items, per approved batch + amendments)
 --------------------------------------------------------------------------------
-✓ App.js lazy-route pattern (SafetyHomePage anchor) — mirrored for WorkDiaryPage.
-✓ ProjectControlPage.js work-tabs array + handleWorkTab (safety anchor at
-  ~3642) — diary item added identically.
-✓ api.js safetyService — diaryService placed right after it, signEntry mirrors
-  signTraining FormData exactly (signer_name / signature_type / typed_name /
-  signature_image).
-✓ SafetySignaturePad reused AS-IS (emits signatureType: 'canvas'|'typed' —
-  verified against backend 422 branch in work_diary_router.py).
-✓ Entry shape verified against schemas.py:1204 — materials is List[str],
-  workers_by_company/equipment_list/subcontractors/incidents_summary/
-  tours_summary/trainings_summary are List[dict] with source markers,
-  defect_counts dict, weather/inspector_visit Optional[dict], signature URL at
-  entry.worker_signature.signature_display_url.
-✓ todayIL() = toLocaleDateString('en-CA', {timeZone:'Asia/Jerusalem'}) —
-  matches backend israel_today() day boundary.
+1. Signed/draft PDF export (reportlab, modeled on the tour report).
+2. Photo picker on the diary entry (reuses the safety upload endpoint).
+3. Carry-over a: owner/admin diary READ access (writes unchanged).
+4. Carry-over b: /api/work-diary paywall URL pattern tuple.
 
-FILES CHANGED (3 modified, 3 new frontend files, 1 new probe)
+STEP 0 — PRE-FLIGHT (anchors matched before writing code)
 --------------------------------------------------------------------------------
-1. frontend/src/App.js — +9 lines: lazy import + route
-   /projects/:projectId/diary guarded to owner/admin/project_manager/
-   management_team (same 4-role guard as /safety).
-2. frontend/src/pages/ProjectControlPage.js — +3 lines: NotebookPen import,
-   menu item 'יומן עבודה' (hidden outside the 4 roles — same visibility rule
-   as the safety item), nav handler line.
-3. frontend/src/services/api.js — +43 lines: diaryService, 7 methods mapping
-   1:1 to the D1 route table (create/list?month/get/patch/refresh-derived/
-   signature multipart/addendums). Verified path-for-path against the router.
-4. frontend/src/components/diary/diaryLabels.js — NEW: Hebrew labels
-   (STATUS_HE, SECTION_TITLES, WEATHER_OPTIONS, NO_WORK_REASONS, DERIVED_HINT
-   transparency line).
-5. frontend/src/pages/WorkDiaryPage.js — NEW (~330 lines): month list view
-   (chips: status/הוזן באיחור/לא עבדו), month pager, "יומן היום" (409 → opens
-   existing), "לא עבדו היום" dialog (reason select + free-text for אחר),
-   deep-link ?date= (below), flag-off 404 screen, forbidden 403 screen.
-6. frontend/src/components/diary/WorkDiaryEntryView.js — NEW (~500 lines):
-   draft editor — debounced 800ms autosave (one PATCH per touched section),
-   derived-vs-manual transparency (DERIVED_HINT on derived rows/sections),
-   editable sections (description, workers_by_company with counts + manual
-   rows, subcontractors/equipment/materials chips, weather select, inspector
-   visit, special instructions), read-only derived sections (incidents/tours/
-   trainings/defect_counts), refresh-derived button, sign via
-   SafetySignaturePad (canvas/typed), signed mode = read-only + addendums.
-7. backend/tests/probe_diary_d2_http.py — NEW probe (verification only).
+✓ services/safety_pdf.py generate_tour_report — structure, _register_fonts_once,
+  _load_signature_image, _load_brikops_logo/_load_client_logo, _NumberedCanvas
+  — all REUSED via import, file untouched (DO-NOT-TOUCH honored).
+✓ _with_display_url equipment pattern — photo_display_urls added per-GET only.
+✓ safetyService.uploadDocumentFile + SafetyTrainingForm compressImage idiom —
+  photo picker mirrors both; upload keys land under safety/{project_id}/.
+✓ SafetyTourRunner exportTourPdf blob-download idiom — PDF button mirrors it.
+✓ router.py _ORG_URL_PATTERNS tuple shape — (regex, 'projects', 'org_id').
 
-KEY IMPLEMENTATION DECISIONS
+FILES CHANGED (2 backend modified, 1 backend NEW, 3 frontend modified, 1 probe)
 --------------------------------------------------------------------------------
-• Deep-link (?date= outside loaded month) — per your approved correction:
-  month picker jumps to date.slice(0,7), list loads that month, entry matched
-  by diary_date; no match → "לא נמצא יומן לתאריך זה" empty state with a back
-  button. URL state via cloned URLSearchParams, single-key set/delete.
-• Autosave engine: pendingRef accumulates per-key partials, 800ms debounce,
-  flush() before sign and before refresh-derived. After architect review
-  (below) hardened twice: (1) failed non-409 PATCH restores its payload into
-  pendingRef (newer edits win per key) so nothing is silently lost; (2)
-  inFlightRef promise lock — flush awaits any in-flight PATCH first, so
-  sign/refresh can never race a timer-fired autosave. 409 on PATCH → fetch
-  server truth → editor flips read-only (entry was signed elsewhere).
-• 409 on create ("יומן היום" double-tap or created on another device) → not an
-  error: reload month + open the existing entry.
-• Any edit to a derived row marks it source:"manual" (survives
-  refresh-derived, verified by probe).
-• Sign guard mirrors backend: no_work=false + empty description → blocked
-  client-side with the same Hebrew message the API returns (422 text).
-• no_work entry is created as DRAFT with the auto description (D1 semantics),
-  sign flow identical to a normal day.
+1. backend/contractor_ops/work_diary_router.py
+   • imports: io, StreamingResponse, _is_super_admin.
+   • DIARY_READERS = ('owner','admin','project_manager','management_team').
+   • NEW _check_diary_read_access() — shape-identical to _check_project_access
+     but against DIARY_READERS; super_admin bypass via _is_super_admin
+     (platform_role). Swapped into list_entries + get_entry only.
+     WRITES (create/patch/refresh/sign/addendum) still _check_project_access
+     + require_roles(*SAFETY_WRITERS) — completely untouched.
+   • _with_display_url: photo_refs → photo_display_urls PARALLEL list (same
+     length, per-item fail-soft None, never persisted at rest).
+   • NEW GET /{pid}/entries/{eid}/export/pdf — reader access, StreamingResponse
+     application/pdf, Content-Disposition diary_{diary_date}.pdf, audit event
+     "pdf_exported".
+   • SECURITY (architect review): MAX_DIARY_PHOTOS=12 + _PHOTO_REF_RE +
+     _validate_photo_refs() gate on PATCH photo_refs — see ARCHITECT section.
+2. backend/contractor_ops/router.py — ONE tuple added to _ORG_URL_PATTERNS:
+     (_re.compile(r'^/api/work-diary/([^/]+)'), 'projects', 'org_id')
+   → scope-aware paywall fallback now resolves org from diary URLs (closes the
+   d2 deviation #2 gap).
+3. backend/services/work_diary_pdf.py — NEW (~460 lines).
+   generate_work_diary_pdf(db, project_id, entry_id) modeled on
+   generate_tour_report; imports safety_pdf helpers, zero edits there.
+   • _DiaryCanvas(_NumberedCanvas): "יומן עבודה" wordmark; red "הוזן באיחור"
+     band stamp on page 1 when entered_late; diagonal "טיוטה — לא חתום"
+     watermark on EVERY page while status != signed.
+   • Sections in batch order: header card (project/date/weekday/status/
+     produced-at), weather, workers_by_company table + total, subcontractors,
+     equipment, materials, work_description, incidents/tours/trainings
+     summaries, defect_counts, inspector_visit, special_instructions, photos,
+     signature, addendums.
+   • Photos: 3 per row, 5×4cm, each wrapped try/except around reportlab
+     Image() CONSTRUCTION (that is where corrupt bytes throw — see sandbox
+     transcript below); missing storage refs skipped fail-soft by the loader.
+   • Typed signature renders signer name + "(חתימה מוקלדת)"; canvas signature
+     embeds the PNG.
+4. frontend/src/services/api.js — diaryService.exportEntryPdf(projectId,
+   entryId): axios GET responseType 'blob' (mirror of exportTourPdf).
+5. frontend/src/components/diary/WorkDiaryEntryView.js
+   • Header action "הורד PDF" (FileDown icon) — draft AND signed, readers too;
+     flushes pending autosave first; blob → object URL → download + revoke.
+   • PHOTOS card (draft + writer only): accept="image/*", MAX_PHOTOS=12,
+     compressImage → safetyService.uploadDocumentFile → stored_ref pushed via
+     queueSave({photo_refs}) (photos are just another autosaved section —
+     engine internals untouched). Thumbs from photo_display_urls; X-remove per
+     photo; readers/signed see a read-only thumbnail grid.
+   • Sign blocked while uploadingPhotos (openSign guard + disabled button).
+6. frontend/src/components/diary/diaryLabels.js — photos:'תמונות' label.
+7. backend/tests/probe_diary_d3_http.py — NEW probe (verification only).
 
-DEVIATIONS / FINDINGS (2 to be aware of)
+KEY DECISIONS / DEVIATIONS (4 to be aware of)
 --------------------------------------------------------------------------------
-1. WRITERS vs batch text: batch said isWriter=4-role; implemented
-   DIARY_WRITERS = project_manager + management_team, matching backend
-   SAFETY_WRITERS. Moreover, the D1 backend uses _check_project_access for
-   READS too, which 403s owner/admin even on GET — identical to the safety
-   module's behavior (SafetyHomePage shows its forbidden screen the same way).
-   So today owner/admin see the menu item but land on "אין הרשאה". This is
-   the existing house pattern; widening reads to owner/admin is a BACKEND
-   decision (1-line change in D3/D4 if you want it — say the word).
-2. Paywall gap (pre-existing, backend, out of d2 scope): server.py
-   _ORG_URL_PATTERNS has no /api/work-diary pattern, so the scope-aware
-   paywall fallback can't resolve an org from diary URLs. Users whose org
-   resolves via the legacy get_user_org fast-path (i.e., everyone with an
-   organization_memberships row — the normal case) are unaffected; flagging
-   for completeness. One tuple addition if you want it covered in D3.
+1. NO list-row PDF icon (batch 2.3 "optional, keep tiny", left to me): the
+   month list rows are themselves <button> elements — nesting another button
+   is invalid DOM; a sibling hit-target bloats the row. Entry header button
+   covers the flow. Skipped per the "skip if it bloats" clause.
+2. Org-owner WITHOUT a project_memberships row still gets 403 on diary reads —
+   _check_diary_read_access is deliberately shape-identical to
+   _check_project_access (membership row required). Same as every other
+   module; widening to org-level implied access would be a separate decision.
+3. Photo uploads reuse POST /api/safety/{pid}/upload (approved wording), so
+   keys live under safety/{project_id}/ — and the safety module flag
+   (ENABLE_SAFETY_MODULE) must be ON for diary photo uploads to work. It is on
+   in staging/prod; noting the coupling explicitly.
+4. photo_display_urls is per-GET only, never persisted (probe V1e proves it);
+   local backend returns stored_ref as /api/uploads/<key>, S3 returns the bare
+   key — validation + display handle both.
 
-VERIFY — V1..V9 RESULTS
+ARCHITECT REVIEW — 1 BLOCKING FINDING, FIXED + RE-VERIFIED
 --------------------------------------------------------------------------------
-Method: NEW HTTP probe backend/tests/probe_diary_d2_http.py — boots the REAL
-FastAPI app in-process (ENABLE_WORK_DIARY=true, FILES_STORAGE_BACKEND=local,
-local Mongo), REAL JWT minted with the app's own _create_token, REAL paywall +
-RBAC + middleware chain (nothing patched). Every request is the exact URL +
-method + body shape diaryService sends, so a PASS = the UI's network contract
-is correct end-to-end. Seeded org + active subscription + project_memberships
-+ organization_memberships; full cleanup after.
+Finding (severe, real): photo_refs were accepted as arbitrary strings; the PDF
+image loader HTTP-fetches any ref that generate_url passes through as an
+http(s) URL. A writer could PATCH photo_refs=["http://169.254.169.254/..."] and
+make the SERVER fetch internal targets on export (SSRF), plus no server-side
+count cap (resource exhaustion).
+FIX (two layers, both in this batch):
+  a. Write-time gate — _validate_photo_refs() on PATCH: each ref must match
+     ^(/api/uploads/)?safety/{THIS project_id}/{uuid}.{ext}$ (no schemes, no
+     "..", no slashes in filename), max 12 refs → otherwise 422 Hebrew detail.
+  b. Export-time defense-in-depth — generate_work_diary_pdf skips (and logs)
+     any ref not matching the same shape BEFORE it reaches the loader.
+New negative probes V1f-V1i (below) prove: http:// ref → 422, cross-project
+ref → 422, 13 refs → 422, entry untouched after rejections.
+All other areas passed: RBAC read-widen correct, PDF endpoint/headers/audit
+correct, fail-soft photo handling correct, paywall tuple correct.
 
-probe_diary_d2_http.py — 16/16 PASS:
-  V2  create today → 200, diary_date correct
-  V2b duplicate create → 409 (UI opens existing)
-  V-late yesterday → entered_late=true (badge data in list + entry header)
-  V3  list ?month → {items,total}, month-filtered, today present
-  V3b empty month → items=[] (deep-link miss state)
-  V4a PATCH work_description → 200, persisted
-  V4b PATCH workers_by_company manual row → 200, count=7, source=manual
-  V4c PATCH materials List[str] → 200, exact list echoed
-  V4d PATCH weather {desc,source} → 200
-  V5  refresh-derived → 200, manual edits SURVIVE (description + manual row)
-  V6  sign multipart (canvas + PNG) → 200, status=signed,
-      worker_signature.signature_display_url present
-  V6-lock PATCH after sign → 409 (UI flips read-only)
-  V6b addendum on signed → 200, appended with text
-  V7a owner GET list → 403 (backend read restriction — see deviation 1)
-  V7b owner POST create → 403
-  V7c owner PATCH → 403
-
-V1 flag-off (live dev server, default env): GET /api/work-diary/x/entries →
-   404 (route absent) → UI shows the "מודול לא פעיל" screen path.
-V8 DEVICE (Zahi, after flipping ENABLE_WORK_DIARY=true on staging EB):
-   BACK chain entry → list → control; deep-link ?date=; RTL rendering;
-   signature pad touch drawing.
-V9 build: craco build EXIT=0 (twice — before and after architect fixes).
-   House greps on the 3 new files → 0 hits (window.confirm / <select /
-   localStorage / WebkitOverflowScrolling / setSearchParams object-literal).
-   git diff: backend production code untouched; App.js/ProjectControlPage
-   diffs are the small additive blocks only.
-
-ARCHITECT REVIEW
+REPORTLAB SANDBOX TRANSCRIPT (amendment #4 — verified BEFORE sign-off)
 --------------------------------------------------------------------------------
-Round 1 flagged TWO material autosave issues, both FIXED and re-built:
-  1. flush() cleared pendingRef before the PATCH succeeded → failed non-409
-     save silently dropped queued edits. FIX: restore failed payload into
-     pendingRef (newer edits win per key) → retried on next flush.
-  2. flush() didn't await an already-in-flight PATCH → sign/refresh could
-     race a timer-fired autosave. FIX: inFlightRef promise lock; flush always
-     awaits the in-flight request before sending or returning.
-All other areas passed: route/menu/API contracts consistent, deep-link logic
-correct, signature payload matches pad output, probe coverage "high-signal".
-No security findings.
+reportlab 4.4.10: Image(BytesIO(corrupt_bytes)) raises
+PIL.UnidentifiedImageError AT CONSTRUCTION (not at build/draw time) — so the
+per-image try/except wraps the constructor, which is the correct interception
+point. Missing storage ref → loader returns None → skipped before Image().
+Full-generation sandbox runs against local Mongo: DRAFT+late, SIGNED+canvas,
+SIGNED+typed → all emit %PDF- (~105KB, 3 pages); corrupt + missing photo refs
+skipped, PDF still builds. Page-1 renders visually verified (RTL, watermark,
+red late band, tables, weekday mapping: 2026-07-08 → יום רביעי ✓).
+
+VERIFY — RESULTS
+--------------------------------------------------------------------------------
+Method: NEW HTTP probe backend/tests/probe_diary_d3_http.py — REAL app
+in-process (ENABLE_WORK_DIARY=true, ENABLE_SAFETY_MODULE=true for the upload
+route, FILES_STORAGE_BACKEND=local, local Mongo), REAL JWTs via _create_token,
+REAL paywall/RBAC/middleware. Seeded: org+active subscription, project, PM,
+owner, contractor-member, non-member PM, super_admin (platform_role — that is
+what _is_super_admin checks, not role), plus a second EXPIRED org. Full
+cleanup after. 26/26 PASS:
+
+  V1a photo upload via /api/safety/{pid}/upload → 200 + stored_ref
+  V1b stored_ref key under safety/{project_id}/ (local /api/uploads prefix ok)
+  V1c PATCH photo_refs → photo_display_urls parallel list (len match, url ok)
+  V1d GET entry keeps parallel list
+  V1e photo_display_urls NOT persisted at rest (raw Mongo doc checked)
+  V1f SSRF: photo_refs=["http://169.254.169.254/..."] → 422, never stored
+  V1g cross-project safety/other-project/… ref → 422
+  V1h 13 refs → 422 (cap 12)
+  V1i photo_refs unchanged after all rejected PATCHes
+  V2a DRAFT export → 200, %PDF- magic, application/pdf (~105KB)
+  V2b Content-Disposition: attachment; filename="diary_YYYY-MM-DD.pdf"
+  V2c audit event "pdf_exported" recorded with actor
+  V3a owner GET list → 200 (READ-WIDEN — was 403 in d2)
+  V3b owner GET entry → 200
+  V3c owner export PDF → 200 %PDF-
+  V3d owner POST create → STILL 403
+  V3e owner PATCH → STILL 403
+  V3f owner sign → STILL 403
+  V3g contractor project-member GET → 403 (not in DIARY_READERS)
+  V3h non-member PM GET → 403
+  V3i non-member export → 403
+  V3j super_admin GET → 200 (platform_role bypass)
+  V4a sign canvas multipart → signed
+  V4b SIGNED export → 200 %PDF-
+  V5  _resolve_request_org_id('/api/work-diary/{pid}/…') → org_id (the tuple)
+  V6  expired-org PM POST create → 402 (paywall blocks mutations; GET stays
+      open by design — _check_paywall returns early on GET)
+
+Build & hygiene:
+  craco build → EXIT=0 (CI=false, staging.invalid backend URL).
+  py_compile on both backend files → OK. Workflow restarted clean.
+  House greps on touched FE files → 0 hits (window.confirm / <select /
+  localStorage / WebkitOverflowScrolling / setSearchParams object-literal).
 
 DO-NOT-TOUCH COMPLIANCE
 --------------------------------------------------------------------------------
-Backend production code: ZERO changes (git-verified; only the new probe file
-under backend/tests/). SafetySignaturePad: reused, not modified. No photos
-(ride D3), no PDF, no weather API, no new dependencies. safety-1.7 remains
-deferred per your instruction.
+services/safety_pdf.py: ZERO edits (helpers imported). SafetySignaturePad:
+untouched. Autosave engine internals: untouched (photos ride queueSave).
+Write RBAC: untouched. No new dependencies (reportlab already in). No weather
+API (D4). No delete-entry. Font registration + image loading reused, not
+reimplemented.
 
-ROLLBACK: single commit → git revert. Flag still defaults false everywhere —
-zero production surface until you flip ENABLE_WORK_DIARY on staging EB.
+ROLLBACK: git revert of the batch commits. Flag still defaults false —
+zero production surface until ENABLE_WORK_DIARY is flipped on staging EB.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================
