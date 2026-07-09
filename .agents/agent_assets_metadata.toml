@@ -702,3 +702,9 @@ id = "9PbtqUTJ1J5LoURMfqoxW"
 uri = "file://.local/plans/safety-1-7-plan.txt"
 type = "text"
 title = "PLAN — safety-1.7: worker profile photo (ממתין לאישור)"
+
+[[outputs]]
+id = "5O-RXLOpjBsHC0rBsXbY0"
+uri = "file://.local/plans/diary-d2-plan.txt"
+type = "text"
+title = "PLAN — diary-d2: Work Diary UI (ממתין לאישור)"
