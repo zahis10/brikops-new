@@ -18,6 +18,7 @@ Legal-deliverable posture:
 """
 import io
 import logging
+import re
 from datetime import datetime, timezone
 
 from services.pdf_service import hebrew
@@ -148,8 +149,19 @@ async def generate_work_diary_pdf(db, project_id: str, entry_id: str) -> bytes:
     if sig and sig.get("signature_type") == "canvas" and sig.get("signature_ref"):
         sig_img_bytes = await _load_signature_image(sig.get("signature_ref"))
 
+    # D3 security (architect review) — defense-in-depth against SSRF: the
+    # loader HTTP-fetches refs that generate_url passes through as http(s)
+    # URLs, so ONLY storage keys shaped like the safety-upload output for
+    # THIS project may reach it (write-time gate lives in work_diary_router
+    # _validate_photo_refs; duplicated here to avoid a circular import).
+    _safe_ref = re.compile(
+        r"^(?:/api/uploads/)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$")
     photo_bytes = []                       # [BytesIO, ...] — loadable only
     for ref in (entry.get("photo_refs") or []):
+        m = _safe_ref.match(ref or "")
+        if not m or m.group(1) != project_id or ".." in ref:
+            logger.warning("work_diary_pdf: skipping unsafe photo ref %r", ref)
+            continue
         b = await _load_signature_image(ref)   # generic loader; fail-soft None
         if b is not None:
             photo_bytes.append(b)

@@ -253,6 +253,29 @@ def _with_display_url(entry: dict) -> dict:
     return entry
 
 
+# D3 security (architect review) — photo_refs are user-supplied strings that
+# later reach the PDF image loader, which will HTTP-fetch refs that generate_url
+# returns as http(s) URLs. Without this gate a writer could store an arbitrary
+# URL and make the SERVER fetch it on export (SSRF). Allow ONLY keys produced by
+# POST /api/safety/{project_id}/upload: safety/{THIS project}/{uuid}.{ext},
+# optionally with the local-backend /api/uploads/ prefix. No schemes, no "..",
+# no slashes in the filename part.
+MAX_DIARY_PHOTOS = 12
+_PHOTO_REF_RE = re.compile(
+    r"^(?:/api/uploads/)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$")
+
+
+def _validate_photo_refs(project_id: str, refs: list):
+    if len(refs) > MAX_DIARY_PHOTOS:
+        raise HTTPException(status_code=422,
+                            detail=f"ניתן לצרף עד {MAX_DIARY_PHOTOS} תמונות")
+    for ref in refs:
+        m = _PHOTO_REF_RE.match(ref or "")
+        if not m or m.group(1) != project_id or ".." in ref:
+            raise HTTPException(status_code=422,
+                                detail="הפניית תמונה לא חוקית")
+
+
 async def _get_entry_or_404(db, project_id: str, entry_id: str) -> dict:
     entry = await db.work_diary_entries.find_one(
         {"id": entry_id, "project_id": project_id, "deletedAt": None}, {"_id": 0})
@@ -426,6 +449,8 @@ async def update_diary_entry(
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
         return _with_display_url(entry)
+    if "photo_refs" in updates:
+        _validate_photo_refs(project_id, updates["photo_refs"] or [])
     updates["updated_at"] = _now()
     # ATOMIC draft re-assert: closes the read→write race against a
     # concurrent signer (decision 5 — signed is immutable, no exceptions).
