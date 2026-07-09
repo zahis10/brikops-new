@@ -1,158 +1,155 @@
 ================================================================================
-REVIEW — BATCH diary-d1: Work Diary backend (יומן עבודה, D1 of 4)
-Date: 2026-07-08  |  Branch: staging (HEAD 57c9f73 + this work, uncommitted)
+REVIEW — BATCH diary-d2: Work Diary frontend (יומן עבודה, D2 of 4)
+Date: 2026-07-09  |  Branch: staging  |  Backend: UNTOUCHED (probe file only)
 ================================================================================
 
 STEP 0 — PRE-FLIGHT (all anchors matched before writing code)
 --------------------------------------------------------------------------------
-✓ server.py:455 safety flag-gate block + :1191 startup-index block — mirrored.
-✓ config.py:71 ENABLE_SAFETY_MODULE pattern — ENABLE_WORK_DIARY added below it.
-✓ safety/trainings.py:225 sign_training — 3c chain mirrored helper-for-helper.
-✓ safety/_shared.py:54 SAFETY_WRITERS = ("project_manager","management_team").
-✓ grep "work_diary" backend/ → was EMPTY (green field).
-✓ utils/timezone.py israel_today() — entered_late day boundary.
-✓ Derivation source fields verified in live code (workers.company_id,
-  equipment.status, incidents.occurred_at, tours.tour_date, documents.kind/
-  status/created_at/updated_at, trainings.trained_at/worker_id, project_companies).
-⚠ Flagged in plan: concept doc future-features/work-diary-concept-2026-07-08.md
-  does not exist in repo; the batch's own quoted decisions 1-9 were followed.
+✓ App.js lazy-route pattern (SafetyHomePage anchor) — mirrored for WorkDiaryPage.
+✓ ProjectControlPage.js work-tabs array + handleWorkTab (safety anchor at
+  ~3642) — diary item added identically.
+✓ api.js safetyService — diaryService placed right after it, signEntry mirrors
+  signTraining FormData exactly (signer_name / signature_type / typed_name /
+  signature_image).
+✓ SafetySignaturePad reused AS-IS (emits signatureType: 'canvas'|'typed' —
+  verified against backend 422 branch in work_diary_router.py).
+✓ Entry shape verified against schemas.py:1204 — materials is List[str],
+  workers_by_company/equipment_list/subcontractors/incidents_summary/
+  tours_summary/trainings_summary are List[dict] with source markers,
+  defect_counts dict, weather/inspector_visit Optional[dict], signature URL at
+  entry.worker_signature.signature_display_url.
+✓ todayIL() = toLocaleDateString('en-CA', {timeZone:'Asia/Jerusalem'}) —
+  matches backend israel_today() day boundary.
 
-FILES CHANGED (5 modified, 1 new production file, 2 new probe files)
+FILES CHANGED (3 modified, 3 new frontend files, 1 new probe)
 --------------------------------------------------------------------------------
-1. backend/contractor_ops/work_diary_router.py  — NEW (production), ~460 lines
-   Router prefix /api/work-diary, tags=["work-diary"], flag-gated in server.py.
-   7 endpoints (route table below). NO delete endpoint by design (evidence
-   posture — documented in module docstring).
-2. backend/contractor_ops/schemas.py            — APPEND-ONLY (+81 lines)
-   WorkDiaryEntry / WorkDiaryCreate / WorkDiaryUpdate / WorkDiaryAddendumCreate.
-   Existing models untouched (diff is pure append at EOF).
-   WorkDiaryUpdate deliberately EXCLUDES diary_date / entered_late /
-   worker_signature / second_signature / addendums / status.
-3. backend/config.py                            — +3 lines after safety flag:
-   ENABLE_WORK_DIARY = env('ENABLE_WORK_DIARY', 'false') == 'true'
-4. backend/server.py                            — +22/-1 lines, 3 spots:
-   • line 32: ENABLE_WORK_DIARY added to the existing `from config import (` list
-   • ~line 476: mirror of the safety gate — router imported+included ONLY when
-     flag on; log line both ways
-   • ~line 1214: startup ensure_work_diary_indexes(db) inside the flag,
-     try/except non-fatal (identical posture to safety indices)
-5. backend/.env.production.template             — +1: ENABLE_WORK_DIARY=false
-   backend/.env.example                         — +3: flags section + same line
-   (NOTE, pre-existing: ENABLE_SAFETY_MODULE appears in NEITHER template —
-   left as-is, out of scope.)
-6. backend/tests/probe_diary_d1.py              — NEW probe harness (V1-V6+V5b)
-   backend/tests/probe_diary_d1_boot.py         — NEW boot probe (V7)
+1. frontend/src/App.js — +9 lines: lazy import + route
+   /projects/:projectId/diary guarded to owner/admin/project_manager/
+   management_team (same 4-role guard as /safety).
+2. frontend/src/pages/ProjectControlPage.js — +3 lines: NotebookPen import,
+   menu item 'יומן עבודה' (hidden outside the 4 roles — same visibility rule
+   as the safety item), nav handler line.
+3. frontend/src/services/api.js — +43 lines: diaryService, 7 methods mapping
+   1:1 to the D1 route table (create/list?month/get/patch/refresh-derived/
+   signature multipart/addendums). Verified path-for-path against the router.
+4. frontend/src/components/diary/diaryLabels.js — NEW: Hebrew labels
+   (STATUS_HE, SECTION_TITLES, WEATHER_OPTIONS, NO_WORK_REASONS, DERIVED_HINT
+   transparency line).
+5. frontend/src/pages/WorkDiaryPage.js — NEW (~330 lines): month list view
+   (chips: status/הוזן באיחור/לא עבדו), month pager, "יומן היום" (409 → opens
+   existing), "לא עבדו היום" dialog (reason select + free-text for אחר),
+   deep-link ?date= (below), flag-off 404 screen, forbidden 403 screen.
+6. frontend/src/components/diary/WorkDiaryEntryView.js — NEW (~500 lines):
+   draft editor — debounced 800ms autosave (one PATCH per touched section),
+   derived-vs-manual transparency (DERIVED_HINT on derived rows/sections),
+   editable sections (description, workers_by_company with counts + manual
+   rows, subcontractors/equipment/materials chips, weather select, inspector
+   visit, special instructions), read-only derived sections (incidents/tours/
+   trainings/defect_counts), refresh-derived button, sign via
+   SafetySignaturePad (canvas/typed), signed mode = read-only + addendums.
+7. backend/tests/probe_diary_d2_http.py — NEW probe (verification only).
 
 KEY IMPLEMENTATION DECISIONS
 --------------------------------------------------------------------------------
-• Uniqueness (decision 1): Mongo partialFilterExpression CANNOT express
-  {deletedAt: null} → unique COMPOUND index (project_id, diary_date, deletedAt)
-  instead. With no delete endpoint in D1 every doc has deletedAt=None, so
-  active-per-day uniqueness is exact. Friendly Hebrew 409 via pre-check;
-  DuplicateKeyError caught → same 409 (index closes the race window).
-• Derivation (decisions 6+9): 7 sections derived at create; EVERY source wrapped
-  in its own try/except → failure yields an empty section, never a 500. Zero
-  coupling to ENABLE_SAFETY_MODULE — empty collections simply derive empty.
-  Every derived item carries source:"derived"; manual items carry "manual".
-• defect_counts (documented heuristic per batch): opened = defects created that
-  date; closed = same-day updated_at with status ∈ resolved/verified. No audit
-  scan.
-• entered_late (decision 4): diary_date < israel_today(), server-computed at
-  create, absent from the PATCH model → immutable.
-• Signature (decision 2): mirrors sign_training 3c chain EXACTLY — rate-limit →
-  validate_upload → read → empty-check → check_upload_bytes →
-  check_storage_quota(org) → save_bytes(diaries/{pid}/{eid}/sig_{uuid}.png) →
-  record_upload; typed variant; Hebrew 422s. ATOMIC claim: update_one filter
-  {status:"draft", worker_signature:None} → modified==0 → 409. Key-only at
-  rest; signature_display_url regenerated per-GET, never persisted.
-• Signed immutability (decision 5): PATCH + refresh-derived ALSO re-assert
-  status:"draft" INSIDE their update_one filter (matched==0 → 409) — this
-  closes the read→write race vs a concurrent signer. Added after architect
-  review flagged the window; race probes added (V5b).
-• second_signature: reserved field, stored as None, NO setter anywhere (D1).
-• SAFETY_WRITERS imported from safety._shared — role-tuple import only; module
-  import has no route side effects when the safety flag is off (verified V7).
-• Audit entity "work_diary": created / updated / derived_refreshed / signed /
-  addendum_added.
+• Deep-link (?date= outside loaded month) — per your approved correction:
+  month picker jumps to date.slice(0,7), list loads that month, entry matched
+  by diary_date; no match → "לא נמצא יומן לתאריך זה" empty state with a back
+  button. URL state via cloned URLSearchParams, single-key set/delete.
+• Autosave engine: pendingRef accumulates per-key partials, 800ms debounce,
+  flush() before sign and before refresh-derived. After architect review
+  (below) hardened twice: (1) failed non-409 PATCH restores its payload into
+  pendingRef (newer edits win per key) so nothing is silently lost; (2)
+  inFlightRef promise lock — flush awaits any in-flight PATCH first, so
+  sign/refresh can never race a timer-fired autosave. 409 on PATCH → fetch
+  server truth → editor flips read-only (entry was signed elsewhere).
+• 409 on create ("יומן היום" double-tap or created on another device) → not an
+  error: reload month + open the existing entry.
+• Any edit to a derived row marks it source:"manual" (survives
+  refresh-derived, verified by probe).
+• Sign guard mirrors backend: no_work=false + empty description → blocked
+  client-side with the same Hebrew message the API returns (422 text).
+• no_work entry is created as DRAFT with the auto description (D1 semantics),
+  sign flow identical to a normal day.
 
-VERIFY — V1..V8 RESULTS (all PASS)
+DEVIATIONS / FINDINGS (2 to be aware of)
 --------------------------------------------------------------------------------
-Harness scaffolding (DISCLOSED): probes drive the REAL router coroutines
-against REAL local Mongo (mongodb://localhost:27017/contractor_ops). Patched
-to no-op, NOT under test: _check_project_access (RBAC plumbing),
-check_upload_rate_limit, check_upload_bytes, check_storage_quota,
-record_upload. validate_upload kept REAL. require_roles is a Depends factory →
-coroutines called directly with user=project_manager (p3c convention).
-Storage backend in this env resolves to S3 → refs stored as s3://diaries/…
-(still a key, not a presigned URL — the 3c invariant holds).
+1. WRITERS vs batch text: batch said isWriter=4-role; implemented
+   DIARY_WRITERS = project_manager + management_team, matching backend
+   SAFETY_WRITERS. Moreover, the D1 backend uses _check_project_access for
+   READS too, which 403s owner/admin even on GET — identical to the safety
+   module's behavior (SafetyHomePage shows its forbidden screen the same way).
+   So today owner/admin see the menu item but land on "אין הרשאה". This is
+   the existing house pattern; widening reads to owner/admin is a BACKEND
+   decision (1-line change in D3/D4 if you want it — say the word).
+2. Paywall gap (pre-existing, backend, out of d2 scope): server.py
+   _ORG_URL_PATTERNS has no /api/work-diary pattern, so the scope-aware
+   paywall fallback can't resolve an org from diary URLs. Users whose org
+   resolves via the legacy get_user_org fast-path (i.e., everyone with an
+   organization_memberships row — the normal case) are unaffected; flagging
+   for completeness. One tuple addition if you want it covered in D3.
 
-tests/probe_diary_d1.py — 31/31 PASS:
-V1 (9): workers_by_company 2 workers grouped (named company + "ללא חברה"),
-   all source:"derived"; equipment active-only (EQ-1 in, decommissioned EQ-2
-   out); subcontractors from project_companies; today's incident; today's
-   tour; defect_counts {opened:1, closed:1}; trainings with resolved
-   worker_name "עובד אחד"; EMPTY-safety project → all sections empty, entry
-   valid (decision 9); no_work=true → derivation skipped, auto description
-   "לא בוצעה עבודה — גשם".
-V2 (2): duplicate date → 409 "כבר קיים יומן לתאריך זה"; same date on a second
-   project → both created (index scoped per project).
-V3 (3): yesterday → entered_late=true; today → false; PATCH with a smuggled
-   entered_late → field ignored by model, value stays false.
-V4 (5): draft PATCH sets work_description; refresh-derived → manual item
-   ("קבלן ידני", source:manual) SURVIVES + derived count updates 2→3 after a
-   new worker; manual free-text untouched; signed PATCH → 409
-   "היומן חתום — ניתן להוסיף תוספת בלבד"; refresh on signed → same 409.
-V5 (5+3): sign without work_description (no_work=false) → 422 "יש למלא תיאור
-   עבודות לפני חתימה"; canvas sign → key-only at rest under diaries/…, no
-   display_url persisted; response carries signature_display_url (per-GET
-   presign); second sign → 409 "היומן כבר חתום"; pre-set-signature race → 409;
-   DB-level atomic filter matches 0 docs once signature exists.
-   V5b race closure (post-architect): stale-draft PATCH after concurrent
-   sign → 409; stale-draft refresh → 409; signed doc byte-untouched.
-V6 (3): addendum on signed appends (text+created_at+created_by); all other
-   fields byte-equal before/after; addendum on draft → 409
-   "היומן עדיין טיוטה — ערוך אותו ישירות".
-
-tests/probe_diary_d1_boot.py (fresh interpreter per flag value) — V7 PASS:
-   flag OFF: total 356 routes, 0 × /api/work-diary, boot clean, log line
-     "Work Diary disabled (ENABLE_WORK_DIARY=false)".
-   flag ON: 363 routes = 356 invariant + 7 diary endpoints; boot clean;
-     ensure_work_diary_indexes ran for real; unique index verified:
-     [('project_id',1),('diary_date',1),('deletedAt',1)] unique=True;
-     raw duplicate insert → DuplicateKeyError.
-V8: py_compile clean (server, config, router, schemas, both probes).
-   Non-diary route count IDENTICAL flag-off vs flag-on (356 = 356) → zero
-   changes to existing routers' tables. Dev workflow restarted → boots clean
-   with flag off (default).
-
-NEW ROUTER ROUTE TABLE (flag ON only; writers = PM/management_team)
+VERIFY — V1..V9 RESULTS
 --------------------------------------------------------------------------------
-POST   /api/work-diary/{project_id}/entries                          [writers]
-GET    /api/work-diary/{project_id}/entries          (?month=YYYY-MM) [members]
-GET    /api/work-diary/{project_id}/entries/{entry_id}                [members]
-PATCH  /api/work-diary/{project_id}/entries/{entry_id}               [writers]
-POST   /api/work-diary/{project_id}/entries/{entry_id}/refresh-derived [writers]
-POST   /api/work-diary/{project_id}/entries/{entry_id}/signature     [writers]
-POST   /api/work-diary/{project_id}/entries/{entry_id}/addendums     [writers]
+Method: NEW HTTP probe backend/tests/probe_diary_d2_http.py — boots the REAL
+FastAPI app in-process (ENABLE_WORK_DIARY=true, FILES_STORAGE_BACKEND=local,
+local Mongo), REAL JWT minted with the app's own _create_token, REAL paywall +
+RBAC + middleware chain (nothing patched). Every request is the exact URL +
+method + body shape diaryService sends, so a PASS = the UI's network contract
+is correct end-to-end. Seeded org + active subscription + project_memberships
++ organization_memberships; full cleanup after.
+
+probe_diary_d2_http.py — 16/16 PASS:
+  V2  create today → 200, diary_date correct
+  V2b duplicate create → 409 (UI opens existing)
+  V-late yesterday → entered_late=true (badge data in list + entry header)
+  V3  list ?month → {items,total}, month-filtered, today present
+  V3b empty month → items=[] (deep-link miss state)
+  V4a PATCH work_description → 200, persisted
+  V4b PATCH workers_by_company manual row → 200, count=7, source=manual
+  V4c PATCH materials List[str] → 200, exact list echoed
+  V4d PATCH weather {desc,source} → 200
+  V5  refresh-derived → 200, manual edits SURVIVE (description + manual row)
+  V6  sign multipart (canvas + PNG) → 200, status=signed,
+      worker_signature.signature_display_url present
+  V6-lock PATCH after sign → 409 (UI flips read-only)
+  V6b addendum on signed → 200, appended with text
+  V7a owner GET list → 403 (backend read restriction — see deviation 1)
+  V7b owner POST create → 403
+  V7c owner PATCH → 403
+
+V1 flag-off (live dev server, default env): GET /api/work-diary/x/entries →
+   404 (route absent) → UI shows the "מודול לא פעיל" screen path.
+V8 DEVICE (Zahi, after flipping ENABLE_WORK_DIARY=true on staging EB):
+   BACK chain entry → list → control; deep-link ?date=; RTL rendering;
+   signature pad touch drawing.
+V9 build: craco build EXIT=0 (twice — before and after architect fixes).
+   House greps on the 3 new files → 0 hits (window.confirm / <select /
+   localStorage / WebkitOverflowScrolling / setSearchParams object-literal).
+   git diff: backend production code untouched; App.js/ProjectControlPage
+   diffs are the small additive blocks only.
 
 ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-Round 1: flagged ONE material issue — PATCH/refresh checked "signed" at read
-time but their update filters didn't re-assert draft → concurrent-sign race
-could mutate a just-signed diary. FIXED (atomic status:"draft" filter + 409 on
-matched==0) and locked with 3 new race probes (V5b). All other areas passed:
-atomic sign claim correct, uniqueness strategy acceptable for D1, fail-soft
-derivation isolated, RBAC aligned, no injection/data-leak findings.
+Round 1 flagged TWO material autosave issues, both FIXED and re-built:
+  1. flush() cleared pendingRef before the PATCH succeeded → failed non-409
+     save silently dropped queued edits. FIX: restore failed payload into
+     pendingRef (newer edits win per key) → retried on next flush.
+  2. flush() didn't await an already-in-flight PATCH → sign/refresh could
+     race a timer-fired autosave. FIX: inFlightRef promise lock; flush always
+     awaits the in-flight request before sending or returning.
+All other areas passed: route/menu/API contracts consistent, deep-link logic
+correct, signature payload matches pad output, probe coverage "high-signal".
+No security findings.
 
 DO-NOT-TOUCH COMPLIANCE
 --------------------------------------------------------------------------------
-Safety package: import-only (role tuple + _new_id). Existing schemas: pure
-append. Frontend: untouched. No second_signature setter, no delete, no weather
-API, no PDF, no UI. No new dependencies. UTC via _now(); IL boundary via
-existing timezone util.
+Backend production code: ZERO changes (git-verified; only the new probe file
+under backend/tests/). SafetySignaturePad: reused, not modified. No photos
+(ride D3), no PDF, no weather API, no new dependencies. safety-1.7 remains
+deferred per your instruction.
 
-ROLLBACK: single commit → git revert. Flag defaults false everywhere → zero
-production surface until explicitly enabled.
+ROLLBACK: single commit → git revert. Flag still defaults false everywhere —
+zero production surface until you flip ENABLE_WORK_DIARY on staging EB.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================

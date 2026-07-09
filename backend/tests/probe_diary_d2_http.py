@@ -175,7 +175,7 @@ async def main():
         # V6 sign — multipart exactly like diaryService.signEntry FormData
         r = await c.post(
             f"{base}/{eid}/signature",
-            data={"signer_name": "מנהל בדיקה", "signature_type": "drawn"},
+            data={"signer_name": "מנהל בדיקה", "signature_type": "canvas"},
             files={"signature_image": ("signature.png", _PNG, "image/png")},
             headers=pm_h,
         )

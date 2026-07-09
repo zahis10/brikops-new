@@ -49,6 +49,7 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
   const pendingRef = useRef({});
   const timerRef = useRef(null);
   const savedFadeRef = useRef(null);
+  const inFlightRef = useRef(null); // promise lock — serializes autosave vs sign/refresh
 
   useEffect(() => { setLocal(entry); }, [entry]);
   useEffect(() => () => {
@@ -63,26 +64,41 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
 
   const flush = async () => {
     clearTimeout(timerRef.current);
+    // Wait for any in-flight PATCH first — sign/refresh must never race a
+    // timer-fired autosave (architect finding #2).
+    if (inFlightRef.current) {
+      try { await inFlightRef.current; } catch (e) { /* handled inside */ }
+    }
     const payload = pendingRef.current;
     if (!Object.keys(payload).length) return true;
     pendingRef.current = {};
     setSaveState('saving');
-    try {
-      const resp = await diaryService.updateEntry(projectId, entry.id, payload);
-      onChanged(resp);
-      setSaveState('saved');
-      clearTimeout(savedFadeRef.current);
-      savedFadeRef.current = setTimeout(() => setSaveState('idle'), 2000);
-      return true;
-    } catch (err) {
-      setSaveState('idle');
-      detailToast(err, 'שגיאה בשמירה');
-      if (err?.response?.status === 409) {
-        // signed meanwhile — pull server truth and flip read-only
-        try { onChanged(await diaryService.getEntry(projectId, entry.id)); } catch (e) { /* keep last */ }
+    const run = (async () => {
+      try {
+        const resp = await diaryService.updateEntry(projectId, entry.id, payload);
+        onChanged(resp);
+        setSaveState('saved');
+        clearTimeout(savedFadeRef.current);
+        savedFadeRef.current = setTimeout(() => setSaveState('idle'), 2000);
+        return true;
+      } catch (err) {
+        setSaveState('idle');
+        detailToast(err, 'שגיאה בשמירה');
+        if (err?.response?.status === 409) {
+          // signed meanwhile — pull server truth and flip read-only
+          try { onChanged(await diaryService.getEntry(projectId, entry.id)); } catch (e) { /* keep last */ }
+        } else {
+          // Durable autosave (architect finding #1): restore the failed
+          // payload so the next flush retries it; newer edits win per key.
+          pendingRef.current = { ...payload, ...pendingRef.current };
+        }
+        return false;
+      } finally {
+        inFlightRef.current = null;
       }
-      return false;
-    }
+    })();
+    inFlightRef.current = run;
+    return run;
   };
 
   // One debounced PATCH per touched section (800ms) — no per-section save buttons.
