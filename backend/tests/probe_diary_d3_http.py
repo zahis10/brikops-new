@@ -25,6 +25,7 @@ reportlab Image(BytesIO) idiom sandbox transcript (Zahi amendment #4) is in
 review.txt — corrupt bytes raise UnidentifiedImageError at CONSTRUCTION.
 """
 import os
+import re
 os.environ["ENABLE_WORK_DIARY"] = "true"
 # The diary photo picker reuses POST /api/safety/{pid}/upload — that router is
 # feature-gated (never imported when off), so the probe must enable it too.
@@ -183,6 +184,86 @@ async def main():
         record("V1i photo_refs untouched after rejected PATCHes",
                r.status_code == 200 and r.json().get("photo_refs") == [ref],
                f"refs={r.json().get('photo_refs') if r.status_code==200 else '-'}")
+
+        # ---------------- V1 (fix2) direct validator: BOTH backend shapes ------
+        # S3 mode → "s3://safety/{pid}/..", local mode → "/api/uploads/safety/..".
+        # The write-time gate (_validate_photo_refs) AND the PDF loader's mirror
+        # regex must ACCEPT both real shapes yet still REJECT schemes / a bucket
+        # segment / cross-project. (d3 probes ran local-only, so s3:// never hit.)
+        from contractor_ops.work_diary_router import _validate_photo_refs
+        from fastapi import HTTPException as _HX
+        _pdf_re = re.compile(  # mirror of _safe_ref built inside work_diary_pdf.build
+            r"^(?:/api/uploads/|s3://)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$")
+
+        def _router_accepts(refs):
+            try:
+                _validate_photo_refs(pid, refs)
+                return True
+            except _HX:
+                return False
+
+        def _pdf_accepts(s):
+            m = _pdf_re.match(s or "")
+            return bool(m) and m.group(1) == pid and ".." not in (s or "")
+
+        _uu = uuid.uuid4().hex
+        _acc = [f"s3://safety/{pid}/{_uu}.jpg",
+                f"/api/uploads/safety/{pid}/{_uu}.jpg",
+                f"safety/{pid}/{_uu}.jpg"]
+        _rej = ["http://169.254.169.254/latest/meta-data",
+                "https://evil/x.jpg",
+                f"s3://mybucket/safety/{pid}/{_uu}.jpg",   # bucket segment, not our shape
+                f"s3://safety/other-{pid}/{_uu}.jpg"]      # cross-project
+        record("V1j router validator ACCEPTS s3/local/bare shapes",
+               all(_router_accepts([s]) for s in _acc),
+               f"acc={[_router_accepts([s]) for s in _acc]}")
+        record("V1k router validator REJECTS scheme/bucket/cross-project",
+               all(not _router_accepts([s]) for s in _rej),
+               f"rej={[_router_accepts([s]) for s in _rej]}")
+        record("V1l PDF-loader regex ACCEPTS s3/local/bare shapes",
+               all(_pdf_accepts(s) for s in _acc),
+               f"acc={[_pdf_accepts(s) for s in _acc]}")
+        record("V1m PDF-loader regex REJECTS scheme/bucket/cross-project",
+               all(not _pdf_accepts(s) for s in _rej),
+               f"rej={[_pdf_accepts(s) for s in _rej]}")
+
+        # ---------------- V2 (fix2) HTTP: real s3:// ref round-trips -----------
+        _s3ref = f"s3://safety/{pid}/{uuid.uuid4().hex}.jpg"
+        r = await c.patch(f"{base}/{eid}", json={"photo_refs": [_s3ref]}, headers=pm_h)
+        record("V2fix2a PATCH s3:// photo_ref → 200 stored verbatim",
+               r.status_code == 200 and r.json().get("photo_refs") == [_s3ref],
+               f"status={r.status_code} refs={r.json().get('photo_refs') if r.status_code==200 else '-'}")
+        # regression: the d3 negatives still reject after the widen
+        r = await c.patch(f"{base}/{eid}",
+                          json={"photo_refs": ["http://169.254.169.254/latest/meta-data"]},
+                          headers=pm_h)
+        record("V2fix2b http:// still 422", r.status_code == 422, f"status={r.status_code}")
+        r = await c.patch(f"{base}/{eid}",
+                          json={"photo_refs": [f"s3://safety/other-{pid}/{_uu}.jpg"]},
+                          headers=pm_h)
+        record("V2fix2c s3:// cross-project still 422", r.status_code == 422, f"status={r.status_code}")
+        r = await c.patch(f"{base}/{eid}", json={"photo_refs": [_s3ref] * 13}, headers=pm_h)
+        record("V2fix2d >12 s3:// refs still 422", r.status_code == 422, f"status={r.status_code}")
+        # restore the real (loadable) local ref so downstream PDF checks pass
+        r = await c.patch(f"{base}/{eid}", json={"photo_refs": [ref]}, headers=pm_h)
+        record("V2fix2e restore loadable ref → 200",
+               r.status_code == 200 and r.json().get("photo_refs") == [ref],
+               f"status={r.status_code}")
+
+        # ---------------- V3 (fix2) PDF fail-soft on missing s3 object ---------
+        # A valid-SHAPE s3:// ref whose object does not exist must be SKIPPED by
+        # the loader — the signed PDF still builds (no 500). Verified via the
+        # export endpoint after briefly setting a shape-valid, unloadable ref.
+        r = await c.patch(f"{base}/{eid}",
+                          json={"photo_refs": [f"s3://safety/{pid}/{uuid.uuid4().hex}.jpg"]},
+                          headers=pm_h)
+        _ok_patch = r.status_code == 200
+        r = await c.get(f"{base}/{eid}/export/pdf", headers=pm_h)
+        record("V3fix2 PDF builds fail-soft with unloadable s3:// ref",
+               _ok_patch and r.status_code == 200 and r.content[:5] == b"%PDF-",
+               f"patch={_ok_patch} status={r.status_code} bytes={len(r.content)}")
+        # restore loadable ref for the remaining d3 checks
+        await c.patch(f"{base}/{eid}", json={"photo_refs": [ref]}, headers=pm_h)
 
         # ---------------- V2 PDF export (draft) ----------------
         r = await c.get(f"{base}/{eid}/export/pdf", headers=pm_h)

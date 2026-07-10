@@ -1,92 +1,106 @@
 ================================================================================
-REVIEW — BATCH diary-d3-fix1: PDF button prominence + photos section clarity
-Date: 2026-07-10  |  Branch: staging (base = c42cca1, D3 in)  |  FRONTEND ONLY
-Severity: P2 (field feedback from Zahi's D3 staging device test — UX only)
+REVIEW — BATCH diary-d3-fix2: photo_refs validation rejects real S3 refs
+Date: 2026-07-10  |  Branch: staging (base = ea5242e — d3 + d3-fix1 in)  |  BACKEND ONLY
+Severity: P1 — diary photos UNSAVABLE on staging/prod (field-found by Zahi):
+          every upload PATCH → 422 "הפניית תמונה לא חוקית"
 ================================================================================
 
-SCOPE
+ROOT CAUSE (verified on code)
 --------------------------------------------------------------------------------
-Two UX findings from device-testing D3 on staging:
-(1) PDF download was a bare icon button in the header — easy to miss, small tap
-    target → make it a clear labeled action.
-(2) Photos card sat near the bottom titled just "תמונות" with no explanation and
-    no meaningful position → self-explanatory title + hint, and move it right
-    after תיאור עבודות (photos illustrate the described work).
+services/object_storage.py save_bytes() returns different shapes per backend:
+    • S3 mode    → "s3://{key}"          e.g. s3://safety/<pid>/<uuid>.jpg
+    • local mode → "/api/uploads/{key}"
+The D3 SSRF gate — _PHOTO_REF_RE (work_diary_router.py) and the duplicated
+_safe_ref built inside work_diary_pdf.py — only allowed an OPTIONAL
+"/api/uploads/" prefix. So every REAL s3:// ref failed shape validation →
+_validate_photo_refs raised 422 → PATCH photo_refs rejected. Photos could never
+be saved once the backend ran on S3 (staging/prod).
 
-STEP 0 — PRE-FLIGHT (all anchors matched on HEAD c42cca1; no mismatch)
---------------------------------------------------------------------------------
-✓ onExportPdf handler (line 187) + icon button (365-372) — handler REUSED as-is.
-✓ sectionCard('photos', …) card (was line 582) — retitled/annotated/moved.
-✓ diaryLabels photos: 'תמונות' (line 34).
-✓ work_description card (line 406) — the card the photos section moves AFTER.
-✓ DERIVED_HINT muted style (text-xs text-slate-400) — reused for the photos hint.
+Why D3 missed it: the D3 probes ran FILES_STORAGE_BACKEND=local (standing rule),
+so only the local "/api/uploads/" shape was ever exercised — the s3:// shape
+was never tested.
 
-FILES CHANGED (2 — both frontend)
+NEW STANDING RULE (recorded in memory): stored-ref shape validations must carry
+direct regex assertions for BOTH backend shapes (local + s3), not just local.
+
+THE CHANGE (2 files — the two regexes kept IDENTICAL)
 --------------------------------------------------------------------------------
-1. frontend/src/components/diary/diaryLabels.js
-   • SECTION_TITLES.photos: 'תמונות' → 'תמונות מהיום'.
-2. frontend/src/components/diary/WorkDiaryEntryView.js
-   • PDF button: icon-only <button> → labeled ui/Button (variant="outline",
-     h-9, gap-1.5): FileDown + "הורד PDF"; while exporting → disabled +
-     "מייצא…". onExportPdf UNCHANGED. Same visibility (draft AND signed,
-     readers included). Height 36px (h-9) → ≥ the small tap-target the batch
-     asked to grow past the old p-2 icon.
-   • sectionCard() helper: added an optional { hint } arg → renders one muted
-     line (text-xs text-slate-400, same as DERIVED_HINT) under the title.
-     Backward-compatible; every existing call unchanged.
-   • Photos card MOVED: from before special_instructions (bottom) to directly
-     AFTER the work_description card. Passes hint:
-     "צילומי האתר והעבודות של היום — ייכללו ב-PDF החתום".
-   • Empty state (editable, 0 photos): the small "הוסף תמונות" button replaced
-     by the house dashed drop-zone — full-width, min-h-[72px], border-2
-     border-dashed, ImagePlus + "הוסף תמונות מהאתר", opens the SAME hidden file
-     input via photoInputRef. With ≥1 photo: unchanged thumbnail grid + the
-     small "הוסף תמונות" button below it.
-   • Reader/signed with 0 photos: card still hidden (condition unchanged:
-     editable || photo_refs.length > 0).
+1. backend/contractor_ops/work_diary_router.py   (_PHOTO_REF_RE)
+2. backend/services/work_diary_pdf.py            (_safe_ref)
+
+  old: r"^(?:/api/uploads/)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$"
+  new: r"^(?:/api/uploads/|s3://)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$"
+
+Nothing else touched: MAX_DIARY_PHOTOS=12 cap, group(1)==project_id match, and
+the ".." re-check all stay exactly as they were.
+
+3. backend/tests/probe_diary_d3_http.py — new assertions (V1j-m, V2fix2a-e, V3fix2).
+
+SECURITY POSTURE (UNCHANGED — architect-confirmed)
+--------------------------------------------------------------------------------
+• http:// and https:// still CANNOT match: the prefix alternation allows only
+  the two literal prefixes ("/api/uploads/" | "s3://") or nothing, then requires
+  the literal "safety/"; the body permits no ":" and no "/" beyond the fixed
+  segments — so a full URL scheme can never satisfy it.
+• "s3://<bucket>/safety/..." (extra bucket segment) is still REJECTED — after
+  "s3://" the next chars must be literally "safety/". Our refs are "s3://" + key
+  with NO bucket segment, so this is correct.
+• Cross-project refs still blocked by the unchanged group(1)==project_id check.
+• Path traversal still blocked by the unchanged ".." check.
+The SSRF gate that D3 added is fully preserved; this only widens the allowed
+prefix set to include our own S3 output shape.
 
 DO-NOT-TOUCH COMPLIANCE
 --------------------------------------------------------------------------------
-onExportPdf / handlePhotoFiles / removePhoto: untouched. Autosave engine +
-queueSave/flush: untouched. MAX_PHOTOS: untouched. Hidden file input +
-photoInputRef: same element, now opened from either the grid button or the
-drop-zone. uploadingPhotos sign-guard: intact (openSign blocks + upload
-buttons disabled while uploading). Zero backend changes. Zero PDF-generator
-changes (PDF section order unchanged). SafetySignaturePad + sign flow untouched.
+No frontend changes (FE flow was correct — the SERVER was rejecting).
+Untouched: services/object_storage.py, the /api/safety/{pid}/upload endpoint,
+_load_signature_image, the validation call sites, error messages, the 12-cap,
+the project-match, and the ".." check.
 
-VERIFY — RESULTS
+VERIFY — RESULTS (FILES_STORAGE_BACKEND=local, as standing rule)
 --------------------------------------------------------------------------------
-V1 Header — labeled "הורד PDF" Button renders for draft + signed + reader;
-   onExportPdf path unchanged (flush → blob → download → revoke); toggles to
-   disabled "מייצא…" while exporting.  ✓ (code + build)
-V2 Photos card renders directly after תיאור עבודות, titled "תמונות מהיום" with
-   the muted hint line.  ✓ (code)
-V3 Empty + editable → full-width dashed drop-zone opens the picker; after
-   upload the grid renders; remove-X present; sign still blocked mid-upload
-   (uploadingPhotos guard unchanged).  ✓ (code)
-V4 Reader (owner) with photos → read-only grid in the new position (no add
-   button, no X); reader with 0 photos → card hidden.  ✓ (code)
-V5 House greps on both touched files → 0 hits (window.confirm / <select /
-   localStorage / WebkitOverflowScrolling / setSearchParams object-literal).  ✓
+V1 (direct validator + PDF-loader regex, BOTH shapes):
+   V1j router validator ACCEPTS s3/local/bare shapes ......... PASS [True,True,True]
+   V1k router validator REJECTS scheme/bucket/cross-project ... PASS [F,F,F,F]
+   V1l PDF-loader regex ACCEPTS s3/local/bare shapes ......... PASS [True,True,True]
+   V1m PDF-loader regex REJECTS scheme/bucket/cross-project ... PASS [F,F,F,F]
+     ACCEPT set: s3://safety/{pid}/{uuid}.jpg ·
+                 /api/uploads/safety/{pid}/{uuid}.jpg · safety/{pid}/{uuid}.jpg
+     REJECT set: http://169.254.169.254/latest/meta-data ·
+                 https://evil/x.jpg · s3://mybucket/safety/{pid}/x.jpg (bucket) ·
+                 s3://safety/other-{pid}/x.jpg (cross-project)
 
-Build: craco build → EXIT=0 (CI=false, staging.invalid backend URL).
-Device visual (RTL header crowding at mobile widths, tab-order of the PDF
-button + dashed CTA): deferred to Zahi's staging device pass — same as the D2
-V8 DEVICE step, since the module is flag-gated (ENABLE_WORK_DIARY) and needs a
-live authenticated project to render.
+V2 (HTTP round-trip — the actual bug):
+   V2fix2a PATCH s3:// photo_ref → 200 stored verbatim ....... PASS
+           (refs == ["s3://safety/{pid}/<uuid>.jpg"])
+   V2fix2b http:// still 422 ................................. PASS
+   V2fix2c s3:// cross-project still 422 .................... PASS
+   V2fix2d >12 s3:// refs still 422 ......................... PASS
+   V2fix2e restore loadable ref → 200 ...................... PASS
+
+V3 (PDF fail-soft):
+   V3fix2 PDF builds fail-soft with unloadable s3:// ref .... PASS
+          (valid-shape s3:// object missing → image skipped, PDF still built,
+           status=200 %PDF-, 105162 bytes — no 500)
+
+V4 py_compile (both changed files + probe) ................. OK
+   FULL d3 suite re-run ................................... 36/36 PASS, 0 FAIL
+   (26 original d3 checks + 10 new fix2 checks; all d3 negatives still 422)
+
+V5 DEVICE (Zahi, staging, real S3): upload 2-3 photos → NO error toast →
+   refresh → thumbnails PERSIST → sign → PDF contains the photos.  ← pending Zahi
 
 ARCHITECT REVIEW — PASS (no issues)
 --------------------------------------------------------------------------------
-Confirmed all three changes implemented correctly; JSX integrity intact (no
-broken conditionals, no duplicate refs, thumbnail key ${ref}-${idx} unchanged);
-all DO-NOT-TOUCH behaviors preserved (onExportPdf, handlePhotoFiles, removePhoto,
-MAX_PHOTOS, autosave/flush, hidden input + photoInputRef, uploadingPhotos sign
-guard). No security findings (FE-only, no new data path). Suggested follow-ups
-(non-blocking): mobile-width smoke for header crowding + keyboard tab-order —
-folded into the deferred device pass above.
+Confirmed both enforcement points fixed and byte-identical; SSRF posture intact
+(http/https unmatched, bucket-segment rejected, cross-project + ".." unchanged);
+no functional regression; probe suite expanded and 36/36 green. No new security
+findings. Non-blocking follow-ups suggested (not in this batch's scope): add an
+s3-backend probe lane, and later DRY the two regexes into a shared constant to
+prevent drift.
 
-ROLLBACK: git revert of this commit (2 FE files). Flag still defaults false —
-zero production surface until ENABLE_WORK_DIARY is flipped on staging EB.
+ROLLBACK: git revert of this commit (2 backend regex lines + probe additions).
+Flag still defaults false (ENABLE_WORK_DIARY) — zero prod surface until flipped.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================

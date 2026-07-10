@@ -262,7 +262,7 @@ def _with_display_url(entry: dict) -> dict:
 # no slashes in the filename part.
 MAX_DIARY_PHOTOS = 12
 _PHOTO_REF_RE = re.compile(
-    r"^(?:/api/uploads/)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$")
+    r"^(?:/api/uploads/|s3://)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$")
 
 
 def _validate_photo_refs(project_id: str, refs: list):

@@ -8,7 +8,7 @@ Rule: when probing the real FastAPI app in-process (httpx ASGITransport) with re
 - `subscriptions` doc with `status:"active"` and `paid_until` as an ISO **string** — `_resolve_access` compares against `_now()` which returns an isoformat string; inserting a datetime raises TypeError.
 - Force `os.environ["MONGO_URL"]` (not setdefault) before importing server — the repl env carries an Atlas URI that otherwise wins.
 
-**Why:** first d2 probe run failed 16/16 with 402/403 for exactly these reasons.
+**Why:** an in-process probe that skips any of these seeds fails wholesale with 402 (paywall) or 403 (RBAC) before reaching the assertions it meant to test.
 **How to apply:** any future probe that goes through the full middleware chain (paywall, RBAC) instead of calling router coroutines directly.
 
 More seeding/env rules:

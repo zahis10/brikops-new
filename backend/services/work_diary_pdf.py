@@ -155,7 +155,7 @@ async def generate_work_diary_pdf(db, project_id: str, entry_id: str) -> bytes:
     # THIS project may reach it (write-time gate lives in work_diary_router
     # _validate_photo_refs; duplicated here to avoid a circular import).
     _safe_ref = re.compile(
-        r"^(?:/api/uploads/)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$")
+        r"^(?:/api/uploads/|s3://)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$")
     photo_bytes = []                       # [BytesIO, ...] — loadable only
     for ref in (entry.get("photo_refs") or []):
         m = _safe_ref.match(ref or "")

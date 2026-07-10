@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "REVIEW — BATCH diary-d3-fix1 (כפתור PDF מודגש + כרטיס תמונות)"
+title = "REVIEW — BATCH diary-d3-fix2 (קבלת refs של S3 בוולידציית תמונות)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
