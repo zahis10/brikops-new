@@ -714,3 +714,9 @@ id = "FcosFeGsYbCgV34kB7g9m"
 uri = "file://.local/plans/diary-d3-plan.txt"
 type = "text"
 title = "PLAN — diary-d3: PDF + תמונות + קריאה לבעלים + paywall"
+
+[[outputs]]
+id = "JlC2StZCmZI2fLOZIA2vm"
+uri = "file://plan_diary_d3_fix2.txt"
+type = "text"
+title = "תוכנית עבודה — BATCH diary-d3-fix2 (תיקון וולידציית photo_refs ל-S3)"
