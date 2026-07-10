@@ -1,0 +1,124 @@
+================================================================================
+תוכנית עבודה — BATCH safety-1.7
+תמונת פרופיל לעובד בטיחות (סגירת פער Cemento)
+================================================================================
+תאריך:   2026-07-10
+ענף:     staging (בסיס = 54982e1 — diary D3 + fix1 + fix2 בפנים)
+חומרה:   P1-small (מאמץ S) — ערך זיהוי + תנאי-מקדים למסך כשירות QR
+         (ירוק/אדום) שמציג את תמונת העובד
+מצב:     ממתין ל"תתחיל" — טרם התחלתי מימוש
+================================================================================
+
+STEP 0 — PRE-FLIGHT (כבר בוצע, קריאה-בלבד — כל העוגנים תואמים)
+--------------------------------------------------------------------------------
+  ✓ SafetyWorkerCreate @31 · SafetyWorkerUpdate @41  (workers.py)
+  ✓ SafetyWorker( @722  (schemas.py)
+  ✓ id_number / id_number_hash handling קיים (69-70, 82, 116) — לא נגעתי
+  ✓ photo ב-SafetyWorkerForm.js + SafetyWorkerCard.js → 0 hits (שדה ירוק)
+  ✓ WorkersList @1485  (SafetyHomePage.js)
+  ✓ uploadDocumentFile @578  (api.js) — לשימוש חוזר, בלי API method חדש
+  ✓ _PHOTO_REF_RE @264  (work_diary_router.py) — הרגקס של d3-fix2 למראה
+  → אין סטייה. אפשר לממש כשתאשר.
+
+הקבצים שישתנו (5: 2 backend + 3 frontend)
+--------------------------------------------------------------------------------
+  1. backend/contractor_ops/schemas.py
+  2. backend/contractor_ops/safety/workers.py
+  3. frontend/src/components/safety/SafetyWorkerForm.js
+  4. frontend/src/components/safety/SafetyWorkerCard.js
+  5. frontend/src/pages/SafetyHomePage.js
+
+השינויים המדויקים
+--------------------------------------------------------------------------------
+1. schemas.py — SafetyWorker += (אחרי notes):
+     photo_ref: Optional[str] = None            # מפתח S3 קבוע (תבנית 1b)
+     photo_display_url: Optional[str] = None    # per-GET; לעולם לא נשמר
+
+2. safety/workers.py:
+   a. SafetyWorkerCreate += photo_ref: Optional[str] = None
+      SafetyWorkerUpdate += photo_ref: Optional[str] = None
+      (null בעדכון = ניקוי התמונה — סמנטיקת exclude_unset כרגיל)
+   b. create_worker: doc += "photo_ref": payload.photo_ref
+   c. list_workers (per-item) + get_worker: regen של photo_display_url מ-
+      photo_ref דרך generate_url, fail-soft try/except → None
+      (תבנית equipment/trainings). לא נוגעים בהתנהגות id_number/id_number_hash.
+   d. ולידטור צורה חדש (לקח d3-fix2 — ה-ref מוצג כ-<img src> לכל חברי הפרויקט
+      ויזין את מסך הכשירות של ה-QR):
+        _WORKER_PHOTO_REF_RE = re.compile(
+          r"^(?:/api/uploads/|s3://)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$")
+      נאכף ב-create וב-update בכל פעם ש-photo_ref הוא מחרוזת לא-null:
+        shape match + group(1) == project_id + אין ".." → אחרת 422
+        "הפניית תמונה לא חוקית".
+      חייב להיות byte-identical לרגקס של d3-fix2 (שתי צורות ה-backend:
+      /api/uploads/ וגם s3:// — זה כל הלקח). null עובר ללא בדיקה (מסלול ניקוי).
+
+3. SafetyWorkerForm.js — בורר תמונה, בדיוק תבנית העלאת התעודות אך images בלבד:
+     accept="image/*", תמיד compressImage(file) לפני
+     safetyService.uploadDocumentFile (בלי ענף PDF), שמירת stored_ref;
+     תצוגה מקדימה עגולה 88px (photo_display_url בעריכה; העלאה חדשה → res.url),
+     X לניקוי (photo_ref → null בפיילוד), חסימת submit בזמן העלאה
+     ('המתן לסיום העלאת התמונה'). Label: "תמונת עובד".
+     הפיילוד כולל photo_ref גם ב-create וגם ב-edit (null כשנוקה).
+
+4. SafetyWorkerCard.js — avatar בראש הכרטיס: photo_display_url → img 56px
+   rounded-full (onError → fallback); אחרת fallback = עיגול ראשי-תיבות
+   (bg-slate-200, אותיות ראשונות של full_name).
+
+5. SafetyHomePage.js — שורת WorkersList: thumb 40px rounded-full לפני השם
+   (אותו fallback ראשי-תיבות). שום דבר אחר בשורה לא משתנה.
+
+מה אסור לגעת
+--------------------------------------------------------------------------------
+  • טיפול ב-id_number בכל מקום (עמדת ה-PII נשארת בדיוק כפי שהיא).
+  • endpoint ההעלאה (images כבר מותרות), RBAC של workers, score, exports
+    (תמונה לא נוספת ל-Excel/PDF בבאטץ' זה — פריט parity עתידי).
+  • work_diary_router / work_diary_pdf — הרגקסים של היומן נשארים במקומם;
+    ממראים את התבנית, לא מרפקטרים לקבוע משותף בבאטץ' זה.
+  • אין deps חדשים; אין lightbox (tap → window.open בכרטיס בלבד, כמו 1d).
+
+אימות (VERIFY)
+--------------------------------------------------------------------------------
+V1 יצירת עובד עם תמונה → Mongo מחזיק KEY בלבד; list/get מחזירים
+   photo_display_url; כרטיס + שורה מציגים.
+V2 עריכה: החלפת תמונה (מפתח ישן נדרס ב-doc, orphan מקובל כמו 1b);
+   ניקוי → photo_ref null, fallback ראשי-תיבות.
+V3 עובד ללא תמונה → fallback בכל מקום, בלי img שבור.
+V4 עובדים legacy (בלי מפתח photo_ref) → regen no-op, list תקין.
+V5 upload guard: submit חסום בזמן העלאה; לא-image נדחה ע"י accept + server.
+V6 SHAPE VALIDATION (שתי צורות ה-backend — כלל קבוע מ-d3-fix2):
+     assertions ישירים ACCEPT: s3://safety/{pid}/x.jpg ·
+       /api/uploads/safety/{pid}/x.jpg · safety/{pid}/x.jpg
+     REJECT: http://169.254.169.254/x · https://evil/x.jpg ·
+       s3://bucket/safety/{pid}/x.jpg · s3://safety/{OTHER}/x.jpg
+     HTTP: create/update עם http:// → 422; s3:// shape → 200.
+V7 py_compile + craco build EXIT=0; greps (window.confirm/<select/localStorage)
+   ב-3 קבצי ה-FE → 0; diff של id_number → UNCHANGED.
+
+סדר הביצוע (כשתאשר "תתחיל")
+--------------------------------------------------------------------------------
+  1) עריכת schemas.py (2 שדות).
+  2) עריכת safety/workers.py (Create/Update fields, create doc, regen loop,
+     ולידטור הצורה).
+  3) עריכת 3 קבצי ה-FE (form picker, card avatar, list-row thumb).
+  4) py_compile לקבצי ה-backend + craco build.
+  5) פרוב shape-validation (FILES_STORAGE_BACKEND=local — כלל קבוע, בלי
+     העלאה לבקט האמיתי) + house greps + id_number diff.
+  6) architect review.
+  7) קריאה ואז דריסה של review.txt בשורש (STEP 0, diffs, תמלילי V1-V7) +
+     כתיבת .local/.commit_message.
+  8) present_asset(review.txt) → עצירה. ללא git/deploy, ללא mark_task_complete.
+
+תוצרים
+--------------------------------------------------------------------------------
+  • review.txt (STEP 0, diffs, פלטי V1-V7).
+  • .local/.commit_message:
+      feat(safety): worker profile photo — key-at-rest, per-GET display URL
+
+Rollback
+--------------------------------------------------------------------------------
+  git revert של הקומיט (5 קבצים). התכונה additive; עובדים קיימים ללא photo_ref
+  ממשיכים לעבוד (fallback ראשי-תיבות). ENABLE_SAFETY_MODULE שולט בחשיפה.
+
+================================================================================
+ממתין לאישור זהי ("תתחיל") — לא מתחיל מימוש עד אז. אין deploy.
+================================================================================

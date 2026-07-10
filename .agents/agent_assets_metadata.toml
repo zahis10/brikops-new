@@ -720,3 +720,9 @@ id = "JlC2StZCmZI2fLOZIA2vm"
 uri = "file://plan_diary_d3_fix2.txt"
 type = "text"
 title = "תוכנית עבודה — BATCH diary-d3-fix2 (תיקון וולידציית photo_refs ל-S3)"
+
+[[outputs]]
+id = "UKZlBGj-xSP2k0NQsbFpw"
+uri = "file://plan_safety_1_7.txt"
+type = "text"
+title = "תוכנית עבודה — BATCH safety-1.7 (תמונת פרופיל לעובד)"
