@@ -1,16 +1,28 @@
 """
-Work Diary (יומן עבודה) PDF generator — batch diary-d3.
+Work Diary (יומן עבודה) PDF generator — batch diary-d3 + diary-d4a.
 
-Public API: `async generate_work_diary_pdf(db, project_id, entry_id) -> bytes`.
+Public API:
+  • `async generate_work_diary_pdf(db, project_id, entry_id) -> bytes`
+       one signed-or-draft entry (d3).
+  • `async generate_work_diary_monthly_pdf(db, project_id, month) -> bytes`
+       consolidated SIGNED-only entries for YYYY-MM, one per page (d4a Part 1).
 
 MODEL: services/safety_pdf.py generate_tour_report. All shared plumbing is
 IMPORTED from safety_pdf (fonts, logos, generic image loader, X-of-Y canvas)
 — nothing reimplemented here per the D3 do-not-touch list.
 
+The per-entry flowable story is built ONCE in `_entry_story` and reused by both
+generators, so the single-entry visual output is byte-identical (V4 regression
+guard) and the monthly PDF renders the SAME entry layout per page.
+
 Legal-deliverable posture:
   • Unsigned (draft) → a diagonal "טיוטה — לא חתום" watermark on EVERY page,
-    so an unsigned print can never masquerade as final.
-  • entered_late → a red "הוזן באיחור" stamp in the header band (page 1).
+    so an unsigned print can never masquerade as final. The MONTHLY PDF is
+    signed-only, so it never carries the watermark.
+  • entered_late → a red "⚠ הוזן באיחור" line in the entry cover panel (always)
+    PLUS a header-band stamp on page 1 (single-entry export ONLY — in the
+    monthly doc page 1 is the month cover, so the band stamp is suppressed and
+    the per-entry cover-panel line carries the late signal instead).
   • Photos + signature images are per-image fail-soft: the try/except wraps
     the Image(...) CONSTRUCTION (corrupt bytes raise UnidentifiedImageError
     at construction on reportlab 4.4.x — sandbox-verified 2026-07-09), never
@@ -33,6 +45,13 @@ from services.safety_pdf import (
     _TOUR_TYPE_HE,
     _TOUR_STATUS_HE,
 )
+# THE shared safety-ref pattern — the SAME compiled object used by the write
+# gates (work_diary_router / safety.workers). Here it is the SSRF READ gate:
+# the generic loader HTTP-fetches refs that generate_url passes through as
+# http(s) URLs, so ONLY storage keys shaped like the safety-upload output for
+# THIS project may reach it (batch d4a fold-in 2e — was a duplicated local
+# re.compile, now single-source to make byte-drift impossible).
+from contractor_ops.upload_safety import SAFETY_STORED_REF_RE
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +69,20 @@ def _weekday_he(diary_date: str) -> str:
         return ""
 
 
+def _safe_int(v) -> int:
+    """Coerce a workers-count cell to int; anything non-numeric → 0. A direct-API
+    entry with count="abc" must never 500 the export (batch d4a fold-in 2b)."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
 class _DiaryCanvas(_NumberedCanvas):
     """The shared X-of-Y canvas with a diary header band: same navy band +
-    logos, but the page-1 wordmark is "יומן עבודה", an optional red
-    "הוזן באיחור" stamp, and a diagonal draft watermark on every page."""
+    logos. The page-1 wordmark is `_wordmark` (default "יומן עבודה"; the
+    monthly generator overrides it), with an optional red "הוזן באיחור" stamp
+    and a diagonal draft watermark on every page (both opt-in per document)."""
 
     def _draw_header(self, page):
         from reportlab.lib.colors import Color, HexColor, white
@@ -92,7 +121,8 @@ class _DiaryCanvas(_NumberedCanvas):
                 c.setFont("Rubik-Bold", 13)
             except Exception:
                 c.setFont("Helvetica-Bold", 13)
-            c.drawCentredString(W / 2.0, H - band_h / 2.0 - 5, hebrew("יומן עבודה"))
+            wordmark = getattr(self, "_wordmark", "יומן עבודה")
+            c.drawCentredString(W / 2.0, H - band_h / 2.0 - 5, hebrew(wordmark))
             if getattr(self, "_late_stamp", False):
                 try:
                     c.setFont("Rubik-Bold", 10)
@@ -122,52 +152,54 @@ class _DiaryCanvas(_NumberedCanvas):
             c.restoreState()
 
 
-async def generate_work_diary_pdf(db, project_id: str, entry_id: str) -> bytes:
-    """Build the work-diary PDF for one entry. Any status is exportable —
-    a draft carries the watermark. Empty sections are skipped."""
-    from reportlab.lib import colors
-    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import ParagraphStyle
-    from reportlab.lib.units import cm, mm
-    from reportlab.platypus import (
-        Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, HRFlowable, Image
-    )
-
-    _register_fonts_once()
-
-    project = await db.projects.find_one({"id": project_id}, {"_id": 0}) or {}
-    entry = await db.work_diary_entries.find_one(
-        {"id": entry_id, "project_id": project_id, "deletedAt": None}, {"_id": 0}
-    ) or {}
-
-    is_draft = entry.get("status") != "signed"
+# =====================================================================
+# Async media pre-loaders (must run BEFORE the sync platypus build)
+# =====================================================================
+async def _load_entry_signature(entry: dict):
+    """Return the signature image bytes (BytesIO) for a canvas signature, else
+    None. Fail-soft: a missing/failed load renders as the typed/graphic
+    fallback in the signature block."""
     sig = entry.get("worker_signature") or None
-
-    # ---- Pre-load ALL images (async) BEFORE the sync platypus build ----
-    sig_img_bytes = None
     if sig and sig.get("signature_type") == "canvas" and sig.get("signature_ref"):
-        sig_img_bytes = await _load_signature_image(sig.get("signature_ref"))
+        return await _load_signature_image(sig.get("signature_ref"))
+    return None
 
-    # D3 security (architect review) — defense-in-depth against SSRF: the
-    # loader HTTP-fetches refs that generate_url passes through as http(s)
-    # URLs, so ONLY storage keys shaped like the safety-upload output for
-    # THIS project may reach it (write-time gate lives in work_diary_router
-    # _validate_photo_refs; duplicated here to avoid a circular import).
-    _safe_ref = re.compile(
-        r"^(?:/api/uploads/|s3://)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$")
-    photo_bytes = []                       # [BytesIO, ...] — loadable only
+
+async def _load_entry_photos(project_id: str, entry: dict) -> list:
+    """Return [BytesIO, ...] for the entry's photo_refs. SSRF gate: only refs
+    shaped like the safety upload output for THIS project reach the loader;
+    each load is fail-soft (None dropped)."""
+    photo_bytes = []
     for ref in (entry.get("photo_refs") or []):
-        m = _safe_ref.match(ref or "")
+        m = SAFETY_STORED_REF_RE.match(ref or "")
         if not m or m.group(1) != project_id or ".." in ref:
             logger.warning("work_diary_pdf: skipping unsafe photo ref %r", ref)
             continue
         b = await _load_signature_image(ref)   # generic loader; fail-soft None
         if b is not None:
             photo_bytes.append(b)
+    return photo_bytes
 
-    brikops_logo = _load_brikops_logo()
-    client_logo = await _load_client_logo(db, project.get("org_id"))
+
+# =====================================================================
+# The per-entry flowable story (shared by both generators)
+# =====================================================================
+def _entry_story(project: dict, entry: dict, photo_bytes: list, sig_img_bytes) -> list:
+    """Build the full flowable list for ONE diary entry — cover panel through
+    the brand footer. Byte-identical to the pre-d4a single-entry body (V4
+    regression guard). `photo_bytes` / `sig_img_bytes` are pre-loaded async by
+    the caller. Self-contained: styles are built here so the monthly generator
+    can call it per page."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import cm, mm
+    from reportlab.platypus import (
+        Paragraph, Spacer, Table, TableStyle, HRFlowable, Image
+    )
+
+    is_draft = entry.get("status") != "signed"
+    sig = entry.get("worker_signature") or None
 
     # ---- Styles (tour-report palette) ----
     SLATE_700 = colors.HexColor("#334155")
@@ -234,13 +266,6 @@ async def generate_work_diary_pdf(db, project_id: str, entry_id: str) -> bytes:
                        spaceBefore=1, spaceAfter=6, lineCap="round"),
         ]
 
-    out = io.BytesIO()
-    doc = SimpleDocTemplate(
-        out, pagesize=A4,
-        leftMargin=1.5 * cm, rightMargin=1.5 * cm,
-        topMargin=3.0 * cm, bottomMargin=2.4 * cm,
-        title="יומן עבודה",
-    )
     elems = []
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     diary_date = entry.get("diary_date", "")
@@ -287,10 +312,10 @@ async def generate_work_diary_pdf(db, project_id: str, entry_id: str) -> bytes:
     workers = entry.get("workers_by_company") or []
     if workers:
         elems.extend(_section("עובדים באתר"))
-        total = sum(int(w.get("count") or 0) for w in workers)
+        total = sum(_safe_int(w.get("count")) for w in workers)
         elems.append(_table(
             ["חברה / קבוצה", "מספר עובדים"],
-            [[w.get("company_name") or "ללא חברה", w.get("count") or 0] for w in workers],
+            [[w.get("company_name") or "ללא חברה", _safe_int(w.get("count"))] for w in workers],
             [10 * cm, 4 * cm],
         ))
         elems.append(Spacer(1, 1.5 * mm))
@@ -446,6 +471,40 @@ async def generate_work_diary_pdf(db, project_id: str, entry_id: str) -> bytes:
 
     elems.append(Spacer(1, 4 * mm))
     elems.append(Paragraph(hebrew("נוצר באמצעות BrikOps · brikops.com"), sub))
+    return elems
+
+
+async def generate_work_diary_pdf(db, project_id: str, entry_id: str) -> bytes:
+    """Build the work-diary PDF for one entry. Any status is exportable —
+    a draft carries the watermark. Empty sections are skipped."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate
+
+    _register_fonts_once()
+
+    project = await db.projects.find_one({"id": project_id}, {"_id": 0}) or {}
+    entry = await db.work_diary_entries.find_one(
+        {"id": entry_id, "project_id": project_id, "deletedAt": None}, {"_id": 0}
+    ) or {}
+
+    is_draft = entry.get("status") != "signed"
+
+    # ---- Pre-load ALL images (async) BEFORE the sync platypus build ----
+    sig_img_bytes = await _load_entry_signature(entry)
+    photo_bytes = await _load_entry_photos(project_id, entry)
+
+    brikops_logo = _load_brikops_logo()
+    client_logo = await _load_client_logo(db, project.get("org_id"))
+
+    out = io.BytesIO()
+    doc = SimpleDocTemplate(
+        out, pagesize=A4,
+        leftMargin=1.5 * cm, rightMargin=1.5 * cm,
+        topMargin=3.0 * cm, bottomMargin=2.4 * cm,
+        title="יומן עבודה",
+    )
+    elems = _entry_story(project, entry, photo_bytes, sig_img_bytes)
 
     def make_canvas(*a, **k):
         cv = _DiaryCanvas(*a, **k)
@@ -453,6 +512,102 @@ async def generate_work_diary_pdf(db, project_id: str, entry_id: str) -> bytes:
         cv._client_logo = client_logo
         cv._late_stamp = bool(entry.get("entered_late"))
         cv._draft_watermark = is_draft
+        return cv
+
+    doc.build(elems, canvasmaker=make_canvas)
+    out.seek(0)
+    return out.getvalue()
+
+
+async def generate_work_diary_monthly_pdf(db, project_id: str, month: str) -> bytes:
+    """Consolidated monthly PDF: ALL SIGNED entries for `month` (YYYY-MM),
+    ascending by date, one entry per page after a month cover. Signed-only, so
+    no draft watermark; the per-entry late signal rides the cover-panel line
+    (the header band stamp is single-export-only). The caller (router) is
+    responsible for the empty-month 404 and month-format 422; this guards empty
+    defensively by still producing a cover-only document."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import cm, mm
+    from reportlab.platypus import (
+        Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, PageBreak
+    )
+
+    _register_fonts_once()
+
+    project = await db.projects.find_one({"id": project_id}, {"_id": 0}) or {}
+    entries = await db.work_diary_entries.find(
+        {"project_id": project_id, "deletedAt": None, "status": "signed",
+         "diary_date": {"$regex": f"^{re.escape(month)}"}},
+        {"_id": 0},
+    ).sort("diary_date", 1).to_list(400)
+
+    brikops_logo = _load_brikops_logo()
+    client_logo = await _load_client_logo(db, project.get("org_id"))
+
+    SLATE_700 = colors.HexColor("#334155")
+    SLATE_500 = colors.HexColor("#64748B")
+    SLATE_200 = colors.HexColor("#E2E8F0")
+    SLATE_50 = colors.HexColor("#F8FAFC")
+
+    title_style = ParagraphStyle(
+        "MTitle", fontName="Rubik-Bold", fontSize=22,
+        alignment=TA_CENTER, textColor=SLATE_700, leading=28,
+    )
+    sub = ParagraphStyle(
+        "MSub", fontName="Rubik", fontSize=11,
+        alignment=TA_CENTER, textColor=SLATE_500, leading=16,
+    )
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    cover_lines = []
+    if project.get("name"):
+        cover_lines.append(f"פרויקט: {project['name']}")
+    cover_lines.append(f"חודש: {month}")
+    cover_lines.append(f"מספר רשומות חתומות: {len(entries)}")
+    cover_lines.append(f"תאריך הפקה: {today}")
+
+    panel_rows = [[Paragraph(hebrew("יומן עבודה — סיכום חודשי"), title_style)]]
+    for line in cover_lines:
+        panel_rows.append([Paragraph(hebrew(line), sub)])
+    cover_panel = Table(panel_rows, colWidths=[16 * cm])
+    cover_panel.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), SLATE_50),
+        ("BOX", (0, 0), (-1, -1), 0.5, SLATE_200),
+        ("ROUNDEDCORNERS", [10, 10, 10, 10]),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 16),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+        ("TOPPADDING", (0, 0), (-1, -1), 18),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 18),
+    ]))
+
+    elems = [Spacer(1, 40 * mm), cover_panel]
+
+    for i, entry in enumerate(entries):
+        # Pre-load THIS entry's media (async) before the sync story build.
+        sig_img_bytes = await _load_entry_signature(entry)
+        photo_bytes = await _load_entry_photos(project_id, entry)
+        elems.append(PageBreak())
+        elems.extend(_entry_story(project, entry, photo_bytes, sig_img_bytes))
+
+    out = io.BytesIO()
+    doc = SimpleDocTemplate(
+        out, pagesize=A4,
+        leftMargin=1.5 * cm, rightMargin=1.5 * cm,
+        topMargin=3.0 * cm, bottomMargin=2.4 * cm,
+        title="יומן עבודה — חודשי",
+    )
+
+    def make_canvas(*a, **k):
+        cv = _DiaryCanvas(*a, **k)
+        cv._brikops_logo = brikops_logo
+        cv._client_logo = client_logo
+        cv._late_stamp = False        # month page 1 is the cover, not an entry
+        cv._draft_watermark = False   # signed-only document
+        cv._wordmark = "יומן עבודה — חודשי"
         return cv
 
     doc.build(elems, canvasmaker=make_canvas)

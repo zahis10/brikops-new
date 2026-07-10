@@ -743,6 +743,14 @@ export const diaryService = {
     );
     return response;
   },
+  // d4a — consolidated monthly PDF (signed entries only). month = "YYYY-MM".
+  async exportMonthlyPdf(projectId, month) {
+    const response = await axios.get(
+      `${API}/work-diary/${projectId}/export/monthly-pdf`,
+      { headers: getAuthHeader(), params: { month }, responseType: 'blob' }
+    );
+    return response;
+  },
 };
 
 export const buildingService = {

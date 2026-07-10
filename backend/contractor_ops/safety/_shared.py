@@ -41,6 +41,7 @@ from contractor_ops.upload_rate_limit import (
 from contractor_ops.upload_quota import check_storage_quota, record_upload
 from contractor_ops.upload_safety import (
     validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES,
+    SAFETY_STORED_REF_RE,
 )
 
 logger = logging.getLogger(__name__)

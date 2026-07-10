@@ -160,13 +160,22 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
         refs.push(res.stored_ref);
         urls.push(res.url || null);
       }
-      // Display URLs are per-GET only (never PATCHed) — merge locally so the
+      // Merge from the LATEST state (functional) so the append is computed
+      // against current photo_refs, never a stale closure — a remove that
+      // landed mid-upload can no longer be resurrected (d4a fold-in 2a).
+      // Display URLs are per-GET only (never PATCHed) — merged locally so the
       // thumbs appear now; server truth returns the parallel list on next GET.
-      setLocal((prev) => ({
-        ...prev,
-        photo_display_urls: [...(prev.photo_display_urls || []), ...urls],
-      }));
-      queueSave({ photo_refs: [...(local.photo_refs || []), ...refs] });
+      setLocal((prev) => {
+        const nextRefs = [...(prev.photo_refs || []), ...refs];
+        pendingRef.current = { ...pendingRef.current, photo_refs: nextRefs };
+        return {
+          ...prev,
+          photo_refs: nextRefs,
+          photo_display_urls: [...(prev.photo_display_urls || []), ...urls],
+        };
+      });
+      clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(flush, 800);
     } catch (err) {
       detailToast(err, 'העלאת התמונות נכשלה — נסה שוב');
     } finally {
@@ -176,11 +185,20 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
   };
 
   const removePhoto = (idx) => {
-    setLocal((prev) => ({
-      ...prev,
-      photo_display_urls: (prev.photo_display_urls || []).filter((_, i) => i !== idx),
-    }));
-    queueSave({ photo_refs: (local.photo_refs || []).filter((_, i) => i !== idx) });
+    // Frozen while an upload is in flight — removing mid-upload would race the
+    // functional append (d4a fold-in 2a); the X is also disabled in the UI.
+    if (uploadingPhotos) return;
+    setLocal((prev) => {
+      const nextRefs = (prev.photo_refs || []).filter((_, i) => i !== idx);
+      pendingRef.current = { ...pendingRef.current, photo_refs: nextRefs };
+      return {
+        ...prev,
+        photo_refs: nextRefs,
+        photo_display_urls: (prev.photo_display_urls || []).filter((_, i) => i !== idx),
+      };
+    });
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(flush, 800);
   };
 
   // ---------- D3: PDF export (mirrors SafetyTourRunner.onExportPdf) ----------
@@ -368,7 +386,7 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
             variant="outline"
             onClick={onExportPdf}
             disabled={exporting}
-            className="h-9 gap-1.5 shrink-0"
+            className="h-9 gap-1.5 shrink-0 border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800"
             aria-label="הורד PDF"
           >
             <FileDown className={`w-4 h-4 ${exporting ? 'animate-pulse' : ''}`} />
@@ -453,8 +471,9 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
                         <button
                           type="button"
                           onClick={() => removePhoto(idx)}
+                          disabled={uploadingPhotos}
                           aria-label="הסר תמונה"
-                          className="absolute -top-1.5 -left-1.5 bg-white border border-slate-200 rounded-full p-0.5 text-slate-500 hover:text-slate-800 shadow-sm"
+                          className="absolute -top-1.5 -left-1.5 bg-white border border-slate-200 rounded-full p-0.5 text-slate-500 hover:text-slate-800 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-500"
                         >
                           <X className="w-3.5 h-3.5" />
                         </button>

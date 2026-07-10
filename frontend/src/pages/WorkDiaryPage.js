@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  ArrowRight, NotebookPen, ChevronRight, ChevronLeft, CalendarOff, Plus,
+  ArrowRight, NotebookPen, ChevronRight, ChevronLeft, CalendarOff, Plus, FileDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '../components/ui/card';
@@ -52,8 +52,12 @@ export default function WorkDiaryPage() {
   const [noWorkOpen, setNoWorkOpen] = useState(false);
   const [noWorkReason, setNoWorkReason] = useState('');
   const [noWorkText, setNoWorkText] = useState('');
+  const [exportingMonth, setExportingMonth] = useState(false);
 
   const isWriter = DIARY_WRITERS.includes(project?.my_role);
+  // Monthly PDF consolidates SIGNED entries only — the button appears only when
+  // the loaded month has at least one (d4a Part 1). Available to any reader.
+  const hasSigned = entries.items.some((e) => e.status === 'signed');
 
   // Deep link (?date= outside the loaded month) → jump the month picker there.
   // The list fetch below then either finds the entry or shows the miss state.
@@ -158,6 +162,28 @@ export default function WorkDiaryPage() {
     }
   };
 
+  // d4a — consolidated monthly PDF (mirrors the single-entry blob download).
+  const exportMonth = async () => {
+    setExportingMonth(true);
+    try {
+      const res = await diaryService.exportMonthlyPdf(projectId, month);
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `diary_${month}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      const d = err?.response?.data?.detail;
+      toast.error(typeof d === 'string' ? d : 'שגיאה בהפקת PDF חודשי');
+    } finally {
+      setExportingMonth(false);
+    }
+  };
+
   const onEntryChanged = (updated) => {
     if (!updated?.id) return;
     setEntries((prev) => ({
@@ -235,6 +261,19 @@ export default function WorkDiaryPage() {
             <h1 className="text-lg font-bold text-slate-900 truncate">יומן עבודה</h1>
             {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
           </div>
+          {hasSigned && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={exportMonth}
+              disabled={exportingMonth}
+              className="h-9 gap-1.5 shrink-0 border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800"
+              aria-label="PDF חודשי"
+            >
+              <FileDown className={`w-4 h-4 ${exportingMonth ? 'animate-pulse' : ''}`} />
+              {exportingMonth ? 'מייצא…' : 'PDF חודשי'}
+            </Button>
+          )}
         </div>
         <div className="flex items-center justify-between px-4 pb-3">
           <button

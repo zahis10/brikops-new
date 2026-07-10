@@ -22,6 +22,10 @@ const SEVERITY_COLOR = {
 const initialsOf = (name) => (name || '').trim().split(/\s+/).slice(0, 2)
   .map((w) => w[0]).join('').toUpperCase() || '?';
 
+// Same idiom as SafetyWorkerForm — only open a real http(s) display URL in a
+// new tab (a relative/blank ref is a no-op).
+const isHttp = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
+
 function Field({ label, children }) {
   if (children == null || children === '') return null;
   return (
@@ -89,12 +93,19 @@ export default function SafetyWorkerCard({
         <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
           <div className="flex items-center gap-3">
             {worker.photo_display_url && !avatarBroken ? (
-              <img
-                src={worker.photo_display_url}
-                alt={worker.full_name}
-                className="w-14 h-14 rounded-full object-cover border border-slate-200 shrink-0"
-                onError={() => setAvatarBroken(true)}
-              />
+              <button
+                type="button"
+                onClick={() => { if (isHttp(worker.photo_display_url)) window.open(worker.photo_display_url, '_blank'); }}
+                className="shrink-0 rounded-full"
+                aria-label="הצג תמונת עובד"
+              >
+                <img
+                  src={worker.photo_display_url}
+                  alt={worker.full_name}
+                  className="w-14 h-14 rounded-full object-cover border border-slate-200"
+                  onError={() => setAvatarBroken(true)}
+                />
+              </button>
             ) : (
               <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-semibold shrink-0">
                 {initialsOf(worker.full_name)}

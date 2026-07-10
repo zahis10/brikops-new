@@ -1,77 +1,129 @@
 ================================================================================
-REVIEW — BATCH safety-1.7: worker profile photo
-Date: 2026-07-10  |  Branch: staging  |  BACKEND (2) + FRONTEND (3)
-Scope: optional worker profile photo — key-at-rest + per-GET display URL, with a
-       write-time SSRF gate mirrored byte-for-byte from work_diary.
+REVIEW — BATCH diary-d4a: monthly consolidated PDF + 6 polish fold-ins
+Date: 2026-07-10  |  Branch: staging (base = e047a9f)  |  BACKEND + FRONTEND
+Scope: one-click monthly PDF that consolidates every SIGNED work-diary entry for
+       a month into a single document (cover + one entry per page), plus 6 small
+       polish fold-ins. NO weather work (explicitly out of scope).
 ================================================================================
+
+STEP 0 — PRE-FLIGHT (read-only) — NO DRIFT
+--------------------------------------------------------------------------------
+Confirmed before touching code:
+  - work_diary_pdf.generate_work_diary_pdf / _safe_ref / unguarded int(count)
+  - work_diary_router: _PHOTO_REF_RE, export/pdf, _check_diary_read_access
+    (owner/admin included), list already does ^\d{4}-\d{2}$ month filter -> 422
+  - safety/workers._WORKER_PHOTO_REF_RE
+  - all THREE ref-regex bodies were byte-identical (unified in 2e)
+  - FE anchors: uploadingPhotos, removePhoto/X, "הורד PDF" button, avatar,
+    SafetyWorkerForm.isHttp idiom
 
 WHAT CHANGED
 --------------------------------------------------------------------------------
-Backend (2 files)
-  contractor_ops/schemas.py
-    - SafetyWorker += photo_ref (permanent storage KEY, never a URL at rest)
-    - SafetyWorker += photo_display_url (regenerated per-GET; never persisted)
+Backend
+  contractor_ops/upload_safety.py
+    - NEW SAFETY_STORED_REF_RE (single compiled regex; leaf module = no cycles).
+      This is now THE one ref pattern shared app-wide (2e).
+
+  contractor_ops/safety/_shared.py
+    - re-exports SAFETY_STORED_REF_RE (safety hub).
 
   contractor_ops/safety/workers.py
-    - import generate_url (from safety._shared, already exported)
-    - SafetyWorkerCreate / SafetyWorkerUpdate += photo_ref
-    - _WORKER_PHOTO_REF_RE — BYTE-IDENTICAL to work_diary_router._PHOTO_REF_RE
-      (d3-fix2 lesson: accept BOTH /api/uploads/ AND s3:// shapes)
-    - _validate_worker_photo_ref(project_id, ref): None passes (clear); else 422
-      unless ref is a safety/{THIS project}/ key (also blocks "..")
-    - _photo_display(ref): fail-soft per-GET display URL (never persisted)
-    - create: validate photo_ref BEFORE any db work; store key; return display url
-    - list / get: regen photo_display_url per row / per doc
-    - update: validate photo_ref when present (null clears); return display url
-    - id_number / id_number_hash PII handling UNTOUCHED
+    - _WORKER_PHOTO_REF_RE = SAFETY_STORED_REF_RE (same object, not a copy).
 
-Frontend (3 files)
-  components/safety/SafetyWorkerForm.js
-    - image picker: accept="image/*", ALWAYS compressImage (no PDF branch),
-      reuses safetyService.uploadDocumentFile, keeps stored_ref as photo.key
-    - 88px round preview; X "הסר תמונה" clears -> photo_ref null
-    - submit blocked while uploading ("המתן לסיום העלאת התמונה")
-    - label "תמונת עובד"; photo_ref sent (null when cleared) on create AND edit
+  contractor_ops/work_diary_router.py
+    - _PHOTO_REF_RE = SAFETY_STORED_REF_RE (same object).
+    - NEW GET /{project_id}/export/monthly-pdf?month=YYYY-MM
+        * gate: _check_diary_read_access (readers incl. owner/admin/super_admin)
+        * _MONTH_RE ^\d{4}-\d{2}$ else 422 (Hebrew) ; re.escape(month) in query
+        * 0 signed entries -> 404 {"detail":"אין רשומות חתומות בחודש זה"}
+        * StreamingResponse application/pdf, filename diary_{YYYY-MM}.pdf
+        * audit "monthly_pdf_exported" (project_id, month, entries, size_bytes)
+
+  services/work_diary_pdf.py  (EXTRACT, not rewrite)
+    - carved the per-entry body into _entry_story(project, entry, photos, sig)
+      + _load_entry_signature + _load_entry_photos helpers.
+    - generate_work_diary_pdf now builds from those helpers — SAME output
+      (guarded by the d3 regression suite, 36/36).
+    - _safe_int(v) (2b): non-numeric worker "count" -> 0 instead of raising.
+    - NEW generate_work_diary_monthly_pdf(db, project_id, month): signed-only,
+      sorted diary_date ASC, month cover (project + "יומן עבודה — סיכום חודשי" +
+      month + signed count), PageBreak per entry, NO draft watermark, wordmark
+      "יומן עבודה — חודשי". Uses the SAME _DiaryCanvas.
+
+Frontend
+  services/api.js            diaryService.exportMonthlyPdf(projectId, month) blob
+  pages/WorkDiaryPage.js     "PDF חודשי" button (header), shown only when the
+                             loaded month has >=1 SIGNED entry; blob download;
+                             disabled + "מייצא…" while running; red style (2c).
+  components/diary/WorkDiaryEntryView.js
+    - 2a: remove-X frozen (disabled + no-op guard) while an upload is in flight;
+      photo append now computed from the LATEST state via functional setLocal
+      (kills the stale-closure resurrect race). removePhoto mirrors the pattern.
+    - 2c: "הורד PDF" restyled border-red-300 / text-red-700 / hover:bg-red-50.
   components/safety/SafetyWorkerCard.js
-    - 56px rounded-full avatar at top of card; onError -> initials fallback
-  pages/SafetyHomePage.js
-    - WorkersList row: 40px round thumb before name; onError -> initials fallback
-    - removed now-unused Hammer import
+    - 2f: avatar wrapped in a button; tap opens photo_display_url in a new tab
+      (isHttp guard, same idiom as SafetyWorkerForm). Initials fallback intact.
 
-VERIFICATION
---------------------------------------------------------------------------------
-- backend py_compile (workers.py + schemas.py) ............ OK
-- craco build (REACT_APP_BACKEND_URL set for probe) ....... EXIT=0
-- probe (FILES_STORAGE_BACKEND=local; NEVER a real bucket):
-    V6 regex both shapes accept (uploads / s3 / bare) ...... PASS
-    8 SSRF rejects (http, https, //, .., wrong-project x2,
-      empty-seg, no-filename) -> 422 ....................... PASS
-    validator: None + valid s3 pass ....................... PASS
-    HTTP create s3 ref -> 201 (echoes photo_ref,
-      returns photo_display_url) .......................... PASS
-    HTTP create http ref -> 422 ........................... PASS
-    HTTP update http ref -> 422 ........................... PASS
-    HTTP update null -> 200 (photo_ref cleared) ........... PASS
-- house greps in 3 FE files (window.confirm / raw <select /
-    localStorage) ......................................... 0 / 0 / 0
-- id_number / id_number_hash diff ........................ UNCHANGED
+  tests/test_object_storage_shapes.py (2d, NEW)
+    - offline unit probe (mocks the S3 client, NEVER a real bucket): pins
+      save_bytes local->"/api/uploads/{key}", s3->"s3://{key}", and
+      generate_url local passthrough + s3 presigned shape. 7/7 PASS.
 
-ARCHITECT REVIEW
+VERIFY (FILES_STORAGE_BACKEND=local — standing rule; NEVER a real bucket)
 --------------------------------------------------------------------------------
-PASS — no critical issues. Confirmed: validation on BOTH create+update; null
-clears; display URL never persisted; regex byte-identical to diary; SSRF vectors
-blocked; PII unchanged; no RBAC/soft-delete/audit/company regressions; FE sends
-null on clear (create+edit); fail-soft onError->initials; no banned patterns.
-Non-blocking suggestions: (1) future single-source the shared regex constant to
-avoid drift; (2) keep regression tests for URL-ref rejection; (3) optional DB
-sanity scan that no photo_display_url leaks into stored docs.
+probe_diary_d4a.py — 17/17 PASS:
+  [PASS] V7a router _PHOTO_REF_RE IS SAFETY_STORED_REF_RE
+  [PASS] V7b workers _WORKER_PHOTO_REF_RE IS SAFETY_STORED_REF_RE
+  [PASS] V7c work_diary_pdf imports SAFETY_STORED_REF_RE (same object)
+  [PASS] V1a monthly export -> 200 %PDF- application/pdf (bytes=109616)
+  [PASS] V1b filename diary_2026-03.pdf
+  [PASS] V1c page count = cover + 2 signed, draft excluded (pages=3)
+  [PASS] V1d audit monthly_pdf_exported (entries=2)
+  [PASS] V2a empty month -> 404 Hebrew ("אין רשומות חתומות")
+  [PASS] V2b bad month "2026-3" -> 422
+  [PASS] V2c garbage month -> 422
+  [PASS] V3a owner GET monthly -> 200 (read gate)
+  [PASS] V3b non-member GET monthly -> 403
+  [PASS] V3c super_admin GET monthly -> 200
+  [PASS] V6 single-entry export tolerates count='abc' (2b _safe_int)
+  [PASS] V1PERF heavy month (10 signed x 6 imgs = 60) -> 200 %PDF- (pages=11)
+  [PASS] V1PERF WALL-CLOCK = 3.30s (threshold ~30s)
 
-GUARDRAILS HONORED
+V1-PERF DECISION (approved amendment):
+  Synthetic heavy month = 10 signed entries x 6 photos = 60 image loads.
+  Wall-clock generation = 3.30s — WELL under the ~30s stop-threshold and far
+  under the ~60s ALB/EB timeout. -> SHIP the synchronous generator as-is; the
+  background-export fallback is NOT needed for this batch.
+
+V4 REGRESSION — probe_diary_d3_http.py 36/36 PASS (single-entry export path
+  unchanged; SSRF gate, read-widen, paywall tuple, signed export all green).
+  Single-entry PDF is now assembled from the SAME _entry_story helper the monthly
+  doc uses, so single vs monthly per-entry pages are visually identical.
+
+V8 py_compile PASS (all touched .py) ; craco build EXIT=0 (only pre-existing
+  capacitor apple-sign-in source-map warnings, unrelated to this batch).
+
+V5 (2a) / V9 device checks — left for Zahi on-device:
+  - red PDF button in both places; monthly PDF from the month list
+  - card avatar tap opens the photo; X frozen while uploading; remove
+    mid-upload no longer resurrects the removed photo
+
+ARCHITECT REVIEW — PASS (no blocker, no security finding)
+  - monthly PDF correct end-to-end; _entry_story preserves single-entry output.
+  - 2a functional-updater side-effect is safe here (idempotent, non-visible;
+    StrictMode double-invoke cannot corrupt persisted refs).
+  - injection: month fullmatch-validated + re.escape in Mongo query.
+  - SSRF: photo refs shape-gated at write AND at PDF read time; cross-project /
+    non-storage schemes rejected.
+  - RBAC/paywall: monthly GET uses the same read gate as list/get/export-single.
+  Optional (non-blocking) follow-ups noted: a FE unit test for the upload/remove
+  race, and a content-marker assertion for signed-only monthly inclusion.
+
+WHERE THE SHARED CONSTANT LANDED (2e)
 --------------------------------------------------------------------------------
-- No new dependencies; no lightbox (card preview taps -> window.open only)
-- Upload endpoint / workers RBAC / score / exports UNTOUCHED
-- work_diary regexes mirrored, NOT refactored
-- No uploads to any real bucket (local backend only during probe)
+contractor_ops/upload_safety.py :: SAFETY_STORED_REF_RE — a leaf module (no
+imports back into safety/work_diary), so every consumer references THE SAME
+compiled object with zero import-cycle risk (proven by V7 `is` asserts).
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

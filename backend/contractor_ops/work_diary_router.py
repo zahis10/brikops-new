@@ -46,6 +46,7 @@ from contractor_ops.upload_rate_limit import check_upload_rate_limit, check_uplo
 from contractor_ops.upload_quota import check_storage_quota, record_upload
 from contractor_ops.upload_safety import (
     validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES,
+    SAFETY_STORED_REF_RE,
 )
 from contractor_ops.utils.timezone import israel_today
 
@@ -261,8 +262,10 @@ def _with_display_url(entry: dict) -> dict:
 # optionally with the local-backend /api/uploads/ prefix. No schemes, no "..",
 # no slashes in the filename part.
 MAX_DIARY_PHOTOS = 12
-_PHOTO_REF_RE = re.compile(
-    r"^(?:/api/uploads/|s3://)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$")
+# THE shared safety-ref pattern (upload_safety.SAFETY_STORED_REF_RE) — the SAME
+# compiled object as safety.workers._WORKER_PHOTO_REF_RE and the PDF SSRF gate
+# (batch d4a fold-in 2e), so the three can never drift byte-for-byte again.
+_PHOTO_REF_RE = SAFETY_STORED_REF_RE
 
 
 def _validate_photo_refs(project_id: str, refs: list):
@@ -423,6 +426,51 @@ async def export_diary_entry_pdf(
     })
 
     filename = f"diary_{entry.get('diary_date', entry_id[:8])}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# =====================================================================
+# 2.2c EXPORT MONTHLY PDF (d4a) — READ gate (owner/admin allowed). Consolidates
+# every SIGNED entry for the month into one document, one entry per page. Drafts
+# are excluded (a monthly summary is a signed-record deliverable).
+# =====================================================================
+_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+@router.get("/{project_id}/export/monthly-pdf")
+async def export_diary_monthly_pdf(
+    project_id: str,
+    month: str = Query(..., description="YYYY-MM"),
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    await _check_diary_read_access(user, project_id)
+
+    if not _MONTH_RE.fullmatch(month):
+        raise HTTPException(status_code=422, detail="חודש לא תקין (נדרש YYYY-MM)")
+
+    signed_count = await db.work_diary_entries.count_documents({
+        "project_id": project_id, "deletedAt": None, "status": "signed",
+        "diary_date": {"$regex": f"^{re.escape(month)}"},
+    })
+    if signed_count == 0:
+        raise HTTPException(status_code=404, detail="אין רשומות חתומות בחודש זה")
+
+    from services.work_diary_pdf import generate_work_diary_monthly_pdf
+    pdf_bytes = await generate_work_diary_monthly_pdf(db, project_id, month)
+
+    await _audit("work_diary", project_id, "monthly_pdf_exported", user["id"], {
+        "project_id": project_id,
+        "month": month,
+        "entries": signed_count,
+        "size_bytes": len(pdf_bytes),
+    })
+
+    filename = f"diary_{month}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",

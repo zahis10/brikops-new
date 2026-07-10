@@ -7,6 +7,7 @@ from contractor_ops.safety._shared import (  # noqa: F401
     Optional,
     Query,
     SAFETY_DELETERS,
+    SAFETY_STORED_REF_RE,
     SAFETY_WRITERS,
     SafetyWorker,
     SoftDeleteBody,
@@ -52,10 +53,11 @@ class SafetyWorkerUpdate(BaseModel):
 
 # Photo refs are user-supplied and rendered as <img src> to every project member
 # (and feed the QR fitness screen), so the write-time shape gate is the SSRF
-# guard. MUST stay byte-identical to work_diary_router._PHOTO_REF_RE (the
-# d3-fix2 lesson: allow BOTH storage backends — /api/uploads/ AND s3://).
-_WORKER_PHOTO_REF_RE = re.compile(
-    r"^(?:/api/uploads/|s3://)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$")
+# guard. THE shared safety-ref pattern (upload_safety.SAFETY_STORED_REF_RE) —
+# the SAME compiled object as work_diary_router._PHOTO_REF_RE and the PDF SSRF
+# gate, so drift is impossible (batch d4a fold-in 2e; d3-fix2 lesson: BOTH
+# storage backends — /api/uploads/ AND s3://).
+_WORKER_PHOTO_REF_RE = SAFETY_STORED_REF_RE
 
 
 def _validate_worker_photo_ref(project_id: str, ref):
