@@ -1,0 +1,150 @@
+================================================================================
+PLAN — BATCH diary-d4a: monthly consolidated PDF + 6 polish fold-ins (no weather)
+Date: 2026-07-10  |  Branch: staging (base = e047a9f)  |  Backend + Frontend
+================================================================================
+
+STEP 0 — PRE-FLIGHT RESULT (already run, read-only) — NO DRIFT
+--------------------------------------------------------------------------------
+Backend:
+  services/work_diary_pdf.py     generate_work_diary_pdf @125 ; _safe_ref @157 ;
+                                 unguarded int(w.get("count")) @290
+  work_diary_router.py           _PHOTO_REF_RE @264 ; export/pdf @405 ;
+                                 _check_diary_read_access @61 (owner/admin incl.) ;
+                                 list_diary_entries @369 already does month filter
+                                 diary_date {"$regex":"^{month}"} + ^\d{4}-\d{2}$->422
+  safety/workers.py              _WORKER_PHOTO_REF_RE @57
+  -> all THREE regex bodies confirmed byte-identical (unify in 2e)
+Frontend:
+  diary/WorkDiaryEntryView.js    uploadingPhotos @43 ; removePhoto @178 (X @455) ;
+                                 "הורד PDF" button @372/375
+  safety/SafetyWorkerCard.js     avatar photo_display_url @91-93
+  safety/SafetyWorkerForm.js     isHttp idiom @17
+
+DECISION (2e): shared constant lands in contractor_ops/safety/_shared.py
+  (already the safety hub — exports generate_url + all safety deps). Named
+  SAFETY_STORED_REF_RE. All three sites import THE SAME compiled object.
+
+================================================================================
+PART 1 — MONTHLY CONSOLIDATED PDF
+================================================================================
+1.1 services/work_diary_pdf.py — EXTRACT, do not rewrite
+    - Carve the per-entry body (cover panel + all sections + photos + signature
+      + addendums) out of generate_work_diary_pdf into an internal builder:
+        async def _entry_story(db, project, entry, styles, ...) -> list[flowables]
+    - generate_work_diary_pdf keeps its exact current output: it now builds the
+      doc from [ *_entry_story(...) ] — SAME sections, styles, stamps, canvas.
+      (V4 regression guards this.)
+    - NEW: async def generate_work_diary_monthly_pdf(db, project_id, month) -> bytes
+        * fetch SIGNED entries only (status=="signed", deletedAt None) for the
+          month, sorted diary_date ASC (reuse the ^{month} prefix query shape)
+        * month cover page: project name + logos band, "יומן עבודה — סיכום חודשי",
+          the month, and count of signed entries
+        * then each entry's _entry_story separated by PageBreak
+        * NO draft watermark (signed-only doc). entered_late still renders via
+          each entry panel's red "⚠ הוזן באיחור" line; the CANVAS band stamp
+          stays single-export-only.
+        * same _DiaryCanvas; page-1 wordmark may read "יומן עבודה — חודשי".
+
+1.2 work_diary_router.py — NEW endpoint
+    GET /{project_id}/export/monthly-pdf?month=YYYY-MM
+      - gate: _check_diary_read_access (readers incl. owner/admin)
+      - validate month ^\d{4}-\d{2}$ else 422 (mirror list_diary_entries msg)
+      - no signed entries in month -> 404 {"detail":"אין רשומות חתומות בחודש זה"}
+      - StreamingResponse application/pdf, filename diary_{YYYY-MM}.pdf
+      - audit "monthly_pdf_exported" (project_id, month, entries count)
+
+1.3 services/api.js
+    diaryService.exportMonthlyPdf(projectId, month) -> blob (mirror the existing
+    single-entry export blob call).
+
+1.4 WorkDiaryPage.js — month header row
+    button "PDF חודשי" (FileDown icon), visible only when the loaded month has
+    >=1 SIGNED entry; blob download diary_{month}.pdf; disabled + "מייצא…" while
+    running. Uses the SAME red style as 2c.
+
+================================================================================
+PART 2 — THE 6 FOLD-INS
+================================================================================
+2a WorkDiaryEntryView.js — photo remove-X during upload
+   - disable every remove-X while uploadingPhotos (visual disabled + no-op guard)
+   - in handlePhotoFiles completion, build the queueSave photo_refs append from
+     the LATEST state (functional setLocal(prev => ...)) — kills the stale-closure
+     resurrect race.
+
+2b services/work_diary_pdf.py — _safe_int
+   - add _safe_int(v): try int(v) except -> 0
+   - use for the workers table count CELL and the total SUM (@290 area)
+   - a direct-API count="abc" must not 500 the export.
+
+2c WorkDiaryEntryView.js — "הורד PDF" restyle to light inviting RED
+   - keep shape/size; e.g. border-red-300 text-red-700 hover:bg-red-50
+     (FileDown icon inherits). Apply SAME style to the new monthly button (1.4).
+   - NO other button in the app changes.
+
+2d NEW backend/tests/test_object_storage_shapes.py — tiny unit probe
+   - local mode: save_bytes returns "/api/uploads/{key}"
+   - s3 branch: formats "s3://{key}" (assert the formatting path/string;
+     monkeypatch boto3 client or assert around _use_s3())
+   - generate_url passthrough for local refs
+   - no AWS needed. (the s3-lane guard the d3-fix2 postmortem asked for)
+
+2e ONE shared regex constant — SAFETY_STORED_REF_RE (in safety/_shared.py)
+     r"^(?:/api/uploads/|s3://)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$"
+   - work_diary_router._PHOTO_REF_RE  -> import/alias of the constant
+   - workers._WORKER_PHOTO_REF_RE     -> import/alias of the constant
+   - work_diary_pdf: function-local _safe_ref -> module import of the constant
+   - probe asserts all three are THE SAME compiled object (identity `is`)
+
+2f SafetyWorkerCard.js — 56px avatar becomes tappable
+   - onClick -> if (isHttp(photo_display_url)) window.open(photo_display_url,
+     '_blank') (reuse the form's isHttp idiom; add a local copy or small helper)
+   - initials fallback stays non-tappable. (closes the 1.7 deviation)
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- services/safety_pdf.py (import-only). SafetySignaturePad. Autosave engine
+  internals (2a touches ONLY the X buttons + the append callsite).
+- Single-entry PDF visual output (V4 regression-guarded). Write RBAC.
+- Weather (that's D4b). No new deps. Upload endpoint + object_storage.py runtime
+  behavior (2d only TESTS it).
+
+================================================================================
+VERIFY (FILES_STORAGE_BACKEND=local — standing rule; NEVER a real bucket)
+================================================================================
+V1 Monthly: month w/ 2 signed + 1 draft -> PDF cover + EXACTLY 2 entries (draft
+   excluded), PageBreak-separated, photos + signatures render, no tofu.
+V2 Empty month -> 404 Hebrew detail; bad month format -> 422.
+V3 RBAC: owner GET monthly -> 200; non-member -> 403 (extend D3 probe).
+V4 REGRESSION: single-entry export unchanged — re-run existing diary probe suite
+   (probe_diary_d3_http.py, 36/36+) green + note a before/after single-entry PDF
+   visual compare in review.txt.
+V5 2a: X disabled during upload; completion append from latest state (remove
+   mid-upload no longer resurrects) — probe or manual, state which.
+V6 2b: entry with count="abc" (direct PATCH) -> export 200, total treats it as 0.
+V7 2d unit probe green; 2e identity assert (all three `is` the same object).
+V8 py_compile + craco build EXIT=0; house greps clean on touched FE files.
+V9 DEVICE (Zahi): red PDF button both places; monthly PDF from month list; card
+   avatar tap opens photo; X frozen while uploading.
+
+================================================================================
+DELIVERABLES
+================================================================================
+- review.txt (STEP 0, diffs, V1-V8 transcripts + before/after single-entry PDF
+  note + where the shared constant landed) ending
+  "AWAITING ZAHI APPROVAL — DO NOT DEPLOY"
+- .local/.commit_message:
+    feat(diary): monthly consolidated PDF + polish (d4a)
+
+EXECUTION ORDER (proposed)
+--------------------------------------------------------------------------------
+1) 2e shared constant (unblocks clean refactor) ->
+2) 1.1 extract _entry_story + monthly generator + 2b _safe_int ->
+3) 1.2 monthly endpoint ->
+4) 2d storage-shapes unit probe ->
+5) FE: 1.3 api.js, 1.4 monthly button, 2a X-freeze+append fix, 2c red restyle,
+   2f avatar tap ->
+6) probes V1-V8, architect review, review.txt + commit_message, present, STOP.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

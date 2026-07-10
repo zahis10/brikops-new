@@ -726,3 +726,9 @@ id = "UKZlBGj-xSP2k0NQsbFpw"
 uri = "file://plan_safety_1_7.txt"
 type = "text"
 title = "תוכנית עבודה — BATCH safety-1.7 (תמונת פרופיל לעובד)"
+
+[[outputs]]
+id = "Apy36rMueJbcQgEOFfuwx"
+uri = "file://plan_diary_d4a.txt"
+type = "text"
+title = "Plan — diary-d4a (monthly PDF + 6 fold-ins)"
