@@ -114,6 +114,16 @@ VERIFY (FILES_STORAGE_BACKEND=local — standing rule; NEVER a real bucket)
 ================================================================================
 V1 Monthly: month w/ 2 signed + 1 draft -> PDF cover + EXACTLY 2 entries (draft
    excluded), PageBreak-separated, photos + signatures render, no tofu.
+   V1-PERF (approved amendment 2026-07-10): the monthly generator pre-loads ALL
+   images with the inherited SYNC-requests loader — a photo-heavy month
+   multiplies it. ALSO build a synthetic HEAVY month (10 signed entries x 6
+   photos = 60 images) and REPORT the wall-clock generation time in review.txt.
+     * if generation > ~30s -> STOP and report BEFORE shipping. ALB/EB timeouts
+       are ~60s; we switch to a BACKGROUND-export pattern rather than ship a 504
+       generator.
+     * if fast -> just record the number in review.txt.
+   (probe seeds 60 small local /api/uploads/ refs; FILES_STORAGE_BACKEND=local,
+   NEVER a real bucket.)
 V2 Empty month -> 404 Hebrew detail; bad month format -> 422.
 V3 RBAC: owner GET monthly -> 200; non-member -> 403 (extend D3 probe).
 V4 REGRESSION: single-entry export unchanged — re-run existing diary probe suite
