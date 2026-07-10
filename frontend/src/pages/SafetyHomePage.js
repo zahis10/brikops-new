@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
-  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter, Plus, Pencil, Camera, FileText, ClipboardList,
+  Users, TrendingUp, ShieldAlert, Wrench, Filter, Plus, Pencil, Camera, FileText, ClipboardList,
   ChevronLeft,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -1482,6 +1482,29 @@ function TasksList({ items, isWriter, onEdit }) {
   );
 }
 
+const workerInitials = (name) => (name || '').trim().split(/\s+/).slice(0, 2)
+  .map((w) => w[0]).join('').toUpperCase() || '?';
+
+// Row thumbnail: 40px round photo, fail-soft to initials on load error.
+function WorkerThumb({ worker }) {
+  const [broken, setBroken] = useState(false);
+  if (worker.photo_display_url && !broken) {
+    return (
+      <img
+        src={worker.photo_display_url}
+        alt={worker.full_name}
+        className="w-10 h-10 rounded-full object-cover bg-slate-100 shrink-0"
+        onError={() => setBroken(true)}
+      />
+    );
+  }
+  return (
+    <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 text-sm font-semibold shrink-0">
+      {workerInitials(worker.full_name)}
+    </div>
+  );
+}
+
 function WorkersList({ items, isWriter, onEdit, onOpenCard }) {
   if (!items?.length) return <EmptyState icon={Users} text="אין עובדים רשומים" />;
   return (
@@ -1492,9 +1515,7 @@ function WorkersList({ items, isWriter, onEdit, onOpenCard }) {
           role="button"
           onClick={() => onOpenCard(w)}
           className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50 cursor-pointer">
-          <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
-            <Hammer className="w-5 h-5 text-slate-500" />
-          </div>
+          <WorkerThumb worker={w} />
           <div className="flex-1 min-w-0">
             <p className="font-medium text-slate-900 truncate">{w.full_name}</p>
             <p className="text-xs text-slate-500 truncate">

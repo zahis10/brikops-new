@@ -16,6 +16,7 @@ from contractor_ops.safety._shared import (  # noqa: F401
     _hash_id_number,
     _new_id,
     _now,
+    generate_url,
     _resolve_include_deleted,
     _retention_date,
     get_current_user,
@@ -36,6 +37,7 @@ class SafetyWorkerCreate(BaseModel):
     profession: Optional[str] = None
     phone: Optional[str] = None
     notes: Optional[str] = None
+    photo_ref: Optional[str] = None
 
 
 class SafetyWorkerUpdate(BaseModel):
@@ -45,6 +47,34 @@ class SafetyWorkerUpdate(BaseModel):
     phone: Optional[str] = None
     notes: Optional[str] = None
     company_id: Optional[str] = None
+    photo_ref: Optional[str] = None
+
+
+# Photo refs are user-supplied and rendered as <img src> to every project member
+# (and feed the QR fitness screen), so the write-time shape gate is the SSRF
+# guard. MUST stay byte-identical to work_diary_router._PHOTO_REF_RE (the
+# d3-fix2 lesson: allow BOTH storage backends — /api/uploads/ AND s3://).
+_WORKER_PHOTO_REF_RE = re.compile(
+    r"^(?:/api/uploads/|s3://)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$")
+
+
+def _validate_worker_photo_ref(project_id: str, ref):
+    """422 unless ref is a safety/{THIS project}/ storage key. None passes (clear)."""
+    if ref is None:
+        return
+    m = _WORKER_PHOTO_REF_RE.match(ref or "")
+    if not m or m.group(1) != project_id or ".." in ref:
+        raise HTTPException(status_code=422, detail="הפניית תמונה לא חוקית")
+
+
+def _photo_display(ref):
+    """Regenerate a per-GET display URL from the stored key; fail-soft → None."""
+    if not ref:
+        return None
+    try:
+        return generate_url(ref)
+    except Exception:
+        return None
 
 
 @router.post("/{project_id}/workers", status_code=201, response_model=SafetyWorker)
@@ -55,6 +85,7 @@ async def create_worker(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
+    _validate_worker_photo_ref(project_id, payload.photo_ref)
 
     resolved_company_id = await _ensure_company_or_placeholder(
         db, project_id, payload.company_id, payload.company_name, user["id"]
@@ -71,6 +102,7 @@ async def create_worker(
         "profession": payload.profession,
         "phone": payload.phone,
         "notes": payload.notes,
+        "photo_ref": payload.photo_ref,
         "created_at": _now(),
         "created_by": user["id"],
         "deletedAt": None,
@@ -83,7 +115,9 @@ async def create_worker(
     await _audit("safety_worker", doc["id"], "created", user["id"], {
         "project_id": project_id, "after": audit_after,
     })
-    return SafetyWorker(**doc)
+    result = SafetyWorker(**doc)
+    result.photo_display_url = _photo_display(doc.get("photo_ref"))
+    return result
 
 
 @router.get("/{project_id}/workers")
@@ -111,9 +145,10 @@ async def list_workers(
     total = await db.safety_workers.count_documents(q)
     cursor = db.safety_workers.find(q, {"_id": 0}).sort("created_at", -1).skip(offset).limit(limit)
     items = await cursor.to_list(length=limit)
-    # strip the hash from list responses too
+    # strip the hash from list responses too; regen the photo display URL per-GET
     for it in items:
         it.pop("id_number_hash", None)
+        it["photo_display_url"] = _photo_display(it.get("photo_ref"))
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
@@ -131,6 +166,7 @@ async def get_worker(
     # PII: never expose hash or any raw id_number
     doc.pop("id_number_hash", None)
     doc["id_number"] = None
+    doc["photo_display_url"] = _photo_display(doc.get("photo_ref"))
     return SafetyWorker(**doc)
 
 
@@ -154,6 +190,9 @@ async def update_worker(
         # PII: rotate hash only; never persist raw id_number on the document.
         updates["id_number_hash"] = _hash_id_number(updates["id_number"]) if updates["id_number"] else None
         updates["id_number"] = None
+    if "photo_ref" in updates:
+        # null clears the photo; a non-null ref must pass the shape gate
+        _validate_worker_photo_ref(project_id, updates["photo_ref"])
     if "company_id" in updates and updates["company_id"]:
         comp = await db.project_companies.find_one({
             "id": updates["company_id"], "project_id": project_id, "deletedAt": None,
@@ -171,7 +210,9 @@ async def update_worker(
         "before": {k: v for k, v in before.items() if k not in _STRIP_PII},
         "after": {k: v for k, v in after.items() if k not in _STRIP_PII},
     })
-    return SafetyWorker(**after)
+    result = SafetyWorker(**after)
+    result.photo_display_url = _photo_display(after.get("photo_ref"))
+    return result
 
 
 @router.delete("/{project_id}/workers/{worker_id}", status_code=204)

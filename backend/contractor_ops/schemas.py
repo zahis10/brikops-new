@@ -729,6 +729,8 @@ class SafetyWorker(BaseModel):
     profession: Optional[str] = None     # e.g. "נגר", "חשמלאי"
     phone: Optional[str] = None
     notes: Optional[str] = None
+    photo_ref: Optional[str] = None      # permanent storage KEY (1b pattern); never a URL at rest
+    photo_display_url: Optional[str] = None  # regenerated per-GET; never persisted
     created_at: str                      # ISO UTC via _now()
     created_by: str                      # actor user id
     # soft-delete (project-wide convention — camelCase)

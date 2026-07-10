@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { Camera, X } from 'lucide-react';
+import { compressImage } from '../../utils/imageCompress';
 import { safetyService, projectCompanyService } from '../../services/api';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -12,6 +14,7 @@ import SafetyFormModal from './SafetyFormModal';
 // Sentinel for the "free-text new company" option (create only). Radix Select
 // values must be non-empty strings, so we use an explicit token rather than ''.
 const NEW_COMPANY = '__new__';
+const isHttp = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
 
 // Create + edit a safety worker. Fields mirror SafetyWorkerCreate / SafetyWorkerUpdate
 // exactly. id_number is WRITE-ONLY: the server hashes it and we never receive or
@@ -27,6 +30,10 @@ export default function SafetyWorkerForm({ projectId, worker, open, onClose, onS
   const [companyName, setCompanyName] = useState('');
   const [idNumber, setIdNumber] = useState('');
   const [notes, setNotes] = useState('');
+  // photo: key = permanent stored_ref sent to the server; preview = display URL
+  const [photo, setPhoto] = useState({ key: null, preview: null });
+  const [photoBroken, setPhotoBroken] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [submitting, setSubmitting] = useState(false);
 
@@ -40,6 +47,8 @@ export default function SafetyWorkerForm({ projectId, worker, open, onClose, onS
     setCompanyName('');
     setIdNumber(''); // never prefill — stored value is a hash
     setNotes(worker?.notes || '');
+    setPhoto({ key: worker?.photo_ref || null, preview: worker?.photo_display_url || null });
+    setPhotoBroken(false);
   }, [open, worker]);
 
   // Best-effort company list (same PII-trimmed source NewDefectModal uses).
@@ -71,7 +80,24 @@ export default function SafetyWorkerForm({ projectId, worker, open, onClose, onS
     setCompanyId(v);
   };
 
+  const handlePhoto = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      // worker photos are always images — always compress (no PDF branch)
+      const toUpload = await compressImage(file);
+      const res = await safetyService.uploadDocumentFile(projectId, toUpload);
+      setPhoto({ key: res.stored_ref, preview: res.url });
+      setPhotoBroken(false);
+    } catch (err) {
+      toast.error('העלאת התמונה נכשלה — נסה שוב');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleSubmit = async () => {
+    if (uploading) { toast.error('המתן לסיום העלאת התמונה'); return; }
     const name = fullName.trim();
     if (name.length < 2 || name.length > 120) {
       toast.error('שם מלא הוא שדה חובה (2-120 תווים)');
@@ -84,6 +110,7 @@ export default function SafetyWorkerForm({ projectId, worker, open, onClose, onS
       phone: phone.trim() || null,
       notes: notes.trim() || null,
       company_id: companyId || null,
+      photo_ref: photo.key || null,  // null clears the photo (create + edit)
     };
     if (idNumber.trim()) payload.id_number = idNumber.trim();
     // company_name is create-only (SafetyWorkerUpdate has no company_name field).
@@ -168,6 +195,49 @@ export default function SafetyWorkerForm({ projectId, worker, open, onClose, onS
       <div className="space-y-1.5">
         <Label htmlFor="sw-notes">הערות</Label>
         <Textarea id="sw-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>תמונת עובד</Label>
+        <div className="flex items-center gap-3">
+          {photo.preview && !photoBroken ? (
+            <button
+              type="button"
+              onClick={() => { if (isHttp(photo.preview)) window.open(photo.preview, '_blank'); }}
+              className="w-[88px] h-[88px] rounded-full overflow-hidden border border-slate-200 bg-slate-100 shrink-0"
+              aria-label="תצוגת תמונת העובד"
+            >
+              <img src={photo.preview} alt="תמונת עובד" className="w-full h-full object-cover" onError={() => setPhotoBroken(true)} />
+            </button>
+          ) : (
+            <div className="w-[88px] h-[88px] rounded-full border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center shrink-0">
+              <Camera className="w-6 h-6 text-slate-300" />
+            </div>
+          )}
+          <div className="flex flex-col gap-2">
+            <label
+              className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-medium cursor-pointer hover:bg-slate-50 ${uploading ? 'opacity-60 pointer-events-none' : ''}`}
+            >
+              <Camera className="w-4 h-4" />
+              {uploading ? 'מעלה…' : (photo.key ? 'החלף תמונה' : 'הוסף תמונה')}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; handlePhoto(f); }}
+              />
+            </label>
+            {photo.key && !uploading && (
+              <button
+                type="button"
+                onClick={() => { setPhoto({ key: null, preview: null }); setPhotoBroken(false); }}
+                className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800"
+              >
+                <X className="w-3.5 h-3.5" /> הסר תמונה
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </SafetyFormModal>
   );

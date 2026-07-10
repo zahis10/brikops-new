@@ -1,106 +1,78 @@
 ================================================================================
-REVIEW — BATCH diary-d3-fix2: photo_refs validation rejects real S3 refs
-Date: 2026-07-10  |  Branch: staging (base = ea5242e — d3 + d3-fix1 in)  |  BACKEND ONLY
-Severity: P1 — diary photos UNSAVABLE on staging/prod (field-found by Zahi):
-          every upload PATCH → 422 "הפניית תמונה לא חוקית"
+REVIEW — BATCH safety-1.7: worker profile photo
+Date: 2026-07-10  |  Branch: staging  |  BACKEND (2) + FRONTEND (3)
+Scope: optional worker profile photo — key-at-rest + per-GET display URL, with a
+       write-time SSRF gate mirrored byte-for-byte from work_diary.
 ================================================================================
 
-ROOT CAUSE (verified on code)
+WHAT CHANGED
 --------------------------------------------------------------------------------
-services/object_storage.py save_bytes() returns different shapes per backend:
-    • S3 mode    → "s3://{key}"          e.g. s3://safety/<pid>/<uuid>.jpg
-    • local mode → "/api/uploads/{key}"
-The D3 SSRF gate — _PHOTO_REF_RE (work_diary_router.py) and the duplicated
-_safe_ref built inside work_diary_pdf.py — only allowed an OPTIONAL
-"/api/uploads/" prefix. So every REAL s3:// ref failed shape validation →
-_validate_photo_refs raised 422 → PATCH photo_refs rejected. Photos could never
-be saved once the backend ran on S3 (staging/prod).
+Backend (2 files)
+  contractor_ops/schemas.py
+    - SafetyWorker += photo_ref (permanent storage KEY, never a URL at rest)
+    - SafetyWorker += photo_display_url (regenerated per-GET; never persisted)
 
-Why D3 missed it: the D3 probes ran FILES_STORAGE_BACKEND=local (standing rule),
-so only the local "/api/uploads/" shape was ever exercised — the s3:// shape
-was never tested.
+  contractor_ops/safety/workers.py
+    - import generate_url (from safety._shared, already exported)
+    - SafetyWorkerCreate / SafetyWorkerUpdate += photo_ref
+    - _WORKER_PHOTO_REF_RE — BYTE-IDENTICAL to work_diary_router._PHOTO_REF_RE
+      (d3-fix2 lesson: accept BOTH /api/uploads/ AND s3:// shapes)
+    - _validate_worker_photo_ref(project_id, ref): None passes (clear); else 422
+      unless ref is a safety/{THIS project}/ key (also blocks "..")
+    - _photo_display(ref): fail-soft per-GET display URL (never persisted)
+    - create: validate photo_ref BEFORE any db work; store key; return display url
+    - list / get: regen photo_display_url per row / per doc
+    - update: validate photo_ref when present (null clears); return display url
+    - id_number / id_number_hash PII handling UNTOUCHED
 
-NEW STANDING RULE (recorded in memory): stored-ref shape validations must carry
-direct regex assertions for BOTH backend shapes (local + s3), not just local.
+Frontend (3 files)
+  components/safety/SafetyWorkerForm.js
+    - image picker: accept="image/*", ALWAYS compressImage (no PDF branch),
+      reuses safetyService.uploadDocumentFile, keeps stored_ref as photo.key
+    - 88px round preview; X "הסר תמונה" clears -> photo_ref null
+    - submit blocked while uploading ("המתן לסיום העלאת התמונה")
+    - label "תמונת עובד"; photo_ref sent (null when cleared) on create AND edit
+  components/safety/SafetyWorkerCard.js
+    - 56px rounded-full avatar at top of card; onError -> initials fallback
+  pages/SafetyHomePage.js
+    - WorkersList row: 40px round thumb before name; onError -> initials fallback
+    - removed now-unused Hammer import
 
-THE CHANGE (2 files — the two regexes kept IDENTICAL)
+VERIFICATION
 --------------------------------------------------------------------------------
-1. backend/contractor_ops/work_diary_router.py   (_PHOTO_REF_RE)
-2. backend/services/work_diary_pdf.py            (_safe_ref)
+- backend py_compile (workers.py + schemas.py) ............ OK
+- craco build (REACT_APP_BACKEND_URL set for probe) ....... EXIT=0
+- probe (FILES_STORAGE_BACKEND=local; NEVER a real bucket):
+    V6 regex both shapes accept (uploads / s3 / bare) ...... PASS
+    8 SSRF rejects (http, https, //, .., wrong-project x2,
+      empty-seg, no-filename) -> 422 ....................... PASS
+    validator: None + valid s3 pass ....................... PASS
+    HTTP create s3 ref -> 201 (echoes photo_ref,
+      returns photo_display_url) .......................... PASS
+    HTTP create http ref -> 422 ........................... PASS
+    HTTP update http ref -> 422 ........................... PASS
+    HTTP update null -> 200 (photo_ref cleared) ........... PASS
+- house greps in 3 FE files (window.confirm / raw <select /
+    localStorage) ......................................... 0 / 0 / 0
+- id_number / id_number_hash diff ........................ UNCHANGED
 
-  old: r"^(?:/api/uploads/)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$"
-  new: r"^(?:/api/uploads/|s3://)?safety/([A-Za-z0-9_-]+)/[A-Za-z0-9][A-Za-z0-9.+_-]*$"
-
-Nothing else touched: MAX_DIARY_PHOTOS=12 cap, group(1)==project_id match, and
-the ".." re-check all stay exactly as they were.
-
-3. backend/tests/probe_diary_d3_http.py — new assertions (V1j-m, V2fix2a-e, V3fix2).
-
-SECURITY POSTURE (UNCHANGED — architect-confirmed)
+ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-• http:// and https:// still CANNOT match: the prefix alternation allows only
-  the two literal prefixes ("/api/uploads/" | "s3://") or nothing, then requires
-  the literal "safety/"; the body permits no ":" and no "/" beyond the fixed
-  segments — so a full URL scheme can never satisfy it.
-• "s3://<bucket>/safety/..." (extra bucket segment) is still REJECTED — after
-  "s3://" the next chars must be literally "safety/". Our refs are "s3://" + key
-  with NO bucket segment, so this is correct.
-• Cross-project refs still blocked by the unchanged group(1)==project_id check.
-• Path traversal still blocked by the unchanged ".." check.
-The SSRF gate that D3 added is fully preserved; this only widens the allowed
-prefix set to include our own S3 output shape.
+PASS — no critical issues. Confirmed: validation on BOTH create+update; null
+clears; display URL never persisted; regex byte-identical to diary; SSRF vectors
+blocked; PII unchanged; no RBAC/soft-delete/audit/company regressions; FE sends
+null on clear (create+edit); fail-soft onError->initials; no banned patterns.
+Non-blocking suggestions: (1) future single-source the shared regex constant to
+avoid drift; (2) keep regression tests for URL-ref rejection; (3) optional DB
+sanity scan that no photo_display_url leaks into stored docs.
 
-DO-NOT-TOUCH COMPLIANCE
+GUARDRAILS HONORED
 --------------------------------------------------------------------------------
-No frontend changes (FE flow was correct — the SERVER was rejecting).
-Untouched: services/object_storage.py, the /api/safety/{pid}/upload endpoint,
-_load_signature_image, the validation call sites, error messages, the 12-cap,
-the project-match, and the ".." check.
+- No new dependencies; no lightbox (card preview taps -> window.open only)
+- Upload endpoint / workers RBAC / score / exports UNTOUCHED
+- work_diary regexes mirrored, NOT refactored
+- No uploads to any real bucket (local backend only during probe)
 
-VERIFY — RESULTS (FILES_STORAGE_BACKEND=local, as standing rule)
---------------------------------------------------------------------------------
-V1 (direct validator + PDF-loader regex, BOTH shapes):
-   V1j router validator ACCEPTS s3/local/bare shapes ......... PASS [True,True,True]
-   V1k router validator REJECTS scheme/bucket/cross-project ... PASS [F,F,F,F]
-   V1l PDF-loader regex ACCEPTS s3/local/bare shapes ......... PASS [True,True,True]
-   V1m PDF-loader regex REJECTS scheme/bucket/cross-project ... PASS [F,F,F,F]
-     ACCEPT set: s3://safety/{pid}/{uuid}.jpg ·
-                 /api/uploads/safety/{pid}/{uuid}.jpg · safety/{pid}/{uuid}.jpg
-     REJECT set: http://169.254.169.254/latest/meta-data ·
-                 https://evil/x.jpg · s3://mybucket/safety/{pid}/x.jpg (bucket) ·
-                 s3://safety/other-{pid}/x.jpg (cross-project)
-
-V2 (HTTP round-trip — the actual bug):
-   V2fix2a PATCH s3:// photo_ref → 200 stored verbatim ....... PASS
-           (refs == ["s3://safety/{pid}/<uuid>.jpg"])
-   V2fix2b http:// still 422 ................................. PASS
-   V2fix2c s3:// cross-project still 422 .................... PASS
-   V2fix2d >12 s3:// refs still 422 ......................... PASS
-   V2fix2e restore loadable ref → 200 ...................... PASS
-
-V3 (PDF fail-soft):
-   V3fix2 PDF builds fail-soft with unloadable s3:// ref .... PASS
-          (valid-shape s3:// object missing → image skipped, PDF still built,
-           status=200 %PDF-, 105162 bytes — no 500)
-
-V4 py_compile (both changed files + probe) ................. OK
-   FULL d3 suite re-run ................................... 36/36 PASS, 0 FAIL
-   (26 original d3 checks + 10 new fix2 checks; all d3 negatives still 422)
-
-V5 DEVICE (Zahi, staging, real S3): upload 2-3 photos → NO error toast →
-   refresh → thumbnails PERSIST → sign → PDF contains the photos.  ← pending Zahi
-
-ARCHITECT REVIEW — PASS (no issues)
---------------------------------------------------------------------------------
-Confirmed both enforcement points fixed and byte-identical; SSRF posture intact
-(http/https unmatched, bucket-segment rejected, cross-project + ".." unchanged);
-no functional regression; probe suite expanded and 36/36 green. No new security
-findings. Non-blocking follow-ups suggested (not in this batch's scope): add an
-s3-backend probe lane, and later DRY the two regexes into a shared constant to
-prevent drift.
-
-ROLLBACK: git revert of this commit (2 backend regex lines + probe additions).
-Flag still defaults false (ENABLE_WORK_DIARY) — zero prod surface until flipped.
-
+================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================

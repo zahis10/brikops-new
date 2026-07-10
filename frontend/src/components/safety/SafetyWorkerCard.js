@@ -19,6 +19,9 @@ const SEVERITY_COLOR = {
   '3': 'bg-red-100 text-red-800',
 };
 
+const initialsOf = (name) => (name || '').trim().split(/\s+/).slice(0, 2)
+  .map((w) => w[0]).join('').toUpperCase() || '?';
+
 function Field({ label, children }) {
   if (children == null || children === '') return null;
   return (
@@ -35,12 +38,14 @@ export default function SafetyWorkerCard({
   const [trainings, setTrainings] = useState([]);
   const [incidents, setIncidents] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [avatarBroken, setAvatarBroken] = useState(false);
 
   useEffect(() => {
     if (!open || !worker?.id) return undefined;
     let cancelled = false;
     setTrainings([]);
     setIncidents([]);
+    setAvatarBroken(false);
     setLoading(true);
     Promise.allSettled([
       safetyService.listTrainings(projectId, { worker_id: worker.id, limit: 100 }),
@@ -82,9 +87,23 @@ export default function SafetyWorkerCard({
         </DialogHeader>
 
         <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
-          <div>
-            <h3 className="text-lg font-bold text-slate-900">{worker.full_name}</h3>
-            {worker.profession && <p className="text-sm text-slate-500 mt-0.5">{worker.profession}</p>}
+          <div className="flex items-center gap-3">
+            {worker.photo_display_url && !avatarBroken ? (
+              <img
+                src={worker.photo_display_url}
+                alt={worker.full_name}
+                className="w-14 h-14 rounded-full object-cover border border-slate-200 shrink-0"
+                onError={() => setAvatarBroken(true)}
+              />
+            ) : (
+              <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-semibold shrink-0">
+                {initialsOf(worker.full_name)}
+              </div>
+            )}
+            <div className="min-w-0">
+              <h3 className="text-lg font-bold text-slate-900">{worker.full_name}</h3>
+              {worker.profession && <p className="text-sm text-slate-500 mt-0.5">{worker.profession}</p>}
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-x-4 gap-y-3">
