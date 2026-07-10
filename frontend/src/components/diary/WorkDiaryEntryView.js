@@ -269,13 +269,16 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
   const dateTitle = d.toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const sig = local.worker_signature;
 
-  const sectionCard = (titleKey, children, { derived = false } = {}) => (
+  const sectionCard = (titleKey, children, { derived = false, hint = null } = {}) => (
     <Card className="p-4 space-y-2">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-bold text-slate-900">{SECTION_TITLES[titleKey]}</h3>
       </div>
       {derived && editable && (
         <p className="text-xs text-slate-400">{DERIVED_HINT}</p>
+      )}
+      {hint && (
+        <p className="text-xs text-slate-400">{hint}</p>
       )}
       {children}
     </Card>
@@ -360,16 +363,17 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
               {saveState === 'saving' ? 'שומר…' : (<><Check className="w-3.5 h-3.5 text-green-600" />נשמר</>)}
             </span>
           )}
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={onExportPdf}
             disabled={exporting}
-            className="p-2 rounded-lg hover:bg-slate-100 disabled:opacity-50 shrink-0"
+            className="h-9 gap-1.5 shrink-0"
             aria-label="הורד PDF"
-            title="הורד PDF"
           >
-            <FileDown className={`w-5 h-5 text-slate-700 ${exporting ? 'animate-pulse' : ''}`} />
-          </button>
+            <FileDown className={`w-4 h-4 ${exporting ? 'animate-pulse' : ''}`} />
+            {exporting ? 'מייצא…' : 'הורד PDF'}
+          </Button>
         </div>
         {local.status === 'signed' && (
           <div className="px-4 pb-3 flex items-center gap-3">
@@ -419,6 +423,85 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
             <p className="text-sm text-slate-700 whitespace-pre-wrap">{local.work_description || '—'}</p>
           )
         ))}
+
+        {(editable || (local.photo_refs || []).length > 0) && sectionCard('photos', (
+          <>
+            {(local.photo_refs || []).length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {(local.photo_refs || []).map((ref, idx) => {
+                  const url = (local.photo_display_urls || [])[idx];
+                  return (
+                    <div key={`${ref}-${idx}`} className="relative">
+                      {url ? (
+                        <button
+                          type="button"
+                          onClick={() => window.open(url, '_blank')}
+                          aria-label={`תמונה ${idx + 1}`}
+                        >
+                          <img
+                            src={url}
+                            alt={`תמונה ${idx + 1}`}
+                            className="w-20 h-20 object-cover rounded-lg border border-slate-200 bg-white"
+                          />
+                        </button>
+                      ) : (
+                        <div className="w-20 h-20 rounded-lg border border-slate-200 bg-slate-100 flex items-center justify-center">
+                          <ImagePlus className="w-5 h-5 text-slate-300" />
+                        </div>
+                      )}
+                      {editable && (
+                        <button
+                          type="button"
+                          onClick={() => removePhoto(idx)}
+                          aria-label="הסר תמונה"
+                          className="absolute -top-1.5 -left-1.5 bg-white border border-slate-200 rounded-full p-0.5 text-slate-500 hover:text-slate-800 shadow-sm"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {editable && (
+              <>
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => handlePhotoFiles(e.target.files)}
+                />
+                {(local.photo_refs || []).length > 0 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1.5"
+                    disabled={uploadingPhotos}
+                    onClick={() => photoInputRef.current?.click()}
+                  >
+                    <ImagePlus className="w-3.5 h-3.5" />
+                    {uploadingPhotos ? 'מעלה…' : 'הוסף תמונות'}
+                  </Button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={uploadingPhotos}
+                    onClick={() => photoInputRef.current?.click()}
+                    className="w-full min-h-[72px] flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-slate-300 text-slate-500 hover:border-slate-400 hover:text-slate-700 disabled:opacity-50"
+                    aria-label="הוסף תמונות מהאתר"
+                  >
+                    <ImagePlus className="w-5 h-5" />
+                    <span className="text-sm">{uploadingPhotos ? 'מעלה…' : 'הוסף תמונות מהאתר'}</span>
+                  </button>
+                )}
+              </>
+            )}
+          </>
+        ), { hint: 'צילומי האתר והעבודות של היום — ייכללו ב-PDF החתום' })}
 
         {sectionCard('workers_by_company', (
           <>
@@ -577,73 +660,6 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
               {[inspector.visitor, inspector.checked, inspector.notes].filter(Boolean).join(' · ') || '—'}
             </p>
           )
-        ))}
-
-        {(editable || (local.photo_refs || []).length > 0) && sectionCard('photos', (
-          <>
-            <div className="flex flex-wrap gap-2">
-              {(local.photo_refs || []).map((ref, idx) => {
-                const url = (local.photo_display_urls || [])[idx];
-                return (
-                  <div key={`${ref}-${idx}`} className="relative">
-                    {url ? (
-                      <button
-                        type="button"
-                        onClick={() => window.open(url, '_blank')}
-                        aria-label={`תמונה ${idx + 1}`}
-                      >
-                        <img
-                          src={url}
-                          alt={`תמונה ${idx + 1}`}
-                          className="w-20 h-20 object-cover rounded-lg border border-slate-200 bg-white"
-                        />
-                      </button>
-                    ) : (
-                      <div className="w-20 h-20 rounded-lg border border-slate-200 bg-slate-100 flex items-center justify-center">
-                        <ImagePlus className="w-5 h-5 text-slate-300" />
-                      </div>
-                    )}
-                    {editable && (
-                      <button
-                        type="button"
-                        onClick={() => removePhoto(idx)}
-                        aria-label="הסר תמונה"
-                        className="absolute -top-1.5 -left-1.5 bg-white border border-slate-200 rounded-full p-0.5 text-slate-500 hover:text-slate-800 shadow-sm"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-              {!(local.photo_refs || []).length && !editable && (
-                <p className="text-xs text-slate-400">—</p>
-              )}
-            </div>
-            {editable && (
-              <>
-                <input
-                  ref={photoInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => handlePhotoFiles(e.target.files)}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 gap-1.5"
-                  disabled={uploadingPhotos}
-                  onClick={() => photoInputRef.current?.click()}
-                >
-                  <ImagePlus className="w-3.5 h-3.5" />
-                  {uploadingPhotos ? 'מעלה…' : 'הוסף תמונות'}
-                </Button>
-              </>
-            )}
-          </>
         ))}
 
         {sectionCard('special_instructions', (

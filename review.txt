@@ -1,177 +1,91 @@
 ================================================================================
-REVIEW — BATCH diary-d3: Work Diary PDF + photos + read-widen + paywall (D3 of 4)
-Date: 2026-07-09  |  Branch: staging  |  Flag: ENABLE_WORK_DIARY (default false)
+REVIEW — BATCH diary-d3-fix1: PDF button prominence + photos section clarity
+Date: 2026-07-10  |  Branch: staging (base = c42cca1, D3 in)  |  FRONTEND ONLY
+Severity: P2 (field feedback from Zahi's D3 staging device test — UX only)
 ================================================================================
 
-SCOPE (4 items, per approved batch + amendments)
+SCOPE
 --------------------------------------------------------------------------------
-1. Signed/draft PDF export (reportlab, modeled on the tour report).
-2. Photo picker on the diary entry (reuses the safety upload endpoint).
-3. Carry-over a: owner/admin diary READ access (writes unchanged).
-4. Carry-over b: /api/work-diary paywall URL pattern tuple.
+Two UX findings from device-testing D3 on staging:
+(1) PDF download was a bare icon button in the header — easy to miss, small tap
+    target → make it a clear labeled action.
+(2) Photos card sat near the bottom titled just "תמונות" with no explanation and
+    no meaningful position → self-explanatory title + hint, and move it right
+    after תיאור עבודות (photos illustrate the described work).
 
-STEP 0 — PRE-FLIGHT (anchors matched before writing code)
+STEP 0 — PRE-FLIGHT (all anchors matched on HEAD c42cca1; no mismatch)
 --------------------------------------------------------------------------------
-✓ services/safety_pdf.py generate_tour_report — structure, _register_fonts_once,
-  _load_signature_image, _load_brikops_logo/_load_client_logo, _NumberedCanvas
-  — all REUSED via import, file untouched (DO-NOT-TOUCH honored).
-✓ _with_display_url equipment pattern — photo_display_urls added per-GET only.
-✓ safetyService.uploadDocumentFile + SafetyTrainingForm compressImage idiom —
-  photo picker mirrors both; upload keys land under safety/{project_id}/.
-✓ SafetyTourRunner exportTourPdf blob-download idiom — PDF button mirrors it.
-✓ router.py _ORG_URL_PATTERNS tuple shape — (regex, 'projects', 'org_id').
+✓ onExportPdf handler (line 187) + icon button (365-372) — handler REUSED as-is.
+✓ sectionCard('photos', …) card (was line 582) — retitled/annotated/moved.
+✓ diaryLabels photos: 'תמונות' (line 34).
+✓ work_description card (line 406) — the card the photos section moves AFTER.
+✓ DERIVED_HINT muted style (text-xs text-slate-400) — reused for the photos hint.
 
-FILES CHANGED (2 backend modified, 1 backend NEW, 3 frontend modified, 1 probe)
+FILES CHANGED (2 — both frontend)
 --------------------------------------------------------------------------------
-1. backend/contractor_ops/work_diary_router.py
-   • imports: io, StreamingResponse, _is_super_admin.
-   • DIARY_READERS = ('owner','admin','project_manager','management_team').
-   • NEW _check_diary_read_access() — shape-identical to _check_project_access
-     but against DIARY_READERS; super_admin bypass via _is_super_admin
-     (platform_role). Swapped into list_entries + get_entry only.
-     WRITES (create/patch/refresh/sign/addendum) still _check_project_access
-     + require_roles(*SAFETY_WRITERS) — completely untouched.
-   • _with_display_url: photo_refs → photo_display_urls PARALLEL list (same
-     length, per-item fail-soft None, never persisted at rest).
-   • NEW GET /{pid}/entries/{eid}/export/pdf — reader access, StreamingResponse
-     application/pdf, Content-Disposition diary_{diary_date}.pdf, audit event
-     "pdf_exported".
-   • SECURITY (architect review): MAX_DIARY_PHOTOS=12 + _PHOTO_REF_RE +
-     _validate_photo_refs() gate on PATCH photo_refs — see ARCHITECT section.
-2. backend/contractor_ops/router.py — ONE tuple added to _ORG_URL_PATTERNS:
-     (_re.compile(r'^/api/work-diary/([^/]+)'), 'projects', 'org_id')
-   → scope-aware paywall fallback now resolves org from diary URLs (closes the
-   d2 deviation #2 gap).
-3. backend/services/work_diary_pdf.py — NEW (~460 lines).
-   generate_work_diary_pdf(db, project_id, entry_id) modeled on
-   generate_tour_report; imports safety_pdf helpers, zero edits there.
-   • _DiaryCanvas(_NumberedCanvas): "יומן עבודה" wordmark; red "הוזן באיחור"
-     band stamp on page 1 when entered_late; diagonal "טיוטה — לא חתום"
-     watermark on EVERY page while status != signed.
-   • Sections in batch order: header card (project/date/weekday/status/
-     produced-at), weather, workers_by_company table + total, subcontractors,
-     equipment, materials, work_description, incidents/tours/trainings
-     summaries, defect_counts, inspector_visit, special_instructions, photos,
-     signature, addendums.
-   • Photos: 3 per row, 5×4cm, each wrapped try/except around reportlab
-     Image() CONSTRUCTION (that is where corrupt bytes throw — see sandbox
-     transcript below); missing storage refs skipped fail-soft by the loader.
-   • Typed signature renders signer name + "(חתימה מוקלדת)"; canvas signature
-     embeds the PNG.
-4. frontend/src/services/api.js — diaryService.exportEntryPdf(projectId,
-   entryId): axios GET responseType 'blob' (mirror of exportTourPdf).
-5. frontend/src/components/diary/WorkDiaryEntryView.js
-   • Header action "הורד PDF" (FileDown icon) — draft AND signed, readers too;
-     flushes pending autosave first; blob → object URL → download + revoke.
-   • PHOTOS card (draft + writer only): accept="image/*", MAX_PHOTOS=12,
-     compressImage → safetyService.uploadDocumentFile → stored_ref pushed via
-     queueSave({photo_refs}) (photos are just another autosaved section —
-     engine internals untouched). Thumbs from photo_display_urls; X-remove per
-     photo; readers/signed see a read-only thumbnail grid.
-   • Sign blocked while uploadingPhotos (openSign guard + disabled button).
-6. frontend/src/components/diary/diaryLabels.js — photos:'תמונות' label.
-7. backend/tests/probe_diary_d3_http.py — NEW probe (verification only).
-
-KEY DECISIONS / DEVIATIONS (4 to be aware of)
---------------------------------------------------------------------------------
-1. NO list-row PDF icon (batch 2.3 "optional, keep tiny", left to me): the
-   month list rows are themselves <button> elements — nesting another button
-   is invalid DOM; a sibling hit-target bloats the row. Entry header button
-   covers the flow. Skipped per the "skip if it bloats" clause.
-2. Org-owner WITHOUT a project_memberships row still gets 403 on diary reads —
-   _check_diary_read_access is deliberately shape-identical to
-   _check_project_access (membership row required). Same as every other
-   module; widening to org-level implied access would be a separate decision.
-3. Photo uploads reuse POST /api/safety/{pid}/upload (approved wording), so
-   keys live under safety/{project_id}/ — and the safety module flag
-   (ENABLE_SAFETY_MODULE) must be ON for diary photo uploads to work. It is on
-   in staging/prod; noting the coupling explicitly.
-4. photo_display_urls is per-GET only, never persisted (probe V1e proves it);
-   local backend returns stored_ref as /api/uploads/<key>, S3 returns the bare
-   key — validation + display handle both.
-
-ARCHITECT REVIEW — 1 BLOCKING FINDING, FIXED + RE-VERIFIED
---------------------------------------------------------------------------------
-Finding (severe, real): photo_refs were accepted as arbitrary strings; the PDF
-image loader HTTP-fetches any ref that generate_url passes through as an
-http(s) URL. A writer could PATCH photo_refs=["http://169.254.169.254/..."] and
-make the SERVER fetch internal targets on export (SSRF), plus no server-side
-count cap (resource exhaustion).
-FIX (two layers, both in this batch):
-  a. Write-time gate — _validate_photo_refs() on PATCH: each ref must match
-     ^(/api/uploads/)?safety/{THIS project_id}/{uuid}.{ext}$ (no schemes, no
-     "..", no slashes in filename), max 12 refs → otherwise 422 Hebrew detail.
-  b. Export-time defense-in-depth — generate_work_diary_pdf skips (and logs)
-     any ref not matching the same shape BEFORE it reaches the loader.
-New negative probes V1f-V1i (below) prove: http:// ref → 422, cross-project
-ref → 422, 13 refs → 422, entry untouched after rejections.
-All other areas passed: RBAC read-widen correct, PDF endpoint/headers/audit
-correct, fail-soft photo handling correct, paywall tuple correct.
-
-REPORTLAB SANDBOX TRANSCRIPT (amendment #4 — verified BEFORE sign-off)
---------------------------------------------------------------------------------
-reportlab 4.4.10: Image(BytesIO(corrupt_bytes)) raises
-PIL.UnidentifiedImageError AT CONSTRUCTION (not at build/draw time) — so the
-per-image try/except wraps the constructor, which is the correct interception
-point. Missing storage ref → loader returns None → skipped before Image().
-Full-generation sandbox runs against local Mongo: DRAFT+late, SIGNED+canvas,
-SIGNED+typed → all emit %PDF- (~105KB, 3 pages); corrupt + missing photo refs
-skipped, PDF still builds. Page-1 renders visually verified (RTL, watermark,
-red late band, tables, weekday mapping: 2026-07-08 → יום רביעי ✓).
-
-VERIFY — RESULTS
---------------------------------------------------------------------------------
-Method: NEW HTTP probe backend/tests/probe_diary_d3_http.py — REAL app
-in-process (ENABLE_WORK_DIARY=true, ENABLE_SAFETY_MODULE=true for the upload
-route, FILES_STORAGE_BACKEND=local, local Mongo), REAL JWTs via _create_token,
-REAL paywall/RBAC/middleware. Seeded: org+active subscription, project, PM,
-owner, contractor-member, non-member PM, super_admin (platform_role — that is
-what _is_super_admin checks, not role), plus a second EXPIRED org. Full
-cleanup after. 26/26 PASS:
-
-  V1a photo upload via /api/safety/{pid}/upload → 200 + stored_ref
-  V1b stored_ref key under safety/{project_id}/ (local /api/uploads prefix ok)
-  V1c PATCH photo_refs → photo_display_urls parallel list (len match, url ok)
-  V1d GET entry keeps parallel list
-  V1e photo_display_urls NOT persisted at rest (raw Mongo doc checked)
-  V1f SSRF: photo_refs=["http://169.254.169.254/..."] → 422, never stored
-  V1g cross-project safety/other-project/… ref → 422
-  V1h 13 refs → 422 (cap 12)
-  V1i photo_refs unchanged after all rejected PATCHes
-  V2a DRAFT export → 200, %PDF- magic, application/pdf (~105KB)
-  V2b Content-Disposition: attachment; filename="diary_YYYY-MM-DD.pdf"
-  V2c audit event "pdf_exported" recorded with actor
-  V3a owner GET list → 200 (READ-WIDEN — was 403 in d2)
-  V3b owner GET entry → 200
-  V3c owner export PDF → 200 %PDF-
-  V3d owner POST create → STILL 403
-  V3e owner PATCH → STILL 403
-  V3f owner sign → STILL 403
-  V3g contractor project-member GET → 403 (not in DIARY_READERS)
-  V3h non-member PM GET → 403
-  V3i non-member export → 403
-  V3j super_admin GET → 200 (platform_role bypass)
-  V4a sign canvas multipart → signed
-  V4b SIGNED export → 200 %PDF-
-  V5  _resolve_request_org_id('/api/work-diary/{pid}/…') → org_id (the tuple)
-  V6  expired-org PM POST create → 402 (paywall blocks mutations; GET stays
-      open by design — _check_paywall returns early on GET)
-
-Build & hygiene:
-  craco build → EXIT=0 (CI=false, staging.invalid backend URL).
-  py_compile on both backend files → OK. Workflow restarted clean.
-  House greps on touched FE files → 0 hits (window.confirm / <select /
-  localStorage / WebkitOverflowScrolling / setSearchParams object-literal).
+1. frontend/src/components/diary/diaryLabels.js
+   • SECTION_TITLES.photos: 'תמונות' → 'תמונות מהיום'.
+2. frontend/src/components/diary/WorkDiaryEntryView.js
+   • PDF button: icon-only <button> → labeled ui/Button (variant="outline",
+     h-9, gap-1.5): FileDown + "הורד PDF"; while exporting → disabled +
+     "מייצא…". onExportPdf UNCHANGED. Same visibility (draft AND signed,
+     readers included). Height 36px (h-9) → ≥ the small tap-target the batch
+     asked to grow past the old p-2 icon.
+   • sectionCard() helper: added an optional { hint } arg → renders one muted
+     line (text-xs text-slate-400, same as DERIVED_HINT) under the title.
+     Backward-compatible; every existing call unchanged.
+   • Photos card MOVED: from before special_instructions (bottom) to directly
+     AFTER the work_description card. Passes hint:
+     "צילומי האתר והעבודות של היום — ייכללו ב-PDF החתום".
+   • Empty state (editable, 0 photos): the small "הוסף תמונות" button replaced
+     by the house dashed drop-zone — full-width, min-h-[72px], border-2
+     border-dashed, ImagePlus + "הוסף תמונות מהאתר", opens the SAME hidden file
+     input via photoInputRef. With ≥1 photo: unchanged thumbnail grid + the
+     small "הוסף תמונות" button below it.
+   • Reader/signed with 0 photos: card still hidden (condition unchanged:
+     editable || photo_refs.length > 0).
 
 DO-NOT-TOUCH COMPLIANCE
 --------------------------------------------------------------------------------
-services/safety_pdf.py: ZERO edits (helpers imported). SafetySignaturePad:
-untouched. Autosave engine internals: untouched (photos ride queueSave).
-Write RBAC: untouched. No new dependencies (reportlab already in). No weather
-API (D4). No delete-entry. Font registration + image loading reused, not
-reimplemented.
+onExportPdf / handlePhotoFiles / removePhoto: untouched. Autosave engine +
+queueSave/flush: untouched. MAX_PHOTOS: untouched. Hidden file input +
+photoInputRef: same element, now opened from either the grid button or the
+drop-zone. uploadingPhotos sign-guard: intact (openSign blocks + upload
+buttons disabled while uploading). Zero backend changes. Zero PDF-generator
+changes (PDF section order unchanged). SafetySignaturePad + sign flow untouched.
 
-ROLLBACK: git revert of the batch commits. Flag still defaults false —
+VERIFY — RESULTS
+--------------------------------------------------------------------------------
+V1 Header — labeled "הורד PDF" Button renders for draft + signed + reader;
+   onExportPdf path unchanged (flush → blob → download → revoke); toggles to
+   disabled "מייצא…" while exporting.  ✓ (code + build)
+V2 Photos card renders directly after תיאור עבודות, titled "תמונות מהיום" with
+   the muted hint line.  ✓ (code)
+V3 Empty + editable → full-width dashed drop-zone opens the picker; after
+   upload the grid renders; remove-X present; sign still blocked mid-upload
+   (uploadingPhotos guard unchanged).  ✓ (code)
+V4 Reader (owner) with photos → read-only grid in the new position (no add
+   button, no X); reader with 0 photos → card hidden.  ✓ (code)
+V5 House greps on both touched files → 0 hits (window.confirm / <select /
+   localStorage / WebkitOverflowScrolling / setSearchParams object-literal).  ✓
+
+Build: craco build → EXIT=0 (CI=false, staging.invalid backend URL).
+Device visual (RTL header crowding at mobile widths, tab-order of the PDF
+button + dashed CTA): deferred to Zahi's staging device pass — same as the D2
+V8 DEVICE step, since the module is flag-gated (ENABLE_WORK_DIARY) and needs a
+live authenticated project to render.
+
+ARCHITECT REVIEW — PASS (no issues)
+--------------------------------------------------------------------------------
+Confirmed all three changes implemented correctly; JSX integrity intact (no
+broken conditionals, no duplicate refs, thumbnail key ${ref}-${idx} unchanged);
+all DO-NOT-TOUCH behaviors preserved (onExportPdf, handlePhotoFiles, removePhoto,
+MAX_PHOTOS, autosave/flush, hidden input + photoInputRef, uploadingPhotos sign
+guard). No security findings (FE-only, no new data path). Suggested follow-ups
+(non-blocking): mobile-width smoke for header crowding + keyboard tab-order —
+folded into the deferred device pass above.
+
+ROLLBACK: git revert of this commit (2 FE files). Flag still defaults false —
 zero production surface until ENABLE_WORK_DIARY is flipped on staging EB.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

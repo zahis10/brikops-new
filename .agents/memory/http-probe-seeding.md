@@ -11,7 +11,7 @@ Rule: when probing the real FastAPI app in-process (httpx ASGITransport) with re
 **Why:** first d2 probe run failed 16/16 with 402/403 for exactly these reasons.
 **How to apply:** any future probe that goes through the full middleware chain (paywall, RBAC) instead of calling router coroutines directly.
 
-## D3 additions (2026-07-09)
-- `_is_super_admin()` checks `platform_role == 'super_admin'` on the user doc — seeding `role: 'super_admin'` alone gets 403. Seed both fields.
-- The safety router (incl. `POST /api/safety/{pid}/upload`) is feature-gated: never imported unless `ENABLE_SAFETY_MODULE=true` → probes hitting it get 405/404. Set the env var at probe top alongside `ENABLE_WORK_DIARY`.
-- Local storage backend returns `stored_ref` prefixed `/api/uploads/<key>`; S3 returns the bare key. Assertions on refs must accept both (`"<key-fragment>" in ref`, not `startswith`).
+More seeding/env rules:
+- Super-admin bypass keys off `platform_role == 'super_admin'` on the user doc, NOT `role` — seed both fields or the bypass 403s.
+- Feature-gated routers are never imported when their flag is off (probes hitting them get 404/405). Set every flag the probe touches at the top of the file, e.g. a work-diary probe that reuses the safety upload endpoint must also set `ENABLE_SAFETY_MODULE=true`.
+- The local storage backend returns `stored_ref` prefixed `/api/uploads/<key>`; S3 returns the bare key. Ref assertions must accept both (substring match, not `startswith`).
