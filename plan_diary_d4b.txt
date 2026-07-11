@@ -25,24 +25,32 @@ STEP 0 FINDINGS (pre-flight ran 2026-07-11 — one mismatch)
 ✔ FE weather card       WorkDiaryEntryView.js:616-631 — manual {desc, source}
                         via queueSave
 ✔ WEATHER_OPTIONS       diaryLabels.js:5 (manual options stay untouched)
-✖ MISMATCH: NO general project-update endpoint/model exists (no ProjectUpdate,
-  no PATCH/PUT /projects/{id}; FE has no updateProject service). The spec's
-  "existing project-update service" anchor does not exist.
-  → RESOLUTION (the "or equivalent" clause): one NEW narrow endpoint:
-    PUT /projects/{project_id}/weather-city
-    gate: require_roles('project_manager', 'management_team')  ← the house
-          manager-level gate (companies_router pattern); no existing RBAC
-          touched anywhere.
-    body: {"weather_city": "<code>"|null} — validated against the 15-city
-          list; null clears. Audit event "project_weather_city_set".
+✖ MISMATCH (original spec): NO general project-update endpoint/model exists.
+  → RESOLVED by the W1 AMENDMENT (Zahi, 2026-07-11): the city setting lives in
+    the DIARY domain, not the project. Amendment anchors verified 2026-07-11:
+      ensure_work_diary_indexes   work_diary_router.py:663 (called server.py:1212)
+      write gate                  require_roles(*SAFETY_WRITERS) +
+                                  _check_project_access (e.g. lines 297-300)
+      list_diary_entries          work_diary_router.py:372 → {"items","total"}
+      refresh-derived             endpoint @521; FE refreshDerived @116 (flush-first)
+      derived hint pattern        FE sectionCard @290
 
 ================================================================================
 IMPLEMENTATION PARTS
 ================================================================================
 
-PART 1 — backend/contractor_ops/schemas.py
-    Project += weather_city: Optional[str] = None
-    (one line; no other model touched)
+PART 1 — diary-domain city setting (per the W1 AMENDMENT — supersedes any
+         Project field / projects_router endpoint; schemas.py NOT touched)
+    - NEW collection work_diary_settings:
+        {id, project_id (UNIQUE), weather_city, updated_at, updated_by}
+      unique index (project_id) added in ensure_work_diary_indexes.
+    - NEW PUT /api/work-diary/{project_id}/weather-city
+        body {"weather_city": "<code>"|null} — null clears; 422 unknown code;
+        gate = the diary router's EXISTING write pattern verbatim
+        (require_roles(*SAFETY_WRITERS) + _check_project_access) — membership
+        by construction; audit "diary_weather_city_set".
+    - list_diary_entries envelope gains "weather_city" (one indexed find_one);
+      the derive path reads the same doc.
 
 PART 2 — NEW backend/services/weather_il.py  (single source of truth)
     IL_WEATHER_CITIES = [  # (code, hebrew label) — from W0 inventory
@@ -70,15 +78,15 @@ PART 2 — NEW backend/services/weather_il.py  (single source of truth)
     Index note: weather_cache gets a unique compound index (city_code, date) —
         created in the existing index-bootstrap path.
 
-PART 3 — backend/contractor_ops/projects_router.py
-    NEW PUT /projects/{project_id}/weather-city (per STEP 0 resolution above):
-    manager gate, 404 unknown project, 422 unknown city code, null clears,
-    audit "project_weather_city_set", returns the updated project fields.
+PART 3 — [FOLDED INTO PART 1 by the W1 AMENDMENT]
+    projects_router.py is NOT touched. The city endpoint lives on the diary
+    router (PUT /api/work-diary/{project_id}/weather-city — see PART 1).
 
 PART 4 — backend/contractor_ops/work_diary_router.py :: _derive_sections
     weather becomes a derived DICT section MIRRORING defect_counts exactly:
-    - CREATE: project.weather_city set → weather = await get_daily_weather(
-      city, diary_date) (cache-first). None → weather stays None (manual).
+    - CREATE: work_diary_settings.weather_city set for the project → weather =
+      await get_daily_weather(city, diary_date) (cache-first). None → weather
+      stays None (manual).
     - refresh-derived: overwrite weather ONLY if current is None or
       source == "derived". Manual weather NEVER overwritten. A derived value
       is re-derived (fresh cache/fetch); fetch-fail on refresh → keep the
@@ -86,14 +94,16 @@ PART 4 — backend/contractor_ops/work_diary_router.py :: _derive_sections
     - NO change to sign flow / autosave / PDF (weather.desc already renders).
 
 PART 5 — frontend
-    services/api.js: projectService.setWeatherCity(projectId, code|null)
+    services/api.js: diaryService.setWeatherCity(projectId, code|null)
+    (weather_city arrives on the existing month-list envelope — no extra GET)
     components/diary/WorkDiaryEntryView.js — weather card only:
-      - project WITHOUT weather_city + user is a diary WRITER → inline
-        one-time picker in the card: "עיר לנתוני מזג אוויר" (Radix Select over
-        IL_WEATHER_CITIES — FE copy of the 15-city list in diaryLabels.js,
-        labeled "העיר הקרובה לאתר") → PUT weather-city → trigger the existing
-        refresh-derived action → weather fills immediately.
-      - readers: no picker, no change.
+      - no city set + user is a diary WRITER → empty-state notice with Zahi's
+        copy: "לא נבחרה עיר · למילוי אוטומטי בפעמים הבאות בחר עיר" → tap opens
+        the inline Radix Select ("עיר לנתוני מזג אוויר", 15-city FE copy in
+        diaryLabels.js, labeled "העיר הקרובה לאתר") → PUT weather-city →
+        trigger the existing refresh-derived action → the CURRENT entry fills
+        immediately.
+      - readers: no notice, no picker, no change.
       - derived weather renders with the standard "נגזר" hint treatment;
         manual editing keeps working exactly as today (flips source to
         manual — existing derived-section pattern).
@@ -121,7 +131,12 @@ V4 Derive semantics (HTTP probes, full middleware):
     - create with city → weather.source == "derived", desc startswith "תחזית:"
     - manual edit → refresh-derived → manual SURVIVES
     - derived → refresh-derived → re-derived (and fetch-fail → old value kept)
-V5 No city on project → weather None; picker rendering is writer-only (FE
+V4b weather-city endpoint (amendment probes):
+    - PUT valid code → 200 + settings doc + audit "diary_weather_city_set"
+    - PUT null → clears; PUT unknown code → 422
+    - non-member PM → 403 (write gate by construction); reader role → 403
+    - list_diary_entries envelope carries weather_city
+V5 No city set → weather None; picker rendering is writer-only (FE
     logic — asserted at code level + V8 device)
 V6 PDF: derived weather renders in the מזג אוויר section — single-entry AND
     monthly PDF (reuses d4a probe helpers)
@@ -139,11 +154,11 @@ DELIVERABLES (end of W1)
   feat(diary): auto weather from IMS (city-cached, fail-soft) (d4b)
 - Zahi runs git/deploy. NO deploy from here.
 
-OPEN POINT REQUIRING APPROVAL (the one deviation)
+OPEN POINTS
 --------------------------------------------------------------------------------
-The NEW narrow endpoint PUT /projects/{project_id}/weather-city with the
-manager-level gate (require_roles project_manager/management_team) — needed
-because no general project-update path exists. Everything else is spec-verbatim.
+None. The earlier endpoint deviation was superseded by the W1 AMENDMENT
+(city setting scoped to the diary domain) — the plan is now spec-verbatim
+against the amended BATCH.
 
 ================================================================================
 AWAITING "תתחיל" — NO FEATURE CODE UNTIL APPROVED.
