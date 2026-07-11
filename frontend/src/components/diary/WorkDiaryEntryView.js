@@ -18,7 +18,7 @@ import { diaryService, safetyService } from '../../services/api';
 import { compressImage } from '../../utils/imageCompress';
 import SafetySignaturePad from '../safety/SafetySignaturePad';
 import {
-  WEATHER_OPTIONS, STATUS_HE, SECTION_TITLES, DERIVED_HINT,
+  WEATHER_OPTIONS, STATUS_HE, SECTION_TITLES, DERIVED_HINT, IL_WEATHER_CITIES,
 } from './diaryLabels';
 
 /**
@@ -27,7 +27,9 @@ import {
  * sections carry the locked transparency line (DERIVED_HINT) — derived data
  * is a suggestion, never a gate (concept decisions 6+9).
  */
-export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChanged, onBack }) {
+export default function WorkDiaryEntryView({
+  projectId, entry, isWriter, weatherCity, onWeatherCityChanged, onChanged, onBack,
+}) {
   const { user } = useAuth();
   const editable = isWriter && entry.status === 'draft';
 
@@ -49,6 +51,9 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
   const [newSub, setNewSub] = useState('');
   const [newEquip, setNewEquip] = useState('');
   const [newMaterial, setNewMaterial] = useState('');
+  // d4b — one-time weather-city picker (writer only, shown while no city set)
+  const [cityPickerOpen, setCityPickerOpen] = useState(false);
+  const [savingCity, setSavingCity] = useState(false);
 
   const pendingRef = useRef({});
   const timerRef = useRef(null);
@@ -350,6 +355,22 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
     </ul>
   );
 
+  // d4b — pick the diary's weather city once, then auto-fill the open entry
+  // via the existing refresh-derived action (manual data survives it).
+  const pickWeatherCity = async (code) => {
+    setSavingCity(true);
+    try {
+      await diaryService.setWeatherCity(projectId, code);
+      if (onWeatherCityChanged) onWeatherCityChanged(code);
+      setCityPickerOpen(false);
+      await refreshDerived();
+    } catch (err) {
+      detailToast(err, 'שגיאה בשמירת העיר');
+    } finally {
+      setSavingCity(false);
+    }
+  };
+
   const inspector = local.inspector_visit || {};
   const setInspector = (key, val) => {
     queueSave({ inspector_visit: { ...inspector, [key]: val, source: 'manual' } });
@@ -615,18 +636,49 @@ export default function WorkDiaryEntryView({ projectId, entry, isWriter, onChang
 
         {sectionCard('weather', (
           editable ? (
-            <Select
-              value={local.weather?.desc || ''}
-              onValueChange={(v) => queueSave({ weather: { desc: v, source: 'manual' } })}
-              dir="rtl"
-            >
-              <SelectTrigger><SelectValue placeholder="בחר מזג אוויר (אופציונלי)" /></SelectTrigger>
-              <SelectContent>
-                {WEATHER_OPTIONS.map((w) => (
-                  <SelectItem key={w} value={w}>{w}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <>
+              {/* d4b — writer-only one-time city setup (auto-fill next time) */}
+              {!weatherCity && !cityPickerOpen && (
+                <button
+                  type="button"
+                  onClick={() => setCityPickerOpen(true)}
+                  className="w-full text-right text-xs text-slate-500 border border-dashed border-slate-300 rounded-lg px-3 py-2 hover:border-slate-400 hover:text-slate-700"
+                >
+                  לא נבחרה עיר · למילוי אוטומטי בפעמים הבאות בחר עיר
+                </button>
+              )}
+              {!weatherCity && cityPickerOpen && (
+                <Select value="" onValueChange={pickWeatherCity} disabled={savingCity} dir="rtl">
+                  <SelectTrigger aria-label="עיר לנתוני מזג אוויר">
+                    <SelectValue placeholder={savingCity ? 'שומר…' : 'העיר הקרובה לאתר'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {IL_WEATHER_CITIES.map((c) => (
+                      <SelectItem key={c.code} value={c.code}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {local.weather?.source === 'derived' && (
+                <p className="text-xs text-slate-400">{DERIVED_HINT}</p>
+              )}
+              <Select
+                value={local.weather?.desc || ''}
+                onValueChange={(v) => queueSave({ weather: { desc: v, source: 'manual' } })}
+                dir="rtl"
+              >
+                <SelectTrigger>
+                  {local.weather?.desc
+                    ? <span className="text-sm text-slate-700">{local.weather.desc}</span>
+                    : <SelectValue placeholder="בחר מזג אוויר (אופציונלי)" />}
+                </SelectTrigger>
+                <SelectContent>
+                  {WEATHER_OPTIONS.map((w) => (
+                    <SelectItem key={w} value={w}>{w}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
           ) : (
             <p className="text-sm text-slate-700">{local.weather?.desc || '—'}</p>
           )

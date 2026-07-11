@@ -718,6 +718,11 @@ export const diaryService = {
     const r = await axios.post(`${API}/work-diary/${projectId}/entries/${entryId}/refresh-derived`, null, { headers: getAuthHeader() });
     return r.data;
   },
+  // d4b — diary-scoped weather city (null clears). Writer-gated server-side.
+  async setWeatherCity(projectId, code) {
+    const r = await axios.put(`${API}/work-diary/${projectId}/weather-city`, { weather_city: code }, { headers: getAuthHeader() });
+    return r.data;
+  },
   async signEntry(projectId, entryId, { signerName, signatureType, typedName, blob }) {
     const fd = new FormData();
     fd.append('signer_name', signerName || '');

@@ -242,6 +242,8 @@ export default function WorkDiaryPage() {
         projectId={projectId}
         entry={entry}
         isWriter={isWriter}
+        weatherCity={entries.weather_city || null}
+        onWeatherCityChanged={(code) => setEntries((prev) => ({ ...prev, weather_city: code }))}
         onChanged={onEntryChanged}
         onBack={() => setDateParam(null)}
       />

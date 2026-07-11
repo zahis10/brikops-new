@@ -27,9 +27,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from pymongo.errors import DuplicateKeyError
 
 from services.object_storage import generate_url
+from services.weather_il import CITY_CODES, get_daily_weather
 
 from contractor_ops.router import (
     get_current_user, get_db, _now, _audit,
@@ -94,6 +96,21 @@ DERIVED_LIST_SECTIONS = (
 # =====================================================================
 async def _derive_sections(db, project_id: str, diary_date: str) -> dict:
     date_prefix = {"$regex": f"^{re.escape(diary_date)}"}
+
+    # d4b — weather forecast (IMS, cache-first, fail-soft). Derived ONLY when
+    # the diary has a city set (work_diary_settings); otherwise stays None
+    # (fully manual). get_daily_weather NEVER raises and NEVER exceeds the
+    # 2.5s budget — a down IMS cannot delay entry creation.
+    weather = None
+    try:
+        settings = await db.work_diary_settings.find_one(
+            {"project_id": project_id}, {"_id": 0, "weather_city": 1})
+        city = (settings or {}).get("weather_city")
+        if city:
+            weather = await get_daily_weather(db, city, diary_date)
+    except Exception as e:
+        logger.warning(f"[DIARY] weather derivation failed (fail-soft): {e}")
+        weather = None
 
     workers_by_company = []
     try:
@@ -230,6 +247,7 @@ async def _derive_sections(db, project_id: str, diary_date: str) -> dict:
         "tours_summary": tours_summary,
         "defect_counts": defect_counts,
         "trainings_summary": trainings_summary,
+        "weather": weather,
     }
 
 
@@ -366,6 +384,52 @@ async def create_diary_entry(
 
 
 # =====================================================================
+# 2.1b WEATHER CITY (d4b) — diary-scoped setting (Adjustment B: NOT on the
+# project). Gate = the diary write pattern VERBATIM (SAFETY_WRITERS +
+# _check_project_access — membership by construction).
+# =====================================================================
+class WeatherCitySet(BaseModel):
+    weather_city: Optional[str] = None   # null clears
+
+
+@router.put("/{project_id}/weather-city")
+async def set_weather_city(
+    project_id: str,
+    payload: WeatherCitySet,
+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+):
+    db = get_db()
+    await _check_project_access(user, project_id)
+
+    city = payload.weather_city
+    if city is not None and city not in CITY_CODES:
+        raise HTTPException(status_code=422, detail="קוד עיר לא מוכר")
+
+    now = _now()
+    try:
+        await db.work_diary_settings.update_one(
+            {"project_id": project_id},
+            {"$set": {"weather_city": city, "updated_at": now,
+                      "updated_by": user["id"]},
+             "$setOnInsert": {"id": _new_id(), "project_id": project_id}},
+            upsert=True,
+        )
+    except DuplicateKeyError:
+        # Concurrent first-write race — the unique index guarantees one doc;
+        # plain update now targets it.
+        await db.work_diary_settings.update_one(
+            {"project_id": project_id},
+            {"$set": {"weather_city": city, "updated_at": now,
+                      "updated_by": user["id"]}},
+        )
+
+    await _audit("work_diary", project_id, "diary_weather_city_set", user["id"], {
+        "project_id": project_id, "weather_city": city,
+    })
+    return {"project_id": project_id, "weather_city": city}
+
+
+# =====================================================================
 # 2.2 LIST + GET
 # =====================================================================
 @router.get("/{project_id}/entries")
@@ -386,7 +450,15 @@ async def list_diary_entries(
     total = await db.work_diary_entries.count_documents(q)
     items = await db.work_diary_entries.find(q, {"_id": 0}).sort(
         "diary_date", -1).to_list(400)
-    return {"items": [_with_display_url(i) for i in items], "total": total}
+    # d4b — the FE learns the diary's weather city with the month load
+    # (ONE indexed find_one; no extra endpoint).
+    settings = await db.work_diary_settings.find_one(
+        {"project_id": project_id}, {"_id": 0, "weather_city": 1})
+    return {
+        "items": [_with_display_url(i) for i in items],
+        "total": total,
+        "weather_city": (settings or {}).get("weather_city"),
+    }
 
 
 @router.get("/{project_id}/entries/{entry_id}")
@@ -540,6 +612,14 @@ async def refresh_derived_sections(
     existing_dc = entry.get("defect_counts")
     if existing_dc is None or (isinstance(existing_dc, dict) and existing_dc.get("source") == "derived"):
         updates["defect_counts"] = fresh.get("defect_counts")
+    # weather (d4b) — same dict semantics as defect_counts, with one twist:
+    # a fetch-fail on refresh (fresh None) KEEPS the existing derived value —
+    # never wipe, never downgrade. Manual weather is NEVER overwritten.
+    existing_w = entry.get("weather")
+    if existing_w is None or (isinstance(existing_w, dict) and existing_w.get("source") == "derived"):
+        fresh_w = fresh.get("weather")
+        if fresh_w is not None:
+            updates["weather"] = fresh_w
     updates["updated_at"] = _now()
 
     # ATOMIC draft re-assert (same race-closure as PATCH).
@@ -675,4 +755,14 @@ async def ensure_work_diary_indexes(db) -> None:
         [("project_id", 1), ("status", 1)],
         background=True, name="idx_wd_project_status",
     )
-    logger.info("Work diary indices ensured (2 total)")
+    # d4b — diary-scoped settings (one doc per project) + weather cache
+    # (one doc per city/day; second project same city/day = zero HTTP).
+    await db.work_diary_settings.create_index(
+        [("project_id", 1)],
+        unique=True, background=True, name="uniq_wd_settings_project",
+    )
+    await db.weather_cache.create_index(
+        [("city_code", 1), ("date", 1)],
+        unique=True, background=True, name="uniq_weather_city_date",
+    )
+    logger.info("Work diary indices ensured (4 total)")
