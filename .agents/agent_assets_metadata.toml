@@ -732,3 +732,9 @@ id = "Apy36rMueJbcQgEOFfuwx"
 uri = "file://plan_diary_d4a.txt"
 type = "text"
 title = "Plan — diary-d4a (updated: V1 perf amendment)"
+
+[[outputs]]
+id = "OOgWluQINPIrOLLFQjBIT"
+uri = "file://w0_report_diary_d4b.txt"
+type = "text"
+title = "W0 report — diary-d4b IMS source inventory"

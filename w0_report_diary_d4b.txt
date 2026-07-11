@@ -1,0 +1,135 @@
+================================================================================
+W0 REPORT — BATCH diary-d4b: IMS weather source inventory (REPORT-ONLY)
+Date: 2026-07-11  |  Branch: staging (base = 0f80f82)  |  NO FEATURE CODE WRITTEN
+All findings below are from REAL fetches performed from this environment today.
+================================================================================
+
+(a1) IMS CITY FORECAST — isr_cities.xml  [NO TOKEN, VERIFIED LIVE]
+--------------------------------------------------------------------------------
+URL:      https://ims.gov.il/sites/default/files/ims_data/xml_files/isr_cities.xml
+Fetched:  HTTP 200, 30,143 bytes, text/xml, encoding ISO-8859-8 (declared in the
+          XML prolog — stdlib xml.etree honors it; Hebrew city names decode fine).
+Root:     <IsraelCitiesWeatherForecastMorning>, IssueDateTime "2026-07-11 04:38"
+          (Last-Modified: 01:43 GMT = 04:43 IL — regenerated every morning).
+Shape:    Location → LocationMetaData {LocationId, NameEng, NameHeb, lat/lon}
+          → LocationData → TimeUnitData per Date (TODAY + 3 days) → Elements:
+            - Minimum/Maximum temperature (°C, int)
+            - Weather code (see mapping below)
+            - Min/Max relative humidity + "Wind direction and speed"
+              ("225-180/10-15") — first day only
+            - NO rain amount anywhere (rain is expressed via the weather code:
+              גשום / מעונן עם גשם קל / יתכן גשם)
+
+CITY LIST (all 15 — this is the hardcode candidate for IL_WEATHER_CITIES):
+    520 אילת · 114 אשדוד · 513 באר שבע · 203 בית שאן · 115 חיפה · 202 טבריה
+    510 ירושלים · 204 לוד · 106 מצפה רמון · 207 נצרת · 105 עין גדי · 209 עפולה
+    507 צפת · 201 קצרין · 402 תל אביב - יפו
+
+WEATHER-CODE MAPPING (fetched live from https://ims.gov.il/he/weather_codes —
+returns clean JSON with official Hebrew desc; all 23 codes):
+    1010 סופות חול · 1020 סופות רעמים · 1060 שלג · 1070 שלג קל
+    1080 שלג מעורב בגשם · 1140 גשום · 1160 ערפל · 1220 מעונן חלקית
+    1230 מעונן · 1250 בהיר · 1260 רוחות חזקות · 1270 הביל · 1300 קרה
+    1310 חם · 1320 קר · 1510 סוער · 1520 שלג כבד
+    1530 מעונן חלקית, יתכן גשם · 1540 מעונן, יתכן גשם · 1560 מעונן עם גשם קל
+    1570 אביך · 1580 חם מאד · 1590 קר מאד
+→ Hardcode this mapping as a constant (don't fetch at runtime); capture saved.
+
+SAMPLE PARSED OUTPUT — Tel Aviv (402), 2026-07-11, from today's real feed:
+    {"desc": "תחזית: מעונן חלקית", "temp_min": 24, "temp_max": 30,
+     "rain_mm": null, "source": "derived"}
+    (raw: Weather code 1220, Min 24, Max 30, humidity 55, wind 225-180/10-15)
+
+(a2) IMS OBSERVED FEEDS — imslasthour.xml  [NO TOKEN, VERIFIED LIVE]
+--------------------------------------------------------------------------------
+URL:      .../xml_files/imslasthour.xml — HTTP 200, ~229KB, UTF-8.
+Shape:    <RealTimeData> → 498 <Observation> rows = 83 stations × the LAST HOUR
+          only, at 10-minute resolution. Fields per row: TD, TDmax, TDmin
+          (per-10-min interval, NOT daily), Rain (per-interval accumulation),
+          RH, wind, etc. Station names English-only (e.g. "TEL AVIV COAST").
+VERDICT:  A DAILY min/max/rain-total is NOT derivable from this feed without
+          polling it all day and aggregating — i.e., a scheduler job, which the
+          batch explicitly forbids (fetch-on-demand + cache only). Also probed
+          IMS_001.xml (hourly per-station FORECAST — exists, not needed).
+          → No token-free path to OBSERVED daily data. This is the decisive fact.
+
+(b) IMS ENVISTA API — api.ims.gov.il  [TOKEN REQUIRED; DOC-LEVEL + LIVE PROBE]
+--------------------------------------------------------------------------------
+Live probe: GET https://api.ims.gov.il/v1/envista/stations → 401
+    {"Message":"Authorization has been denied for this request."}
+    (endpoint confirmed alive; dummy token also 401 → real token gate).
+Per the official docs (ims.gov.il/en/ObservationDataAPI — page body is
+JS-rendered so summarized from the published API spec):
+    - Auth header:  Authorization: ApiToken <token>
+    - Stations:     GET /v1/envista/stations (ids, names, active channels)
+    - Daily data:   GET /v1/envista/stations/{id}/data/daily/{channelId}
+                    (+ date-range variants), 10-minute granularity
+    - Channels:     TD (temp °C) and Rain (mm) exist on most stations
+    → TRUE observed daily min/max/rain IS available here — but only with a
+      token that Zahi must bring (env IMS_API_TOKEN), and computing "final day"
+      values still means the day must be over.
+
+================================================================================
+RECOMMENDED PAIR (source + strategy) — per the W0 amendment
+================================================================================
+SOURCE for v1:   (a1) isr_cities.xml city FORECAST — token-free, one fetch per
+                 city/day, official IMS numbers, Hebrew mapping included.
+STRATEGY:        s1 — forecast-then-refresh, with the "upgrade to OBSERVED
+                 final" leg EXPLICITLY GATED on IMS_API_TOKEN (Envista) as an
+                 optional phase-2; absent the token the value simply remains
+                 forecast-labeled forever.
+
+get_daily_weather(city_code, date) semantics under this pair:
+    - date == today or future-in-feed → {"desc": "תחזית: <hebrew code desc>",
+      temp_min, temp_max, rain_mm: null, "source": "derived"}
+    - refresh-derived on a LATER day, token PRESENT → Envista observed final:
+      {"desc": "<desc>", temps/rain observed, source "derived"} (no prefix =
+      final by convention, and desc can carry "נמדד" if desired at W1 detail).
+    - refresh-derived, token ABSENT → re-derive from forecast feed if the date
+      is still in it; else keep existing value (no downgrade, no wipe).
+    - date not in feed / any failure / timeout → None (fail-soft, manual entry).
+
+THE COMMON FLOW, EXPLICITLY (signed the same evening):
+    The signed, immutable record shows "תחזית: מעונן חלקית · 24–30°C" — an
+    honest, SELF-DESCRIBING official forecast. A PDF reader knows exactly what
+    it is. No silent partials, ever. HARD CONSTRAINT SATISFIED.
+
+Why not s2 (observed-partial "נמדד עד HH:MM"):
+    There is NO token-free observed source (a2 verdict), so s2 would make the
+    entire feature dead until a token exists; and with Envista it still yields
+    partial numbers in the common same-evening-sign flow — weaker legal value
+    than a clean labeled forecast, for more moving parts.
+Why not s3 (defer/retro):
+    Entries are typically signed the same evening → under s3 the signed record
+    has NO weather at all in the common case. Zero value where it matters most.
+
+================================================================================
+GOTCHAS (for W1)
+================================================================================
+1. Encoding: isr_cities is ISO-8859-8 (declared) — parse bytes with ET, never
+   .decode('utf-8'). weather_codes JSON is plain UTF-8/ascii-escaped.
+2. Early-morning hole: the morning issue lands ~04:40 IL. An entry created
+   00:00–04:40 may find only YESTERDAY's issue, whose first TimeUnitData can
+   still be yesterday — if the requested date is absent → return None (manual).
+3. CDN staleness: feed served with Cache-Control max-age=1209600 (14 days!) —
+   harmless for us (server-side fetch once per city/day + Mongo weather_cache),
+   but W1 should send a cache-busting header/param or tolerate a stale morning.
+4. rain_mm is ALWAYS null from the forecast source — the Hebrew desc carries
+   rain ("גשום", "מעונן עם גשם קל"...). PDF renders desc; nothing breaks.
+5. Humidity/wind exist only for day 1 of the feed — do not depend on them.
+6. Only 15 cities — the picker is "העיר הקרובה לאתר"; fine for v1.
+7. Envista (if phase-2): station-id ≠ city-code — needs its own small map;
+   "final" values only exist once the day is over; token ONLY via env
+   IMS_API_TOKEN, absent → that leg silently off (per spec).
+
+FIXTURES CAPTURED TODAY (data only — the ONLY files written in W0):
+    backend/tests/fixtures/ims_isr_cities_2026-07-11.xml   (real full response)
+    backend/tests/fixtures/ims_weather_codes_he.json       (real full response)
+    → these become the committed V1 parser-test fixtures in W1.
+
+================================================================================
+W0 COMPLETE — STOPPING PER SPEC. NO FEATURE CODE WRITTEN.
+AWAITING ZAHI/COWORK APPROVAL OF (source=isr_cities forecast, strategy=s1 with
+token-gated Envista upgrade) BEFORE ANY W1 IMPLEMENTATION.
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================
