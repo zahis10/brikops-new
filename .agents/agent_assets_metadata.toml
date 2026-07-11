@@ -738,3 +738,9 @@ id = "OOgWluQINPIrOLLFQjBIT"
 uri = "file://w0_report_diary_d4b.txt"
 type = "text"
 title = "W0 report — diary-d4b IMS source inventory"
+
+[[outputs]]
+id = "14usuvwsBSXGlW53M-BGW"
+uri = "file://plan_diary_d4b.txt"
+type = "text"
+title = "תוכנית W1 — diary-d4b (מזג אוויר מ-IMS)"

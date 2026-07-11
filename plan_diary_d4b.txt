@@ -1,0 +1,150 @@
+================================================================================
+PLAN — BATCH diary-d4b W1: weather auto-fill from IMS (forecast-only, s1)
+Date: 2026-07-11  |  Branch: staging (base = c0b6801, includes d4a + W0 fixtures)
+Status: PLAN ONLY — awaiting "תתחיל". NO feature code written yet.
+================================================================================
+
+LOCKED W0 DECISION (input to this plan)
+--------------------------------------------------------------------------------
+- Source: isr_cities.xml city FORECAST (15 cities, ISO-8859-8, morning ~04:40,
+  temp min/max + weather code; NO rain amounts → rain_mm always null).
+- Strategy: s1 FORECAST-ONLY. desc = "תחזית: <official Hebrew code desc>".
+- Envista observed-upgrade: OUT entirely (no token-gated dead code).
+- Past/retro dates → None → manual. refresh re-derives only while the date is
+  in the feed; never wipes, never downgrades, never touches manual.
+- Fixtures already captured & saved (W0):
+    backend/tests/fixtures/ims_isr_cities_2026-07-11.xml
+    backend/tests/fixtures/ims_weather_codes_he.json
+
+STEP 0 FINDINGS (pre-flight ran 2026-07-11 — one mismatch)
+--------------------------------------------------------------------------------
+✔ Project model         schemas.py:123 (no weather_city today)
+✔ _derive_sections      work_diary_router.py:95
+✔ defect_counts         dict, source:"derived", replaced only while derived
+                        (comment @83 — weather MIRRORS this exactly)
+✔ FE weather card       WorkDiaryEntryView.js:616-631 — manual {desc, source}
+                        via queueSave
+✔ WEATHER_OPTIONS       diaryLabels.js:5 (manual options stay untouched)
+✖ MISMATCH: NO general project-update endpoint/model exists (no ProjectUpdate,
+  no PATCH/PUT /projects/{id}; FE has no updateProject service). The spec's
+  "existing project-update service" anchor does not exist.
+  → RESOLUTION (the "or equivalent" clause): one NEW narrow endpoint:
+    PUT /projects/{project_id}/weather-city
+    gate: require_roles('project_manager', 'management_team')  ← the house
+          manager-level gate (companies_router pattern); no existing RBAC
+          touched anywhere.
+    body: {"weather_city": "<code>"|null} — validated against the 15-city
+          list; null clears. Audit event "project_weather_city_set".
+
+================================================================================
+IMPLEMENTATION PARTS
+================================================================================
+
+PART 1 — backend/contractor_ops/schemas.py
+    Project += weather_city: Optional[str] = None
+    (one line; no other model touched)
+
+PART 2 — NEW backend/services/weather_il.py  (single source of truth)
+    IL_WEATHER_CITIES = [  # (code, hebrew label) — from W0 inventory
+      520 אילת, 114 אשדוד, 513 באר שבע, 203 בית שאן, 115 חיפה, 202 טבריה,
+      510 ירושלים, 204 לוד, 106 מצפה רמון, 207 נצרת, 105 עין גדי, 209 עפולה,
+      507 צפת, 201 קצרין, 402 תל אביב - יפו ]
+    WEATHER_CODE_HE = {23 codes}   # from the captured weather_codes fixture
+    _parse_cities_xml(raw_bytes) -> dict  # pure function, unit-testable on the
+        committed fixture; ET.fromstring on BYTES (ISO-8859-8 declared in
+        prolog — never .decode('utf-8'))
+    async def get_daily_weather(city_code, date) -> dict | None
+        1. guard: city_code in list, date well-formed, else None
+        2. CACHE-FIRST: db.weather_cache.find_one({city_code, date}) → hit =
+           return cached value (ZERO HTTP)
+        3. fetch isr_cities.xml — house HTTP client, total timeout ≤ 2.5s,
+           ONE attempt, no retries; cache-busting query param (?t=epoch) per
+           the locked decision (CDN max-age=14d)
+        4. parse; requested date must be present in the response, else None
+           (covers the early-morning hole and all retro dates)
+        5. build {"desc": "תחזית: <WEATHER_CODE_HE[code]>", "temp_min": int,
+                  "temp_max": int, "rain_mm": None, "source": "derived"}
+        6. upsert into weather_cache {city_code, date, value, fetched_at}
+        7. ANY exception anywhere → return None. NEVER raises. No user-facing
+           errors ever.
+    Index note: weather_cache gets a unique compound index (city_code, date) —
+        created in the existing index-bootstrap path.
+
+PART 3 — backend/contractor_ops/projects_router.py
+    NEW PUT /projects/{project_id}/weather-city (per STEP 0 resolution above):
+    manager gate, 404 unknown project, 422 unknown city code, null clears,
+    audit "project_weather_city_set", returns the updated project fields.
+
+PART 4 — backend/contractor_ops/work_diary_router.py :: _derive_sections
+    weather becomes a derived DICT section MIRRORING defect_counts exactly:
+    - CREATE: project.weather_city set → weather = await get_daily_weather(
+      city, diary_date) (cache-first). None → weather stays None (manual).
+    - refresh-derived: overwrite weather ONLY if current is None or
+      source == "derived". Manual weather NEVER overwritten. A derived value
+      is re-derived (fresh cache/fetch); fetch-fail on refresh → keep the
+      existing derived value (never wipe, never downgrade).
+    - NO change to sign flow / autosave / PDF (weather.desc already renders).
+
+PART 5 — frontend
+    services/api.js: projectService.setWeatherCity(projectId, code|null)
+    components/diary/WorkDiaryEntryView.js — weather card only:
+      - project WITHOUT weather_city + user is a diary WRITER → inline
+        one-time picker in the card: "עיר לנתוני מזג אוויר" (Radix Select over
+        IL_WEATHER_CITIES — FE copy of the 15-city list in diaryLabels.js,
+        labeled "העיר הקרובה לאתר") → PUT weather-city → trigger the existing
+        refresh-derived action → weather fills immediately.
+      - readers: no picker, no change.
+      - derived weather renders with the standard "נגזר" hint treatment;
+        manual editing keeps working exactly as today (flips source to
+        manual — existing derived-section pattern).
+
+PART 6 — nothing else
+    NO backfill of old entries. NO scheduler. NO new deps (stdlib xml.etree +
+    house HTTP client). DO NOT TOUCH: sign flow, autosave engine, PDF
+    generators, monthly PDF, photo pipeline, any existing RBAC.
+
+================================================================================
+VERIFICATION PLAN (FILES_STORAGE_BACKEND=local; NO live-IMS calls in probes)
+================================================================================
+NEW probe: backend/tests/probe_diary_d4b.py (+ unit test file for the parser)
+V1 Parser unit tests on the COMMITTED fixture:
+    - Tel Aviv 402 / 2026-07-11 → desc "תחזית: מעונן חלקית", 24/30, rain null
+    - second city sanity (e.g. ירושלים 510)
+    - malformed/truncated fixture bytes → None
+    - date absent from fixture (retro date) → None
+V2 Cache: mock the HTTP layer with a call counter —
+    - two creates same city/date → exactly ONE fetch
+    - different date → new fetch
+V3 Fail-soft: mocked timeout / HTTP 500 / garbage body →
+    - create returns 200 fast, weather None, no error surfaced
+V4 Derive semantics (HTTP probes, full middleware):
+    - create with city → weather.source == "derived", desc startswith "תחזית:"
+    - manual edit → refresh-derived → manual SURVIVES
+    - derived → refresh-derived → re-derived (and fetch-fail → old value kept)
+V5 No city on project → weather None; picker rendering is writer-only (FE
+    logic — asserted at code level + V8 device)
+V6 PDF: derived weather renders in the מזג אוויר section — single-entry AND
+    monthly PDF (reuses d4a probe helpers)
+V7 py_compile all touched; craco build EXIT=0; house greps clean;
+    REGRESSION: probe_diary_d3_http.py (36) + probe_diary_d4a.py (17) green
+V8 DEVICE (Zahi, staging): pick city once → create today's entry → weather
+    appears with derived hint → manual edit → רענן נתונים → manual survives →
+    PDF shows it.
+
+DELIVERABLES (end of W1)
+--------------------------------------------------------------------------------
+- review.txt (STEP 0 report, diffs, V1–V7 transcripts, approved source + city
+  list) ending "AWAITING ZAHI APPROVAL — DO NOT DEPLOY"
+- .local/.commit_message:
+  feat(diary): auto weather from IMS (city-cached, fail-soft) (d4b)
+- Zahi runs git/deploy. NO deploy from here.
+
+OPEN POINT REQUIRING APPROVAL (the one deviation)
+--------------------------------------------------------------------------------
+The NEW narrow endpoint PUT /projects/{project_id}/weather-city with the
+manager-level gate (require_roles project_manager/management_team) — needed
+because no general project-update path exists. Everything else is spec-verbatim.
+
+================================================================================
+AWAITING "תתחיל" — NO FEATURE CODE UNTIL APPROVED.
+================================================================================
