@@ -1,0 +1,183 @@
+================================================================================
+PLAN — BATCH safety-ind1: site-induction org templates + editor + snapshot infra
+Date: 2026-07-12  |  Branch: staging (base ded377e)  |  BACKEND + FRONTEND
+STATUS: STEP 0 COMPLETE — 1 MISMATCH REPORTED — AWAITING ZAHI DECISIONS + "תתחיל"
+================================================================================
+
+STEP 0 — PRE-FLIGHT RESULTS (verified against HEAD)
+--------------------------------------------------------------------------------
+[OK] Safety package registration — safety/__init__.py: submodule IMPORT ORDER
+     = route registration order; all modules attach to the shared router from
+     _shared.py (prefix /api/safety, gated in server.py on
+     ENABLE_SAFETY_MODULE). induction.py joins the SAME mechanism — one import
+     line, placed before `indexes`.
+
+[OK] Index bootstrap home — safety/indexes.py :: ensure_safety_indexes()
+     (idempotent create_index calls). The two new collections join there:
+       - induction_templates: UNIQUE(org_id)
+       - induction_content_snapshots: UNIQUE(org_id, template_version,
+         language) — collection stays EMPTY this batch (writer lands in IND-2)
+
+[OK] FE alerts card — SafetyHomePage.js: opt-out card @783+ (Bell @789);
+     CURRENT visibility = isWriter = SAFETY_WRITERS.includes(project?.my_role)
+     @419 → {project_manager, management_team}. The 5b one-liner replaces
+     exactly this condition. my_role source: project_memberships.role
+     (actual values: project_manager, management_team, contractor, viewer,
+     owner). house rules confirmed: Radix Dialog modal={false}; no
+     window.confirm / native <select> / localStorage.
+
+[MISMATCH — REPORTED, AWAITING DECISION] require_roles("owner","admin")
+     grep returned EMPTY. Root cause: require_roles (router.py:257) checks
+     user['role'] — the GLOBAL role enum, which is ONLY:
+       project_manager / management_team / contractor / viewer
+     There is NO global 'owner' and NO 'admin' anywhere ('owner' exists as a
+     PROJECT role and as an ORG role; the closest org value is 'org_admin').
+     The spec's gates as written would 403 everyone.
+
+ORG-RESOLUTION IDIOM FOUND (reported as the spec requires)
+--------------------------------------------------------------------------------
+Users do NOT carry org_id. The house mechanism:
+  - get_user_org(user['id'])  (billing.py:208) →
+    db.organization_memberships → the org doc. Used by ownership_transfer,
+    deletion_router, and friends.
+  - Org management gate (member_management.py):
+    MANAGEMENT_ORG_ROLES = {'owner', 'org_admin', 'billing_admin'} +
+    direct ownership via organizations.owner_user_id == user.id
+    (the check_org_billing_role idiom).
+  - CAUTION: two membership collection names exist in the codebase —
+    organization_memberships (billing, member_management — the canonical org
+    role mechanism) AND org_memberships (admin_router etc.). This batch uses
+    organization_memberships via the existing helpers only.
+
+PROPOSED GATE ADAPTATION (three rows — ZAHI DECIDES)
+--------------------------------------------------------------------------------
+1) PUT /api/safety/induction-template   (spec: owner+admin only)
+   PROPOSED: get_current_user + org = get_user_org(user.id) (404/403 if none);
+   allowed iff org.owner_user_id == user.id OR org role == 'org_admin'.
+   (billing_admin NOT included by default — say if you want it in.)
+
+2) GET /api/safety/induction-template + /starter   (spec: 4 roles)
+   PROPOSED: get_current_user; allowed iff global role ∈
+   {project_manager, management_team} OR org owner / org_admin (same
+   resolution as PUT). Conductors (IND-2) are covered by the global roles.
+
+3) FE "תוכן הדרכת אתר" card visibility   (spec: my_role ∈ {'owner','admin'})
+   my_role is PROJECT-level and 'admin' does not exist in it; FE has no org
+   role exposure today. TWO OPTIONS:
+     (a) show when my_role === 'owner' (server 403 protects org_admins-only
+         actions anyway; org_admin without project membership won't see the
+         card until they open it from elsewhere) — SMALLEST
+     (b) GET returns {"can_edit": bool} resolved server-side; FE gates the
+         card on it — CLEANEST, +a few lines in the GET response
+   DEFAULT IF NOT OVERRIDDEN: (b) can_edit flag (accurate audience, no FE
+   role-mapping drift).
+
+IMPLEMENTATION PLAN (after decisions + "תתחיל")
+--------------------------------------------------------------------------------
+BACKEND — NEW contractor_ops/safety/induction.py (registered like siblings):
+  a. GET /api/safety/induction-template — read gate per row 2; org_id from
+     the AUTHENTICATED user only (never path/body). Returns the org's single
+     template doc (id, org_id, version, languages, updated_at, updated_by)
+     or {"template": null} (+ can_edit if option b chosen).
+  b. PUT /api/safety/induction-template — write gate per row 1.
+     Body {"sections":[{title, body}...]} → stored under languages.he
+     (languages MAP from day 1; IND-3 adds en/ru/ar additively).
+     Validation (422, Hebrew): 1..200 sections; title stripped non-empty
+     ≤200; body stripped non-empty ≤5000.
+     Upsert ONE doc per org, ATOMIC version bump:
+       update_one({"org_id": org_id},
+         {"$set": {"languages.he": {"sections": [...]},
+                   "updated_at": _now(), "updated_by": user["id"]},
+          "$inc": {"version": 1},
+          "$setOnInsert": {"id": uuid4, "org_id": org_id,
+                           "created_at": _now()}}, upsert=True)
+     Response = fresh doc. Audit "induction_template_saved"
+     {org_id, version, sections_count}.
+  c. GET /api/safety/induction-template/starter — read gate; returns
+     STARTER_INDUCTION_SECTIONS_HE (10-14 sections: כללי ונהלי אתר, ציוד מגן
+     אישי, עבודה בגובה, פיגומים וסולמות, חשמל, כלים וציוד מכני, הרמה
+     ומנופים, חפירות, אש וחומרים מסוכנים, סדר וניקיון, מצבי חירום ופינוי,
+     דיווח על מפגעים ותאונות) each with a SHORT generic Hebrew body.
+     Constant marked `# DRAFT content — requires Zahi approval before prod`;
+     FULL TEXT printed in review.txt. Returning ≠ saving.
+  d. Pure helper induction_content_hash(sections, legal_text) -> sha256 hex
+     over canonical JSON (ensure_ascii=False, sort_keys=True,
+     separators=(",",":")) — IND-2's evidentiary contract; determinism
+     unit-probed.
+
+INDEXES — safety/indexes.py: +2 (see STEP 0). Snapshot collection: index
+     only, ZERO docs, ZERO endpoints this batch.
+
+FRONTEND
+  - api.js: safetyService += getInductionTemplate(), saveInductionTemplate(
+    sections), getInductionStarter().
+  - NEW components/safety/InductionTemplateEditor.js — Radix Dialog
+    modal={false}, full-height scrollable, RTL inherited:
+      * ordered sections: title input + body textarea, ↑/↓ reorder, מחק,
+        "הוסף סעיף" at bottom
+      * empty state → "טען תבנית לדוגמה" → starter fills LOCAL state only
+      * header shows "גרסה N" when exists
+      * save → sonner "נשמר · גרסה {version}" / server-detail error toast
+      * dirty-close guard WITHOUT window.confirm: first close click shows
+        inline "יש שינויים שלא נשמרו — לחץ שוב לסגירה", second click closes
+  - SafetyHomePage.js — TWO additions ONLY:
+      a. סקירה tab: compact card "תוכן הדרכת אתר" (BookOpen +
+         "התוכן שעובדים קוראים וחותמים עליו בקליטה"), visibility per row 3
+         decision → opens the editor
+      b. Alerts-card audience one-liner: visibility condition →
+         ['project_manager','owner'].includes(project?.my_role)
+
+DO NOT TOUCH (honored)
+--------------------------------------------------------------------------------
+trainings.py, signature endpoint, any conduct/reading flow (IND-2); NO
+snapshot writer/endpoints (index only); NO template delete endpoint; alerts
+engine/scheduler/reminder_service/prefs backend (only the FE line 5b); no
+new deps; no per-project template; no en/ru/ar surfaces; no window.confirm /
+native <select> / localStorage; no id_number/PII.
+
+VERIFY V1-V9 (functional probes, local Mongo, FILES_STORAGE_BACKEND=local)
+--------------------------------------------------------------------------------
+V1 PUT owner → version 1; second PUT → 2; GET round-trip equality on
+   languages.he.sections.
+V2 RBAC: owner+org_admin PUT 200; project_manager PUT 403 / GET 200;
+   management_team GET 200; unauthenticated 401. ORG ISOLATION with TWO
+   orgs: org-B GET → null; org-B PUT → separate doc; org-A version untouched.
+V3 422s (Hebrew): empty list · 201 sections · empty/whitespace title ·
+   empty body · body 5001 chars.
+V4 Concurrency: two rapid PUTs same org → ONE doc, version +2.
+V5 Hash: identical → identical; key-order/whitespace variants of same
+   content → identical; single-char change → different. Snapshots: unique
+   index EXISTS, 0 docs.
+V6 Starter returned as DRAFT; full text in review.txt for approval.
+V7 FE: owner sees the card, PM does not; full editor round-trip persists;
+   starter fills without saving; dirty-close guard; craco build EXIT=0;
+   house greps clean.
+V8 Alerts-card audience: renders for project_manager AND owner, NOT
+   management_team (condition asserted + manual note).
+V9 REGRESSION: py_compile touched; safety + diary probe suites green;
+   scheduler boots.
+
+DELIVERABLES
+--------------------------------------------------------------------------------
+review.txt (STEP 0 outputs incl. the org-resolution idiom, diffs, V1-V9
+transcripts, FULL starter text for approval) ending
+"AWAITING ZAHI APPROVAL — DO NOT DEPLOY" + .local/.commit_message:
+  feat(safety): site-induction org templates (versioned) + editor + snapshot infra (IND-1)
+
+  Org-scoped induction content template (numbered sections, atomic version
+  bump per save, multi-language-ready schema, owner/admin editor with DRAFT
+  starter pending approval), append-only content-snapshot collection +
+  canonical hash helper grounding the evidentiary sign flow (IND-2), and the
+  alerts opt-out card audience aligned to real recipients (PM+owner).
+
+OPEN DECISIONS FOR ZAHI (blocking "תתחיל")
+--------------------------------------------------------------------------------
+  D1: PUT gate — org owner + org_admin only? include billing_admin?
+  D2: GET gate — global {project_manager, management_team} + org
+      owner/org_admin — confirm.
+  D3: FE card visibility — option (a) my_role==='owner' or option (b)
+      server-resolved can_edit flag (my default: b).
+
+================================================================================
+AWAITING ZAHI DECISIONS (D1-D3) + "תתחיל" — NO CODE WRITTEN YET
+================================================================================

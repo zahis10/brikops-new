@@ -750,3 +750,9 @@ id = "Iiri1gaCvx4J4M6L65p66"
 uri = "file://plan_safety_w1_alerts.txt"
 type = "text"
 title = "PLAN v2 — safety-w1-alerts: התראות תפוגה + opt-out פר-משתמש"
+
+[[outputs]]
+id = "6ZMgEqLf_TPBz776Ww91O"
+uri = "file://plan_safety_ind1.txt"
+type = "text"
+title = "PLAN — BATCH safety-ind1"
