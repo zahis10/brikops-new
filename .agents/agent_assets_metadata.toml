@@ -744,3 +744,9 @@ id = "14usuvwsBSXGlW53M-BGW"
 uri = "file://plan_diary_d4b.txt"
 type = "text"
 title = "תוכנית W1 — diary-d4b (תואמת ל-spec v3)"
+
+[[outputs]]
+id = "Iiri1gaCvx4J4M6L65p66"
+uri = "file://plan_safety_w1_alerts.txt"
+type = "text"
+title = "PLAN — safety-w1-alerts: התראות תפוגה ב-WhatsApp"

@@ -1,0 +1,112 @@
+================================================================================
+PLAN — BATCH safety-w1-alerts (CLEAN CONSOLIDATED v2, 2026-07-12)
+WhatsApp expiry alerts (30/14/7/0) for equipment + trainings
+STATUS: STEP 0 COMPLETE — AWAITING "תתחיל" FROM ZAHI
+================================================================================
+
+STEP 0 — PRE-FLIGHT RESULTS (verified against HEAD 14c1858+)
+--------------------------------------------------------------------------------
+ALL ANCHORS FOUND. TWO PATH CORRECTIONS vs the spec text (content matches,
+location differs — house layout):
+
+  SPEC PATH                          ACTUAL PATH
+  backend/scheduler.py            →  backend/contractor_ops/scheduler.py
+  backend/services/reminder_service.py
+                                  →  backend/contractor_ops/reminder_service.py
+
+Verified anchors:
+  [OK] _daily_reminders_job @ contractor_ops/scheduler.py:24 — daily lock
+       (_acquire_daily_lock), Shabbat skip (is_shabbat), then PM-digest block
+       + contractor-reminders block, each in its own try/except-log. The new
+       expiry block slots after the contractor block, same shape.
+  [OK] reminder_service.py: send_all_pm_digests @725 (recipient resolution to
+       REUSE), _send_wa_template @141 (named-param + button_params support),
+       _check_user_reminder_prefs @64, _log_reminder @197, DRY-RUN honored
+       inside _send_wa_template @143 (logs masked, returns dry_run), mask_phone
+       imported @10, button suffix idiom @486:
+           button_params = [{"index": 0, "text": f"{project_id}?src=wa"}]
+  [OK] config.py TEMPLATE surface @78-91 (env-overridable names,
+       WA_TEMPLATE_PARAM_MODE='named') — safety_expiry_alert joins the same
+       mechanism: WA_TEMPLATE_SAFETY_EXPIRY env, code default
+       'safety_expiry_alert'.
+  [OK] equipment.py: _equipment_latest_checks @91, _build_check_status @119
+       (newest-per-track semantics to import, NOT re-implement).
+  [OK] trainings.py: expires_at field @46/56/86 (+ existing lt-filter @124);
+       newest-per-(worker_id, training_type) grouping = p3c fix1/fix2.
+  [OK] App.js routes block @258+; safety pages live at
+       /projects/:projectId/safety @441 — redirect route /safety/:projectId
+       will be added alongside the public routes, replace-navigate, query
+       string preserved.
+  [OK] server.py gates safety router on ENABLE_SAFETY_MODULE @455 — the
+       scheduler block gates the same way (flag off → silent skip).
+
+NO DRIFT beyond the two path corrections above. Phase G is RESOLVED — template
+safety_expiry_alert (he, Utility, 3 NAMED params project/items/count,
+׀-separated items, dynamic URL button base https://app.brikops.com/safety/) is
+Meta-APPROVED; nothing is submitted to Meta in this batch.
+
+IMPLEMENTATION PLAN
+--------------------------------------------------------------------------------
+1) backend/config.py — add:
+     WA_TEMPLATE_SAFETY_EXPIRY = os.environ.get('WA_TEMPLATE_SAFETY_EXPIRY',
+                                                'safety_expiry_alert')
+
+2) NEW backend/contractor_ops/safety_expiry_service.py
+   collect_expiry_alerts(db, today) -> dict[project_id, payload]:
+     - TRAININGS: ONE aggregation — non-deleted, expires_at != None; group by
+       (worker_id, training_type) keeping the NEWEST record only (superseded
+       never alert); keep days_left = (expires_at - today).days ∈ {30,14,7,0}.
+     - EQUIPMENT: active + non-deleted; per-track latest via IMPORTED
+       _equipment_latest_checks + _build_check_status; track expires_at with
+       days_left ∈ {30,14,7,0}; carry internal_code + category + check_name.
+     - Payload per project: list of typed items (kind, label parts, days_left)
+       + uncapped total.
+   send_all_safety_expiry_alerts() -> {sent, skipped, failed}:
+     - Per project with non-empty payload: recipients EXACTLY like
+       send_all_pm_digests (same prefs/dormant/wa-disabled/cooldown helpers;
+       reminder_type="safety_expiry").
+     - Params ONLY (template body frozen at Meta):
+         project = project name
+         items   = ׀-separated:
+                   "🔧 {internal_code} ({category}) — {check_name} פג בעוד N ימים"
+                   "🎓 {worker} — {training_type} פג בעוד N ימים"
+                   0 days → "פג היום"; cap ~10 + "׀ + עוד X";
+                   HARD assert: no '\n' in any param.
+         count   = uncapped total
+       button_params = [{"index": 0, "text": f"{project_id}?src=wa"}]
+     - Template name from config; DRY-RUN + mask_phone ride the existing
+       _send_wa_template path; _log_reminder-style audit entry per
+       (project, date); NEVER log id numbers.
+
+3) backend/contractor_ops/scheduler.py — ONE block after contractor reminders,
+   same try/except-log shape, gated on ENABLE_SAFETY_MODULE (flag off →
+   "skipping (module disabled)" log, nothing else). NO new job/triggers.
+
+4) frontend/src/App.js — route "/safety/:projectId" → <Navigate replace> to
+   "/projects/:projectId/safety" preserving the query string (small inline
+   redirect component, mirrors /phone-login idiom @259). No auth logic.
+
+DO NOT TOUCH (honored): digest/contractor flows, cooldowns, Shabbat, trigger
+times, notification engines, safety package modules (import-only),
+DEFAULT_EQUIPMENT_CHECKS, the Meta template, no settings UI.
+
+VERIFY V1-V8 (functional, local Mongo, DRY-RUN — nothing real is sent)
+--------------------------------------------------------------------------------
+NEW probe backend/tests/probe_safety_w1_alerts.py:
+  V1 trainings thresholds 30/14/7/0 in, +1 out, superseded excluded
+  V2 equipment +7 in with code+category+check; decommissioned excluded
+  V3 one payload per project; >10 → cap + "+ עוד X"; count=uncapped;
+     assert no '\n' in any param
+  V4 prefs-off skipped; dormant skipped; DRY-RUN transcript shows template,
+     3 named params, button suffix, masked phone
+  V5 run twice same day → daily lock blocks; days_left=29 → nothing
+  V6 py_compile; scheduler boots with wiring; safety flag off → silent skip
+  V7 FE redirect /safety/abc?src=wa → /projects/abc/safety?src=wa;
+     craco build EXIT=0
+  V8 regression: probe_diary_d3_http (36), probe_diary_d4a (17),
+     probe_diary_d4b (23) + safety suites — all green
+
+DELIVERABLES: review.txt (STEP 0 + diff + V1-V8 incl. full DRY-RUN transcript
+of one composed message) + .local/.commit_message per spec. NO deploy, NO
+mark-complete — AWAITING ZAHI APPROVAL.
+================================================================================
