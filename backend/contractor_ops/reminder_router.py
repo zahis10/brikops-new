@@ -111,6 +111,7 @@ def create_reminder_router(require_roles, get_current_user):
         return {
             "contractor_reminder": {**defaults, **prefs.get("contractor_reminder", {})},
             "pm_digest": {**defaults, **prefs.get("pm_digest", {})},
+            "safety_expiry": {**defaults, **prefs.get("safety_expiry", {})},
         }
 
     @router.put("/users/me/reminder-preferences")
@@ -121,7 +122,7 @@ def create_reminder_router(require_roles, get_current_user):
         body = await request.json()
         validated = {}
         valid_days = {0, 1, 2, 3, 4}
-        for key in ("contractor_reminder", "pm_digest"):
+        for key in ("contractor_reminder", "pm_digest", "safety_expiry"):
             if key not in body:
                 continue
             section = body[key]
@@ -156,6 +157,7 @@ def create_reminder_router(require_roles, get_current_user):
         return {
             "contractor_reminder": {**defaults, **current.get("contractor_reminder", {})},
             "pm_digest": {**defaults, **current.get("pm_digest", {})},
+            "safety_expiry": {**defaults, **current.get("safety_expiry", {})},
         }
 
     @cron_router.post("/internal/cron/daily-reminders")

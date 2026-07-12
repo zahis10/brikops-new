@@ -1,111 +1,170 @@
 ================================================================================
-REVIEW — BATCH diary-d4b: IMS weather auto-fill for the work diary (s1 forecast)
-Date: 2026-07-11  |  Branch: staging  |  BACKEND + FRONTEND
-Scope: auto-fill the diary weather section from the IMS morning city-forecast
-       feed. One-time city pick per diary; forecast-only (s1); self-describing
-       "תחזית: …" desc; cache-first; fail-soft everywhere. NO Envista, NO
-       tokens, NO rain amounts (feed has none — rain_mm always null).
+REVIEW — BATCH safety-w1-alerts: proactive WhatsApp expiry alerts (30/14/7/0)
+Date: 2026-07-12  |  Branch: staging  |  BACKEND + FRONTEND
+Scope: daily aggregated per-project WhatsApp alert for expiring safety
+       trainings + equipment checks, riding the existing reminders job.
+       Per-user opt-out via existing reminder-preferences + FE Switch card.
+       Short redirect route /safety/:projectId for the WA button.
 ================================================================================
 
 STEP 0 — PRE-FLIGHT (read-only) — NO DRIFT
 --------------------------------------------------------------------------------
-All 7 anchors verified before implementation (see plan_diary_d4b.txt):
-  - W0 fixture committed: backend/tests/fixtures/ims_isr_cities_2026-07-11.xml
-    (ISO-8859-8, 15 cities, LocationId is a CHILD ELEMENT not an attribute)
-  - Tel Aviv 402 / 2026-07-11 → Weather code 1220, min 24, max 30
-  - _derive_sections / refresh-derived / create doc.update() flow
-  - work_diary_settings did not exist; weather field already Optional[dict]
-    in both schema models (no schema change needed)
-  - FE weather card @616-633; list envelope {items,total}; SAFETY_WRITERS gate
+All anchors verified before implementation (see plan_safety_w1_alerts.txt):
+  - _daily_reminders_job @ contractor_ops/scheduler.py — daily lock, Shabbat
+    skip, PM-digest + contractor blocks each in own try/except; expiry block
+    slots after contractor block, same shape
+  - reminder_service.py helpers to REUSE: _send_wa_template (named params +
+    button_params + DRY-RUN + mask_phone), _check_user_reminder_prefs,
+    _user_disabled_whatsapp, _is_user_dormant, _resolve_phone_for_user,
+    _check_cooldown (48h), _log_reminder; button idiom
+    [{"index":0,"text":f"{project_id}?src=wa"}]
+  - config.py template surface (env-overridable, WA_TEMPLATE_PARAM_MODE=named)
+  - equipment.py _equipment_latest_checks + _build_check_status (import-only)
+  - trainings.py expires_at + newest-per-(worker_id, training_type) semantics
+  - App.js routes block; safety page @ /projects/:projectId/safety
+  - server.py gates safety router on ENABLE_SAFETY_MODULE — scheduler block
+    gates identically
 
-WHAT CHANGED
+MINI PRE-FLIGHT — OPT-OUT PATH DECISION (reported as promised)
 --------------------------------------------------------------------------------
-BACKEND
-1) NEW backend/services/weather_il.py
-   - IL_WEATHER_CITIES (15 IMS cities, hardcoded from fixture) + CITY_CODES
-   - WEATHER_CODE_HE (all 23 official Hebrew code descriptions)
-   - parse_city_forecast(raw_bytes, city, date) — PURE, parses BYTES with
-     xml.etree (prolog declares ISO-8859-8; never .decode('utf-8')), returns
-     {desc:"תחזית: …", temp_min, temp_max, rain_mm:null, source:"derived"}
-     or None. NEVER raises.
-   - get_daily_weather(db, city, date) — cache-first (Mongo weather_cache;
-     second project same city/day = ZERO HTTP), ONE aiohttp attempt with
-     total timeout 2.5s + cache-bust ?t=epoch (feed CDN max-age=14d),
-     fail-soft: ANY failure → None.
+  users.reminder_preferences[type]={enabled,days} + _check_user_reminder_prefs
+  already exist, and GET/PUT /api/users/me/reminder-preferences already exist
+  (self-only, get_current_user gate) but hard-whitelist two types.
+  → CHOSEN SMALLEST PATH: added "safety_expiry" to the existing whitelist
+    tuple + the GET/PUT response dicts in reminder_router.py. NO new endpoint;
+    validation/merge logic untouched; alert engine needed ZERO pref changes
+    (it just passes reminder_type="safety_expiry" to the existing helper).
 
-2) backend/contractor_ops/work_diary_router.py
-   - _derive_sections: derives weather ONLY when work_diary_settings has a
-     weather_city (fail-soft try/except; a down IMS cannot delay create).
-     Create path picks it up automatically via doc.update(); no_work skips.
-   - refresh-derived weather semantics (the no-wipe rules):
-       * manual weather NEVER overwritten
-       * overwrite only if existing is None or source=="derived"
-       * fetch-fail on refresh (fresh None) KEEPS the existing derived value
-   - NEW PUT /api/work-diary/{project_id}/weather-city
-       * gate = the diary WRITE pattern verbatim: require_roles(*SAFETY_WRITERS)
-         + _check_project_access (membership by construction)
-       * 422 Hebrew "קוד עיר לא מוכר" for unknown codes; null clears
-       * upsert with $setOnInsert id; DuplicateKeyError race fallback
-       * audit action: diary_weather_city_set
-   - List envelope now {items, total, weather_city} (one indexed find_one)
-   - ensure_work_diary_indexes: + unique work_diary_settings(project_id),
-     + unique weather_cache(city_code, date) — "4 total"
+WHAT CHANGED (git diff --stat)
+--------------------------------------------------------------------------------
+ backend/config.py                         |  2 ++
+ backend/contractor_ops/reminder_router.py |  4 ++-
+ backend/contractor_ops/scheduler.py       | 17 +++++++++
+ frontend/src/App.js                       | 11 ++++++
+ frontend/src/pages/SafetyHomePage.js      | 57 +++++++++++++++++++++++++++--
+ NEW backend/contractor_ops/safety_expiry_service.py
+ NEW backend/tests/probe_safety_w1_alerts.py
+
+BACKEND
+1) NEW contractor_ops/safety_expiry_service.py
+   - collect_expiry_alerts(db, today):
+       TRAININGS — ONE aggregation: non-deleted workers' non-deleted
+       trainings with expires_at, grouped by (worker_id, training_type)
+       keeping NEWEST only (superseded renewals NEVER alert);
+       days_left ∈ {30,14,7,0} exact-day (idempotent — each item alerts at
+       most once per threshold).
+       EQUIPMENT — active + non-deleted; per-track latest via IMPORTED
+       _equipment_latest_checks + _build_check_status (safety package
+       untouched); same exact-day thresholds; carries internal_code +
+       category (EQUIPMENT_CATEGORY_HE) + check_name.
+   - _compose_params(project_name, payload): 3 NAMED params (project/items/
+     count); items ׀-separated, "פג בעוד N ימים" / 0→"פג היום", cap 10 +
+     "׀ + עוד X"; count = UNCAPPED total; HARD assert no '\n' in any param.
+   - send_all_safety_expiry_alerts(): active non-archived projects only;
+     recipients = project_memberships role ∈ {project_manager, owner}
+     (digest-style); per-recipient gauntlet REUSES reminder_service helpers:
+     wa-disabled → dormant → prefs("safety_expiry") → phone → 48h cooldown;
+     _send_wa_template (DRY-RUN honored, masked logs) with template from
+     config + button suffix "{project_id}?src=wa"; per-recipient
+     reminder_log type="safety_expiry"; run-level "safety_expiry_run" audit
+     entry per (project, date) — ALWAYS written, with sent/skipped/failed
+     counts (architect fix, see below). No ID numbers ever logged.
+2) config.py: WA_TEMPLATE_SAFETY_EXPIRY (env-overridable, default
+   'safety_expiry_alert') — joins the existing template mechanism.
+3) scheduler.py: ONE gated block after contractor reminders inside
+   _daily_reminders_job — lazy import, ENABLE_SAFETY_MODULE off → silent
+   skip log; own try/except-log (a failure can never break digest/contractor
+   flows). NO new job, NO trigger changes.
+4) reminder_router.py: "safety_expiry" added to prefs whitelist + GET/PUT
+   response dicts (see path decision above).
 
 FRONTEND
-3) diaryLabels.js — IL_WEATHER_CITIES FE copy (backend is source of truth)
-4) api.js — diaryService.setWeatherCity(projectId, code) PUT
-5) WorkDiaryPage.js — passes weatherCity from the list envelope +
-   onWeatherCityChanged into the entry view
-6) WorkDiaryEntryView.js — weather card (writers, draft only):
-   - no city set → dashed empty-state "לא נבחרה עיר · למילוי אוטומטי בפעמים
-     הבאות בחר עיר" → tap → Radix Select "העיר הקרובה לאתר" (15 cities)
-   - pick → PUT weather-city → existing refreshDerived() (flush-locked, so no
-     autosave race) → the open entry fills in immediately
-   - derived weather shows the standard DERIVED_HINT transparency line; the
-     manual weather Select still works and overrides (source:"manual")
-   - readers/signed entries: unchanged plain text
+5) App.js: public route /safety/:projectId → <Navigate replace> to
+   /projects/:projectId/safety, query string preserved (?src=wa survives).
+   No auth logic — target route enforces access as before.
+6) SafetyHomePage.js: compact opt-out card at top of the סקירה (overview)
+   tab — Bell + "קבלת התראות וואטסאפ על פגי תוקף" + Switch, default ON,
+   visible to manager (writer) roles; optimistic toggle + revert-on-fail via
+   existing userService reminder-prefs round-trip (AccountSettingsPage
+   pattern). Hooks placed ABOVE all early returns (architect fix).
 
-VERIFICATION — ALL LOCAL, FILES_STORAGE_BACKEND=local, NO REAL IMS HTTP
+DO-NOT-TOUCH honored: digest/contractor flows, cooldown/Shabbat logic,
+trigger times, notification engines, safety package internals (import-only),
+DEFAULT_EQUIPMENT_CHECKS, Meta template body, no per-project kill-switch.
+
+VERIFICATION — ALL LOCAL, FILES_STORAGE_BACKEND=local, DRY-RUN ONLY
 --------------------------------------------------------------------------------
-NEW probe backend/tests/probe_diary_d4b.py ......... 23/23 PASS
-  V1 parser on committed fixture: exact Tel Aviv value; unknown city → None;
-     date outside window → None; malformed bytes → None (never raises)
-  V2 cache proof (counted fake fetcher): 2 calls same city/day → exactly ONE
-     fetch; bad city/date → None with ZERO fetches
-  V3 fail-soft: fetcher raising → None; entry CREATE with city set + IMS down
-     → 200, weather null (never 500)
-  V4 semantics over real HTTP: refresh derives "תחזית: מעונן חלקית" 24/30;
-     refresh with fetch-fail KEEPS derived; manual PATCH survives refresh
-  V5 RBAC: non-member PM → 403; owner (reader) → 403; unknown code → 422;
-     writer → 200 + audit written; null clears
-  V6 list envelope weather_city round-trip
-  V7 create-with-cache → derived at create; signed-entry PDF → 200 %PDF-
+SAFETY GUARD: environment carries real WA creds — the probe BLANKS
+WA_ACCESS_TOKEN/WA_PHONE_NUMBER_ID AND sets WHATSAPP_ENABLED=false BEFORE
+imports, then hard-asserts _wa_enabled is False. Nothing real was sent.
+
+NEW probe backend/tests/probe_safety_w1_alerts.py ... 32/32 PASS
+  V1  trainings 30/14/7/0 in; +1 day out; superseded renewal excluded;
+      deleted-worker training excluded
+  V2  equipment +7 in with internal_code + Hebrew category + check_name;
+      decommissioned excluded
+  V3  one payload per project; 12 items → cap 10 + "+ עוד 2"; count=12
+      (uncapped); assert no '\n' in any param
+  V4  prefs-off user skipped; dormant skipped; per-recipient log + run-level
+      audit entry (V4e logs=1 run=1)
+      FULL DRY-RUN TRANSCRIPT (one composed message, from probe output):
+        template : safety_expiry_alert  (lang=he, 3 named params)
+        to       : +972****0001 (masked)
+        project  : "פרויקט בטיחות 3821b0a1"
+        items    : "🎓 עובד 0 — עבודה בגובה פג היום ׀ 🎓 עובד 7 — עבודה
+                    בגובה פג בעוד 7 ימים ׀ 🔧 עגורן-... (עגורן צריח) —
+                    תסקיר בודק מוסמך פג בעוד 7 ימים ׀ ..."
+        count    : 5
+        button   : suffix "{project_id}?src=wa"
+  V5  second send_all same day → 48h cooldown blocks (0 sent, 6 skipped);
+      daily lock: second acquire same day → False; days_left=29 → nothing
+  V6  py_compile OK; scheduler wiring present; flag OFF → send_all NOT
+      invoked (silent skip); flag ON → invoked
+  V7  redirect /safety/abc?src=wa → /projects/abc/safety?src=wa
+  V9  opt-out OFF → user skipped (transcript shows reason), other users on
+      same project unaffected; ON → included again
+  V10 GET includes safety_expiry default enabled=True; PUT off → echoed
+      False, others untouched; persists across reload; bad type → 400 Hebrew
 
 REGRESSION
   probe_diary_d3_http.py ......... 36/36 PASS
-  probe_diary_d4a.py ............. 17/17 PASS (V1PERF 0.87s)
-  py_compile (service + router) .. OK
-  craco production build ......... OK (only pre-existing capacitor
-                                   source-map warnings)
+  probe_diary_d4a.py ............. 17/17 PASS
+  probe_diary_d4b.py ............. 23/23 PASS
+  test_safety_registration ....... 13/13 PASS
+  test_defect_safety_tag ......... 5/6 — the 1 failure
+    (test_defects_summary_includes_safety_open_count, "Database not
+    initialized") is PRE-EXISTING and UNRELATED: a mock-based test patching
+    projects_router internals; the failing code path (router.get_db) is in
+    files this batch never touched (git status confirms only the 5 files
+    above were modified). Fails identically regardless of ordering.
+  py_compile (service/scheduler/router/config) ... OK
+  craco production build ......... EXIT=0, Compiled successfully
+  house greps (console.log/debugger/TODO) clean on touched FE files
 
-ARCHITECT REVIEW — PASS, no blocking findings
+ARCHITECT REVIEW — 2 findings, BOTH FIXED + probe re-run 32/32
 --------------------------------------------------------------------------------
-  - Derive/refresh no-wipe semantics confirmed correct; upsert race handled
-  - Security: RBAC explicit and restrictive; fixed IMS URL (no SSRF surface);
-    no injection sinks
-  - Non-blocking suggestions noted for future batches: (a) a control to
-    change/clear the city after initial set (today: PUT with null/new code
-    exists server-side; FE picker shows only while unset), (b) optional TTL
-    cleanup for weather_cache growth
+  1) [BLOCKING] SafetyHomePage hook-order bug: the new useEffect was declared
+     after the loading/forbidden/flagOff early returns → potential "Rendered
+     more hooks than during the previous render" on state transition.
+     FIX: pref-loading effect + toggle handler moved ABOVE all early returns;
+     build re-run clean.
+  2) [SPEC] Run-level "safety_expiry_run" audit entry was written only when
+     at least one message was sent — spec requires one per (project, date).
+     FIX: entry now ALWAYS written per processed project, enriched with
+     sent/skipped/failed counts for traceability.
+  Otherwise: aggregation/newest-per-group correct; scheduler gating preserves
+  existing flows; redirect route introduces no auth surface; prefs extension
+  safe; no security findings.
 
 KNOWN LIMITS (by design, per approved spec)
 --------------------------------------------------------------------------------
-  - Forecast-only (s1): desc always prefixed "תחזית:" — signed records are
-    self-describing; no observed-data upgrade in this batch
-  - rain_mm always null (feed has no amounts; Hebrew desc carries rain)
-  - Past dates outside the feed window simply stay manual (None)
-  - FE city picker appears only while no city is set; changing city later is
-    API-ready but has no UI yet (candidate for a future settings surface)
+  - Exact-day thresholds {30,14,7,0}: if the daily job misses a day (server
+    down), that day's threshold is skipped — accepted for idempotency.
+  - 48h cooldown never collides with the thresholds (they are ≥7 days
+    apart); it only blocks manual re-runs within 48h (intended).
+  - No per-project kill-switch (per spec); opt-out is per-user only.
+  - Meta template safety_expiry_alert must exist/be approved in the WA
+    account before production enablement (body frozen at Meta).
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

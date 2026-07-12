@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
   Users, TrendingUp, ShieldAlert, Wrench, Filter, Plus, Pencil, Camera, FileText, ClipboardList,
-  ChevronLeft,
+  ChevronLeft, Bell,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
@@ -17,7 +17,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
-import { safetyService, projectService, projectCompanyService } from '../services/api';
+import { Switch } from '../components/ui/switch';
+import { safetyService, projectService, projectCompanyService, userService } from '../services/api';
 import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
 import SafetyKpiCard from '../components/safety/SafetyKpiCard';
 import SafetyFilterSheet, {
@@ -68,6 +69,10 @@ export default function SafetyHomePage() {
   const [incidents, setIncidents] = useState({ items: [], total: 0 });
   const [flagOff, setFlagOff] = useState(false);
   const [forbidden, setForbidden] = useState(false);
+  // Batch safety-w1-alerts — personal WhatsApp expiry-alert opt-out
+  // (users.reminder_preferences.safety_expiry via the EXISTING prefs API).
+  const [expiryAlertPref, setExpiryAlertPref] = useState(null);
+  const [expiryPrefSaving, setExpiryPrefSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get('tab');
@@ -362,6 +367,33 @@ export default function SafetyHomePage() {
     })();
     return () => { cancelled = true; };
   }, [projectId, activeTab, auxFilters, loading, flagOff, forbidden]);
+
+  // Batch safety-w1-alerts — load the personal expiry-alert preference once
+  // the project (and thus the viewer's role) is known. MUST live ABOVE the
+  // early returns below to keep React hook order stable across renders.
+  const writerRole = SAFETY_WRITERS.includes(project?.my_role);
+  useEffect(() => {
+    if (!writerRole) return;
+    userService.getReminderPreferences()
+      .then((prefs) => setExpiryAlertPref(prefs?.safety_expiry?.enabled !== false))
+      .catch(() => {});
+  }, [writerRole]);
+
+  const toggleExpiryAlerts = async (enabled) => {
+    const prev = expiryAlertPref;
+    setExpiryAlertPref(enabled);
+    setExpiryPrefSaving(true);
+    try {
+      const result = await userService.updateReminderPreferences({ safety_expiry: { enabled } });
+      setExpiryAlertPref(result?.safety_expiry?.enabled !== false);
+      toast.success(enabled ? 'התראות פגי תוקף הופעלו' : 'התראות פגי תוקף כובו');
+    } catch (err) {
+      setExpiryAlertPref(prev);
+      toast.error(err.response?.data?.detail || 'שמירת ההעדפה נכשלה');
+    } finally {
+      setExpiryPrefSaving(false);
+    }
+  };
 
   if (loading) return <SafetySkeleton />;
   if (forbidden) return <SafetyForbidden onBack={() => navigate(`/projects/${projectId}/control?workMode=structure`)} />;
@@ -749,6 +781,27 @@ export default function SafetyHomePage() {
           </Card>
 
           <TabsContent value="overview" className="p-0 m-0 space-y-6">
+            {isWriter && expiryAlertPref !== null && (
+              <Card className="p-4 bg-white shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+                      <Bell className="w-4 h-4 text-blue-600" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-900">קבלת התראות וואטסאפ על פגי תוקף</p>
+                      <p className="text-xs text-slate-500">תזכורת אישית 30/14/7/0 ימים לפני פקיעת הדרכות ובדיקות ציוד</p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={expiryAlertPref}
+                    onCheckedChange={toggleExpiryAlerts}
+                    disabled={expiryPrefSaving}
+                    dir="ltr"
+                  />
+                </div>
+              </Card>
+            )}
             <Card className="p-5 bg-white shadow-sm">
               <div className="flex flex-col md:flex-row items-center gap-6">
                 <SafetyScoreGauge score={scoreData?.score ?? 0} label="ציון בטיחות" />

@@ -93,6 +93,8 @@ WA_QC_REJECT_TEMPLATE_HE = os.environ.get('WA_QC_REJECT_TEMPLATE_HE', 'qc_item_r
 WA_QC_REJECT_TEMPLATE_LANG = 'he'
 WA_REMINDER_TEMPLATE_HE = os.environ.get('WA_REMINDER_TEMPLATE_HE', 'brikops_contractor_reminder_he')
 WA_DIGEST_TEMPLATE_HE = os.environ.get('WA_DIGEST_TEMPLATE_HE', 'brikops_daily_digest_he')
+# Batch safety-w1-alerts — Meta-approved Utility template (he), 3 named params.
+WA_TEMPLATE_SAFETY_EXPIRY = os.environ.get('WA_TEMPLATE_SAFETY_EXPIRY', 'safety_expiry_alert')
 
 # ----- Stream A 2026-05-01 — contractor digest multi-language template family -----
 # Mirrors WA_DEFECT_TEMPLATES pattern (lines 80-85). One template per language.

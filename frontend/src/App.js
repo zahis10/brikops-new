@@ -247,6 +247,16 @@ const PaywallConnector = () => {
   return null;
 };
 
+// Batch safety-w1-alerts — short-base target for the WhatsApp template's
+// dynamic-URL button (https://app.brikops.com/safety/{projectId}?src=wa).
+// Pure redirect, NO auth logic — the target route enforces access exactly
+// as today. Query string preserved (?src=wa rides along harmlessly).
+const SafetyShortRedirect = () => {
+  const { projectId } = useParams();
+  const location = useLocation();
+  return <Navigate to={`/projects/${projectId}/safety${location.search}`} replace />;
+};
+
 const AppRoutes = () => {
   const location = useLocation();
   useEffect(() => {
@@ -257,6 +267,7 @@ const AppRoutes = () => {
       <Routes key={location.pathname}>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/phone-login" element={<Navigate to="/login" replace />} />
+        <Route path="/safety/:projectId" element={<SafetyShortRedirect />} />
         <Route path="/auth/wa" element={<WaLoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/register-management" element={<RegisterManagementPage />} />

@@ -52,6 +52,23 @@ async def _daily_reminders_job():
     except Exception as e:
         logger.error(f"[SCHEDULER] Contractor reminder error: {e}")
 
+    # Batch safety-w1-alerts — gated the same way server.py gates the safety
+    # router: module disabled → skip silently (lazy import keeps the safety
+    # package out of memory when the flag is off).
+    from config import ENABLE_SAFETY_MODULE
+    if ENABLE_SAFETY_MODULE:
+        try:
+            from contractor_ops import safety_expiry_service
+            expiry_result = await safety_expiry_service.send_all_safety_expiry_alerts()
+            logger.info(
+                f"[SCHEDULER] Safety expiry alerts: sent={expiry_result['sent']} "
+                f"skipped={expiry_result['skipped']} failed={expiry_result['failed']}"
+            )
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Safety expiry alert error: {e}")
+    else:
+        logger.info("[SCHEDULER] Safety expiry alerts skipped (module disabled)")
+
     logger.info("[SCHEDULER] Daily reminders job complete")
 
 
