@@ -135,5 +135,17 @@ async def ensure_safety_indexes(db) -> None:
         [("equipment_id", 1), ("check_name", 1)],
         background=True, name="idx_seqc_equip_checkname",
     )
+    # induction (batch safety-ind1) — 2 across 2 collections.
+    # ONE versioned template doc per org.
+    await db.induction_templates.create_index(
+        [("org_id", 1)],
+        background=True, unique=True, name="uidx_it_org",
+    )
+    # Snapshots collection stays EMPTY until IND-2 — the unique index
+    # existing NOW pins the dedup contract for the snapshot writer.
+    await db.induction_content_snapshots.create_index(
+        [("org_id", 1), ("template_version", 1), ("language", 1)],
+        background=True, unique=True, name="uidx_ics_org_version_lang",
+    )
 
-    logger.info("Safety indices ensured (28 total across 9 collections)")
+    logger.info("Safety indices ensured (30 total across 11 collections)")

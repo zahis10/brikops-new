@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
   Users, TrendingUp, ShieldAlert, Wrench, Filter, Plus, Pencil, Camera, FileText, ClipboardList,
-  ChevronLeft, Bell,
+  ChevronLeft, Bell, BookOpen,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
@@ -40,6 +40,7 @@ import SafetyTourRunner from '../components/safety/SafetyTourRunner';
 import SafetyEquipmentTab from '../components/safety/SafetyEquipmentTab';
 import SafetyEquipmentForm from '../components/safety/SafetyEquipmentForm';
 import SafetySignaturePad from '../components/safety/SafetySignaturePad';
+import InductionTemplateEditor from '../components/safety/InductionTemplateEditor';
 import {
   CATEGORY_HE, SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE, INCIDENT_STATUS_HE,
   TOUR_TYPE_HE, TOUR_STATUS_HE,
@@ -73,6 +74,10 @@ export default function SafetyHomePage() {
   // (users.reminder_preferences.safety_expiry via the EXISTING prefs API).
   const [expiryAlertPref, setExpiryAlertPref] = useState(null);
   const [expiryPrefSaving, setExpiryPrefSaving] = useState(false);
+  // Batch safety-ind1 — server-resolved editor permission (D3 option b):
+  // the "תוכן הדרכת אתר" card gates on GET can_edit, never on FE role maps.
+  const [inductionCanEdit, setInductionCanEdit] = useState(false);
+  const [inductionEditorOpen, setInductionEditorOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get('tab');
@@ -371,13 +376,28 @@ export default function SafetyHomePage() {
   // Batch safety-w1-alerts — load the personal expiry-alert preference once
   // the project (and thus the viewer's role) is known. MUST live ABOVE the
   // early returns below to keep React hook order stable across renders.
-  const writerRole = SAFETY_WRITERS.includes(project?.my_role);
+  // Batch safety-ind1 (5b): the alerts card's audience is now the roles the
+  // expiry cron actually targets — project_manager + owner (management_team
+  // dropped). The pref-load effect follows the SAME condition, otherwise the
+  // pref never loads for owners and the card stays hidden (pref === null).
+  const alertsAudience = ['project_manager', 'owner'].includes(project?.my_role);
   useEffect(() => {
-    if (!writerRole) return;
+    if (!alertsAudience) return;
     userService.getReminderPreferences()
       .then((prefs) => setExpiryAlertPref(prefs?.safety_expiry?.enabled !== false))
       .catch(() => {});
-  }, [writerRole]);
+  }, [alertsAudience]);
+
+  // Batch safety-ind1 — resolve can_edit server-side (D3 option b). Single
+  // GET on mount; 403 (contractor/viewer without org rights) → stays false.
+  // MUST live ABOVE the early returns to keep hook order stable.
+  useEffect(() => {
+    let cancelled = false;
+    safetyService.getInductionTemplate()
+      .then((data) => { if (!cancelled) setInductionCanEdit(data?.can_edit === true); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const toggleExpiryAlerts = async (enabled) => {
     const prev = expiryAlertPref;
@@ -781,7 +801,7 @@ export default function SafetyHomePage() {
           </Card>
 
           <TabsContent value="overview" className="p-0 m-0 space-y-6">
-            {isWriter && expiryAlertPref !== null && (
+            {alertsAudience && expiryAlertPref !== null && (
               <Card className="p-4 bg-white shadow-sm">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
@@ -799,6 +819,26 @@ export default function SafetyHomePage() {
                     disabled={expiryPrefSaving}
                     dir="ltr"
                   />
+                </div>
+              </Card>
+            )}
+            {inductionCanEdit && (
+              <Card
+                className="p-4 bg-white shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => setInductionEditorOpen(true)}
+                data-testid="induction-template-card"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+                      <BookOpen className="w-4 h-4 text-emerald-600" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-900">תוכן הדרכת אתר</p>
+                      <p className="text-xs text-slate-500">התוכן שעובדים קוראים וחותמים עליו בקליטה</p>
+                    </div>
+                  </div>
+                  <ChevronLeft className="w-4 h-4 text-slate-400 shrink-0" />
                 </div>
               </Card>
             )}
@@ -1204,6 +1244,11 @@ export default function SafetyHomePage() {
           items: (prev.items || []).map((x) => (x.id === tr.id ? tr : x)),
         }))}
         onClose={() => { setTourRunner(null); reloadTours(); reloadDocuments(); }}
+      />
+
+      <InductionTemplateEditor
+        open={inductionEditorOpen}
+        onOpenChange={setInductionEditorOpen}
       />
     </div>
   );

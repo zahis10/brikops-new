@@ -692,6 +692,24 @@ export const safetyService = {
     );
     return r.data;
   },
+  // Batch safety-ind1 — org induction template (org resolved server-side
+  // from the authenticated user; no org/project in the URL, ever).
+  async getInductionTemplate() {
+    const r = await axios.get(`${API}/safety/induction-template`, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async saveInductionTemplate(sections) {
+    const r = await axios.put(
+      `${API}/safety/induction-template`,
+      { sections },
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+  async getInductionStarter() {
+    const r = await axios.get(`${API}/safety/induction-template/starter`, { headers: getAuthHeader() });
+    return r.data;
+  },
 };
 
 // Work Diary (יומן עבודה) — batch diary-d2. Wraps the 7 flag-gated D1

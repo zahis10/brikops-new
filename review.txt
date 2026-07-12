@@ -1,170 +1,213 @@
 ================================================================================
-REVIEW — BATCH safety-w1-alerts: proactive WhatsApp expiry alerts (30/14/7/0)
-Date: 2026-07-12  |  Branch: staging  |  BACKEND + FRONTEND
-Scope: daily aggregated per-project WhatsApp alert for expiring safety
-       trainings + equipment checks, riding the existing reminders job.
-       Per-user opt-out via existing reminder-preferences + FE Switch card.
-       Short redirect route /safety/:projectId for the WA button.
+REVIEW — BATCH safety-ind1: site-induction org templates + editor + snapshot infra (IND-1)
+Date: 2026-07-12  |  Branch: staging (base ded377e)  |  BACKEND + FRONTEND
+Scope: org-scoped versioned induction content template (ONE doc per org,
+       languages map from day 1, he only), owner/org_admin editor with DRAFT
+       starter, snapshot collection infra (index only) + canonical hash
+       helper for IND-2, alerts-card audience one-liner.
 ================================================================================
 
-STEP 0 — PRE-FLIGHT (read-only) — NO DRIFT
+STEP 0 — PRE-FLIGHT (reported earlier, decisions received)
 --------------------------------------------------------------------------------
-All anchors verified before implementation (see plan_safety_w1_alerts.txt):
-  - _daily_reminders_job @ contractor_ops/scheduler.py — daily lock, Shabbat
-    skip, PM-digest + contractor blocks each in own try/except; expiry block
-    slots after contractor block, same shape
-  - reminder_service.py helpers to REUSE: _send_wa_template (named params +
-    button_params + DRY-RUN + mask_phone), _check_user_reminder_prefs,
-    _user_disabled_whatsapp, _is_user_dormant, _resolve_phone_for_user,
-    _check_cooldown (48h), _log_reminder; button idiom
-    [{"index":0,"text":f"{project_id}?src=wa"}]
-  - config.py template surface (env-overridable, WA_TEMPLATE_PARAM_MODE=named)
-  - equipment.py _equipment_latest_checks + _build_check_status (import-only)
-  - trainings.py expires_at + newest-per-(worker_id, training_type) semantics
-  - App.js routes block; safety page @ /projects/:projectId/safety
-  - server.py gates safety router on ENABLE_SAFETY_MODULE — scheduler block
-    gates identically
+  [OK] safety/__init__.py — import order = registration order; induction.py
+       joins with ONE import line placed before `indexes`.
+  [OK] safety/indexes.py :: ensure_safety_indexes — idempotent; +2 new.
+  [OK] FE alerts card @ SafetyHomePage overview; house rules confirmed.
+  [MISMATCH — RESOLVED BY ZAHI] spec's require_roles("owner","admin") cannot
+       work: global role enum = project_manager / management_team /
+       contractor / viewer only. Org-resolution idiom found and used:
+       get_user_org(user_id) → db.organization_memberships (canonical; NOT
+       org_memberships) → org doc; direct ownership via
+       organizations.owner_user_id.
 
-MINI PRE-FLIGHT — OPT-OUT PATH DECISION (reported as promised)
+ZAHI DECISIONS (verbatim honored)
 --------------------------------------------------------------------------------
-  users.reminder_preferences[type]={enabled,days} + _check_user_reminder_prefs
-  already exist, and GET/PUT /api/users/me/reminder-preferences already exist
-  (self-only, get_current_user gate) but hard-whitelist two types.
-  → CHOSEN SMALLEST PATH: added "safety_expiry" to the existing whitelist
-    tuple + the GET/PUT response dicts in reminder_router.py. NO new endpoint;
-    validation/merge logic untouched; alert engine needed ZERO pref changes
-    (it just passes reminder_type="safety_expiry" to the existing helper).
+  D1  PUT gate = org owner (organizations.owner_user_id == user.id) OR
+      organization_memberships role == 'org_admin'. billing_admin EXCLUDED.
+  D2  GET gate = global {project_manager, management_team} OR owner/org_admin
+      (same resolution); org resolved ONLY from the authenticated user.
+  D3  option (b): GET returns can_edit bool (also in the {"template": null}
+      response); FE card gates on it — no FE role-mapping drift.
+  +V2 addition: billing_admin PUT → 403 probed explicitly.
 
-WHAT CHANGED (git diff --stat)
+WHAT CHANGED (git diff --stat + new files)
 --------------------------------------------------------------------------------
- backend/config.py                         |  2 ++
- backend/contractor_ops/reminder_router.py |  4 ++-
- backend/contractor_ops/scheduler.py       | 17 +++++++++
- frontend/src/App.js                       | 11 ++++++
- frontend/src/pages/SafetyHomePage.js      | 57 +++++++++++++++++++++++++++--
- NEW backend/contractor_ops/safety_expiry_service.py
- NEW backend/tests/probe_safety_w1_alerts.py
+ backend/contractor_ops/safety/__init__.py |  1 +   (register induction)
+ backend/contractor_ops/safety/indexes.py  | 14 ++- (+2 unique indexes)
+ frontend/src/pages/SafetyHomePage.js      | 55 +++- (card + can_edit + 5b)
+ frontend/src/services/api.js              | 18 +++ (3 service methods)
+ NEW backend/contractor_ops/safety/induction.py         (endpoints + starter + hash)
+ NEW frontend/src/components/safety/InductionTemplateEditor.js
+ NEW backend/tests/probe_safety_ind1.py                 (V1-V6 harness)
 
-BACKEND
-1) NEW contractor_ops/safety_expiry_service.py
-   - collect_expiry_alerts(db, today):
-       TRAININGS — ONE aggregation: non-deleted workers' non-deleted
-       trainings with expires_at, grouped by (worker_id, training_type)
-       keeping NEWEST only (superseded renewals NEVER alert);
-       days_left ∈ {30,14,7,0} exact-day (idempotent — each item alerts at
-       most once per threshold).
-       EQUIPMENT — active + non-deleted; per-track latest via IMPORTED
-       _equipment_latest_checks + _build_check_status (safety package
-       untouched); same exact-day thresholds; carries internal_code +
-       category (EQUIPMENT_CATEGORY_HE) + check_name.
-   - _compose_params(project_name, payload): 3 NAMED params (project/items/
-     count); items ׀-separated, "פג בעוד N ימים" / 0→"פג היום", cap 10 +
-     "׀ + עוד X"; count = UNCAPPED total; HARD assert no '\n' in any param.
-   - send_all_safety_expiry_alerts(): active non-archived projects only;
-     recipients = project_memberships role ∈ {project_manager, owner}
-     (digest-style); per-recipient gauntlet REUSES reminder_service helpers:
-     wa-disabled → dormant → prefs("safety_expiry") → phone → 48h cooldown;
-     _send_wa_template (DRY-RUN honored, masked logs) with template from
-     config + button suffix "{project_id}?src=wa"; per-recipient
-     reminder_log type="safety_expiry"; run-level "safety_expiry_run" audit
-     entry per (project, date) — ALWAYS written, with sent/skipped/failed
-     counts (architect fix, see below). No ID numbers ever logged.
-2) config.py: WA_TEMPLATE_SAFETY_EXPIRY (env-overridable, default
-   'safety_expiry_alert') — joins the existing template mechanism.
-3) scheduler.py: ONE gated block after contractor reminders inside
-   _daily_reminders_job — lazy import, ENABLE_SAFETY_MODULE off → silent
-   skip log; own try/except-log (a failure can never break digest/contractor
-   flows). NO new job, NO trigger changes.
-4) reminder_router.py: "safety_expiry" added to prefs whitelist + GET/PUT
-   response dicts (see path decision above).
+BACKEND — contractor_ops/safety/induction.py
+--------------------------------------------------------------------------------
+  GET  /api/safety/induction-template          → {template, can_edit}
+       template = {id, org_id, version, languages:{he:{sections}},
+       created_at, updated_at, updated_by} or null. Read gate per D2.
+       PM/management_team with no org → {"template": null, "can_edit": false}.
+  PUT  /api/safety/induction-template          → gate per D1 (billing_admin,
+       PM, everyone else → 403 Hebrew). Body {"sections":[{title,body}...]}.
+       Validation (422 Hebrew): 1..200 sections; title stripped non-empty
+       ≤200; body stripped non-empty ≤5000. ATOMIC single update_one upsert:
+       $set languages.he/updated_at/updated_by + $inc version +
+       $setOnInsert id/org_id/created_at → no lost updates, version bumps
+       exactly once per save. Audit "induction_template_saved"
+       {org_id, version, sections_count}. Response = fresh doc + can_edit.
+  GET  /api/safety/induction-template/starter  → read gate; returns
+       {"sections": STARTER_INDUCTION_SECTIONS_HE, "draft": true}.
+       Returning ≠ saving (probed: DB untouched).
+  induction_content_hash(sections, legal_text) → sha256 hex over canonical
+       JSON (ensure_ascii=False, sort_keys=True, separators=(",",":")) —
+       IND-2's evidentiary contract, determinism probed.
+  Route-shadowing check: shared /api/safety router has NO 1-segment
+       parametric route and no 2-segment /{project_id}/starter-like literal —
+       /induction-template[/starter] cannot be captured by earlier routes
+       (verified by grep over all safety modules).
+
+INDEXES (safety/indexes.py — now "30 total across 11 collections")
+--------------------------------------------------------------------------------
+  induction_templates          UNIQUE(org_id)                    uidx_it_org
+  induction_content_snapshots  UNIQUE(org_id,template_version,   uidx_ics_org_version_lang
+                               language) — collection EMPTY this batch;
+                               index pins IND-2's dedup contract now.
 
 FRONTEND
-5) App.js: public route /safety/:projectId → <Navigate replace> to
-   /projects/:projectId/safety, query string preserved (?src=wa survives).
-   No auth logic — target route enforces access as before.
-6) SafetyHomePage.js: compact opt-out card at top of the סקירה (overview)
-   tab — Bell + "קבלת התראות וואטסאפ על פגי תוקף" + Switch, default ON,
-   visible to manager (writer) roles; optimistic toggle + revert-on-fail via
-   existing userService reminder-prefs round-trip (AccountSettingsPage
-   pattern). Hooks placed ABOVE all early returns (architect fix).
-
-DO-NOT-TOUCH honored: digest/contractor flows, cooldown/Shabbat logic,
-trigger times, notification engines, safety package internals (import-only),
-DEFAULT_EQUIPMENT_CHECKS, Meta template body, no per-project kill-switch.
-
-VERIFICATION — ALL LOCAL, FILES_STORAGE_BACKEND=local, DRY-RUN ONLY
 --------------------------------------------------------------------------------
-SAFETY GUARD: environment carries real WA creds — the probe BLANKS
-WA_ACCESS_TOKEN/WA_PHONE_NUMBER_ID AND sets WHATSAPP_ENABLED=false BEFORE
-imports, then hard-asserts _wa_enabled is False. Nothing real was sent.
+  api.js safetyService += getInductionTemplate(), saveInductionTemplate(
+    sections), getInductionStarter() — no org/project in any URL.
+  NEW InductionTemplateEditor.js — Radix Dialog modal={false}, RTL, ordered
+    sections (title Input + body Textarea), ↑/↓ reorder, מחק, "הוסף סעיף",
+    empty state → "טען תבנית לדוגמה" fills LOCAL state only (toast: must
+    save), header "גרסה N", save → sonner "נשמר · גרסה N" / server-detail
+    error, dirty-close guard WITHOUT window.confirm: first close click shows
+    inline "יש שינויים שלא נשמרו — לחץ שוב לסגירה", second click closes.
+  SafetyHomePage.js — TWO additions:
+    a. overview card "תוכן הדרכת אתר" ("התוכן שעובדים קוראים וחותמים עליו
+       בקליטה", BookOpen, emerald) gated on server-resolved can_edit from a
+       single GET on mount (D3b); opens the editor. Hooks placed ABOVE the
+       early returns (stable hook order).
+    b. Alerts-card audience 5b: condition → ['project_manager','owner']
+       .includes(project?.my_role).
+       DEVIATION (necessary, 2 lines): the pref-LOAD effect gated on the old
+       isWriter set {PM, management_team}; left as-was, an owner would never
+       load the pref → expiryAlertPref stays null → card invisible for
+       owners, and management_team would still fetch a pref it can't see.
+       The effect now follows the SAME alertsAudience condition. Nothing
+       else about the card touched.
 
-NEW probe backend/tests/probe_safety_w1_alerts.py ... 32/32 PASS
-  V1  trainings 30/14/7/0 in; +1 day out; superseded renewal excluded;
-      deleted-worker training excluded
-  V2  equipment +7 in with internal_code + Hebrew category + check_name;
-      decommissioned excluded
-  V3  one payload per project; 12 items → cap 10 + "+ עוד 2"; count=12
-      (uncapped); assert no '\n' in any param
-  V4  prefs-off user skipped; dormant skipped; per-recipient log + run-level
-      audit entry (V4e logs=1 run=1)
-      FULL DRY-RUN TRANSCRIPT (one composed message, from probe output):
-        template : safety_expiry_alert  (lang=he, 3 named params)
-        to       : +972****0001 (masked)
-        project  : "פרויקט בטיחות 3821b0a1"
-        items    : "🎓 עובד 0 — עבודה בגובה פג היום ׀ 🎓 עובד 7 — עבודה
-                    בגובה פג בעוד 7 ימים ׀ 🔧 עגורן-... (עגורן צריח) —
-                    תסקיר בודק מוסמך פג בעוד 7 ימים ׀ ..."
-        count    : 5
-        button   : suffix "{project_id}?src=wa"
-  V5  second send_all same day → 48h cooldown blocks (0 sent, 6 skipped);
-      daily lock: second acquire same day → False; days_left=29 → nothing
-  V6  py_compile OK; scheduler wiring present; flag OFF → send_all NOT
-      invoked (silent skip); flag ON → invoked
-  V7  redirect /safety/abc?src=wa → /projects/abc/safety?src=wa
-  V9  opt-out OFF → user skipped (transcript shows reason), other users on
-      same project unaffected; ON → included again
-  V10 GET includes safety_expiry default enabled=True; PUT off → echoed
-      False, others untouched; persists across reload; bad type → 400 Hebrew
-
-REGRESSION
-  probe_diary_d3_http.py ......... 36/36 PASS
-  probe_diary_d4a.py ............. 17/17 PASS
-  probe_diary_d4b.py ............. 23/23 PASS
-  test_safety_registration ....... 13/13 PASS
-  test_defect_safety_tag ......... 5/6 — the 1 failure
-    (test_defects_summary_includes_safety_open_count, "Database not
-    initialized") is PRE-EXISTING and UNRELATED: a mock-based test patching
-    projects_router internals; the failing code path (router.get_db) is in
-    files this batch never touched (git status confirms only the 5 files
-    above were modified). Fails identically regardless of ordering.
-  py_compile (service/scheduler/router/config) ... OK
-  craco production build ......... EXIT=0, Compiled successfully
-  house greps (console.log/debugger/TODO) clean on touched FE files
-
-ARCHITECT REVIEW — 2 findings, BOTH FIXED + probe re-run 32/32
+STARTER CONTENT — FULL TEXT (DRAFT — REQUIRES YOUR APPROVAL BEFORE PROD)
 --------------------------------------------------------------------------------
-  1) [BLOCKING] SafetyHomePage hook-order bug: the new useEffect was declared
-     after the loading/forbidden/flagOff early returns → potential "Rendered
-     more hooks than during the previous render" on state transition.
-     FIX: pref-loading effect + toggle handler moved ABOVE all early returns;
-     build re-run clean.
-  2) [SPEC] Run-level "safety_expiry_run" audit entry was written only when
-     at least one message was sent — spec requires one per (project, date).
-     FIX: entry now ALWAYS written per processed project, enriched with
-     sent/skipped/failed counts for traceability.
-  Otherwise: aggregation/newest-per-group correct; scheduler gating preserves
-  existing flows; redirect route introduces no auth surface; prefs extension
-  safe; no security findings.
+ 1. כללי ונהלי אתר
+    ברוכים הבאים לאתר. הכניסה לאתר מותרת רק לאחר קליטה בטיחותית וחתימה על
+    תדריך זה. יש להישמע להוראות מנהל העבודה וממונה הבטיחות בכל עת, להיכנס
+    ולצאת רק בשערים המוסדרים, ולהחנות רק במקומות שהוקצו לכך. אין להכניס
+    אורחים ללא אישור מראש.
+ 2. ציוד מגן אישי
+    חובה לחבוש קסדת מגן ולנעול נעלי בטיחות בכל שטח האתר. יש ללבוש אפוד
+    זוהר, ולהשתמש בציוד מגן ייעודי לפי המשימה: משקפי מגן, אטמי אוזניים,
+    כפפות ורתמת בטיחות בעבודה בגובה. עובד ללא ציוד מגן תקין יורחק מהאתר.
+ 3. עבודה בגובה
+    עבודה בגובה מעל 2 מטר מותרת רק לעובד בעל הדרכת עבודה בגובה בתוקף. חובה
+    להשתמש ברתמת בטיחות מעוגנת לנקודת עיגון תקנית, לוודא משטחי עבודה
+    תקינים ומעקות במקומם, ואין לעבוד בקרבת פתחים לא מגודרים.
+ 4. פיגומים וסולמות
+    אין לעלות על פיגום שלא נבדק ואושר על ידי בונה מקצועי. יש לוודא שילוט
+    תקינות בתוקף על הפיגום, ואין לשנות, לפרק או להזיז רכיבי פיגום ללא
+    אישור. סולמות — רק תקניים, מוצבים על משטח יציב ובזווית נכונה.
+ 5. חשמל
+    עבודות חשמל יבוצעו רק על ידי חשמלאי מוסמך. אין לגעת בלוחות חשמל, כבלים
+    חשופים או ציוד חשמלי פגום — יש לדווח מיד. כלי עבודה חשמליים יחוברו רק
+    דרך לוח זמני תקני עם ממסר פחת.
+ 6. כלים וציוד מכני
+    יש להשתמש רק בכלים תקינים עם מגני בטיחות במקומם. הפעלת ציוד מכני הנדסי
+    מותרת רק לבעלי היתר מתאים בתוקף. אין לעמוד בטווח פעולה של ציוד מכני
+    עובד, ויש לשמור קשר עין עם המפעיל.
+ 7. הרמה ומנופים
+    אסור לשהות מתחת למטען מורם. הרמת מטענים תבוצע רק על ידי מפעיל מנוף
+    מוסמך ובליווי אתת מוסמך. יש לוודא שהמטען קשור ומאוזן כנדרש, ולהתרחק
+    מאזור ההנפה המסומן.
+ 8. חפירות
+    אין להיכנס לחפירה בעומק העולה על 1.2 מטר ללא דיפון תקני או שיפוע
+    מתאים. יש לוודא דרכי מילוט תקינות, לגדר ולסמן כל חפירה פתוחה, ולא
+    לאחסן חומרים או ציוד בסמוך לשפת החפירה.
+ 9. אש וחומרים מסוכנים
+    עבודות בחום (ריתוך, חיתוך, השחזה) מחייבות היתר עבודה בחום וצופה אש עם
+    אמצעי כיבוי זמינים. חומרים דליקים ומסוכנים יאוחסנו במקום ייעודי ומסומן
+    בלבד. העישון מותר רק באזורים מוסדרים.
+10. סדר וניקיון
+    יש לשמור על סביבת עבודה נקייה ומסודרת: לפנות פסולת למכולות, לא לחסום
+    דרכי גישה ומילוט, לאחסן חומרים בערימות יציבות, ולסלק מסמרים בולטים
+    ושאריות חומרים מדרכי מעבר.
+11. מצבי חירום ופינוי
+    בעת אירוע חירום יש להפסיק את העבודה מיד, להתרחק מאזור הסכנה ולהתפנות
+    לנקודת הריכוז שהוגדרה בתדריך. יש להכיר את מיקום ערכת העזרה הראשונה,
+    המטפים ודרכי המילוט. מספרי חירום מפורסמים בלוח האתר.
+12. דיווח על מפגעים ותאונות
+    כל עובד חייב לדווח מיד למנהל העבודה על כל מפגע, כמעט-תאונה או תאונה —
+    גם ללא נפגעים. אין להזיז ציוד שהיה מעורב בתאונה עד לקבלת אישור. דיווח
+    מוקדם מציל חיים.
 
-KNOWN LIMITS (by design, per approved spec)
+VERIFY — PROBE RESULTS (local Mongo, FILES_STORAGE_BACKEND=local, WA blanked)
 --------------------------------------------------------------------------------
-  - Exact-day thresholds {30,14,7,0}: if the daily job misses a day (server
-    down), that day's threshold is skipped — accepted for idempotency.
-  - 48h cooldown never collides with the thresholds (they are ≥7 days
-    apart); it only blocks manual re-runs within 48h (intended).
-  - No per-project kill-switch (per spec); opt-out is per-user only.
-  - Meta template safety_expiry_alert must exist/be approved in the WA
-    account before production enablement (body frozen at Meta).
+probe_safety_ind1.py — 30/30 PASS (in-process real app, real JWTs):
+  V1  owner PUT → v1; second PUT → v2; GET round-trip equality on
+      languages.he.sections; audit event logged (org, version=2, count=4)
+  V2  org_admin PUT 200 · billing_admin PUT 403 (your addition) ·
+      project_manager PUT 403 / GET 200 can_edit=false (sees org template) ·
+      management_team GET 200 · contractor GET 403 · unauthenticated 401 ·
+      ORG ISOLATION: org-B GET null → PUT creates separate doc v1, org-A
+      version untouched (v3), distinct ids
+  V3  Hebrew 422s: empty list ("יש להוסיף לפחות סעיף אחד") · 201 sections ·
+      empty title · whitespace title · empty body · body 5001 chars; rejected
+      PUTs did NOT bump version
+  V4  two CONCURRENT PUTs same org (owner+org_admin) → both 200, ONE doc,
+      version exactly +2 (3→5) — atomic upsert holds
+  V5  hash: identical→identical (64 hex) · key-order variant→identical ·
+      single-char changes→different · snapshots unique index EXISTS with
+      unique=True and 0 docs · templates UNIQUE(org_id) exists
+  V6  starter 200 draft:true, 12 Hebrew sections, returning saved NOTHING
+      (org-B doc byte-identical before/after) · contractor starter 403
+V7  FE: craco build EXIT=0 (CI=false, prod backend URL). House greps clean:
+      no window.confirm / native <select> / localStorage in new code;
+      modal={false} on the editor Dialog. Card gates on server can_edit.
+V8  alerts-card condition asserted:
+      {alertsAudience && expiryAlertPref !== null && (  where
+      alertsAudience = ['project_manager','owner'].includes(project?.my_role)
+      → renders for PM AND owner, NOT management_team.
+V9  REGRESSION: py_compile clean (induction, indexes, __init__, server) ·
+      server boots with safety ENABLED — 61 /api/safety routes incl. the 3
+      induction routes · scheduler imports clean ·
+      probe_safety_w1_alerts 32/32 · diary d3_http 36/36 · d4a 17/17 ·
+      d4b 23/23 · d1 31/31 · d1_boot off-mode PASS.
+      PRE-EXISTING (untouched, NOT from this batch): d1_boot on-mode asserts
+      exactly 7 diary routes but d3/d4 batches added 3 more (now 10);
+      d2_http V7a asserts owner GET 403 but the APPROVED D3 read-widen
+      (2026-07-09) allows owner reads → 15/16. Both are stale assertions in
+      old probes superseded by approved batches; test_defect_safety_tag 5/6
+      pre-existing as previously reported.
+
+ARCHITECT REVIEW — PASS
+--------------------------------------------------------------------------------
+  "Pass — meets the stated IND-1 objective and the Zahi-approved gate
+  adaptations, with no task-blocking defects found. Security: none observed
+  (no authz bypass, cross-org leakage, or secret exposure)."
+  No fixes required.
+
+DO NOT TOUCH — HONORED
+--------------------------------------------------------------------------------
+  trainings.py / signature endpoint / conduct flow (IND-2) untouched; NO
+  snapshot writer or endpoints (index only); NO template delete endpoint;
+  alerts engine/scheduler/reminder_service/prefs backend untouched (FE 5b
+  only, + the 2-line pref-load alignment documented above); no new deps; no
+  per-project template; no en/ru/ar surfaces; no PII.
+
+OPEN ITEMS FOR ZAHI
+--------------------------------------------------------------------------------
+  1. Starter content above is DRAFT — approve/edit wording before prod.
+  2. The two stale diary probe assertions (d1_boot on-mode route count,
+     d2_http V7a owner-read) predate this batch — say the word and I'll
+     align them to the approved D3/D4 behavior in a future batch.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
