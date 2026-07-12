@@ -1,0 +1,98 @@
+================================================================================
+PLAN — GATE qr-scan-diagnostic: האם האפליקציה יכולה לסרוק QR? (חקירה בלבד)
+Date: 2026-07-12  |  Type: REPORT GATE — שום קוד מוצר, שום dep ב-repo,
+שום commit ל-staging, שום deploy. תוצר יחיד: qr_diagnostic_report.txt.
+================================================================================
+
+STEP 0 — PRE-FLIGHT (בוצע, read-only) — עובדות מפתח שכבר אומתו
+--------------------------------------------------------------------------------
+  F1  Capacitor 7.6.1; wrapper ב-frontend/android/; versionCode 22
+      ("1.0.22"); minSdk 23; target/compileSdk 36 (variables.gradle,
+      app/build.gradle).
+  F2  Capgo updater 7.43.3, autoUpdate=true, channel=production
+      (frontend/capacitor.config.json). ship.sh: שינוי frontend/src בלבד →
+      OTA; שינוי android/ → Android Studio → AAB → Play review ידני.
+  F3  AndroidManifest.xml כבר מכיל CAMERA (שורה 49) + uses-feature camera
+      required=false — בזכות @capacitor/camera + @capgo/
+      capacitor-document-scanner שכבר מותקנים. אין צורך בשינוי manifest.
+  F4  שימוש במצלמה כיום: <input type="file" capture="environment"> ב-8
+      זרימות (defects/proofs/handover/stages) — צילום בודד, אין stream;
+      + DocumentScannerButton native ב-NewDefectModal ועמודי Plans.
+      אין אף getUserMedia בקוד.
+  F5  המנגנון המכריע אומת בקוד המקור של Capacitor 7 שמותקן אצלנו
+      (BridgeWebChromeClient.java:102): onPermissionRequest מתרגם
+      android.webkit.resource.VIDEO_CAPTURE → בקשת הרשאת CAMERA מערכתית
+      ומעניק ל-WebView. MainActivity שלנו נקי (אין override). כלומר
+      getUserMedia בתוך ה-WebView אמור לעבוד עם ה-manifest הקיים.
+
+מגבלה גלויה: בסביבת העבודה אין אמולטור/מכשיר Android. מה שיאומת "חי"
+ירוץ בדפדפן; ההתנהגות בתוך ה-WebView תבוסס על F5 (קוד, לא claim) + config
+בפועל. הדוח יסמן בכל שורה: [DEVICE-VERIFIED] / [CODE-VERIFIED] / [DOCS].
+אופציה: דף ספייק זמני שתפתח אתה בטלפון (2 דק') לסגירת הפער — סעיף 5 להלן.
+
+1. G1 — CURRENT STATE (השלמת עובדות, read-only)
+--------------------------------------------------------------------------------
+  1.1 רשימת plugins מלאה: package.json + capacitor.settings.gradle +
+      MainActivity (SmsRetrieverPlugin מקומי) — טבלה עם native/JS-only.
+  1.2 תיעוד מדויק של 8 זרימות המצלמה הקיימות (נתיבי קבצים) + הסבר למה
+      file-input לא מספיק ל-QR (אין live stream).
+  1.3 ניסוח נתיב השחרור ל-native change: bump versionCode → ship.sh →
+      Android Studio → AAB → Play review (ימים) → משתמשים קיימים מקבלים
+      רק אחרי עדכון מה-Play; לעומת OTA: דקות, כיסוי מלא. + אזכור iOS
+      (יש ios/ ו-ship-ios.sh — אותו עיקרון, App Store review).
+
+2. G2 — ספייק ומטריצת אופציות (מחוץ ל-repo!)
+--------------------------------------------------------------------------------
+  2.1 ספייק scratch: תיקייה /tmp/qr_spike (לא ב-git) — דף HTML יחיד +
+      jsQR מ-CDN: getUserMedia(environment) → canvas → decode, וכן ענף
+      BarcodeDetector אם קיים. הרצה: שרת סטטי זמני על פורט צדדי, בדיקה
+      ב-preview דפדפן. נבדק: פתיחת stream, פענוח QR מתמונה על מסך
+      (מקרה שער-כניסה) ומודפס-מדומה (תמונת סטיקר), חוויית ההרשאה.
+  2.2 מילוי המטריצה לכל אופציה:
+      (a) getUserMedia + jsQR / zxing-js  — WebView? דפדפן? OTA? הרשאות?
+          אמינות פענוח מסך-טלפון ומדבקה? מאמץ MVP?
+      (b) BarcodeDetector native-API + fallback ל-(a) — כיסוי דפדפנים
+          (Chrome Android כן, iOS Safari לא — יצוין במדויק לפי caniuse).
+      (c) @capacitor-mlkit/barcode-scanning — איכות/מהירות מול (a) +
+          עלות נתיב-שחרור מלאה מ-1.3. לא יותקן אצלנו — הערכה מקוד המקור
+          של ה-plugin + תיעוד בלבד, מסומן [DOCS].
+  2.3 בדיקת WebView שלנו ספציפית ל-(a): אימות שאין WebChromeClient
+      override, ש-allowMixedContent=false לא מפריע (HTTPS בלבד),
+      ושה-origin ב-Capacitor הוא https://localhost → getUserMedia מותר
+      (secure context). הכל [CODE-VERIFIED] עם נתיבי קבצים.
+
+3. G3 — המלצה אחת + סיכונים + fallback + הערכת מאמץ
+--------------------------------------------------------------------------------
+  המלצה צפויה (תיבחן מול תוצאות הספייק, לא מובטחת): (b) — כלומר (a) עם
+  שכבת BarcodeDetector היכן שקיים: אפס שינוי native, הכל OTA, עובד גם
+  בדפדפן נייד רגיל. סיכונים שייענו: מכשירים ישנים/WebView מיושן, תאורה
+  ומסכים סדוקים, iOS Safari ללא BarcodeDetector (fallback jsQR), משתמש
+  שדחה הרשאת מצלמה (מסך הסבר + קלט ידני של הקוד). הערכת S/M/L לרכיב
+  "סורק שמחזיר מחרוזת ל-callback".
+
+4. DELIVERABLE + סדר פעולות
+--------------------------------------------------------------------------------
+  4.1 כתיבת qr_diagnostic_report.txt בשורש: G1 עם נתיבים, מטריצת G2 עם
+      תוצאות ספייק אמיתיות + ציון סביבת הבדיקה, G3 החלטה. מסתיים ב:
+      "AWAITING ZAHI DECISION — NO IMPLEMENTATION".
+  4.2 אימות שה-repo נקי: git status ריק מ-deps/רכיבים; הספייק נשאר
+      ב-/tmp בלבד.
+  4.3 present_asset(qr_diagnostic_report.txt) → עצירה. בלי review.txt
+      (זה gate, לא batch), בלי commit ל-staging, בלי deploy.
+
+5. אופציונלי — אימות מכשיר אמיתי (רק אם תרצה)
+--------------------------------------------------------------------------------
+  אחרי הדוח אוכל להרים לדקות ספורות דף ספייק על ה-dev-URL שתפתח בטלפון
+  שלך (דפדפן ו/או אפליקציית BrikOps אם יש לך גרסת dev שמצביעת לכאן),
+  ונוסיף לדוח שורת [DEVICE-VERIFIED] אמיתית. לא חוסם את הדוח.
+
+HARD CONSTRAINTS (מהמפרט — ייאכפו)
+--------------------------------------------------------------------------------
+  - שום דבר לא נוחת ב-repo: לא deps, לא manifest, לא components.
+  - אין נגיעה ב-staging/main, אין deploy, אין העלאות לחנות.
+  - אין עיצוב flow מוצרי (tokens/קישורי עובדים/מסך ירוק-אדום) — היתכנות
+    סריקה בלבד.
+
+================================================================================
+ממתין ל-"תתחיל" לפני ביצוע. שום דבר מעבר ל-STEP 0 (read-only) לא בוצע.
+================================================================================

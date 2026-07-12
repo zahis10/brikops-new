@@ -756,3 +756,9 @@ id = "6ZMgEqLf_TPBz776Ww91O"
 uri = "file://plan_safety_ind1.txt"
 type = "text"
 title = "PLAN — BATCH safety-ind1"
+
+[[outputs]]
+id = "sNC4p9-a9JyiKgF587NKO"
+uri = "file://plan_qr_gate.txt"
+type = "text"
+title = "PLAN — GATE qr-scan-diagnostic"
