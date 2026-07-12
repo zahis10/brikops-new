@@ -1,0 +1,136 @@
+================================================================================
+PLAN — BATCH safety-ind2: induction CONDUCT flow — קריאה → לוגיקת מתורגמן →
+חתימה ראייתית + snapshot תוכן (IND-2)
+Date: 2026-07-12 (לילה)  |  Branch: staging  |  STATUS: STEP 0 + PLAN בלבד.
+מימוש יתחיל רק אחרי אישור זהי ש-IND-1 בפרוד (צפוי שני בבוקר).
+================================================================================
+
+STEP 0 — PRE-FLIGHT (בוצע מול HEAD=3eb2cf3; base במפרט=922edfe — ההפרש הוא
+שני commits של דוקומנטציה בלבד מה-QR gate, אפס קוד → לא חוסם)
+--------------------------------------------------------------------------------
+  [OK] trainings.py — שרשרת ה-upload-hardening + idiom פתרון org-דרך-פרויקט
+       שה-conduct משקף 1:1 (sign_training @225):
+         check_upload_rate_limit(user) → validate_upload → empty/bytes check →
+         db.projects.find_one({"id": project_id},{org_id:1}) → _org_id →
+         check_storage_quota(_org_id, n) → save → record_upload(_org_id, n)
+       וגם: guard "כבר חתומה" קיים — training.get("worker_signature") → 409
+       "ההדרכה כבר חתומה" (@240) — בדיוק מה שסעיף 3 במפרט דורש לאמת.
+  [OK] SafetyTrainingUpdate (@50) — רשימת שדות מדווחת כנדרש:
+         training_type, trained_at, instructor_name, duration_minutes,
+         location, expires_at, certificate_url
+       worker_signature איננו ברשימה → אי-השבתה (immutability) נשענת על
+       מודל העדכון; ה-PATCH גם עושה exclude_unset → probe V3 יאשר.
+  [OK] induction.py — induction_content_hash @94, STARTER @39; indexes.py —
+       uidx_ics_org_version_lang UNIQUE(org_id,template_version,language)
+       @148, קיים מ-IND-1 ועדיין ריק. ה-snapshot writer יכתוב עליו.
+  [OK] SafetySignaturePad — components/safety/SafetySignaturePad.js, props:
+       {open, onClose, slotLabel, defaultName, saving, onSave} — בשימוש
+       ב-SafetyTourRunner @772 וב-SafetyHomePage @1000 (חתימת הדרכות
+       קיימת, כולל fallback typed) → REUSE כמות-שהוא ב-STEP 3 של ה-conduct.
+  [OK] WorkersList @SafetyHomePage:1606 — props {items, isWriter, onEdit,
+       onOpenCard}; לכל שורה כפתור עריכה מותנה isWriter עם stopPropagation
+       — כפתור "בצע הדרכת אתר" (GraduationCap) נכנס באותו דפוס בדיוק,
+       לצד ה-Pencil.
+  [OK] Rider anchors: probe_diary_d1_boot.py:40 == 7 (הישן); d2_http:168
+       V7a מצפה 403. ספירת routes בפועל אומתה בריצה חיה: **10** (D3 הוסיף
+       2 exports, D4b הוסיף addendums/signature/refresh-derived/
+       weather-city; 7→10).
+  [MISMATCH — לא חוסם, מדווח] future-features/site-induction-concept-
+       2026-07-12.md לא קיים ב-repo (יש רק safety-and-worklog-concept.md
+       הישן). ההנחיות ה-5/ה-6/ה-7/ה-11/ה-12 מפורטות ממילא inline במפרט
+       עצמו — אעבוד לפיהן. אם תרצה, הדבק את מסמך הקונספט ואצרף אותו
+       ל-repo באותו batch (או שהוא חי אצלך מחוץ ל-repo — עדכן אותי).
+
+1. BACKEND — הרחבת contractor_ops/safety/induction.py (ADD בלבד)
+--------------------------------------------------------------------------------
+  1.1 קבועים (סעיף 0 במפרט, מילה במילה):
+      INDUCTION_TRAINING_TYPE="הדרכת אתר";
+      DEFAULT_INDUCTION_VALIDITY_DAYS=365  # DRAFT — ממתין לאימות רגולטורי
+      INDUCTION_LEGAL_TEXT_HE + INDUCTION_LEGAL_TEXT_INTERPRETER_HE (עם
+      {worker_language}/{interpreter_name}). אין קבועי en/ru/ar (IND-3).
+  1.2 GET /api/safety/{project_id}/induction/content
+      Gate: require_roles(*SAFETY_WRITERS) + _check_project_access (הצמד
+      הביתי). פתרון org דרך ה-PROJECT (db.projects → org_id) — לא
+      get_user_org — כי מדריכים הם PMs שאולי אין להם שורת membership.
+      תשובה: template_version, languages_filled, sections (he), שני קבועי
+      ה-legal, default_validity_days. אין template/he ריק → 404
+      "לא הוגדר תוכן הדרכת אתר לארגון".
+  1.3 POST /api/safety/{project_id}/induction/conduct (multipart, טקס אחד,
+      נולד-חתום — אין רשומה חצי-גמורה):
+      שדות: worker_id (עובד קיים לא-מחוק של הפרויקט), language_choice
+      ("he"|"other"), worker_language+interpreter_name (חובה iff "other";
+      422 "נדרש שם מתורגמן כאשר אין תוכן בשפת העובד"), expires_at
+      אופציונלי (ברירת מחדל היום+365, ולידציית ISO → 422), signer_name +
+      signature_type + signature_image/typed_name — שיקוף מדויק של
+      sign_training כולל כל שרשרת ה-hardening (1:1, אותם helpers, אותו
+      סדר, s3 key f"safety/{pid}/trainings/{tid}/sig_worker_....png").
+      סדר הזרימה (a-e במפרט): טעינת template דרך project-org (אין → 409) →
+      SNAPSHOT dedup-upsert על uidx_ics (insert-if-absent עם sections
+      מלא + legal_text בסיסי + content_hash; קיים → אותו id — ה-attestation
+      המותאם עם שם המתורגמן חי על החתימה, לא ב-snapshot) → בניית
+      attestation_text → INSERT training doc באותה צורה ש-create-training
+      מייצר, עם worker_signature = dict של sign_training PLUS
+      language_read, worker_language, via_interpreter, interpreter_name,
+      content_version, content_hash, snapshot_id, attestation_text →
+      audit "induction_conducted" (בלי PII חדש).
+      תשובה: ה-training שנוצר עם signature_display_url regen כמו list/get.
+      dedup-upsert יתבצע עם update_one(upsert=True,$setOnInsert) + קריאה
+      חוזרת — עמיד למרוץ בזכות ה-unique index (DuplicateKeyError retry).
+  1.4 IMMUTABILITY — לאמת, לא לבנות (סעיף 3): PATCH לא נוגע ב-worker_
+      signature (מודל); /signature על רשומה שנוצרה חתומה → 409 הקיים;
+      עריכת template אחרי conduct לא נוגעת ב-snapshot/רשומה.
+
+2. RIDER — יישור שני probes ישנים (אושר מראש)
+--------------------------------------------------------------------------------
+  d1_boot.py:40 → assert == 10 + הערה (7 מקוריים + 2 D3 exports + ... D4b;
+  אצמיד את הפירוק המדויק לפי הרשימה החיה). d2_http V7a → מצפה 200 (D3
+  read-widen מאושר); V7b POST 403 נשאר. שום שורה אחרת.
+
+3. FRONTEND
+--------------------------------------------------------------------------------
+  3.1 api.js: safetyService += getInductionContent(projectId),
+      conductInduction(projectId, formData).
+  3.2 NEW components/safety/SafetyInductionConduct.js — Radix Dialog
+      modal={false}, full-height, 3 שלבים כמפרט: שפה (עברית / "אחרת" →
+      שדות חובה מתורגמן+שפה, חסימת המשך = שיקוף ה-422) → קריאה (header
+      עובד עם תמונה/initials, sections נגללים, "המשך" רק אחרי גלילה
+      לתחתית — onScroll threshold) → חתימה (attestation VERBATIM מעל
+      הפד, כולל interpolation לוריאנט מתורגמן; expires_at date input
+      prefilled היום+365; signer_name prefilled שם העובד; REUSE
+      SafetySignaturePad + typed fallback כמו חתימת הדרכות; submit →
+      sonner "ההדרכה נרשמה" → close → refresh). 404 template → empty-state
+      עם הקופי המדויק מהמפרט.
+  3.3 SafetyHomePage.js: כפתור פר-עובד "בצע הדרכת אתר" (GraduationCap,
+      isWriter, stopPropagation — אותו דפוס של ה-Pencil ב-WorkersList) →
+      פותח את הדיאלוג לאותו עובד. שום דבר אחר בעמוד.
+
+4. PROBES — backend/tests/probe_safety_ind2.py (in-process, local storage,
+   WA blanked) — V1..V9 בדיוק לפי המפרט, כולל: V1 dedup אותו snapshot_id;
+   V2 שני צדי ה-422 + attestation מכיל את שני הערכים; V3 שלושת מבחני
+   ה-immutability; V4 ארגון טרי 404/409 + assert build-time של הקופי;
+   V5 expires override/invalid/default; V6 כולל ⭐ PM בלי שורת
+   organization_memberships מצליח (פתרון project-org); V7 worker guards
+   (לא קיים/מחוק/מפרויקט אחר); V8 סינרגיית alerts — קריאה יחידתית
+   ל-collect_expiry_alerts (safety_expiry_service.py:88), בלי שליחה;
+   V9 rider ירוק מלא + py_compile + craco EXIT=0 + house greps + רגרסיה
+   מלאה (safety w1+ind1, diary d1/d1_boot/d2/d3/d4a/d4b). V10 = בדיקת
+   מכשיר שלך ב-staging אחרי אישור.
+
+5. DO NOT TOUCH (מהמפרט — ייאכף)
+--------------------------------------------------------------------------------
+  endpoints של IND-1 (רק ADD ל-induction.py); sign_training הקיים (ה-conduct
+  נפרד); create/list/get/grouping/exports/alerts/diary/PDF; אין en/ru/ar;
+  אין delete; אין deps חדשים; אין window.confirm/native select/localStorage;
+  posture של id_number/PII.
+
+6. DELIVERABLES (אחרי מימוש)
+--------------------------------------------------------------------------------
+  review.txt (נקרא→נדרס) עם פלטי STEP 0 — כולל רשימת שדות
+  SafetyTrainingUpdate וספירת ה-routes האמיתית (10) — diffs, תמלילי V1-V9,
+  מסתיים "AWAITING ZAHI APPROVAL — DO NOT DEPLOY" + .local/.commit_message
+  מילה-במילה מהמפרט. present_asset(review.txt) → עצירה.
+
+================================================================================
+ממתין לאישורך ש-IND-1 בפרוד לפני תחילת מימוש (צפוי שני בבוקר).
+STEP 0 נקי פרט ל-mismatch המדווח (מסמך קונספט חסר ב-repo — לא חוסם).
+================================================================================

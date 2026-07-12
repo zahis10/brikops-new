@@ -768,3 +768,9 @@ id = "hYsWKw9lcCA-rUoEK8Qb0"
 uri = "file://qr_diagnostic_report.txt"
 type = "text"
 title = "qr_diagnostic_report — GATE qr-scan-diagnostic"
+
+[[outputs]]
+id = "4K_UrZ8FG_Z0B5kG1MwPU"
+uri = "file://plan_safety_ind2.txt"
+type = "text"
+title = "PLAN — BATCH safety-ind2 (IND-2) — STEP 0 + תוכנית"
