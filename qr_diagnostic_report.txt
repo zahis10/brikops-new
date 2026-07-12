@@ -151,5 +151,9 @@ G3 — המלצה
   — מחוץ ל-git. אין נגיעה ב-staging/main, אין deploy, אין העלאות לחנות.
 
 ================================================================================
-AWAITING ZAHI DECISION — NO IMPLEMENTATION
+ZAHI DECISION (2026-07-12): אושר ונשמר — בלי מימוש בשלב זה.
+המלצה (b) (סורק web טהור: getUserMedia + BarcodeDetector עם fallback jsQR,
+אפס native, הכל OTA) מתועדת כאן כבסיס למימוש עתידי של 1.6 / 1.6א.
+לפני מימוש: ריצת spike.html על טלפון אמיתי לאימות [DEVICE] בתוך ה-WebView.
+NO IMPLEMENTATION — nothing landed beyond this report.
 ================================================================================
