@@ -1,0 +1,155 @@
+================================================================================
+qr_diagnostic_report — GATE qr-scan-diagnostic: האם האפליקציה יכולה לסרוק QR?
+Date: 2026-07-12  |  Type: REPORT GATE — חקירה בלבד. שום קוד מוצר, שום dep
+ב-repo, שום שינוי manifest, שום deploy. הספייק חי ב-/tmp/qr_spike בלבד.
+תיוג ראיות: [DEVICE] נבדק על מכשיר · [SPIKE] הורץ בפועל בסביבת הספייק ·
+[CODE] אומת בקריאת קוד המקור המותקן אצלנו (עם נתיב) · [DOCS] תיעוד/caniuse.
+================================================================================
+
+G1 — CURRENT STATE (עובדות מהמאגר, עם נתיבים)
+--------------------------------------------------------------------------------
+1.1 Capacitor ופלאגינים  [CODE]
+    Capacitor 7.6.1 (@capacitor/core, cli, android; @capacitor/ios 7.6.1) —
+    frontend/package.json. wrapper: frontend/android/ (versionCode 22,
+    versionName "1.0.22" — app/build.gradle; minSdk 23, target/compileSdk 36
+    — variables.gradle). iOS project קיים: frontend/ios/ (+ ship-ios.sh).
+    פלאגינים native רשומים (frontend/android/capacitor.settings.gradle):
+      @capacitor-community/apple-sign-in 7.0.0
+      @capacitor-community/contacts     7.2.0
+      @capacitor/app 7 · camera 7.0.5 · filesystem 7 · preferences 7 ·
+      share 7 · status-bar 7.0.6
+      @capgo/capacitor-document-scanner 7.2.5
+      @capgo/capacitor-social-login     7.6.5
+      @capgo/capacitor-updater          7.43.3
+    + פלאגין מקומי SmsRetrieverPlugin.kt הנרשם ב-MainActivity.java
+    (frontend/android/app/src/main/java/com/brikops/app/).
+    Capgo OTA: capacitor.config.json → CapacitorUpdater autoUpdate=true,
+    channel=production; אין בלוק server → androidScheme ברירת-מחדל
+    https://localhost = secure context (תנאי הכרחי ל-getUserMedia). [CODE]
+
+    הרשאות AndroidManifest.xml (app/src/main, שורות 49-54): CAMERA כבר
+    קיים + uses-feature android.hardware.camera required=false + INTERNET
+    + READ_CONTACTS. => שום שינוי manifest לא נדרש לסריקה. [CODE]
+    iOS: NSCameraUsageDescription כבר קיים ב-frontend/ios/App/App/
+    Info.plist (טקסט עברית על צילום ליקויים). [CODE]
+
+1.2 שימוש במצלמה היום  [CODE]
+    כל זרימות הצילום הן <input type="file" accept="image/*"
+    capture="environment"> — צילום סטילס בודד דרך אפליקציית המצלמה של
+    ה-OS, בלי גישה ל-stream, ולכן לא רלוונטי לסריקת QR חיה:
+      pages/HandoverSectionPage.js:1348 · pages/StageDetailPage.js:405 ·
+      pages/TaskDetailPage.js:858,1378 · components/NewDefectModal.js:1049 ·
+      components/handover/HandoverMeterForm.js:88 · HandoverTenantForm.js:211
+      · HandoverItemModal.js:568
+    בנוסף: DocumentScannerButton (plugin native של Capgo) ב-NewDefectModal
+    ועמודי Plans — סריקת מסמכים, לא QR. @capacitor/camera מותקן אך אין
+    getUserMedia בשום מקום בקוד כיום.
+
+1.3 נתיב שחרור — האילוץ המכריע: מאושר  [CODE]
+    שינוי NATIVE (plugin חדש) אינו OTA-able. Capgo מעדכן אך ורק את חבילת
+    ה-web (webDir=build); כל תוספת plugin = קוד Java/Kotlin חדש ב-APK.
+    הנתיב בפועל אצלנו (ship.sh, מתועד בסקריפט עצמו): שינוי ב-android/ →
+    פתיחת Android Studio אצל זהר → bump versionCode → build AAB → העלאה
+    ל-Google Play → review (שעות-ימים) → משתמשים קיימים מקבלים רק אחרי
+    שהמכשיר שלהם מעדכן מהחנות (פיגור של ימים-שבועות בפריסה מלאה). ואם
+    רוצים iOS בהמשך — אותו סיפור מול App Store. לעומת זאת שינוי web
+    טהור: Capgo OTA, דקות, כיסוי 100% בהפעלה הבאה, וכמובן עובד גם אצל
+    משתמשי הדפדפן הרגיל (Cloudflare Pages).
+
+G2 — מטריצת אופציות
+--------------------------------------------------------------------------------
+סביבת ספייק: Node v20 ב-workspace צד (/tmp/qr_spike, מחוץ ל-repo) —
+פענוח jsQR/zxing על פריימים סינתטיים מדורדרים (מוארה של מסך, ניגודיות
+דפוס נמוכה, סיבוב, טשטוש, רעש, הקטנה). אין כאן מכשיר Android/מצלמה —
+לכן שורות ה-WebView מסומנות [CODE]/[DOCS] ולא [DEVICE]; הוכן דף ספייק
+(spike.html: getUserMedia + BarcodeDetector עם fallback jsQR) לאימות
+[DEVICE] של 2 דקות על הטלפון שלך לפני מימוש — מומלץ, לא חוסם החלטה.
+
+(a) Pure web: getUserMedia + jsQR
+    WebView שלנו?  כן [CODE] — זו הליבה: Capacitor 7 שמותקן אצלנו מטפל
+      בזה מובנה. BridgeWebChromeClient.java:102 (node_modules/@capacitor/
+      android/.../getcapacitor/) מיישם onPermissionRequest: בקשת
+      VIDEO_CAPTURE מה-WebView → בקשת הרשאת CAMERA מערכתית → grant.
+      התנאים מתקיימים אצלנו: CAMERA במניפסט (G1.1) ✓, אין override של
+      WebChromeClient בקוד שלנו (MainActivity נקי — אומת grep) ✓, origin
+      https://localhost = secure context ✓, minSdk 23 = runtime
+      permissions נתמכות ✓.
+    דפדפן רגיל?  כן [DOCS] — getUserMedia נתמך Chrome Android + iOS
+      Safari 11+. חובה HTTPS — יש (Cloudflare Pages).
+    OTA?  כן — קוד web טהור, jsQR הוא dep אחד של ~328KB במקור (~43KB
+      minified), אפס נגיעה native.
+    UX הרשאה:  בקשת מצלמה מערכתית בפעם הראשונה; Android זוכר לצמיתות
+      לאותו origin. באפליקציה: דיאלוג הרשאת האפליקציה הרגיל. דחייה →
+      NotAllowedError שנתפס ומטופל (מסך הסבר + קלט ידני). [DOCS]
+    אמינות פענוח:  [SPIKE] jsQR 10/10 תרחישים, כולל:
+      PASS  מסך-טלפון: מוארה+טשטוש · זווית 12° · מוארה חזקה+רעש
+      PASS  מדבקה: ניגודיות 60/40+רעש · 120px רחוק · סיבוב 25° · 96px זעיר
+      PASS  קצה: טשטוש כבד r=3 · 60px
+      קצב: ~20ms/פריים @640px = headroom של ~50fps — פענוח כל 2-3 פריימים
+      בזמן-אמת בנייד בלי להקפיא UI. הסתייגות ישרה: דגרדציה סינתטית
+      סלחנית ממציאות (תאורת אתר, עדשה שרוטה, רעד יד) — בפועל מצפים
+      לפענוח תוך 1-3 שניות של כיוון, לא הדגמת-מעבדה. zxing-js פוענח גם
+      הוא [SPIKE] אך החבילה ענקית (13MB source מול 328KB) — jsQR מספיק.
+    מאמץ MVP:  S — קומפוננטה אחת: video + canvas + לולאת requestAnimation-
+      Frame, callback עם המחרוזת, כפתור ביטול, fallback קלט ידני.
+
+(b) BarcodeDetector native-API + fallback ל-(a)   ← שיפור פרוגרסיבי
+    WebView שלנו?  כן [DOCS] — ה-WebView של Android (מבוסס Chrome) חושף
+      BarcodeDetector כשה-Google Play services זמינים (רוב מוחלט של
+      מכשירי ה-staff בישראל). כשלא — נופלים ל-jsQR שקוף.
+    דפדפן רגיל?  Chrome Android: כן (83+). iOS Safari: לא — תמיד jsQR.
+      [DOCS: caniuse Shape Detection API]
+    OTA?  כן — עדיין אפס native; זה feature-detect של API דפדפני.
+    UX הרשאה: זהה ל-(a) — אותו getUserMedia, רק המפענח מתחלף.
+    אמינות: המפענח של ML Kit דרך הדפדפן — מהיר וסלחני יותר מ-jsQR בזוויות
+      ותאורה קשות; בדיוק המקרים של שער-כניסה. עלות הקוד: ~15 שורות.
+    מאמץ MVP:  S (אותו רכיב של (a) + ענף אחד).
+
+(c) Native plugin (@capacitor-mlkit/barcode-scanning)   [DOCS בלבד — לא הותקן]
+    WebView שלנו?  כן — אבל זה בדיוק העניין: זה לא web. מסך סריקה native
+      מעל/מאחורי ה-WebView, איכות ML Kit מלאה (הכי מהיר וסלחני).
+    דפדפן רגיל?  לא! משתמשי staff שעובדים מהדפדפן (יש כאלה — G1 context)
+      נשארים בלי סורק, ונדרש ממילא מסלול web מקביל = לתחזק שניים.
+    OTA?  לא. הנתיב המלא מ-G1.3: AAB → Play review → פיגור עדכון אצל
+      מותקנים. וכל bugfix עתידי בסורק — שוב אותו נתיב אם הוא בצד native.
+    UX הרשאה: דיאלוג הרשאת אפליקציה (זהה בפועל ל-(a) בתוך האפליקציה).
+    אמינות: הטובה ביותר בשוליים (זוויות קיצון, תאורה גרועה, ריצוד) — אך
+      היתרון שולי למקרה שלנו: QR בגודל נשלט שאנחנו מדפיסים/מציגים.
+    מאמץ MVP:  M-L (plugin, סנכרון android+ios, מסלול Play, תיאום זהר).
+
+G3 — המלצה
+--------------------------------------------------------------------------------
+  המלצה: אופציה (b) — רכיב web טהור: getUserMedia + BarcodeDetector היכן
+  שקיים, jsQR fallback בכל מקום אחר. אפס שינוי native, אפס שינוי manifest
+  (ההרשאה כבר שם), הכל OTA דרך Capgo, ואותו רכיב בדיוק משרת גם את משתמשי
+  הדפדפן הרגיל — עיקרון "העובד לא מתקין כלום" נשמר, וגם הסורק לא דורש
+  התקנה. תשובה לשאלת המפרט: לא נדרש שום שינוי native — המטרה "אפס" הושגה.
+
+  סיכונים ומה נשבר איפה:
+  - מכשיר ישן/WebView מיושן בלי BarcodeDetector → jsQR (שקוף, נבדק).
+  - getUserMedia נכשל (WebView נדיר-חריג, הרשאה נדחתה, מצלמה תפוסה) →
+    מסך הסבר בעברית + שדה קלט ידני של הקוד (חובה בכל מקרה — מדבקה
+    שהושחתה/השתפשפה בשטח). זה ה-graceful fallback האוניברסלי.
+  - iOS Safari בדפדפן: עובד, אבל רק דרך jsQR — איטי מעט יותר בזוויות
+    קשות; מקובל.
+  - תנאי שטח (שמש ישירה על מסך, מדבקה מלוכלכת): פתרון תפעולי — QR מודפס
+    בגודל ≥4x4 ס"מ עם quiet zone, רמת error-correction M/Q.
+  - פער ראיות יחיד: אימות [DEVICE] בתוך ה-WebView שלנו טרם בוצע (אין
+    מכשיר בסביבה זו). ה-Bridge מטפל בזה בקוד שקראנו [CODE], אבל לפני
+    מימוש 1.6א מומלץ ריצת spike.html של 2 דקות על טלפון עם גרסת ה-dev —
+    מוכן ב-/tmp/qr_spike/spike.html.
+
+  הערכת מאמץ לרכיב "סורק שמחזיר מחרוזת ל-callback" במסלול (b):  S
+  (רכיב אחד + dep יחיד jsQR ~43KB minified + מסך fallback; בלי שום flow
+  מוצרי — tokens/ירוק-אדום הם concept doc נפרד אחרי ה-gate, כמוגדר).
+
+אימות ניקיון (HARD CONSTRAINTS)
+--------------------------------------------------------------------------------
+  git status: שום שינוי ב-package.json / manifest / רכיבים. הקבצים
+  היחידים שנוצרו ב-repo: plan_qr_gate.txt + הדוח הזה. הספייק כולו
+  (node_modules, decode_test.js, zxing_test.js, spike.html) ב-/tmp/qr_spike
+  — מחוץ ל-git. אין נגיעה ב-staging/main, אין deploy, אין העלאות לחנות.
+
+================================================================================
+AWAITING ZAHI DECISION — NO IMPLEMENTATION
+================================================================================

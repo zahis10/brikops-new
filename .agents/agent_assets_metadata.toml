@@ -762,3 +762,9 @@ id = "sNC4p9-a9JyiKgF587NKO"
 uri = "file://plan_qr_gate.txt"
 type = "text"
 title = "PLAN — GATE qr-scan-diagnostic"
+
+[[outputs]]
+id = "hYsWKw9lcCA-rUoEK8Qb0"
+uri = "file://qr_diagnostic_report.txt"
+type = "text"
+title = "qr_diagnostic_report — GATE qr-scan-diagnostic"
