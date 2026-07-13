@@ -774,3 +774,9 @@ id = "4K_UrZ8FG_Z0B5kG1MwPU"
 uri = "file://plan_safety_ind2.txt"
 type = "text"
 title = "PLAN — BATCH safety-ind2 (IND-2) — STEP 0 + תוכנית"
+
+[[outputs]]
+id = "OTQZPuu8liZiqiQbFCrRg"
+uri = "file://plan_fix_annotation_ios_text.txt"
+type = "text"
+title = "PLAN — BATCH fix-annotation-ios-text v2.1"

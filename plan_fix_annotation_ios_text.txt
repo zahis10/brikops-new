@@ -1,0 +1,106 @@
+================================================================================
+PLAN — BATCH fix-annotation-ios-text v2.1: commit של טקסט ממתין בשמירה/סגירה
++ דיכוי double-tap zoom ב-iOS על ה-chrome של עורך האנוטציה
+Date: 2026-07-13  |  Branch: staging (HEAD=536132a)  |  P0-prod-bug
+קובץ יחיד: frontend/src/components/PhotoAnnotation.js (+ probe חדש) →
+שינוי web טהור, מגיע לאפליקציות iOS/Android דרך Capgo OTA. אין Q-gate.
+מקדים את IND-2 — IND-2 לא התחיל וממשיך להמתין ל-"IND-1 בפרוד — תתחיל".
+================================================================================
+
+STEP 0 — PRE-FLIGHT (בוצע ודווח) — אפס סטיות מול HEAD
+--------------------------------------------------------------------------------
+  RC1 מאושר: handleSave @639 מרוקן רק stroke חופשי (@640-649), מתעלם
+      מ-pendingText; hasAnnotations @655 על strokesRef בלבד → תווית-בלבד
+      נופלת ל-onSave(null,false) @657 → ההורה (NewDefectModal.
+      handlePendingAnnotationSave @414, ענף ה-else) מצרף את המקור כמות-
+      שהוא. handleDiscard @572 מותנה strokesRef.length בלבד → סגירה
+      שקטה עם טקסט לא-מאושר.
+  RC2 מאושר: viewport swap @108 בלי viewport-fit=cover (קיים ב-
+      index.html:5); touchAction רק על container/canvas ('none' @736,741);
+      root overlay @677 ושורת ה-input @758 חשופים; fontSize:'16px' @777
+      קיים; אין ignoresViewportScaleLimits ב-ios/ או בconfig.
+  עוגני מימוש: דפוס ref-sync @94-102; commitPendingText @605 עם ענף
+      editingIndex (replace/append) + לכידת color/size בזמן commit;
+      pendingText shape {x,y,value,editingIndex?} @76.
+
+EDITS — הכל ב-PhotoAnnotation.js, לפי E1-E7 של המפרט
+--------------------------------------------------------------------------------
+  E1  pendingTextRef חדש + effect סנכרון בבלוק @94-102 (אותו idiom):
+        useEffect(() => { pendingTextRef.current = pendingText; }, [pendingText]);
+  E2  חילוץ buildTextStroke(curr) → {type:'text', color:colorRef.current,
+      size:textSizeRef.current, x:curr.x, y:curr.y, text:curr.value.trim()}
+      — commitPendingText @605 יקרא לו verbatim; אפס שינוי התנהגות
+      (_bbox נשאר מושמט; ה-redraw הבא ממלא אותו — כמו היום).
+  E3  handleSave: אחרי ריקון ה-freehand (@649) ולפני חישוב hasAnnotations
+      (@655) — ריקון הטקסט הממתין, מראה של ה-flush הקיים:
+        const pt = pendingTextRef.current;
+        if (pt && pt.value.trim()) {
+          const textStroke = buildTextStroke(pt);
+          if (typeof pt.editingIndex === 'number')
+            strokesRef.current = strokesRef.current.map((s,i) =>
+              i === pt.editingIndex ? textStroke : s);
+          else strokesRef.current = [...strokesRef.current, textStroke];
+          setStrokes([...strokesRef.current]);
+          setPendingText(null);
+          redraw([...strokesRef.current]);
+        }
+      סמנטיקה: שמור בזמן שתווית לא-ריקה מוקלדת = התווית נקלטת ונשמרת.
+      (setTextSize('medium') reset נשאר רק במסלול אישור — שמור סוגר את
+      העורך ממילא; אפס שינוי למסלול הקיים.)
+  E4  handleDiscard @573 — התנאי הופך:
+        strokesRef.current.length > 0 || !!pendingTextRef.current?.value.trim()
+      confirmDiscard ללא שינוי. input ריק + X → סגירה מיידית (כמו היום).
+  E5  חיזוק זום בשכבה ש-WebKit מכבד: touchAction:'manipulation' על
+      (a) ה-root overlay @677 (fixed inset-0) ו-(b) ה-div של שורת ה-input
+      @758. ה-canvas שומר touchAction:'none' (קשיח יותר). ה-swap
+      וה-fontSize:16 נשארים (defense in depth; ה-swap הוא ששומר על
+      Android נקי).
+  E6  עדכון ההערה המיושנת מעל ה-input: שורת הקשר על וקטור ה-double-tap
+      ולמה manipulation על ה-root.
+  E7  מחרוזת ה-swap @108 מקבלת viewport-fit=cover:
+        'width=device-width, initial-scale=1, maximum-scale=1,
+         user-scalable=no, viewport-fit=cover'
+      (משחזר safe-area/notch בזמן שהעורך פתוח; ה-restore @113 ללא שינוי).
+
+DO NOT TOUCH (מהמפרט — ייאכף)
+--------------------------------------------------------------------------------
+  getPos/scaleRef/applyDisplayScale/F-keyboard visualViewport; התנהגויות
+  drag/edit/size (F.1a-c); UI של מודל ה-discard; קומפוננטות ההורה; 16px;
+  MAX_CANVAS_SIZE; toBlob 0.70; שום שינוי תחת frontend/ios|android (חייב
+  להישאר OTA-able); בלי touchAction:'none' על ה-root (רק 'manipulation');
+  בלי WebkitOverflowScrolling; בלי deps; קבצי IND-1 על staging.
+
+VERIFY — לפי V1-V6 (V7 = מכשיר שלך, שער הקבלה)
+--------------------------------------------------------------------------------
+  V1  probe יחידתי — frontend/src/components/__tests__/PhotoAnnotation.
+      pendingtext.test.js (jest+jsdom של CRA, בלי dep חדש; אדווח את
+      הכלי בפועל ב-review): pendingText לא-ריק + אפס strokes → handleSave
+      מייצר text stroke ו-onSave נקרא עם (file, true) ולא (null, false);
+      עם editingIndex → replace, count נשמר. (toBlob יקבל polyfill/mock
+      ב-jsdom — יתועד.)
+  V2  טקסט לא-מאושר + X → מודל האישור מופיע; input ריק + X → סגירה מיידית.
+  V3  מסלול אישור ללא שינוי: commit → pill → נשמר (craco build + הרצת
+      DevTools ידנית; צילומי לפני/אחרי ב-review.txt).
+  V4  אמולציית iPhone ב-DevTools: computed touch-action=manipulation על
+      root + שורת input; ציור/גרירה על canvas עדיין עובדים ('none' נשמר);
+      ה-viewport המוחלף מכיל viewport-fit=cover.
+  V5  עכבר דסקטופ: ציור, הצבת טקסט, גרירה, עריכה, undo, שמירה — ללא שינוי.
+  V6  craco build EXIT=0; house greps נקיים על הקובץ (window.confirm /
+      localStorage / native select / WebkitOverflowScrolling → 0).
+  +   רגרסיה: אין נגיעה ב-backend → אין ריצת probes של backend; בדיקת
+      ESLint דרך ה-build בלבד.
+  V7  מכשיר (זהי, staging, האפליקציה באייפון): הקלדה → שמור בלי אישור →
+      התמונה מכילה את התווית; הקלדה → X → מודל; double-tap על הבר
+      התחתון → אין זום; ציור+טקסט יחד → שניהם נשמרים; sanity אנדרואיד.
+
+DELIVERABLES
+--------------------------------------------------------------------------------
+  review.txt (ייקרא ואז יידרס): פלטי STEP 0, diff מלא, פלטי V1-V6,
+  צילומי לפני/אחרי, מסתיים "AWAITING ZAHI APPROVAL — DO NOT DEPLOY".
+  .local/.commit_message — מילה-במילה מהמפרט.
+  present_asset(review.txt) → עצירה. בלי mark complete, בלי deploy.
+
+================================================================================
+ממתין ל-"תתחיל" למימוש ה-batch הזה.
+(IND-2 בנפרד — ממתין ל-"IND-1 בפרוד — תתחיל".)
+================================================================================
