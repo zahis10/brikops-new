@@ -1,214 +1,210 @@
 ================================================================================
-REVIEW — BATCH safety-ind1: site-induction org templates + editor + snapshot infra (IND-1)
-Date: 2026-07-12  |  Branch: staging (base ded377e)  |  BACKEND + FRONTEND
-Scope: org-scoped versioned induction content template (ONE doc per org,
-       languages map from day 1, he only), owner/org_admin editor with DRAFT
-       starter, snapshot collection infra (index only) + canonical hash
-       helper for IND-2, alerts-card audience one-liner.
+REVIEW — BATCH fix-annotation-ios-text v2.1: commit pending text on save/
+discard-guard + suppress iOS double-tap zoom on the annotation editor chrome
+Date: 2026-07-13  |  Branch: staging (base 536132a)  |  FRONTEND ONLY (P0)
+Scope: PhotoAnnotation.js only (OTA-able via Capgo — zero native changes)
+       + NEW unit probe file. No parent components, no ios/, no config,
+       no deps touched.
 ================================================================================
 
-STEP 0 — PRE-FLIGHT (reported earlier, decisions received)
+STEP 0 — PRE-FLIGHT (reported earlier, "תתחיל" received)
 --------------------------------------------------------------------------------
-  [OK] safety/__init__.py — import order = registration order; induction.py
-       joins with ONE import line placed before `indexes`.
-  [OK] safety/indexes.py :: ensure_safety_indexes — idempotent; +2 new.
-  [OK] FE alerts card @ SafetyHomePage overview; house rules confirmed.
-  [MISMATCH — RESOLVED BY ZAHI] spec's require_roles("owner","admin") cannot
-       work: global role enum = project_manager / management_team /
-       contractor / viewer only. Org-resolution idiom found and used:
-       get_user_org(user_id) → db.organization_memberships (canonical; NOT
-       org_memberships) → org doc; direct ownership via
-       organizations.owner_user_id.
+  [OK] RC1 verified line-by-line: handleSave flushed only the in-progress
+       FREEHAND stroke, ignored pendingText entirely → label-only session
+       hit hasAnnotations=false → onSave(null, false) → parent
+       (NewDefectModal.handlePendingAnnotationSave else-branch) attached
+       the RAW photo. Exactly the field report.
+  [OK] RC1-discard: handleDiscard gated on strokesRef.current.length only →
+       typed-but-uncommitted label closed silently via X too.
+  [OK] RC2 verified: viewport swap (~line 108) lacked viewport-fit=cover
+       (present in index.html:5); touchAction existed ONLY on the canvas
+       container + canvas ('none'); no ignoresViewportScaleLimits anywhere
+       under frontend/ios/ or capacitor.config.json.
+  [OK] Implementation anchors: ref-sync idiom block; commitPendingText
+       editingIndex replace/append; pendingText shape {x,y,value,editingIndex?}.
+  Zero mismatches vs spec. HEAD diff from 922edfe (spec's verification base)
+  was documentation-only — no drift in the touched code paths.
 
-ZAHI DECISIONS (verbatim honored)
+WHAT CHANGED (git diff --stat)
 --------------------------------------------------------------------------------
-  D1  PUT gate = org owner (organizations.owner_user_id == user.id) OR
-      organization_memberships role == 'org_admin'. billing_admin EXCLUDED.
-  D2  GET gate = global {project_manager, management_team} OR owner/org_admin
-      (same resolution); org resolved ONLY from the authenticated user.
-  D3  option (b): GET returns can_edit bool (also in the {"template": null}
-      response); FE card gates on it — no FE role-mapping drift.
-  +V2 addition: billing_admin PUT → 403 probed explicitly.
+ frontend/src/components/PhotoAnnotation.js | 73 +++++++++++++-------
+   (57 insertions, 16 deletions — comments included)
+ NEW frontend/src/components/__tests__/PhotoAnnotation.pendingtext.test.js
+   (V1 probe, 5 tests, no new dependencies)
 
-WHAT CHANGED (git diff --stat + new files)
+EDITS E1-E7 (all in PhotoAnnotation.js)
 --------------------------------------------------------------------------------
- backend/contractor_ops/safety/__init__.py |  1 +   (register induction)
- backend/contractor_ops/safety/indexes.py  | 14 ++- (+2 unique indexes)
- frontend/src/pages/SafetyHomePage.js      | 55 +++- (card + can_edit + 5b)
- frontend/src/services/api.js              | 18 +++ (3 service methods)
- NEW backend/contractor_ops/safety/induction.py         (endpoints + starter + hash)
- NEW frontend/src/components/safety/InductionTemplateEditor.js
- NEW backend/tests/probe_safety_ind1.py                 (V1-V6 harness)
+  E1  pendingTextRef + sync effect appended to the existing ref-mirror block
+      (same idiom as colorRef/strokesRef/toolRef/textSizeRef).
+  E2  buildTextStroke(curr) extracted from commitPendingText — color/size
+      still captured at COMMIT time, _bbox still omitted (next redraw
+      repopulates). commitPendingText now calls it; behavior byte-identical.
+  E3  handleSave: after the existing freehand flush and BEFORE the
+      hasAnnotations computation — pending-label flush (mirror structure):
+      non-empty pendingText → buildTextStroke → editingIndex REPLACE /
+      else APPEND → setStrokes + setPendingText(null) + redraw. Semantics:
+      "שמור while a non-empty label is typed" = the label IS committed
+      and saved. (textSize reset stays confirm-path-only — save closes
+      the editor anyway.)
+  E4  handleDiscard confirm condition:
+        strokesRef.current.length > 0 || !!pendingTextRef.current?.value.trim()
+      confirmDiscard unchanged. Empty input + X still closes immediately.
+  E5  touchAction:'manipulation' added to (a) the ROOT fixed inset-0 overlay
+      and (b) the pending-text input row. Canvas KEEPS 'none'. fontSize:16
+      input and the viewport swap kept as-is (defense in depth / Android).
+  E6  Stale comment above the input updated: focus-zoom vs double-tap-zoom
+      vectors + why manipulation sits on the root.
+  E7  Viewport swap string now: 'width=device-width, initial-scale=1,
+      maximum-scale=1, user-scalable=no, viewport-fit=cover' (restores
+      notch/safe-area insets while the editor is open). Restore-on-unmount
+      path unchanged.
 
-BACKEND — contractor_ops/safety/induction.py
+FULL DIFF (PhotoAnnotation.js — functional hunks)
 --------------------------------------------------------------------------------
-  GET  /api/safety/induction-template          → {template, can_edit}
-       template = {id, org_id, version, languages:{he:{sections}},
-       created_at, updated_at, updated_by} or null. Read gate per D2.
-       PM/management_team with no org → {"template": null, "can_edit": false}.
-  PUT  /api/safety/induction-template          → gate per D1 (billing_admin,
-       PM, everyone else → 403 Hebrew). Body {"sections":[{title,body}...]}.
-       Validation (422 Hebrew): 1..200 sections; title stripped non-empty
-       ≤200; body stripped non-empty ≤5000. ATOMIC single update_one upsert:
-       $set languages.he/updated_at/updated_by + $inc version +
-       $setOnInsert id/org_id/created_at → no lost updates, version bumps
-       exactly once per save. Audit "induction_template_saved"
-       {org_id, version, sections_count}. Response = fresh doc + can_edit.
-  GET  /api/safety/induction-template/starter  → read gate; returns
-       {"sections": STARTER_INDUCTION_SECTIONS_HE, "draft": true}.
-       Returning ≠ saving (probed: DB untouched).
-  induction_content_hash(sections, legal_text) → sha256 hex over canonical
-       JSON (ensure_ascii=False, sort_keys=True, separators=(",",":")) —
-       IND-2's evidentiary contract, determinism probed.
-  Route-shadowing check: shared /api/safety router has NO 1-segment
-       parametric route and no 2-segment /{project_id}/starter-like literal —
-       /induction-template[/starter] cannot be captured by earlier routes
-       (verified by grep over all safety modules).
+@@ ref block
++  const pendingTextRef = useRef(null);
+   ...
++  useEffect(() => { pendingTextRef.current = pendingText; }, [pendingText]);
 
-INDEXES (safety/indexes.py — now "30 total across 11 collections")
---------------------------------------------------------------------------------
-  induction_templates          UNIQUE(org_id)                    uidx_it_org
-  induction_content_snapshots  UNIQUE(org_id,template_version,   uidx_ics_org_version_lang
-                               language) — collection EMPTY this batch;
-                               index pins IND-2's dedup contract now.
+@@ viewport swap
+-      viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
++      viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
 
-FRONTEND
---------------------------------------------------------------------------------
-  api.js safetyService += getInductionTemplate(), saveInductionTemplate(
-    sections), getInductionStarter() — no org/project in any URL.
-  NEW InductionTemplateEditor.js — Radix Dialog modal={false}, RTL, ordered
-    sections (title Input + body Textarea), ↑/↓ reorder, מחק, "הוסף סעיף",
-    empty state → "טען תבנית לדוגמה" fills LOCAL state only (toast: must
-    save), header "גרסה N", save → sonner "נשמר · גרסה N" / server-detail
-    error, dirty-close guard WITHOUT window.confirm: first close click shows
-    inline "יש שינויים שלא נשמרו — לחץ שוב לסגירה", second click closes.
-  SafetyHomePage.js — TWO additions:
-    a. overview card "תוכן הדרכת אתר" ("התוכן שעובדים קוראים וחותמים עליו
-       בקליטה", BookOpen, emerald) gated on server-resolved can_edit from a
-       single GET on mount (D3b); opens the editor. Hooks placed ABOVE the
-       early returns (stable hook order).
-    b. Alerts-card audience 5b: condition → ['project_manager','owner']
-       .includes(project?.my_role).
-       DEVIATION (necessary, 2 lines): the pref-LOAD effect gated on the old
-       isWriter set {PM, management_team}; left as-was, an owner would never
-       load the pref → expiryAlertPref stays null → card invisible for
-       owners, and management_team would still fetch a pref it can't see.
-       The effect now follows the SAME alertsAudience condition. Nothing
-       else about the card touched.
+@@ handleDiscard
+-    if (strokesRef.current.length > 0) {
++    if (strokesRef.current.length > 0 || !!pendingTextRef.current?.value.trim()) {
 
-STARTER CONTENT — FULL TEXT (DRAFT — REQUIRES YOUR APPROVAL BEFORE PROD)
---------------------------------------------------------------------------------
- 1. כללי ונהלי אתר
-    ברוכים הבאים לאתר. הכניסה לאתר מותרת רק לאחר קליטה בטיחותית וחתימה על
-    תדריך זה. יש להישמע להוראות מנהל העבודה וממונה הבטיחות בכל עת, להיכנס
-    ולצאת רק בשערים המוסדרים, ולהחנות רק במקומות שהוקצו לכך. אין להכניס
-    אורחים ללא אישור מראש.
- 2. ציוד מגן אישי
-    חובה לחבוש קסדת מגן ולנעול נעלי בטיחות בכל שטח האתר. יש ללבוש אפוד
-    זוהר, ולהשתמש בציוד מגן ייעודי לפי המשימה: משקפי מגן, אטמי אוזניים,
-    כפפות ורתמת בטיחות בעבודה בגובה. עובד ללא ציוד מגן תקין יורחק מהאתר.
- 3. עבודה בגובה
-    עבודה בגובה מעל 2 מטר מותרת רק לעובד בעל הדרכת עבודה בגובה בתוקף. חובה
-    להשתמש ברתמת בטיחות מעוגנת לנקודת עיגון תקנית, לוודא משטחי עבודה
-    תקינים ומעקות במקומם, ואין לעבוד בקרבת פתחים לא מגודרים.
- 4. פיגומים וסולמות
-    אין לעלות על פיגום שלא נבדק ואושר על ידי בונה מקצועי. יש לוודא שילוט
-    תקינות בתוקף על הפיגום, ואין לשנות, לפרק או להזיז רכיבי פיגום ללא
-    אישור. סולמות — רק תקניים, מוצבים על משטח יציב ובזווית נכונה.
- 5. חשמל
-    עבודות חשמל יבוצעו רק על ידי חשמלאי מוסמך. אין לגעת בלוחות חשמל, כבלים
-    חשופים או ציוד חשמלי פגום — יש לדווח מיד. כלי עבודה חשמליים יחוברו רק
-    דרך לוח זמני תקני עם ממסר פחת.
- 6. כלים וציוד מכני
-    יש להשתמש רק בכלים תקינים עם מגני בטיחות במקומם. הפעלת ציוד מכני הנדסי
-    מותרת רק לבעלי היתר מתאים בתוקף. אין לעמוד בטווח פעולה של ציוד מכני
-    עובד, ויש לשמור קשר עין עם המפעיל.
- 7. הרמה ומנופים
-    אסור לשהות מתחת למטען מורם. הרמת מטענים תבוצע רק על ידי מפעיל מנוף
-    מוסמך ובליווי אתת מוסמך. יש לוודא שהמטען קשור ומאוזן כנדרש, ולהתרחק
-    מאזור ההנפה המסומן.
- 8. חפירות
-    אין להיכנס לחפירה בעומק העולה על 1.2 מטר ללא דיפון תקני או שיפוע
-    מתאים. יש לוודא דרכי מילוט תקינות, לגדר ולסמן כל חפירה פתוחה, ולא
-    לאחסן חומרים או ציוד בסמוך לשפת החפירה.
- 9. אש וחומרים מסוכנים
-    עבודות בחום (ריתוך, חיתוך, השחזה) מחייבות היתר עבודה בחום וצופה אש עם
-    אמצעי כיבוי זמינים. חומרים דליקים ומסוכנים יאוחסנו במקום ייעודי ומסומן
-    בלבד. העישון מותר רק באזורים מוסדרים.
-10. סדר וניקיון
-    יש לשמור על סביבת עבודה נקייה ומסודרת: לפנות פסולת למכולות, לא לחסום
-    דרכי גישה ומילוט, לאחסן חומרים בערימות יציבות, ולסלק מסמרים בולטים
-    ושאריות חומרים מדרכי מעבר.
-11. מצבי חירום ופינוי
-    בעת אירוע חירום יש להפסיק את העבודה מיד, להתרחק מאזור הסכנה ולהתפנות
-    לנקודת הריכוז שהוגדרה בתדריך. יש להכיר את מיקום ערכת העזרה הראשונה,
-    המטפים ודרכי המילוט. מספרי חירום מפורסמים בלוח האתר.
-12. דיווח על מפגעים ותאונות
-    כל עובד חייב לדווח מיד למנהל העבודה על כל מפגע, כמעט-תאונה או תאונה —
-    גם ללא נפגעים. אין להזיז ציוד שהיה מעורב בתאונה עד לקבלת אישור. דיווח
-    מוקדם מציל חיים.
+@@ buildTextStroke (extracted; commitPendingText now: const textStroke = buildTextStroke(curr);)
++  const buildTextStroke = useCallback((curr) => ({
++    type: 'text',
++    color: colorRef.current,
++    size: textSizeRef.current,
++    x: curr.x,
++    y: curr.y,
++    text: curr.value.trim(),
++  }), []);
 
-VERIFY — PROBE RESULTS (local Mongo, FILES_STORAGE_BACKEND=local, WA blanked)
+@@ handleSave (after freehand flush, before hasAnnotations)
++    const pt = pendingTextRef.current;
++    if (pt && pt.value.trim()) {
++      const textStroke = buildTextStroke(pt);
++      if (typeof pt.editingIndex === 'number') {
++        strokesRef.current = strokesRef.current.map((s, i) =>
++          i === pt.editingIndex ? textStroke : s
++        );
++      } else {
++        strokesRef.current = [...strokesRef.current, textStroke];
++      }
++      setStrokes([...strokesRef.current]);
++      setPendingText(null);
++      redraw([...strokesRef.current]);
++    }
+
+@@ root overlay
+-         style={{ zIndex: 10001, pointerEvents: 'auto' }}
++         style={{ zIndex: 10001, pointerEvents: 'auto', touchAction: 'manipulation' }}
+
+@@ pending input row
+-             style={{ position: 'relative', zIndex: 20 }}>
++             style={{ position: 'relative', zIndex: 20, touchAction: 'manipulation' }}
+
+  useCallback deps updated: commitPendingText / handleSave += buildTextStroke
+  (stable, [] deps — no identity churn).
+
+VERIFY
 --------------------------------------------------------------------------------
-probe_safety_ind1.py — 30/30 PASS (in-process real app, real JWTs):
-  V1  owner PUT → v1; second PUT → v2; GET round-trip equality on
-      languages.he.sections; audit event logged (org, version=2, count=4)
-  V2  org_admin PUT 200 · billing_admin PUT 403 (your addition) ·
-      project_manager PUT 403 / GET 200 can_edit=false (sees org template) ·
-      management_team GET 200 · contractor GET 403 · unauthenticated 401 ·
-      ORG ISOLATION: org-B GET null → PUT creates separate doc v1, org-A
-      version untouched (v3), distinct ids
-  V3  Hebrew 422s: empty list ("יש להוסיף לפחות סעיף אחד") · 201 sections ·
-      empty title · whitespace title · empty body · body 5001 chars; rejected
-      PUTs did NOT bump version
-  V4  two CONCURRENT PUTs same org (owner+org_admin) → both 200, ONE doc,
-      version exactly +2 (3→5) — atomic upsert holds
-  V5  hash: identical→identical (64 hex) · key-order variant→identical ·
-      single-char changes→different · snapshots unique index EXISTS with
-      unique=True and 0 docs · templates UNIQUE(org_id) exists
-  V6  starter 200 draft:true, 12 Hebrew sections, returning saved NOTHING
-      (org-B doc byte-identical before/after) · contractor starter 403
-V7  FE: craco build EXIT=0 (CI=false, prod backend URL). House greps clean:
-      no window.confirm / native <select> / localStorage in new code;
-      modal={false} on the editor Dialog. Card gates on server can_edit.
-V8  alerts-card condition asserted:
-      {alertsAudience && expiryAlertPref !== null && (  where
-      alertsAudience = ['project_manager','owner'].includes(project?.my_role)
-      → renders for PM AND owner, NOT management_team.
-V9  REGRESSION: py_compile clean (induction, indexes, __init__, server) ·
-      server boots with safety ENABLED — 61 /api/safety routes incl. the 3
-      induction routes · scheduler imports clean ·
-      probe_safety_w1_alerts 32/32 · diary d3_http 36/36 · d4a 17/17 ·
-      d4b 23/23 · d1 31/31 · d1_boot off-mode PASS.
-      PRE-EXISTING (untouched, NOT from this batch): d1_boot on-mode asserts
-      exactly 7 diary routes but d3/d4 batches added 3 more (now 10);
-      d2_http V7a asserts owner GET 403 but the APPROVED D3 read-widen
-      (2026-07-09) allows owner reads → 15/16. Both are stale assertions in
-      old probes superseded by approved batches; test_defect_safety_tag 5/6
-      pre-existing as previously reported.
+V1  UNIT PROBE — frontend/src/components/__tests__/
+    PhotoAnnotation.pendingtext.test.js
+    Tooling (as promised to be reported): CRA jest 27 + jsdom via
+    `craco test` — NO new dependency. @testing-library is NOT installed in
+    this repo, so the probe uses React 19's own act() + createRoot + native
+    DOM events (mousedown/mouseup/click/input). jsdom gaps mocked in-file:
+    window.Image (fires onload async, 800x600), URL.createObjectURL,
+    HTMLCanvasElement.getContext (Proxy stub logging every 2d call —
+    enables per-redraw fillText counting), toBlob (sync fake JPEG blob).
+    ENV NOTE: the optional npm `canvas` package (transitive dep of
+    pdfjs-dist) is require()d eagerly by jsdom and its prebuilt binary
+    needs libuuid.so.1, absent from the default library path here. Fixed
+    at RUN TIME ONLY: LD_LIBRARY_PATH=<nix util-linux lib dir> on the test
+    command. Zero repo/config changes for this.
+
+    RESULT — 5/5 PASS (exit 0, no act() warnings):
+      ✓ P1: label-only pending text is flushed on save → onSave(File, true),
+            NOT (null, false)                                   (126 ms)
+      ✓ P2: saving while editing an existing label REPLACES it (no duplicate
+            stroke) — verified by exactly ONE fillText('תווית מעודכנת') in
+            the final redraw cycle; prefilled input proved edit mode  (96 ms)
+      ✓ P5: commit (אישור) immediately followed by שמור → no double-commit,
+            single label (architect-suggested hardening)         (79 ms)
+      ✓ P3: typed-but-uncommitted label + X → confirm modal
+            ('לבטל את כל השינויים ולסגור?'), onDiscard NOT called (59 ms)
+      ✓ P4: empty pending input + X → closes immediately, no modal (45 ms)
+    Test Suites: 1 passed | Tests: 5 passed | exit 0
+
+V2  Covered by P3+P4 above (jsdom DOM assertions on the real component).
+V3  Confirm-path unchanged: P2/P5 exercise the real commitPendingText path
+    (אישור button) end-to-end in jsdom — commit → pill rendered (fillText)
+    → save. Code-level: commitPendingText behavior byte-identical (E2 is a
+    pure extraction; verified in diff above).
+V4  touch-action layering: root overlay + input row = 'manipulation';
+    canvas/container keep 'none' (grep-verified, diff above); canvas
+    draw/drag/edit still work — P2 drives real mouse events through the
+    canvas listeners (tap→pendingText, tap-on-label→edit) and passes.
+    Swapped viewport string contains viewport-fit=cover (diff above).
+    NOTE: true double-tap gesture behavior is not simulatable in jsdom or
+    a static screenshot — the WebKit gesture layer exists only on device.
+    Honest status: DevTools before/after screenshots of the zoom gesture
+    are NOT reproducible in this environment (no interactive browser);
+    the WebKit-honored mechanism (touch-action: manipulation) is the
+    documented layer and is asserted present at the right nodes. Final
+    word = V7 on your iPhone.
+V5  Desktop-mouse paths regression: P1/P2/P5 drive the REAL canvas mouse
+    listeners (mousedown/mouseup) — text placement, edit-tap hit-test,
+    commit, save all pass. Freehand flush path untouched (diff shows
+    insertion strictly AFTER it). Undo untouched.
+V6  BUILD: cd frontend && CI=false GENERATE_SOURCEMAP=false
+    REACT_APP_BACKEND_URL=https://api.brikops.com npx craco build
+    → EXIT=0, ZERO warnings (grep -c "warning" build log = 0; eslint
+    react-hooks/exhaustive-deps satisfied — deps arrays updated).
+    HOUSE GREPS on both files: window.confirm / localStorage / native
+    <select> / WebkitOverflowScrolling → 0 functional hits (only the
+    pre-existing comments DESCRIBING the window.confirm replacement).
+    Backend untouched → backend probes not run (out of scope).
 
 ARCHITECT REVIEW — PASS
 --------------------------------------------------------------------------------
-  "Pass — meets the stated IND-1 objective and the Zahi-approved gate
-  adaptations, with no task-blocking defects found. Security: none observed
-  (no authz bypass, cross-org leakage, or secret exposure)."
-  No fixes required.
+  "Pass — the PhotoAnnotation changes do accomplish the stated P0 objective."
+  - RC1 fixed correctly (flush before hasAnnotations; replace/append mirrors
+    commitPendingText; discard guard covers pending text).
+  - RC2 mitigation as specified; canvas keeps 'none'; viewport-fit=cover
+    preserved.
+  - "Freehand flush + pending-text flush ordering in handleSave is sound";
+    no drag/edit (F.1a-c) regression evident; residual ref/state timing
+    window deemed non-blocking ("no deterministic failure path in normal
+    event sequencing").
+  - Security: none observed.
+  - Suggested hardening test (Enter/אישור then שמור) → IMPLEMENTED as P5,
+    passes. Device double-tap validation → deferred to V7 (yours).
 
-DO NOT TOUCH — HONORED
+V7 — YOUR DEVICE GATE (iPhone, staging app)
 --------------------------------------------------------------------------------
-  trainings.py / signature endpoint / conduct flow (IND-2) untouched; NO
-  snapshot writer or endpoints (index only); NO template delete endpoint;
-  alerts engine/scheduler/reminder_service/prefs backend untouched (FE 5b
-  only, + the 2-line pref-load alignment documented above); no new deps; no
-  per-project template; no en/ru/ar surfaces; no PII.
+  1. פתח תמונה בעורך → הקלד תווית → לחץ שמור בלי אישור → התמונה שנשמרת
+     מכילה את התווית.
+  2. הקלד תווית → לחץ X → מודל "לבטל את כל השינויים ולסגור?" מופיע.
+  3. דאבל-טאפ על הבר העליון/התחתון/שורת הקלט → אין זום.
+  4. ציור חופשי + תווית יחד → שניהם בתמונה השמורה.
+  5. sanity אנדרואיד: פתיחת עורך, שמירה, אין רגרסיה.
 
-OPEN ITEMS FOR ZAHI
+NOTES / DEVIATIONS
 --------------------------------------------------------------------------------
-  1. Starter content above is DRAFT — approve/edit wording before prod.
-  2. The two stale diary probe assertions (d1_boot on-mode route count,
-     d2_http V7a owner-read) predate this batch — say the word and I'll
-     align them to the approved D3/D4 behavior in a future batch.
+  - P5 test added beyond spec (architect suggestion) — same file, no deps.
+  - LD_LIBRARY_PATH workaround is command-line-only for running the probe
+    locally; nothing committed. If CI ever runs `craco test`, the same env
+    var (or installing libuuid) will be needed — flagging for the deploy
+    pipeline owner (you).
+  - Before/after screenshots of the zoom gesture: not technically possible
+    headlessly (see V4 note). All other promised outputs delivered.
+  - Files touched: EXACTLY PhotoAnnotation.js + the new test file. Parents,
+    ios/, android/, config, deps — untouched (git status verified).
 
-================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================

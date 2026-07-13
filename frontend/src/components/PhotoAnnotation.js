@@ -91,12 +91,18 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
   // hasMovedPastThreshold: once true, stays true for this interaction.
   const draggingTextRef = useRef(null);
 
+  // BATCH fix-annotation-ios-text (2026-07-13) — mirror pendingText into
+  // a ref so handleSave/handleDiscard (stable callbacks) can flush/guard
+  // an in-progress label without stale closures. Same pattern as colorRef.
+  const pendingTextRef = useRef(null);
+
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
   useEffect(() => { onDiscardRef.current = onDiscard; }, [onDiscard]);
   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { textSizeRef.current = textSize; }, [textSize]);
+  useEffect(() => { pendingTextRef.current = pendingText; }, [pendingText]);
 
   const savingRef = useRef(false);
   useEffect(() => { savingRef.current = saving; }, [saving]);
@@ -105,7 +111,10 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
     const viewport = document.querySelector('meta[name="viewport"]');
     const originalViewport = viewport?.content;
     if (viewport) {
-      viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
+      // BATCH fix-annotation-ios-text (2026-07-13) — viewport-fit=cover is
+      // preserved (it's in index.html's base tag); dropping it here lost
+      // notch/safe-area insets while the editor was open.
+      viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
     }
     return () => {
       document.body.style.pointerEvents = '';
@@ -570,7 +579,9 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
   // confirm modal instead of window.confirm. The modal's "אישור"
   // button then calls confirmDiscard which does the actual close.
   const handleDiscard = useCallback(() => {
-    if (strokesRef.current.length > 0) {
+    // BATCH fix-annotation-ios-text (2026-07-13) — a typed-but-uncommitted
+    // label is user work too; without this it closed silently (field bug).
+    if (strokesRef.current.length > 0 || !!pendingTextRef.current?.value.trim()) {
       setShowDiscardConfirm(true);
       return;
     }
@@ -602,18 +613,24 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
   // time). User can change color while typing — the "אישור" press
   // is their final intent. Avoids surprising "I selected red after
   // I tapped!" behavior.
+  // BATCH fix-annotation-ios-text (2026-07-13) — extracted from
+  // commitPendingText so handleSave can flush a pending label outside a
+  // setState updater. Color/size captured at COMMIT time (unchanged).
+  // _bbox intentionally omitted — the next redraw populates it freshly.
+  const buildTextStroke = useCallback((curr) => ({
+    type: 'text',
+    color: colorRef.current,
+    // BATCH F.1a — capture size at commit time (same pattern as color).
+    size: textSizeRef.current,
+    x: curr.x,
+    y: curr.y,
+    text: curr.value.trim(),
+  }), []);
+
   const commitPendingText = useCallback(() => {
     setPendingText(curr => {
       if (!curr || !curr.value.trim()) return null;
-      const textStroke = {
-        type: 'text',
-        color: colorRef.current,
-        // BATCH F.1a — capture size at commit time (same pattern as color).
-        size: textSizeRef.current,
-        x: curr.x,
-        y: curr.y,
-        text: curr.value.trim(),
-      };
+      const textStroke = buildTextStroke(curr);
 
       // BATCH F.1c (2026-05-12) — branch on editingIndex. If set,
       // REPLACE the stroke at that index (preserves array order
@@ -634,7 +651,7 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
     });
     // BATCH F.1a — reset to default for next label.
     setTextSize('medium');
-  }, [redraw]);
+  }, [redraw, buildTextStroke]);
 
   const handleSave = useCallback(() => {
     if (currentStrokeRef.current && drawingRef.current) {
@@ -646,6 +663,25 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
         setStrokes(prev => [...prev, stroke]);
         redraw([...strokesRef.current]);
       }
+    }
+    // BATCH fix-annotation-ios-text (2026-07-13) — flush a pending
+    // (typed-but-unconfirmed) text label, mirroring the freehand flush
+    // above. Without this, "type label → hit save" silently dropped the
+    // label and label-only sessions uploaded the RAW photo (field bug).
+    // Same editingIndex replace/append semantics as commitPendingText.
+    const pt = pendingTextRef.current;
+    if (pt && pt.value.trim()) {
+      const textStroke = buildTextStroke(pt);
+      if (typeof pt.editingIndex === 'number') {
+        strokesRef.current = strokesRef.current.map((s, i) =>
+          i === pt.editingIndex ? textStroke : s
+        );
+      } else {
+        strokesRef.current = [...strokesRef.current, textStroke];
+      }
+      setStrokes([...strokesRef.current]);
+      setPendingText(null);
+      redraw([...strokesRef.current]);
     }
     if (saving) return;
     const canvas = canvasRef.current;
@@ -671,11 +707,11 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
       'image/jpeg',
       0.70
     );
-  }, [saving, redraw]);
+  }, [saving, redraw, buildTextStroke]);
 
   const content = (
     <div className="fixed inset-0 bg-black flex flex-col h-dvh-fallback" dir="rtl"
-         style={{ zIndex: 10001, pointerEvents: 'auto' }}
+         style={{ zIndex: 10001, pointerEvents: 'auto', touchAction: 'manipulation' }}
 >
       {!loaded && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black"
@@ -753,10 +789,15 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
 
       {/* BATCH F (2026-05-12) — pending text input overlay.
           Renders above the action bar when user has tapped in text mode.
-          Input has font-size >= 16px to prevent iOS auto-zoom. */}
+          Input has font-size >= 16px (blocks iOS FOCUS auto-zoom only).
+          BATCH fix-annotation-ios-text (2026-07-13) — the remaining zoom
+          vector was iOS DOUBLE-TAP zoom on the editor chrome (WebKit
+          ignores user-scalable=no for it). touch-action:'manipulation'
+          on the root overlay + this row disables double-tap while keeping
+          taps/scroll; canvas keeps the stricter 'none'. */}
       {pendingText && (
         <div className="flex items-center gap-2 px-4 py-2 bg-slate-800 border-t border-slate-700 shrink-0"
-             style={{ position: 'relative', zIndex: 20 }}>
+             style={{ position: 'relative', zIndex: 20, touchAction: 'manipulation' }}>
           <input
             type="text"
             autoFocus
