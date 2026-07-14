@@ -52,7 +52,7 @@ export default function InductionTemplateEditor({ projectId, open, onOpenChange 
         toast.error(err.response?.data?.detail || 'שגיאה בטעינת תוכן ההדרכה');
       })
       .finally(() => setLoading(false));
-  }, [open]);
+  }, [open, projectId]);
 
   const dirty = !sectionsEqual(sections, loadedSections);
 
