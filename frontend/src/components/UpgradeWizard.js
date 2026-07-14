@@ -3,15 +3,13 @@ import { billingService } from '../services/api';
 import { formatCurrency } from '../utils/billingLabels';
 import { toast } from 'sonner';
 import { Loader2, Check, ChevronDown, ChevronUp, Info, CreditCard } from 'lucide-react';
-const LICENSE_FIRST = 450;
-const LICENSE_ADDITIONAL = 450;
-const PRICE_PER_UNIT = 15;
-
 export default function UpgradeWizard({ orgId, projects, canManageBilling, onPaymentRequested, renewalCycle, onCycleChange, selectedPlan: externalSelectedPlan, billableAmount, billableSource }) {
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [units, setUnits] = useState('');
   const [saving, setSaving] = useState(false);
   const [serverPricing, setServerPricing] = useState(null);
+  const [serverQuote, setServerQuote] = useState(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
   const [step, setStep] = useState(1);
   const [result, setResult] = useState(null);
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
@@ -53,17 +51,17 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
   const parsedUnits = parseInt(units) || 0;
 
   const preview = useMemo(() => {
-    if (parsedUnits < 1) return null;
-    const lf = serverPricing?.license_first ?? LICENSE_FIRST;
-    const la = serverPricing?.license_additional ?? LICENSE_ADDITIONAL;
-    const ppu = serverPricing?.price_per_unit ?? PRICE_PER_UNIT;
+    if (parsedUnits < 1 || !serverPricing) return null;
+    const lf = serverPricing.license_first;
+    const la = serverPricing.license_additional;
+    const ppu = serverPricing.price_per_unit;
+    if (lf == null || ppu == null) return null;
     const licenseFee = lf;
     const unitCost = parsedUnits * ppu;
     return { licenseFee, unitCost, total: licenseFee + unitCost, pricePerUnit: ppu, licenseAdditional: la };
   }, [parsedUnits, serverPricing]);
 
   const hasOverride = billableSource === 'override' || billableSource === 'founder_plan';
-  const displayTotal = hasOverride ? billableAmount : (preview?.total ?? 0);
 
   const canProceedToStep2 = !!selectedProjectId;
   const canProceedToStep3 = parsedUnits >= 1;
@@ -86,13 +84,36 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
     }
   };
 
+  const goToSummary = async () => {
+    if (!selectedProjectId || parsedUnits < 1) return;
+    setQuoteLoading(true);
+    setServerQuote(null);
+    try {
+      const payload = { plan_id: 'standard', contracted_units: parsedUnits };
+      await billingService.updateProjectBilling(selectedProjectId, payload);
+      const data = await billingService.orgBilling(orgId);
+      const sub = data?.subscription;
+      if (sub?.billable_amount == null) {
+        toast.error('לא התקבל סכום מהשרת — נסה שוב');
+        return;
+      }
+      setServerQuote({
+        amount: sub.billable_amount,
+        source: sub.billable_source,
+        breakdown: sub.billable_breakdown || [],
+      });
+      setStep(3);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בחישוב הסכום');
+    } finally {
+      setQuoteLoading(false);
+    }
+  };
+
   const handleStandardSubmit = async () => {
     if (!selectedProjectId || parsedUnits < 1) return;
     setSaving(true);
     try {
-      const payload = { plan_id: 'standard', contracted_units: parsedUnits };
-      await billingService.updateProjectBilling(selectedProjectId, payload);
-
       const result = await billingService.checkout(orgId, renewalCycle || 'monthly', 'standard');
       if (result.payment_page_link) {
         window.location.href = result.payment_page_link;
@@ -282,7 +303,7 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
                   </div>
                   <div className="border-t border-slate-200 pt-2 flex justify-between">
                     <span className="text-sm font-medium text-slate-700">סה״כ חודשי</span>
-                    <span className="text-lg font-bold text-slate-900">{formatCurrency(displayTotal)}</span>
+                    <span className="text-lg font-bold text-slate-900">{formatCurrency(billableAmount ?? 0)}</span>
                   </div>
                 </>
               ) : (
@@ -306,11 +327,12 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
             </div>
           )}
           <button
-            onClick={() => { if (canProceedToStep3) setStep(3); }}
-            disabled={!canProceedToStep3}
-            className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-lg text-sm transition-colors"
+            onClick={() => { if (canProceedToStep3) goToSummary(); }}
+            disabled={!canProceedToStep3 || quoteLoading}
+            className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
           >
-            המשך לסיכום
+            {quoteLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+            {quoteLoading ? 'מחשב סכום...' : 'המשך לסיכום'}
           </button>
         </div>
       )}
@@ -331,33 +353,31 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
               <span className="text-slate-500">יחידות</span>
               <span className="font-medium text-slate-700">{parsedUnits}</span>
             </div>
-            {preview && (
+            {serverQuote && (
               <>
-                {hasOverride ? (
+                {(serverQuote.source === 'override' || serverQuote.source === 'founder_plan') ? (
                   <div className="border-t border-slate-200 pt-2">
                     <div className="text-xs text-amber-600 font-medium mb-1">
-                      {billableSource === 'override' ? '💰 תמחור מותאם אישית' : '🌟 תוכנית מייסדים'}
+                      {serverQuote.source === 'override' ? '💰 תמחור מותאם אישית' : '🌟 תוכנית מייסדים'}
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm font-medium text-slate-700">סה״כ חודשי</span>
-                      <span className="text-lg font-bold text-slate-900">{formatCurrency(displayTotal)}</span>
+                      <span className="text-lg font-bold text-slate-900">{formatCurrency(serverQuote.amount)}</span>
                     </div>
                   </div>
                 ) : (
                   <>
                     <div className="border-t border-slate-200 pt-2 space-y-1">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-500">רישיון פרויקט</span>
-                        <span className="text-slate-700">{formatCurrency(preview.licenseFee)}</span>
-                      </div>
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-500">{parsedUnits} יחידות × {formatCurrency(preview.pricePerUnit)}</span>
-                        <span className="text-slate-700">{formatCurrency(preview.unitCost)}</span>
-                      </div>
+                      {serverQuote.breakdown.map((line) => (
+                        <div key={line.project_id} className="flex justify-between text-xs">
+                          <span className="text-slate-500">{line.project_name || 'פרויקט'} — {line.billable_units} יחידות</span>
+                          <span className="text-slate-700">{formatCurrency(line.monthly_total)}</span>
+                        </div>
+                      ))}
                     </div>
                     <div className="border-t border-slate-200 pt-2 flex justify-between">
-                      <span className="text-sm font-medium text-slate-700">סה״כ חודשי (הערכה)</span>
-                      <span className="text-lg font-bold text-slate-900">{formatCurrency(preview.total)}</span>
+                      <span className="text-sm font-medium text-slate-700">סה״כ חודשי</span>
+                      <span className="text-lg font-bold text-slate-900">{formatCurrency(serverQuote.amount)}</span>
                     </div>
                   </>
                 )}
@@ -367,11 +387,11 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
 
           <button
             onClick={handleStandardSubmit}
-            disabled={saving}
+            disabled={saving || !serverQuote}
             className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-medium py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
-            {saving ? 'מעביר לתשלום...' : `שלם באשראי — ₪${displayTotal.toLocaleString()}`}
+            {saving ? 'מעביר לתשלום...' : `שלם באשראי — ₪${(serverQuote?.amount ?? 0).toLocaleString()}`}
           </button>
         </div>
       )}

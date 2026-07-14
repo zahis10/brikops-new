@@ -1,85 +1,97 @@
 ================================================================================
-REVIEW — MICRO-FIX safety-ind2-fix3 v2 (CONSOLIDATED): מנהל פרויקט עורך את
-תוכן ההדרכה; חבר הנהלה רואה תצוגת קריאה בלבד עם הודעת פנייה
-Date: 2026-07-14  |  Branch: staging (base: אחרי fix2)
+REVIEW — BATCH billing-contracted-binds v2: contracted_units הוא קלט הכסף
+היחיד במסלול המחושב; מכסה (total_units) לתצוגה בלבד; peak/observed = דריפט
+Date: 2026-07-14  |  Branch: staging
 ================================================================================
 
 DECISIONS (Zahi 2026-07-14) — כפי שמומשו
 --------------------------------------------------------------------------------
-  D1  can_edit הסופי = super_admin OR בעל ארגון הפרויקט OR org_admin
-      בארגון הפרויקט OR שורת project_memberships של הקורא לפרויקט הזה
-      עם role == 'project_manager'.
-      billing_admin מוחרג במסלול הארגוני בלבד (פרשנות שאושרה): חברות
-      פרויקטלית אמיתית בתפקיד project_manager מקנה עריכה גם למי שתפקידו
-      הארגוני כספי. התבנית נשארת ברמת ארגון — עריכת PM משפיעה על כל
-      פרויקטי הארגון; חתימות עבר מוקפאות בסנאפשוטים.
-  D2  חברי הנהלה (management_team) רואים את התוכן קריאה-בלבד: הכרטיס
-      מוצג לכל קורא מורשה; פתיחה ללא can_edit מציגה סעיפים כטקסט בלבד
-      (ללא inputs/סידור/שמירה/תבנית לדוגמה) + ההודעה המדויקת:
-      "לשינויים יש לפנות לבעל הארגון או למנהל הפרויקט"
-      תבנית ריקה בקריאה-בלבד → "טרם הוגדר תוכן הדרכת אתר" + אותה הודעה.
+  D1  Option A — איחוד: compute_org_billing_amount הוא מקור אמת יחיד;
+      create_payment_request קורא לו במקום לולאה כפולה.
+  D2  contracted תמיד מנצח: billable = contracted_units בלבד.
+      total_units_declared (מכסה) לא משפיע על החיוב; peak/observed ממשיכים
+      להתעדכן ולהיכתב כנתוני דריפט בלבד.
+  D3  אפס 450/15 מקודדים-קשיח ב-frontend/src — הכל מהשרת.
 
 EDITS
 --------------------------------------------------------------------------------
-  E1  backend/contractor_ops/safety/induction.py —
-      _resolve_project_org_edit: בדיקת PM-membership אחת (lookup ממופתח
-      יחיד ב-project_memberships על {project_id, user_id}) אחרי
-      super_admin/owner/org_admin. שער ה-GET/קהל ללא שינוי (MT כבר קורא
-      דרך SAFETY_WRITERS + _check_project_access). הריזולבר הארגוני של
-      IND-1 — ללא נגיעה.
-  E2  frontend/src/pages/SafetyHomePage.js — מעקב {canRead, canEdit}
-      מאותו GET קיים יחיד: הכרטיס מוצג כשה-GET מצליח (קורא), לא רק
-      ל-can_edit; קבלן/צופה עדיין 403 → אין כרטיס. איפוס שני הדגלים בכל
-      החלפת projectId + בכשל (תיקון ממצא ה-architect — אין דליפת כרטיס
-      בין פרויקטים). כותרת המשנה של הכרטיס ללא שינוי.
-  E3  frontend/src/components/safety/InductionTemplateEditor.js — prop
-      חדש canEdit (ברירת מחדל false): במצב false רנדור קריאה-בלבד לפי
-      D2 (סעיפים כטקסט, ההודעה המדויקת, מצב ריק ייעודי; הגרסה עדיין
-      מוצגת בכותרת); במצב true — בדיוק העורך של היום. dirty-guard פועל
-      רק במצב עריכה; כפתור שמור מוסתר לגמרי בקריאה-בלבד.
+  E1  backend/contractor_ops/billing.py — compute_org_billing_amount:
+      הוסר מעקף total_units_declared; billable=contracted; רענון/כתיבת
+      peak+observed נשמרו. create_payment_request: הלולאה הכפולה הוחלפה
+      בקריאה ל-compute_org_billing_amount (הוסר import מת של
+      calculate_monthly). זהות התנהגות ל-override/founder נשמרה: founder
+      דרך pb.plan_id (499); manual_override ברמת המנוי מעולם לא הוחל
+      במסלול בקשת-תשלום — גם קודם.
+  E2  billing.py — get_billable_amount (מסלול calculated) מחזיר 'breakdown'
+      (תוספתי); get_billing_for_org מוסיף 'billable_breakdown' ל-payload
+      של subscription (תוספתי).
+  E3  backend/contractor_ops/admin_router.py — /admin/billing/orgs:
+      כל פרויקט מועשר כולל contracted_units + observed_units
+      (compute_observed_units לכל pb פעיל).
+  E4  frontend/src/components/UpgradeWizard.js — הוסרו קבועי 450/15;
+      אומדן שלב-2 רק מ-serverPricing (listActivePlans); goToSummary חדש:
+      שומר יחידות (updateProjectBilling) → מושך orgBilling → שלב-3 מציג
+      billable_amount + billable_breakdown מהשרת; כפתור התשלום מציג את
+      סכום השרת ונעול ללא ציטוט.
+  E5  frontend/src/components/ProjectBillingEditModal.js — הוסרו הקבועים;
+      תצוגה מקדימה רק כש-serverPricing נטען.
+  E6  frontend/src/pages/OrgBillingPage.js — בלוק "איך המחיר מחושב"
+      (450/15 קשיח לפי הצהרה) הוחלף בשורת breakdown מהשרת לפי project_id;
+      שורת "שיא במחזור" (tooltip מטעה) הוחלפה בשורת דריפט:
+      "בשימוש X יחידות · בחוזה Y — לעדכון החיוב פנו למנהל המערכת";
+      תחזית פקיעת-מייסדים משתמשת ב-serverPlanPricing (מוסתרת אם אין).
+  E7  frontend/src/components/ProjectBillingCard.js — שורת שיא → שורת דריפט.
+  E8  frontend/src/pages/AdminBillingPage.js — תג דריפט לפרויקט
+      (observed>contracted): "דריפט: X/Y".
+  E9  frontend/src/components/PlanSelector.js — טקסט ₪450/₪15 קשיח הוחלף
+      ב-prop pricing מהשרת (fallback טקסט גנרי ללא מספרים).
 
-  שינוי נתוני פרוב (אושר): bil_id ו-mt_id מקבלים project-role של
-  management_team (קוראים; _check_project_access דורש PM/MT — "member"
-  רגיל חסר גישת קריאה לבטיחות); V2e/V2f הוסבו לפרסונת PM לא-חבר (403).
-
-DIFF SUMMARY
+PROBES / VERIFICATION — הכל עבר (ALL_PASS)
 --------------------------------------------------------------------------------
- backend/contractor_ops/safety/induction.py            |  9 +++++
- backend/tests/probe_safety_ind2_fix1.py               | 60 ++++++++++++--
- frontend/src/components/safety/InductionTemplateEditor.js | +read-only mode
- frontend/src/pages/SafetyHomePage.js                  | canRead/canEdit
-
-VERIFICATION (V1–V4 של הספק)
---------------------------------------------------------------------------------
-  V1  PM חבר פרויקט: GET can_edit=true (V5a); PUT 200, version +1, אותו
-      doc תחת ארגון הפרויקט (V5b); שורת audit ל-actor ה-PM (V5c);
-      ה-content של conduct מגיש את הסעיפים ששמר — אותו מפתח (V5d).
-  V2  MT חבר פרויקט: GET 200 can_edit=false (V5e); PUT 403 עברית (V5f).
-      FE: רנדור קריאה-בלבד עם ההודעה המדויקת — grep build-time מאשר
-      הופעה אחת בדיוק של הטקסט המדויק + הופעה אחת של מצב הריק; מצב ריק
-      קריאה-בלבד ממומש כענף נפרד.
-  V3  PM לא-חבר → 403 GET/PUT (V2e/V2f); billing_admin → can_edit=false
-      /PUT 403 (V2d/V2g/V5g); קבלן → 403, אין כרטיס (V2h + איפוס דגלים).
-      כל מטריצות fix1/fix2 רצות ירוקות תחת הנתונים החדשים:
-      probe_safety_ind2_fix1 המורחב — 31/31 PASSED.
-      רגרסיה: probe_safety_ind1 30/30 · probe_safety_ind2 34/34.
-  V4  craco build CI=true (deploy-parity) EXIT=0, אפס אזהרות; FE tests
-      13/13; py_compile OK; house greps נקיים.
+  V1  contracted=1, peak=277 → 465 זהה בשלושת המסלולים
+      (compute / get_billable_amount / create_payment_request).
+  V2  override: get_billable=1234 (source=override); founder: 499 בשני
+      המסלולים — זהות-בייטים להתנהגות הקודמת.
+  V3  רב-פרויקטי: 10+20 יחידות → 1350; billable==contracted בכל שורה.
+  V4  אידמפוטנטיות: קריאה כפולה — אותו סכום, ללא דריפט מצב.
+  V5  דריפט: observed=7, contracted=2 → billable=2, סכום 480; שדות
+      observed/contracted קיימים ב-breakdown.
+  V6  (סטטי) סנכרון אדמין מ-contracted — billing.py:1382 units=contracted.
+  V7  GET billing תוספתי: billable_breakdown קיים, billable_amount=465;
+      צרכנים קיימים (renewals cron, webhook) לא נשברים — שדות נוספו בלבד.
+  V10 quota=200 ≠ contracted=5 ≠ peak=50 → 525 בשלושת המסלולים; המכסה
+      לא משפיעה.
+  ‎+ py_compile OK; babel parse OK על כל קבצי ה-JS שנערכו;
+  ‎+ FE build (CI=true) עבר; FE tests 13/13 עברו;
+  ‎+ Backend billing tests: 17 עברו, 1 נכשל — כשל קדם-קיים שאינו קשור
+    (test_calculate_monthly_pricing מצפה founder=500; הקוד מחזיר 499 כנדרש
+    בספק; הקבצים לא נגעו בבאץ' הזה).
+  ‎+ grep בית: אפס LICENSE_FIRST/PRICE_PER_UNIT/450/15 תמחוריים
+    ב-frontend/src.
 
 ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-  סבב 1: FAIL — ממצא אמיתי אחד: דגלי canRead/canEdit לא אופסו בהחלפת
-  פרויקט (כרטיס עלול לדלוף מפרויקט מורשה לפרויקט 403). תוקן: איפוס
-  בתחילת כל effect + בכשל ה-GET. build+tests הורצו שוב ירוקים.
-  ה-backend וה-editor אושרו כנכונים כבר בסבב 1 (D1 מומש נכון; אין נתיב
-  מוטציה נגיש במצב קריאה-בלבד; אין הפרות אבטחה).
+  אישר: מסלולי החיוב נכונים ואחודים; הסרת המחירים הקשיחים הושלמה ברכיבים
+  שנגעו; אין רגרסיות אבטחה.
+  ממצא יחיד (חוסם לדעתו, מחוץ להיקף לפי הספק): ראו OPEN ITEMS #1.
 
-OPEN ITEMS FOR ZAHI
+OPEN ITEMS — לשיקול זהי
 --------------------------------------------------------------------------------
-  1. אימות ויזואלי במכשיר: תצוגת הקריאה-בלבד של MT (ההודעה + מצב ריק)
-     וכרטיס שמוצג עכשיו גם לקוראים.
-  2. תזכורת מדיניות: עריכת PM משפיעה על כל פרויקטי הארגון (תבנית
-     ארגונית) — התנהגות מכוונת לפי D1.
-  3. פריטי fix1 עומדים: X בדיאלוג conduct וכפתור "הדרכת אתר" במכשיר.
+  1) get_billing_for_org (billing.py ~1013-1080): בלוקי התצוגה של כרטיסי
+     הפרויקטים עדיין דורסים contracted_units/monthly_total מ-
+     total_units_declared כשהמכסה מוגדרת — כלומר בתצוגת כרטיס הפרויקט
+     (pb.monthly_total) המכסה עדיין משפיעה על מספר מוצג. החיוב בפועל
+     אינו מושפע (כל מסלולי הכסף עוברים דרך compute_org_billing_amount),
+     והבלוק סומן בספק DO-NOT-TOUCH ולכן לא שונה. הארכיטקט ממליץ להסיר
+     את הדריסה בבאץ' המשך + טסט רגרסיה: שינוי total_units לא משנה סכומים.
+  2) טסט מיושן test_calculate_monthly_pricing (founder=500 במקום 499) —
+     מומלץ לתקן בבאץ' תחזוקה.
+  3) checkout sandbox override (amount=5.0 כש-PAYPLUS_ENV!=production) —
+     לא נגעתי, כמוסכם.
+
+DEPLOY NOTES
+--------------------------------------------------------------------------------
+  - הדחיפה חייבת להכיל שינויי billing בלבד (8 קבצים, ראו EDITS).
+  - אין מיגרציות DB; שדות ה-API החדשים תוספתיים בלבד.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

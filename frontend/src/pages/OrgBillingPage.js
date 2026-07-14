@@ -103,6 +103,7 @@ export default function OrgBillingPage() {
   const [invoiceConfirm, setInvoiceConfirm] = useState(null);
 
   const [renewalCycle, setRenewalCycle] = useState('monthly');
+  const [serverPlanPricing, setServerPlanPricing] = useState(null);
   const [renewalPreview, setRenewalPreview] = useState(null);
   const [renewalLoading, setRenewalLoading] = useState(false);
 
@@ -345,6 +346,13 @@ export default function OrgBillingPage() {
   }, [orgId]);
 
   useEffect(() => { loadMembers(); }, [loadMembers]);
+
+  useEffect(() => {
+    billingService.listActivePlans().then(d => {
+      const plans = Array.isArray(d) ? d : d?.plans;
+      if (plans?.length > 0) setServerPlanPricing(plans[0]);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!loading && !membersLoading && location.hash === '#responsibility' && responsibilityRef.current) {
@@ -1139,6 +1147,7 @@ export default function OrgBillingPage() {
               currentPlan={sub?.plan_id}
               selectedPlan={selectedPlan}
               loading={false}
+              pricing={serverPlanPricing}
             />
           )}
 
@@ -1166,12 +1175,13 @@ export default function OrgBillingPage() {
             const lockedDate = isFounderExpiring ? new Date(sub.plan_locked_until) : null;
             const daysLeft = lockedDate ? Math.ceil((lockedDate - new Date()) / 86400000) : null;
             const founderExpiring = daysLeft !== null && daysLeft <= 30;
-            const projectedStandard = data.projects?.reduce((sum, pb) => {
-              const units = (pb.total_units_declared != null && pb.total_units_declared > 0) ? pb.total_units_declared : (pb.contracted_units || 0);
-              const ppu = pb.price_per_unit || 15;
-              const license = 450;
+            const canProject = serverPlanPricing?.license_first != null && serverPlanPricing?.price_per_unit != null;
+            const projectedStandard = canProject ? (data.projects?.reduce((sum, pb) => {
+              const units = pb.contracted_units || 0;
+              const ppu = pb.price_per_unit ?? serverPlanPricing.price_per_unit;
+              const license = serverPlanPricing.license_first;
               return sum + license + (units * ppu);
-            }, 0) || 0;
+            }, 0) || 0) : null;
             if (!founderExpiring) return null;
             const formattedDate = lockedDate.toLocaleDateString('he-IL');
             return (
@@ -1181,9 +1191,11 @@ export default function OrgBillingPage() {
                     ? `תוכנית המייסדים מסתיימת בתאריך ${formattedDate}`
                     : `תוכנית המייסדים הסתיימה בתאריך ${formattedDate}`}
                 </p>
-                <p>
-                  {`לאחר סיום, המנוי יעבור לתוכנית רגילה בעלות ${projectedStandard.toLocaleString()}₪/חודש`}
-                </p>
+                {projectedStandard != null && (
+                  <p>
+                    {`לאחר סיום, המנוי יעבור לתוכנית רגילה בעלות ${projectedStandard.toLocaleString()}₪/חודש`}
+                  </p>
+                )}
               </div>
             );
           })()}
@@ -1835,35 +1847,33 @@ export default function OrgBillingPage() {
                       )}
                     </div>
                   )}
-                  {pb.total_units_declared != null && pb.total_units_declared > 0 && (
-                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 my-2 space-y-1 text-xs">
-                      <div className="font-medium text-slate-700 mb-1">איך המחיר מחושב:</div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500">הצהרת יחידות:</span>
-                        <span className="font-medium">{pb.total_units_declared} יחידות</span>
+                  {(() => {
+                    const serverLine = (sub?.billable_breakdown || []).find(l => l.project_id === pb.project_id);
+                    if (!serverLine) return null;
+                    return (
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 my-2 space-y-1 text-xs">
+                        <div className="font-medium text-slate-700 mb-1">איך המחיר מחושב:</div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-500">יחידות בחוזה:</span>
+                          <span className="font-medium">{serverLine.contracted_units} יחידות</span>
+                        </div>
+                        <div className="flex items-center justify-between border-t border-slate-200 pt-1">
+                          <span className="font-semibold text-slate-800">סה"כ חודשי:</span>
+                          <span className="font-bold text-slate-900">{formatCurrency(serverLine.monthly_total)}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500">רישיון פרויקט:</span>
-                        <span className="font-medium">450₪</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500">{pb.total_units_declared} יחידות × 15₪:</span>
-                        <span className="font-medium">{pb.total_units_declared * 15}₪</span>
-                      </div>
-                      <div className="flex items-center justify-between border-t border-slate-200 pt-1">
-                        <span className="font-semibold text-slate-800">סה"כ חודשי:</span>
-                        <span className="font-bold text-slate-900">{(450 + pb.total_units_declared * 15).toLocaleString()}₪</span>
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                   <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
                     <div>יחידות: <span className="font-medium text-slate-700">{pb.contracted_units}</span></div>
-                    <div>₪/יחידה: <span className="font-medium text-slate-700">{formatCurrency(pb.price_per_unit ?? 15)}</span></div>
+                    {pb.price_per_unit != null && (
+                      <div>₪/יחידה: <span className="font-medium text-slate-700">{formatCurrency(pb.price_per_unit)}</span></div>
+                    )}
                   </div>
-                  {pb.cycle_peak_units > pb.contracted_units && (
-                    <div className="flex items-center gap-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1" title="החיוב נקבע לפי השיא החודשי כדי למנוע שינויים תכופים">
+                  {pb.observed_units > pb.contracted_units && (
+                    <div className="flex items-center gap-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1">
                       <Info className="w-3 h-3" />
-                      <span>שיא במחזור: {pb.cycle_peak_units} יחידות</span>
+                      <span>בשימוש {pb.observed_units} יחידות · בחוזה {pb.contracted_units} — לעדכון החיוב פנו למנהל המערכת</span>
                     </div>
                   )}
                   {pb.pending_contracted_units != null && (

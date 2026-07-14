@@ -221,6 +221,11 @@ const ProjectQuotaRow = ({ project, onUpdated }) => {
         <span className="text-xs text-slate-500 whitespace-nowrap">
           {activeCount} / {declared ?? '—'} יחידות
         </span>
+        {project.contracted_units != null && project.observed_units != null && project.observed_units > project.contracted_units && (
+          <span className="text-xs px-1.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 whitespace-nowrap" title={`בשימוש ${project.observed_units} יחידות · בחוזה ${project.contracted_units}`}>
+            דריפט: {project.observed_units}/{project.contracted_units}
+          </span>
+        )}
       </div>
       {!editing ? (
         <button

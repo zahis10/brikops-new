@@ -121,10 +121,10 @@ export default function ProjectBillingCard({ projectId, userRole, canEdit }) {
                 <span className="text-slate-500">יחידות בפועל</span>
                 <span className={`font-medium ${warning ? 'text-amber-600' : 'text-slate-700'}`}>{billing.observed_units}</span>
               </div>
-              {billing.cycle_peak_units > billing.contracted_units && (
-                <div className="flex items-center gap-1 text-xs text-amber-700 mt-1" title="החיוב נקבע לפי השיא החודשי כדי למנוע שינויים תכופים">
+              {billing.observed_units > billing.contracted_units && (
+                <div className="flex items-center gap-1 text-xs text-amber-700 mt-1">
                   <Info className="w-3 h-3" />
-                  <span>שיא במחזור: {billing.cycle_peak_units} יחידות</span>
+                  <span>בשימוש {billing.observed_units} יחידות · בחוזה {billing.contracted_units} — לעדכון החיוב פנו למנהל המערכת</span>
                 </div>
               )}
               {billing.pending_contracted_units != null && (

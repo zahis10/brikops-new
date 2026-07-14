@@ -990,9 +990,11 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
         billing_info = await get_billable_amount(org_id, 'monthly')
         billable_amount = billing_info['amount']
         billable_source = billing_info['source']
+        billable_breakdown = billing_info.get('breakdown', [])
     except Exception:
         billable_amount = total_monthly
         billable_source = 'calculated'
+        billable_breakdown = []
 
     projects = []
     billed_project_ids = set()
@@ -1109,6 +1111,7 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
             'total_monthly': total_monthly,
             'billable_amount': billable_amount,
             'billable_source': billable_source,
+            'billable_breakdown': billable_breakdown,
             'effective_access': access.value,
             'read_only_reason': reason,
             'subscription_status': snapshot['subscription_status'],
@@ -1617,20 +1620,17 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
             )
             total_units_declared = proj.get('total_units') if proj else None
 
-            if total_units_declared is not None and total_units_declared > 0:
-                billable = total_units_declared
-                contracted = total_units_declared
-                observed = await compute_observed_units(pb['project_id'])
-                peak = total_units_declared
-            else:
-                contracted = pb.get('contracted_units', 0)
-                observed = await compute_observed_units(pb['project_id'])
-                await _refresh_peak_units(pb, observed)
-                pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
-                contracted = pb.get('contracted_units', 0)
-                peak = pb.get('cycle_peak_units', contracted)
-                peak = max(peak, observed, contracted)
-                billable = max(contracted, peak)
+            # Contracted units are the ONLY money input for the calculated
+            # tier. total_units_declared (quota) is display/info only;
+            # peak/observed keep being maintained (drift data) but are
+            # never read when computing the charge.
+            observed = await compute_observed_units(pb['project_id'])
+            await _refresh_peak_units(pb, observed)
+            pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
+            contracted = pb.get('contracted_units', 0)
+            peak = pb.get('cycle_peak_units', contracted)
+            peak = max(peak, observed, contracted)
+            billable = contracted
 
             plan_id = pb.get('plan_id')
             proj_monthly = calculate_monthly(
@@ -1701,12 +1701,18 @@ async def get_billable_amount(org_id: str, cycle: str = 'monthly', plan_override
     calc_result = await compute_org_billing_amount(org_id, cycle)
     amount = calc_result['amount_ils']
     logger.info("BILLING_AMOUNT org=%s cycle=%s amount=%s source=calculated", org_id, cycle, amount)
-    return {'amount': amount, 'source': 'calculated', 'plan_id': plan_id, 'org_id': org_id, 'cycle': cycle}
+    return {
+        'amount': amount,
+        'source': 'calculated',
+        'plan_id': plan_id,
+        'org_id': org_id,
+        'cycle': cycle,
+        'breakdown': calc_result['breakdown'],
+    }
 
 
 async def create_payment_request(org_id: str, user_id: str, cycle: str, note: str = '', contact_email: str = '', requested_by_kind: str = 'unknown') -> dict:
     db = get_db()
-    from contractor_ops.billing_plans import calculate_monthly
     now = _now()
 
     await apply_pending_decreases(org_id)
@@ -1730,40 +1736,13 @@ async def create_payment_request(org_id: str, user_id: str, cycle: str, note: st
     renewal = await preview_renewal(org_id, cycle)
     requested_paid_until = renewal['new_paid_until']
 
-    total_monthly = 0
-    billing_breakdown = []
-    project_billings = await db.project_billing.find(
-        {'org_id': org_id, 'status': 'active'}, {'_id': 0}
-    ).to_list(1000)
-    if project_billings:
-        sorted_pbs = sorted(project_billings, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
-        for idx, pb in enumerate(sorted_pbs):
-            contracted = pb.get('contracted_units', 0)
-            observed = await compute_observed_units(pb['project_id'])
-            await _refresh_peak_units(pb, observed)
-            pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
-            contracted = pb.get('contracted_units', 0)
-            peak = pb.get('cycle_peak_units', contracted)
-            peak = max(peak, observed, contracted)
-            billable = max(contracted, peak)
-            plan_id = pb.get('plan_id')
-            proj_monthly = calculate_monthly(
-                billable, plan_id=plan_id, project_index=idx + 1
-            )
-            total_monthly += proj_monthly
-            proj = await db.projects.find_one({'id': pb['project_id']}, {'_id': 0, 'name': 1})
-            billing_breakdown.append({
-                'project_id': pb.get('project_id'),
-                'project_name': proj.get('name', '') if proj else '',
-                'plan_id': plan_id,
-                'contracted_units': contracted,
-                'observed_units': observed,
-                'cycle_peak_units': peak,
-                'billable_units': billable,
-                'monthly_total': proj_monthly,
-            })
-
-    amount_ils = total_monthly if cycle == 'monthly' else total_monthly * 12
+    # Single source of truth: the same computation that feeds
+    # GET subscription (compute_org_billing_amount). One loop, one number —
+    # what the org billing page shows is exactly what gets charged.
+    calc_result = await compute_org_billing_amount(org_id, cycle)
+    total_monthly = calc_result['total_monthly']
+    billing_breakdown = calc_result['breakdown']
+    amount_ils = calc_result['amount_ils']
 
     if amount_ils == 0:
         logger.warning(f"[BILLING-PAYMENT-REQ] amount_ils=0 for org {org_id} — no active project billing configured")

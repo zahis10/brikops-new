@@ -7,10 +7,6 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from './ui/dialog';
 
-const LICENSE_FIRST = 450;
-const LICENSE_ADDITIONAL = 450;
-const PRICE_PER_UNIT = 15;
-
 export default function ProjectBillingEditModal({ open, onClose, projectBilling, onSaved }) {
   const [units, setUnits] = useState('');
   const [saving, setSaving] = useState(false);
@@ -37,10 +33,11 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
   }, [open]);
 
   const preview = useMemo(() => {
-    if (parsedUnits < 1) return null;
-    const lf = serverPricing?.license_first ?? LICENSE_FIRST;
-    const la = serverPricing?.license_additional ?? LICENSE_ADDITIONAL;
-    const ppu = serverPricing?.price_per_unit ?? PRICE_PER_UNIT;
+    if (parsedUnits < 1 || !serverPricing) return null;
+    const lf = serverPricing.license_first;
+    const la = serverPricing.license_additional;
+    const ppu = serverPricing.price_per_unit;
+    if (lf == null || ppu == null) return null;
     const licenseFee = lf;
     const unitCost = parsedUnits * ppu;
     return { licenseFee, unitCost, total: licenseFee + unitCost, pricePerUnit: ppu, licenseAdditional: la };

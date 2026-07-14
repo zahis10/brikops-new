@@ -188,7 +188,7 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
 
     all_pbs = await db.project_billing.find(
         {'org_id': {'$in': org_ids}, 'status': 'active'},
-        {'_id': 0, 'org_id': 1, 'plan_id': 1, 'project_id': 1},
+        {'_id': 0, 'org_id': 1, 'plan_id': 1, 'project_id': 1, 'contracted_units': 1},
     ).to_list(5000)
     pb_map = {}
     for pb in all_pbs:
@@ -212,7 +212,15 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
         async for row in db.units.aggregate(active_units_pipeline):
             active_count_map[row['_id']] = row['count']
 
-    from contractor_ops.billing import get_billable_amount
+    from contractor_ops.billing import get_billable_amount, compute_observed_units
+    observed_map = {}
+    for pb in all_pbs:
+        pid = pb.get('project_id')
+        if pid and pid not in observed_map:
+            try:
+                observed_map[pid] = await compute_observed_units(pid)
+            except Exception:
+                observed_map[pid] = None
     result = []
     for org in orgs:
         sub = sub_map.get(org['id'])
@@ -227,6 +235,7 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
 
         pb_for_org = pb_map.get(org['id'], [])
         plan_by_project = {pb.get('project_id'): pb.get('plan_id') for pb in pb_for_org if pb.get('project_id')}
+        contracted_by_project = {pb.get('project_id'): pb.get('contracted_units') for pb in pb_for_org if pb.get('project_id')}
         enriched_projects = []
         for p in proj_by_org.get(org['id'], []):
             enriched_projects.append({
@@ -235,12 +244,16 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
                 'total_units': p.get('total_units'),
                 'active_units_count': active_count_map.get(p['id'], 0),
                 'plan_id': plan_by_project.get(p['id']),
+                'contracted_units': contracted_by_project.get(p['id']),
+                'observed_units': observed_map.get(p['id']),
             })
         for pb in pb_for_org:
             if not pb.get('project_id') or pb.get('project_id') not in proj_by_id:
                 enriched_projects.append({
                     'id': pb.get('project_id'),
                     'plan_id': pb.get('plan_id'),
+                    'contracted_units': pb.get('contracted_units'),
+                    'observed_units': observed_map.get(pb.get('project_id')),
                 })
 
         result.append({

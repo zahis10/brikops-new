@@ -1,7 +1,7 @@
 import React from 'react';
 import { Check, Crown, Building2 } from 'lucide-react';
 
-export default function PlanSelector({ plans, onSelect, currentPlan, loading, selectedPlan }) {
+export default function PlanSelector({ plans, onSelect, currentPlan, loading, selectedPlan, pricing }) {
   if (!plans) return null;
 
   const founder = plans.founder;
@@ -80,7 +80,11 @@ export default function PlanSelector({ plans, onSelect, currentPlan, loading, se
           <Building2 className="w-5 h-5 text-emerald-500" />
           <span className="font-bold text-slate-800">תוכנית רגילה</span>
         </div>
-        <div className="text-lg font-bold text-slate-900 mb-1">₪450<span className="text-sm font-normal text-slate-500"> רישיון + ₪15/יחידה לחודש</span></div>
+        {pricing?.license_first != null && pricing?.price_per_unit != null ? (
+          <div className="text-lg font-bold text-slate-900 mb-1">₪{pricing.license_first}<span className="text-sm font-normal text-slate-500"> רישיון + ₪{pricing.price_per_unit}/יחידה לחודש</span></div>
+        ) : (
+          <div className="text-lg font-bold text-slate-900 mb-1"><span className="text-sm font-normal text-slate-500">רישיון + תשלום לפי יחידה</span></div>
+        )}
         <div className="text-xs text-slate-500 mb-2">ללא הגבלת פרויקטים ויחידות</div>
         {selectedPlan === 'standard' && (
           <div className="absolute top-2 left-2">
