@@ -328,14 +328,16 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
       const root = rootRef.current;
       if (!root || !window.visualViewport) return;
       const v = window.visualViewport;
-      const keyboardOpen = v.height < window.innerHeight - 1;
-      if (keyboardOpen) {
-        root.style.height = v.height + 'px';
-        root.style.transform = 'translateY(' + v.offsetTop + 'px)';
-      } else {
-        root.style.height = '';
-        root.style.transform = '';
-      }
+      // BATCH fix-annotation-ios-text-3 (2026-07-14) — RC4: the old
+      // keyboardOpen gate compared v.height to window.innerHeight, but on
+      // some iOS versions innerHeight TRACKS the visual viewport (shrinks
+      // with the keyboard) so the comparison never fired and the pin never
+      // engaged. Zero heuristics now: whenever visualViewport exists the
+      // root ALWAYS matches it — visually identical to inset-0 when no
+      // keyboard is up, fully visible above the keyboard when one is.
+      // '' restore lives ONLY in the effect cleanup.
+      root.style.height = v.height + 'px';
+      root.style.transform = 'translateY(' + v.offsetTop + 'px)';
       if (window.scrollY !== 0) window.scrollTo(0, 0);
     };
 

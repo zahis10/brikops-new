@@ -1,132 +1,91 @@
 ================================================================================
-REVIEW — BATCH fix-annotation-ios-text-2: keyboard-aware editor height —
-eliminate the iOS focus-reveal pan/zoom (RC3, the primary zoom vector)
-Date: 2026-07-14  |  Branch: staging (base 81eac8b — v2.1 in)  |  FRONTEND ONLY
-Scope: PhotoAnnotation.js + extended existing unit-probe file (OTA-able —
-       zero native changes). No parents, no ios/, no config, no deps touched.
+REVIEW — BATCH fix-annotation-ios-text-3: הסרת היוריסטיקת זיהוי-המקלדת —
+העורך תמיד מוצמד (pinned) ל-visual viewport
+Date: 2026-07-14  |  Branch: staging (base 2dc7e0b — fix-2 in)  |  FRONTEND ONLY
+Scope: PhotoAnnotation.js (שינוי התנהגותי אחד) + עדכון מבחן P6. OTA-able —
+       zero native changes. No parents, no ios/, no config, no deps touched.
 ================================================================================
 
-STEP 0 — PRE-FLIGHT (reported, "תתחיל" received)
+STEP 0 — PRE-FLIGHT (reported, "תתחיל" received; plan file also delivered)
 --------------------------------------------------------------------------------
-  [OK] RC3 verified in code: root overlay = fixed inset-0 h-dvh-fallback →
-       LAYOUT-viewport height; no ref, no keyboard adjustment anywhere. The
-       pending-text input sits at the bottom of the flex column →
-       geometrically behind the iOS keyboard → Safari focus-reveal pan/zoom.
-       Matches Zahi's device observation exactly (fires on keyboard open).
-  [OK] Existing F-keyboard effect listens only vv 'resize' + window 'resize'
-       and calls only applyDisplayScale. No vv 'scroll' listener, no
-       rootRef, no scrollTo anywhere in the file — E8/E9 conflict-free.
-  [OK] getPos is rect-based (getBoundingClientRect + scaleRef) — indifferent
-       to root height changes. applyDisplayScale internals untouched.
+  [OK] RC4 verified in code: applyRootViewportFit gated on
+       v.height < window.innerHeight - 1. On the reporting iPhone,
+       window.innerHeight TRACKS the visual viewport → comparison never
+       true → pin never engaged → input stayed behind the keyboard, while
+       the canvas DID shrink (applyDisplayScale reads vv directly) —
+       exactly the screenshot evidence. Zoom itself confirmed gone (fix-2).
+  [OK] E9 scrollTo guard and all fix-2 wiring present and untouched.
 
-WIRING DECISION (as the spec asked to report)
+EDIT (E11 — the only behavioral change)
 --------------------------------------------------------------------------------
-  A SIBLING handler (applyRootViewportFit) inside the SAME existing effect
-  that wires applyDisplayScale — not folded into applyDisplayScale itself
-  (keeps its internals untouched per DO-NOT-TOUCH). Event map:
-    vv 'resize'    → onViewportChange = applyRootViewportFit + applyDisplayScale
-    vv 'scroll'    → applyRootViewportFit only (offsetTop pans, no resize)
-    window 'resize'→ onViewportChange (desktop/no-vv path, unchanged behavior)
-  Keyboard-open detection: vv.height < window.innerHeight - 1 (1px slack).
-  Cleanup removes all three listeners and restores height/transform to ''
-  via rootEl captured at effect setup (eslint react-hooks safe).
-
-EDITS (PhotoAnnotation.js — the only app file changed)
---------------------------------------------------------------------------------
-  E8  rootRef added to the fixed inset-0 overlay div (~line 761).
-      applyRootViewportFit: keyboard open → root.style.height = vv.height px,
-      root.style.transform = translateY(vv.offsetTop px); keyboard closed
-      (vv.height back to full) → both restored to ''. Also on vv 'scroll'.
-      Result: the WHOLE editor (toolbar, canvas, input row, footer)
-      compresses into the visible viewport above the keyboard; the focused
-      input is on-screen by construction → nothing for Safari to reveal →
-      no pan, no zoom. Canvas keeps rescaling via applyDisplayScale
-      (called AFTER the fit on each resize).
-  E9  Residual-pan guard in the same handler: if (window.scrollY !== 0)
-      window.scrollTo(0, 0). No-op when already 0.
-  E10 All v2.1 changes retained verbatim (pending-text flush, discard
-      guard, touchAction manipulation, viewport-fit=cover, 16px input).
-      Diff shows zero removals outside the listener rewiring.
+  In applyRootViewportFit: the keyboardOpen branch DELETED. Whenever
+  visualViewport exists, ALWAYS:
+      root.style.height    = v.height + 'px';
+      root.style.transform = 'translateY(' + v.offsetTop + 'px)';
+  No '' restore on keyboard close — with the keyboard closed vv.height ≈
+  full visible height, so the pin is visually identical to inset-0. The ''
+  restore remains ONLY in the effect cleanup (unmount / loaded cycle).
+  E9 (window.scrollY !== 0 → scrollTo(0,0)) unchanged. Listeners
+  (vv resize/scroll + window resize), onViewportChange ordering
+  (fit → applyDisplayScale), getPos, drag/edit — all untouched.
+  Rationale: zero heuristics — the editor always occupies exactly the
+  visible viewport whatever the OS does with keyboards/URL bars. Desktop/
+  Android: fit only runs on vv events; when they fire, full-height pin is
+  visually equivalent to inset-0 → no visible change.
 
 DIFF SUMMARY
 --------------------------------------------------------------------------------
- frontend/src/components/PhotoAnnotation.js         | 57 +++++++++++++++--
- .../__tests__/PhotoAnnotation.pendingtext.test.js  | 67 ++++++++++++++++++
- 2 files changed, 119 insertions(+), 5 deletions(-)
+ frontend/src/components/PhotoAnnotation.js             | 18 ++++++++--------
+ .../__tests__/PhotoAnnotation.pendingtext.test.js      | 13 +++++++-----
+ 2 files changed, 18 insertions(+), 13 deletions(-)
 
- Key hunks (PhotoAnnotation.js):
- @@ -96 +96,14: + const rootRef = useRef(null);  (with RC3 comment)
- @@ -306 +314,55: existing vv effect gains applyRootViewportFit sibling,
-   onViewportChange composition, vv 'scroll' listener, cleanup restore:
-   +    const applyRootViewportFit = () => {
-   +      const root = rootRef.current;
-   +      if (!root || !window.visualViewport) return;
-   +      const v = window.visualViewport;
-   +      const keyboardOpen = v.height < window.innerHeight - 1;
-   +      if (keyboardOpen) {
-   +        root.style.height = v.height + 'px';
-   +        root.style.transform = 'translateY(' + v.offsetTop + 'px)';
-   +      } else {
-   +        root.style.height = '';
-   +        root.style.transform = '';
-   +      }
-   +      if (window.scrollY !== 0) window.scrollTo(0, 0);
-   +    };
-   +    const onViewportChange = () => {
-   +      applyRootViewportFit();
-   +      applyDisplayScale();
-   +    };
-   (listeners: vv resize→onViewportChange, vv scroll→applyRootViewportFit,
-    window resize→onViewportChange; cleanup removes all + restores styles)
- @@ -710 +757: root div gains ref={rootRef} (className/style unchanged)
+ PhotoAnnotation.js — the single hunk (inside applyRootViewportFit):
+   -      const keyboardOpen = v.height < window.innerHeight - 1;
+   -      if (keyboardOpen) {
+   -        root.style.height = v.height + 'px';
+   -        root.style.transform = 'translateY(' + v.offsetTop + 'px)';
+   -      } else {
+   -        root.style.height = '';
+   -        root.style.transform = '';
+   -      }
+   +      // (RC4 comment) …zero heuristics: always pin to vv…
+   +      root.style.height = v.height + 'px';
+   +      root.style.transform = 'translateY(' + v.offsetTop + 'px)';
+ Test file: P6 retitled to batch-3 semantics; full-height resize now
+ asserts height === '<full>px' + transform 'translateY(0px)' (NOT '');
+ unmount asserts listeners removed AND styles restored to ''.
 
 VERIFY
 --------------------------------------------------------------------------------
-V1  NEW unit probe P6 (same file, mocked visualViewport injected pre-mount):
-      resize with height=400/offsetTop=25 → root height '400px',
-        transform 'translateY(25px)'
-      vv 'scroll' with offsetTop=40 (no resize) → transform updates
-      scrollY=33 + scroll event → window.scrollTo(0,0) called (E9)
-      height back to full → both styles restored to ''
-      unmount → resize+scroll listeners removed (count 0)
-    ✓ P6 passed (43 ms)
-V2  Existing 5 pending-text probes unchanged and passing:
-      ✓ P1 label-only save  ✓ P2 edit-replace  ✓ P5 no double-commit
-      ✓ P3 discard modal    ✓ P4 empty close
-    Tests: 6 passed, 6 total  |  Test Suites: 1 passed  |  0 act-warnings
-V3  craco build EXIT=0, 0 warnings (an interim eslint react-hooks warning
-    about ref-in-cleanup was fixed by capturing rootEl at effect setup;
-    final build fully clean). main.836b7685.js 207.13 kB gzip (-59 B).
-    House greps clean: no window.confirm / localStorage / native select /
+V1  Unit probes — 6/6 pass, 0 act-warnings:
+      ✓ P1 label-only save        ✓ P2 edit-replace
+      ✓ P5 no double-commit      ✓ P3 discard modal
+      ✓ P4 empty close
+      ✓ P6 (batch-3 E11): reduced resize → '400px'/'translateY(25px)';
+        vv scroll (offsetTop 40, no resize) → transform updates;
+        scrollY=33 → scrollTo(0,0) (E9); FULL-height resize → pinned at
+        full px (not ''); unmount → listeners removed + styles ''.
+    Tests: 6 passed, 6 total | Test Suites: 1 passed
+V2  craco build EXIT=0, 0 warnings. main.4c473e86.js 207.13 kB gzip
+    (-57 B). House greps clean: no window.confirm (only comments noting
+    its replacement) / localStorage / native select /
     WebkitOverflowScrolling; no new deps; no ios//android/ changes.
-V4  DEVICE (Zahi — acceptance gate, Safari on staging):
-    text tool → tap image → keyboard opens → NO zoom, NO pan; photo
-    (compressed) + input row + שמור/בטל all visible above the keyboard;
-    type + אישור → pill lands where tapped; close keyboard → editor
-    returns to full height; drawing afterwards still accurate.
-    Repeat once in landscape. Android sanity: unchanged (adjustResize
-    already keeps the input visible; handler restores '' at full height).
+V3  DEVICE (Zahi — the acceptance gate, Safari on staging):
+    text tool → tap image → keyboard opens → the photo COMPRESSES and the
+    input row + אישור + שמור/בטל are ALL VISIBLE above the keyboard while
+    typing; no zoom, no pan; אישור → pill lands where tapped; keyboard
+    close → editor returns to full screen; once in landscape; Android
+    sanity: unchanged.
 
 ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-  Verdict: PASS. Highlights: fit logic correct and scoped; listener
-  wiring/cleanup sound; E10 constraint compliance confirmed (getPos/
-  scaleRef/applyDisplayScale untouched); ordering fit-before-rescale on
-  resize is sensible; regression coverage improved. No security concerns.
-  Non-blocking suggestion only: throttle scrollTo if jitter ever appears
-  on specific iOS versions (not applied — spec says no-op guard suffices;
-  can revisit if V4 shows jitter).
-
-RISK / NOTES
---------------------------------------------------------------------------------
-  - transform on the fixed root creates a containing block for inner
-    fixed/absolute descendants — all editor children are already absolutely
-    positioned relative to the root or in-flow, so no layout change when
-    transform is '' (keyboard closed = 99% of lifetime).
-  - Desktop/no-visualViewport browsers: applyRootViewportFit early-returns;
-    behavior identical to v2.1.
-  - Orientation change with keyboard open: vv fires resize → fit re-applies
-    with the new dimensions (V4 includes a landscape pass).
+  Verdict: PASS. E11 matches spec exactly; E9 preserved; cleanup semantics
+  correct ('' only in cleanup); fit→rescale ordering appropriate; desktop
+  behavior acceptable (event-driven, full-pin ≡ inset-0); transform
+  containing-block risk low (root is the fullscreen container). No
+  security concerns. Clarity nit (P6 title rename) — applied; probes
+  re-run 6/6 green after the rename. Non-blocking watchpoint for V3:
+  recheck rotation + keyboard open/close cycles for visual jitter.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================

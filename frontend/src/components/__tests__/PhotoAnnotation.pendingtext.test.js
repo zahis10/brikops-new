@@ -274,7 +274,7 @@ test('P3: typed-but-uncommitted label + X → confirm modal, no silent close', a
   await m.unmount();
 });
 
-test('P6 (batch-2 E8/E9): visualViewport resize compresses editor root; restore clears it', async () => {
+test('P6 (batch-3 E11): editor root always pins to visualViewport; cleanup restores styles', async () => {
   // Minimal visualViewport mock — must exist BEFORE mount (the effect
   // captures window.visualViewport once per loaded-cycle).
   const listeners = {};
@@ -325,17 +325,20 @@ test('P6 (batch-2 E8/E9): visualViewport resize compresses editor root; restore 
     expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
     Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
 
-    // Keyboard closes: full height restores ''.
+    // Batch-3 E11: keyboard closes → root STAYS pinned to the full
+    // vv.height in px (no '' restore outside cleanup — zero heuristics).
     vv.height = window.innerHeight;
     vv.offsetTop = 0;
     fire('resize');
-    expect(root.style.height).toBe('');
-    expect(root.style.transform).toBe('');
+    expect(root.style.height).toBe(window.innerHeight + 'px');
+    expect(root.style.transform).toBe('translateY(0px)');
 
-    // Unmount removes the listeners.
+    // Unmount removes the listeners AND restores styles to '' (cleanup).
     await m.unmount();
     expect(listeners.resize.length).toBe(0);
     expect(listeners.scroll.length).toBe(0);
+    expect(root.style.height).toBe('');
+    expect(root.style.transform).toBe('');
   } finally {
     delete window.visualViewport;
   }
