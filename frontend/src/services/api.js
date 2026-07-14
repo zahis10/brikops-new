@@ -710,6 +710,20 @@ export const safetyService = {
     const r = await axios.get(`${API}/safety/induction-template/starter`, { headers: getAuthHeader() });
     return r.data;
   },
+  // Batch safety-ind2 — conduct flow (project-scoped; org resolved
+  // server-side via the project).
+  async getInductionContent(projectId) {
+    const r = await axios.get(`${API}/safety/${projectId}/induction/content`, { headers: getAuthHeader() });
+    return r.data;
+  },
+  async conductInduction(projectId, formData) {
+    const r = await axios.post(
+      `${API}/safety/${projectId}/induction/conduct`,
+      formData,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
 };
 
 // Work Diary (יומן עבודה) — batch diary-d2. Wraps the 7 flag-gated D1

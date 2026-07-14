@@ -162,11 +162,12 @@ async def main():
                and (j.get("workers_by_company") or [{}])[0].get("source") == "manual",
                f"status={r.status_code}")
 
-        # V7 RBAC: backend restricts even reads to PM/management_team (d1
-        # _check_project_access) — owner gets 403; UI shows forbidden screen
+        # V7 RBAC — batch safety-ind2 RIDER: reads were later opened to
+        # project members (owner GET now 200); WRITES stay PM/management-only
+        # (V7b/V7c keep asserting 403). Probe tracks current staging reality.
         r = await c.get(base, params={"month": month}, headers=ow_h)
-        record("V7a owner GET list → 403 (backend read restriction)",
-               r.status_code == 403, f"status={r.status_code}")
+        record("V7a owner GET list → 200 (reads opened to members)",
+               r.status_code == 200, f"status={r.status_code}")
         r = await c.post(base, json={"diary_date": today}, headers=ow_h)
         record("V7b owner POST create → 403", r.status_code == 403, f"status={r.status_code}")
         r = await c.patch(f"{base}/{eid}", json={"work_description": "x"}, headers=ow_h)

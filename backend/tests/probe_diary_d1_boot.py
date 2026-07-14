@@ -36,9 +36,11 @@ if mode == "off":
     print("[PASS] V7 flag off → zero /api/work-diary routes (404), boot clean")
     sys.exit(0)
 
-# 7 endpoints on 5 unique paths (GET+POST /entries; GET+PATCH /entries/{id})
-assert len(wd_routes) == 7, f"expected 7 diary (method,path) routes, got {wd_routes}"
-print("[PASS] V7 flag on → 7 /api/work-diary endpoints registered, boot clean")
+# batch safety-ind2 RIDER: count updated 7 → 10. Later diary batches added
+# signature, addendums and refresh-derived endpoints on staging; the probe
+# asserts CURRENT reality, not the original d1 spec.
+assert len(wd_routes) == 10, f"expected 10 diary (method,path) routes, got {wd_routes}"
+print("[PASS] V7 flag on → 10 /api/work-diary endpoints registered, boot clean")
 
 
 async def dup_insert():

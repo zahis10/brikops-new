@@ -1,91 +1,135 @@
 ================================================================================
-REVIEW — BATCH fix-annotation-ios-text-3: הסרת היוריסטיקת זיהוי-המקלדת —
-העורך תמיד מוצמד (pinned) ל-visual viewport
-Date: 2026-07-14  |  Branch: staging (base 2dc7e0b — fix-2 in)  |  FRONTEND ONLY
-Scope: PhotoAnnotation.js (שינוי התנהגותי אחד) + עדכון מבחן P6. OTA-able —
-       zero native changes. No parents, no ios/, no config, no deps touched.
+REVIEW — BATCH safety-ind2: הדרכת אתר — זרימת ביצוע (IND-2)
+קריאה, לוגיקת מתורגמן (פסיקה ה-12), חתימה ראייתית + snapshot תוכן
+Date: 2026-07-14  |  Branch: staging  |  BACKEND + FRONTEND + RIDER
+Base drift: HEAD 0c86526 vs spec 922edfe — reported at STEP 0, non-blocking.
 ================================================================================
 
-STEP 0 — PRE-FLIGHT (reported, "תתחיל" received; plan file also delivered)
+STEP 0 — PRE-FLIGHT (reported, "תתחיל" received)
 --------------------------------------------------------------------------------
-  [OK] RC4 verified in code: applyRootViewportFit gated on
-       v.height < window.innerHeight - 1. On the reporting iPhone,
-       window.innerHeight TRACKS the visual viewport → comparison never
-       true → pin never engaged → input stayed behind the keyboard, while
-       the canvas DID shrink (applyDisplayScale reads vv directly) —
-       exactly the screenshot evidence. Zoom itself confirmed gone (fix-2).
-  [OK] E9 scrollTo guard and all fix-2 wiring present and untouched.
+  [OK] Concept doc written VERBATIM →
+       future-features/site-induction-concept-2026-07-12.md
+  [OK] IND-1 (template CRUD) verified in place; sign_training upload-hardening
+       located and mirrored; alerts service + diary rider files located.
 
-EDIT (E11 — the only behavioral change)
+BACKEND — backend/contractor_ops/safety/induction.py
 --------------------------------------------------------------------------------
-  In applyRootViewportFit: the keyboardOpen branch DELETED. Whenever
-  visualViewport exists, ALWAYS:
-      root.style.height    = v.height + 'px';
-      root.style.transform = 'translateY(' + v.offsetTop + 'px)';
-  No '' restore on keyboard close — with the keyboard closed vv.height ≈
-  full visible height, so the pin is visually identical to inset-0. The ''
-  restore remains ONLY in the effect cleanup (unmount / loaded cycle).
-  E9 (window.scrollY !== 0 → scrollTo(0,0)) unchanged. Listeners
-  (vv resize/scroll + window resize), onViewportChange ordering
-  (fit → applyDisplayScale), getPos, drag/edit — all untouched.
-  Rationale: zero heuristics — the editor always occupies exactly the
-  visible viewport whatever the OS does with keyboards/URL bars. Desktop/
-  Android: fit only runs on vv events; when they fire, full-height pin is
-  visually equivalent to inset-0 → no visible change.
+  E1  Constants: INDUCTION_TRAINING_TYPE="הדרכת אתר";
+      DEFAULT_INDUCTION_VALIDITY_DAYS=365  # DRAFT — pending legal review;
+      INDUCTION_LEGAL_TEXT_HE + interpreter attestation variant (worker_language
+      + interpreter_name interpolated into the SIGNATURE's attestation only).
+  E2  _load_template_via_project(project_id): resolves org via the PROJECT
+      document (not get_user_org) — PM who belongs only to the project works.
+  E3  GET /api/safety/{project_id}/induction/content — SAFETY_WRITERS +
+      _check_project_access; returns sections, legal_text, languages_filled
+      (["he"]), template_version, default_validity_days; 404 עברית if no
+      he template.
+  E4  POST /api/safety/{project_id}/induction/conduct — ONE atomic ceremony:
+      * worker guard (exists, not deleted, same project) → 404
+      * ruling ה-12: language_choice="other" REQUIRES worker_language AND
+        interpreter_name → 422 עברית otherwise; via_interpreter=true;
+        language_read stays "he"
+      * expires_at: optional override (date-validated → 422), default
+        today+365
+      * upload hardening: full mirror of sign_training (content-type,
+        magic bytes, 5MB, canvas/typed rules)
+      * snapshot: _upsert_content_snapshot — dedup upsert keyed
+        (org_id, template_version, language) on unique index uidx_ics
+        + content_hash; DuplicateKeyError caught → re-read (race-safe,
+        added after architect review)
+      * training inserted BORN-SIGNED with extended evidentiary signature:
+        language_read, worker_language, via_interpreter, interpreter_name,
+        content_version, content_hash, snapshot_id, attestation_text
+        (+ all existing signature fields; signature_ref stored as KEY)
+      * audit event: induction_conducted
+  NOTE — SafetyTrainingUpdate field list (unchanged, worker_signature
+  excluded → immutability): [training_type, trained_at, instructor_name,
+  duration_minutes, location, expires_at, certificate_url]
+
+  ⭐ PAYWALL FIX (must-flag) — backend/contractor_ops/router.py:
+     Added (r'^/api/safety/([^/]+)', 'projects', 'org_id') to
+     _ORG_URL_PATTERNS. Without it, a PM with NO organization_memberships
+     row hit 402 BEFORE RBAC on all project-scoped safety routes
+     (work-diary precedent). Verified no bypass on org-level path:
+     /api/safety/induction-template regex-captures "induction-template",
+     projects lookup misses → falls through → still 402 (probe V7½b).
+
+FRONTEND
+--------------------------------------------------------------------------------
+  F1  api.js: getInductionContent(projectId), conductInduction(projectId, form).
+  F2  NEW components/safety/SafetyInductionConduct.js — 3-step Radix Dialog
+      (modal={false}): (1) language — he / "אחרת" gating worker_language +
+      interpreter_name; (2) read — full sections + legal text, scroll-to-
+      bottom gate (short content auto-passes), attestation VERBATIM;
+      (3) sign — reuses SafetySignaturePad, expires date input (default
+      +365). 404-content empty state: "לא הוגדר תוכן הדרכת אתר — מנהל
+      הארגון מגדיר אותו".
+  F3  SafetyHomePage.js — per-worker GraduationCap action (isWriter only),
+      dialog wired with onConducted → reload trainings.
+  House rules: no window.confirm / native select / localStorage /
+  WebkitOverflowScrolling; NO new dependencies (greps clean).
+
+RIDER (approved in spec)
+--------------------------------------------------------------------------------
+  probe_diary_d1_boot.py: route count 7 → 10 (induction content/conduct/
+  template routes) with comment; probe_diary_d2_http.py: V7a 403 → 200
+  (paywall pattern now resolves org via project) — V7b/V7c unchanged.
 
 DIFF SUMMARY
 --------------------------------------------------------------------------------
- frontend/src/components/PhotoAnnotation.js             | 18 ++++++++--------
- .../__tests__/PhotoAnnotation.pendingtext.test.js      | 13 +++++++-----
- 2 files changed, 18 insertions(+), 13 deletions(-)
+ backend/contractor_ops/router.py           |   6 +
+ backend/contractor_ops/safety/induction.py | 259 +++++++++++++++++++++++-
+ backend/tests/probe_diary_d1_boot.py       |   8 +-
+ backend/tests/probe_diary_d2_http.py       |   9 +-
+ frontend/src/pages/SafetyHomePage.js       |  40 +++-
+ frontend/src/services/api.js               |  14 +
+ NEW: backend/tests/probe_safety_ind2.py
+ NEW: frontend/src/components/safety/SafetyInductionConduct.js
+ NEW: future-features/site-induction-concept-2026-07-12.md
 
- PhotoAnnotation.js — the single hunk (inside applyRootViewportFit):
-   -      const keyboardOpen = v.height < window.innerHeight - 1;
-   -      if (keyboardOpen) {
-   -        root.style.height = v.height + 'px';
-   -        root.style.transform = 'translateY(' + v.offsetTop + 'px)';
-   -      } else {
-   -        root.style.height = '';
-   -        root.style.transform = '';
-   -      }
-   +      // (RC4 comment) …zero heuristics: always pin to vv…
-   +      root.style.height = v.height + 'px';
-   +      root.style.transform = 'translateY(' + v.offsetTop + 'px)';
- Test file: P6 retitled to batch-3 semantics; full-height resize now
- asserts height === '<full>px' + transform 'translateY(0px)' (NOT '');
- unmount asserts listeners removed AND styles restored to ''.
-
-VERIFY
+VERIFICATION (V1–V9)
 --------------------------------------------------------------------------------
-V1  Unit probes — 6/6 pass, 0 act-warnings:
-      ✓ P1 label-only save        ✓ P2 edit-replace
-      ✓ P5 no double-commit      ✓ P3 discard modal
-      ✓ P4 empty close
-      ✓ P6 (batch-3 E11): reduced resize → '400px'/'translateY(25px)';
-        vv scroll (offsetTop 40, no resize) → transform updates;
-        scrollY=33 → scrollTo(0,0) (E9); FULL-height resize → pinned at
-        full px (not ''); unmount → listeners removed + styles ''.
-    Tests: 6 passed, 6 total | Test Suites: 1 passed
-V2  craco build EXIT=0, 0 warnings. main.4c473e86.js 207.13 kB gzip
-    (-57 B). House greps clean: no window.confirm (only comments noting
-    its replacement) / localStorage / native select /
-    WebkitOverflowScrolling; no new deps; no ios//android/ changes.
-V3  DEVICE (Zahi — the acceptance gate, Safari on staging):
-    text tool → tap image → keyboard opens → the photo COMPRESSES and the
-    input row + אישור + שמור/בטל are ALL VISIBLE above the keyboard while
-    typing; no zoom, no pan; אישור → pill lands where tapped; keyboard
-    close → editor returns to full screen; once in landscape; Android
-    sanity: unchanged.
+  V1–V8  probe_safety_ind2.py — 34/34 PASSED (in-process ASGI, real Mongo):
+    V1  happy path he: 201, type "הדרכת אתר", expires=today+365, signature
+        complete (key-at-rest, display URL regen), snapshot row + hash
+        recompute match, audit; 2nd conduct → SAME snapshot_id, ONE row
+    V2  ruling ה-12: other w/o interpreter → 422 עברית; w/o language → 422;
+        both → via_interpreter, attestation contains both, language_read=he;
+        shares SAME he snapshot
+    V3  immutability: /signature on conducted → 409; PATCH with
+        worker_signature key → NOT changed; template edit → old record +
+        snapshot byte-identical; new conduct → version 2 + NEW row
+    V4  no template: content 404 + conduct 409 עברית; FE empty-state copy
+    V5  expires_at: override honored; invalid → 422; default applied
+    V6  RBAC: PM member 200; PM non-member 403; MT 200; contractor 403;
+        unauth 401; ⭐ PM with NO org-membership row → 201
+        ([PAYWALL:SCOPED_OK] in logs)
+    V7  worker guards: unknown/deleted/other-project → 404
+    V7½ (post-architect) parallel first-conducts → both 201, SAME
+        snapshot_id, +1 row only; org-level template path → 402 (no bypass)
+    V8  conduct with expires=today+7 appears in collect_expiry_alerts
+  V9  Regression + build:
+    probe_diary_d1_boot on: 10 diary routes, non-diary count flag-invariant
+        (356), unique index + DuplicateKeyError enforced; off: 0 routes
+    probe_diary_d2_http 16/16 · d3 36/36 · d4a 17/17 · d4b 23/23
+    probe_safety_ind1 30/30 (re-run AFTER race fix) · w1_alerts 32/32
+    probe_p3c_signature 8/8 · probe_p3c_fix2_group_total 3/3
+    FE tests 13/13 · craco build CLEAN
+        (CI=false GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=
+         https://api.brikops.com)
 
 ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-  Verdict: PASS. E11 matches spec exactly; E9 preserved; cleanup semantics
-  correct ('' only in cleanup); fit→rescale ordering appropriate; desktop
-  behavior acceptable (event-driven, full-pin ≡ inset-0); transform
-  containing-block risk low (root is the fullscreen container). No
-  security concerns. Clarity nit (P6 title rename) — applied; probes
-  re-run 6/6 green after the rename. Non-blocking watchpoint for V3:
-  recheck rotation + keyboard open/close cycles for visual jitter.
+  Initial verdict FAIL on ONE blocking item: snapshot upsert not handling
+  DuplicateKeyError under concurrent first-write. FIXED (catch → re-read)
+  + dedicated concurrency probe V7½a added — green. Security review: no
+  violations; paywall regex side-effect assessed LOW and probed (V7½b).
+
+OPEN ITEMS FOR ZAHI
+--------------------------------------------------------------------------------
+  1. DEFAULT_INDUCTION_VALIDITY_DAYS=365 is marked DRAFT — pending your
+     legal confirmation.
+  2. Only "he" content exists; en/ru/ar intentionally NOT added per spec.
+  3. Base drift 0c86526 vs 922edfe — non-blocking, already reported.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================

@@ -40,6 +40,7 @@ import SafetyTourRunner from '../components/safety/SafetyTourRunner';
 import SafetyEquipmentTab from '../components/safety/SafetyEquipmentTab';
 import SafetyEquipmentForm from '../components/safety/SafetyEquipmentForm';
 import SafetySignaturePad from '../components/safety/SafetySignaturePad';
+import SafetyInductionConduct from '../components/safety/SafetyInductionConduct';
 import InductionTemplateEditor from '../components/safety/InductionTemplateEditor';
 import {
   CATEGORY_HE, SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE, INCIDENT_STATUS_HE,
@@ -126,6 +127,7 @@ export default function SafetyHomePage() {
   const [workerCard, setWorkerCard] = useState(null);
   const [trainingCardLock, setTrainingCardLock] = useState(null);
   const [trainingSignFor, setTrainingSignFor] = useState(null);
+  const [inductionFor, setInductionFor] = useState(null); // batch safety-ind2
   const [trainingSigning, setTrainingSigning] = useState(false);
   // Batch safety-p2-1d — read-only detail modal (row tap opens it).
   const [detailDoc, setDetailDoc] = useState(null);
@@ -770,6 +772,7 @@ export default function SafetyHomePage() {
                 isWriter={isWriter}
                 onEdit={(w) => setWorkerForm({ open: true, record: w })}
                 onOpenCard={(w) => setWorkerCard(w)}
+                onInduct={(w) => setInductionFor(w)}
               />
             </TabsContent>
             <TabsContent value="trainings" className="p-0 m-0">
@@ -995,6 +998,14 @@ export default function SafetyHomePage() {
           : (!trainingForm.record && !trainingForm.renewFrom && workerChain)
             ? { id: workerChain.workerId, name: workerChain.workerName }
             : null}
+      />
+
+      <SafetyInductionConduct
+        projectId={projectId}
+        worker={inductionFor}
+        open={!!inductionFor}
+        onClose={() => setInductionFor(null)}
+        onConducted={reloadTrainings}
       />
 
       <SafetySignaturePad
@@ -1603,7 +1614,7 @@ function WorkerThumb({ worker }) {
   );
 }
 
-function WorkersList({ items, isWriter, onEdit, onOpenCard }) {
+function WorkersList({ items, isWriter, onEdit, onOpenCard, onInduct }) {
   if (!items?.length) return <EmptyState icon={Users} text="אין עובדים רשומים" />;
   return (
     <ul className="divide-y divide-slate-100">
@@ -1621,14 +1632,25 @@ function WorkersList({ items, isWriter, onEdit, onOpenCard }) {
             </p>
           </div>
           {isWriter && (
-            <button
-              type="button"
-              aria-label="ערוך עובד"
-              onClick={(e) => { e.stopPropagation(); onEdit(w); }}
-              className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
-            >
-              <Pencil className="w-4 h-4" />
-            </button>
+            <>
+              <button
+                type="button"
+                aria-label="בצע הדרכת אתר"
+                title="בצע הדרכת אתר"
+                onClick={(e) => { e.stopPropagation(); onInduct(w); }}
+                className="p-1.5 rounded-lg hover:bg-purple-100 text-purple-600 shrink-0"
+              >
+                <GraduationCap className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                aria-label="ערוך עובד"
+                onClick={(e) => { e.stopPropagation(); onEdit(w); }}
+                className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+            </>
           )}
         </li>
       ))}

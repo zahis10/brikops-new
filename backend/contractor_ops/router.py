@@ -495,6 +495,12 @@ _ORG_URL_PATTERNS = [
     (_re.compile(r'^/api/floors/([^/]+)'),    'floors',    'project_id'),
     (_re.compile(r'^/api/units/([^/]+)'),     'units',     'project_id'),
     (_re.compile(r'^/api/work-diary/([^/]+)'), 'projects', 'org_id'),
+    # batch safety-ind2: project-scoped safety writes (e.g. induction
+    # conduct) must pass the paywall for PMs with NO organization_
+    # memberships row — resolve org via the project, like work-diary.
+    # Org-level paths (/api/safety/induction-template) miss the projects
+    # lookup and fall through harmlessly (None).
+    (_re.compile(r'^/api/safety/([^/]+)'), 'projects', 'org_id'),
 ]
 
 
