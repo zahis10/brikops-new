@@ -773,7 +773,7 @@ title = "qr_diagnostic_report — GATE qr-scan-diagnostic"
 id = "4K_UrZ8FG_Z0B5kG1MwPU"
 uri = "file://plan_safety_ind2.txt"
 type = "text"
-title = "PLAN — BATCH safety-ind2 (IND-2) — STEP 0 + תוכנית"
+title = "תוכנית — BATCH safety-ind2 (ביצוע הדרכת אתר IND-2)"
 
 [[outputs]]
 id = "OTQZPuu8liZiqiQbFCrRg"
