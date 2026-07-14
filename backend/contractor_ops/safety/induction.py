@@ -187,7 +187,7 @@ def _validate_sections(payload: InductionTemplateSave) -> list:
 # =====================================================================
 # Endpoints
 # =====================================================================
-@router.get("/induction-template")
+@router.get("/induction-template")  # unused by FE since ind2-fix1 (kept for probes + future org console)
 async def get_induction_template(user: dict = Depends(get_current_user)):
     org, can_edit = await _require_induction_read(user)
     if not org:
@@ -206,7 +206,7 @@ async def get_induction_starter(user: dict = Depends(get_current_user)):
     return {"sections": STARTER_INDUCTION_SECTIONS_HE, "draft": True}
 
 
-@router.put("/induction-template")
+@router.put("/induction-template")  # unused by FE since ind2-fix1 (kept for probes + future org console)
 async def save_induction_template(
     payload: InductionTemplateSave,
     user: dict = Depends(get_current_user),
@@ -474,3 +474,87 @@ async def conduct_induction(
         except Exception:
             s["signature_display_url"] = None
     return SafetyTraining(**out)
+
+
+# =====================================================================
+# ind2-fix1 — PROJECT-scoped editor pair (ONE org key for the feature)
+# =====================================================================
+async def _resolve_project_org_edit(user: dict, project_id: str):
+    """(org_id, can_edit) resolved via the PROJECT's org — the SAME key the
+    conduct flow uses. can_edit iff user is organizations.owner_user_id of
+    the project's org OR org_admin member IN that org (billing_admin
+    excluded — same D1 semantics as IND-1)."""
+    db = get_db()
+    proj = await db.projects.find_one({"id": project_id}, {"_id": 0, "org_id": 1})
+    org_id = (proj or {}).get("org_id")
+    if not org_id:
+        return None, False
+    org = await db.organizations.find_one({"id": org_id}, {"_id": 0, "id": 1, "owner_user_id": 1})
+    if not org:
+        return org_id, False
+    if org.get("owner_user_id") == user["id"]:
+        return org_id, True
+    mem = await db.organization_memberships.find_one(
+        {"org_id": org_id, "user_id": user["id"]}, {"_id": 0, "role": 1}
+    )
+    return org_id, bool(mem and mem.get("role") == "org_admin")
+
+
+@router.get("/{project_id}/induction-template")
+async def get_project_induction_template(
+    project_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """ind2-fix1: read audience = conduct-content readers (SAFETY_WRITERS
+    with project access) OR project-org managers (can_edit)."""
+    org_id, can_edit = await _resolve_project_org_edit(user, project_id)
+    if not can_edit:
+        if user.get("role") not in SAFETY_WRITERS:
+            raise HTTPException(status_code=403, detail="אין הרשאה לצפייה בתוכן הדרכת האתר")
+        await _check_project_access(user, project_id)
+    if not org_id:
+        raise HTTPException(status_code=404, detail="הפרויקט לא נמצא")
+    db = get_db()
+    doc = await db.induction_templates.find_one({"org_id": org_id}, {"_id": 0})
+    return {"template": doc, "can_edit": can_edit}
+
+
+@router.put("/{project_id}/induction-template")
+async def save_project_induction_template(
+    project_id: str,
+    payload: InductionTemplateSave,
+    user: dict = Depends(get_current_user),
+):
+    """ind2-fix1: SAME behavior as the org-level PUT (validation, atomic
+    $inc version upsert, audit, response shape) — org keyed via PROJECT."""
+    org_id, can_edit = await _resolve_project_org_edit(user, project_id)
+    if not org_id:
+        raise HTTPException(status_code=404, detail="הפרויקט לא נמצא")
+    if not can_edit:
+        raise HTTPException(status_code=403, detail="רק בעל הארגון או מנהל ארגון יכולים לערוך את תוכן ההדרכה")
+    sections = _validate_sections(payload)
+    db = get_db()
+    await db.induction_templates.update_one(
+        {"org_id": org_id},
+        {
+            "$set": {
+                "languages.he": {"sections": sections},
+                "updated_at": _now(),
+                "updated_by": user["id"],
+            },
+            "$inc": {"version": 1},
+            "$setOnInsert": {
+                "id": str(uuid.uuid4()),
+                "org_id": org_id,
+                "created_at": _now(),
+            },
+        },
+        upsert=True,
+    )
+    doc = await db.induction_templates.find_one({"org_id": org_id}, {"_id": 0})
+    await _audit("induction_template", doc["id"], "induction_template_saved", user["id"], {
+        "org_id": org_id,
+        "version": doc.get("version"),
+        "sections_count": len(sections),
+    })
+    return {"template": doc, "can_edit": True}

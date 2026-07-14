@@ -25,7 +25,9 @@ const sectionsEqual = (a, b) => {
   return true;
 };
 
-export default function InductionTemplateEditor({ open, onOpenChange }) {
+// ind2-fix1: template is keyed by the PROJECT's org — the same key the
+// conduct ceremony reads. projectId is REQUIRED.
+export default function InductionTemplateEditor({ projectId, open, onOpenChange }) {
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(null);
   const [sections, setSections] = useState([]);
@@ -38,7 +40,7 @@ export default function InductionTemplateEditor({ open, onOpenChange }) {
     if (!open) return;
     setCloseArmed(false);
     setLoading(true);
-    safetyService.getInductionTemplate()
+    safetyService.getInductionTemplate(projectId)
       .then((data) => {
         const tpl = data?.template;
         const secs = tpl?.languages?.he?.sections || [];
@@ -105,7 +107,7 @@ export default function InductionTemplateEditor({ open, onOpenChange }) {
   const save = async () => {
     setSaving(true);
     try {
-      const data = await safetyService.saveInductionTemplate(sections);
+      const data = await safetyService.saveInductionTemplate(projectId, sections);
       const tpl = data?.template;
       const secs = tpl?.languages?.he?.sections || [];
       setVersion(tpl?.version ?? null);

@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '../ui/dialog';
-import { Loader2, GraduationCap, ChevronLeft } from 'lucide-react';
+import { Loader2, GraduationCap, ChevronLeft, X } from 'lucide-react';
 import SafetySignaturePad from './SafetySignaturePad';
 import { safetyService } from '../../services/api';
 
@@ -127,11 +127,22 @@ const SafetyInductionConduct = ({ projectId, worker, open, onClose, onConducted 
       <Dialog open={open} onOpenChange={(v) => { if (!v && !saving) onClose(); }} modal={false}>
         <DialogContent
           dir="rtl"
-          className="max-w-lg w-[95vw] h-[92dvh] max-h-[92dvh] flex flex-col p-0 gap-0"
+          className="max-w-lg w-[95vw] h-[92dvh] max-h-[92dvh] flex flex-col p-0 gap-0 [&>button]:hidden"
           onInteractOutside={(e) => e.preventDefault()}
         >
-          <DialogHeader className="px-4 py-3 border-b border-slate-100 shrink-0">
-            <DialogTitle className="flex items-center gap-2 text-base">
+          {/* ind2-fix1 E3: default Radix X hidden ([&>button]:hidden) — it
+              overlapped the title icon in RTL. House pattern: our own X at
+              the inline-end of a justify-between header row. */}
+          <DialogHeader className="px-4 py-3 border-b border-slate-100 shrink-0 flex flex-row-reverse items-center justify-between space-y-0">
+            <button
+              type="button"
+              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors shrink-0"
+              aria-label="סגור"
+              onClick={() => { if (!saving) onClose(); }}
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <DialogTitle className="flex items-center gap-2 text-base text-right">
               <GraduationCap className="w-5 h-5 text-purple-600" />
               ביצוע הדרכת אתר
             </DialogTitle>

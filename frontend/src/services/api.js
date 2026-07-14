@@ -692,15 +692,18 @@ export const safetyService = {
     );
     return r.data;
   },
-  // Batch safety-ind1 — org induction template (org resolved server-side
-  // from the authenticated user; no org/project in the URL, ever).
-  async getInductionTemplate() {
-    const r = await axios.get(`${API}/safety/induction-template`, { headers: getAuthHeader() });
+  // ind2-fix1 — induction template keyed by the PROJECT's org (the SAME
+  // key the conduct flow uses). Editor and ceremony read/write ONE doc.
+  async getInductionTemplate(projectId) {
+    const r = await axios.get(
+      `${API}/safety/${projectId}/induction-template`,
+      { headers: getAuthHeader() }
+    );
     return r.data;
   },
-  async saveInductionTemplate(sections) {
+  async saveInductionTemplate(projectId, sections) {
     const r = await axios.put(
-      `${API}/safety/induction-template`,
+      `${API}/safety/${projectId}/induction-template`,
       { sections },
       { headers: getAuthHeader() }
     );

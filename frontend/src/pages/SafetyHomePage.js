@@ -395,11 +395,11 @@ export default function SafetyHomePage() {
   // MUST live ABOVE the early returns to keep hook order stable.
   useEffect(() => {
     let cancelled = false;
-    safetyService.getInductionTemplate()
+    safetyService.getInductionTemplate(projectId)
       .then((data) => { if (!cancelled) setInductionCanEdit(data?.can_edit === true); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, []);
+  }, [projectId]);
 
   const toggleExpiryAlerts = async (enabled) => {
     const prev = expiryAlertPref;
@@ -1258,6 +1258,7 @@ export default function SafetyHomePage() {
       />
 
       <InductionTemplateEditor
+        projectId={projectId}
         open={inductionEditorOpen}
         onOpenChange={setInductionEditorOpen}
       />
@@ -1633,14 +1634,16 @@ function WorkersList({ items, isWriter, onEdit, onOpenCard, onInduct }) {
           </div>
           {isWriter && (
             <>
+              {/* ind2-fix1 E4: labeled control instead of a bare icon */}
               <button
                 type="button"
                 aria-label="בצע הדרכת אתר"
                 title="בצע הדרכת אתר"
                 onClick={(e) => { e.stopPropagation(); onInduct(w); }}
-                className="p-1.5 rounded-lg hover:bg-purple-100 text-purple-600 shrink-0"
+                className="px-2 py-1.5 rounded-lg hover:bg-purple-100 text-purple-700 bg-purple-50 border border-purple-100 shrink-0 flex items-center gap-1 max-w-[110px]"
               >
-                <GraduationCap className="w-4 h-4" />
+                <GraduationCap className="w-4 h-4 shrink-0" />
+                <span className="text-xs font-medium truncate">הדרכת אתר</span>
               </button>
               <button
                 type="button"
