@@ -1,0 +1,62 @@
+================================================================================
+PLAN — BATCH fix-annotation-ios-text-3: הסרת היוריסטיקת זיהוי-המקלדת —
+תמיד להצמיד (pin) את שורש העורך ל-visual viewport
+Date: 2026-07-14  |  Branch: staging (base = 2dc7e0b — fix-2 בפנים)
+Scope: frontend/src/components/PhotoAnnotation.js + עדכון מבחן P6 בלבד.
+Status: STEP 0 הושלם — ממתין ל"תתחיל". שום שינוי לא בוצע עדיין.
+================================================================================
+
+RC4 — הסיבה שה-fix הקודם לא "נדלק" (מאומת בקוד)
+--------------------------------------------------------------------------------
+applyRootViewportFit (שורה ~327) שומר gate:
+    const keyboardOpen = v.height < window.innerHeight - 1;   // שורה 331
+באייפון המדווח, window.innerHeight עוקב אחרי ה-visual viewport (מתכווץ
+עם המקלדת) → ההשוואה לעולם לא נכונה → height/transform לא הוחלו →
+השורש נשאר בגובה layout → שורת ה-input נשארה קבורה מאחורי המקלדת.
+ראיה מצילום המסך: ה-canvas כן התכווץ (applyDisplayScale קורא vv ישירות)
+בעוד שאר העורך לא. הזום עצמו — נעלם (fix-2 עובד), רק ה-pin לא הופעל.
+
+E11 — השינוי ההתנהגותי היחיד
+--------------------------------------------------------------------------------
+בתוך applyRootViewportFit:
+  למחוק לחלוטין את ענף ה-keyboardOpen (שורות 331-338 כיום).
+  כל עוד visualViewport קיים — תמיד:
+      root.style.height    = v.height + 'px';
+      root.style.transform = 'translateY(' + v.offsetTop + 'px)';
+  אין שחזור ל-'' על "מקלדת סגורה" — כשהמקלדת סגורה vv.height ≈ הגובה
+  הנראה המלא, כך שה-pin זהה חזותית ל-inset-0. השחזור ל-'' נשאר אך ורק
+  ב-cleanup של ה-effect (unmount / מחזור loaded).
+  E9 (window.scrollTo(0,0) כש-scrollY!==0) — ללא שינוי.
+  שום לוגיקה אחרת לא נגעת: listeners (vv resize/scroll + window resize),
+  onViewportChange, applyDisplayScale, getPos — הכל נשאר כמו fix-2.
+
+רציונל: אפס היוריסטיקות — העורך תמיד תופס בדיוק את ה-viewport הנראה,
+מה שה-OS לא יעשה עם מקלדות/סרגלי כתובת. דסקטופ/אנדרואיד: vv.height
+שווה ל-viewport המלא → אין שינוי נראה.
+
+אימות (VERIFY)
+--------------------------------------------------------------------------------
+V1  עדכון מבחן P6 בקובץ הקיים:
+    - resize עם גובה מוקטן (400/offsetTop 25) → height '400px',
+      transform 'translateY(25px)'  (כמו היום)
+    - resize חזרה לגובה מלא → height שווה ל-'<גובה מלא>px' (לא '')
+    - cleanup/unmount → הסגנונות משוחזרים ל-'' וה-listeners מוסרים
+    - חמשת מבחני ה-pending-text (P1-P5) ללא שינוי — 6/6 בסך הכל
+V2  craco build EXIT=0, 0 אזהרות; house greps נקיים (בלי window.confirm /
+    localStorage / native select / WebkitOverflowScrolling; בלי deps).
+V3  מכשיר (זהי — שער הקבלה, Safari על staging):
+    כלי טקסט → הקשה על תמונה → מקלדת נפתחת → התמונה מתכווצת ושורת
+    ה-input + אישור + שמור/בטל כולם נראים מעל המקלדת בזמן הקלדה;
+    בלי זום, בלי pan; אישור → ה-pill נוחת נכון; סגירת מקלדת → העורך
+    חוזר למסך מלא; פעם אחת ב-landscape; בדיקת שפיות אנדרואיד.
+
+תוצרים (DELIVERABLES)
+--------------------------------------------------------------------------------
+- review.txt (נקרא ואז נדרס) עם diff + פלטי V1-V2, מסתיים
+  "AWAITING ZAHI APPROVAL — DO NOT DEPLOY"
+- .local/.commit_message בנוסח שסופק במפרט
+- ביקורת ארכיטקט לפני הכתיבה
+- present_asset(review.txt) ועצירה — בלי deploy, בלי mark complete
+
+AWAITING "תתחיל"
+================================================================================

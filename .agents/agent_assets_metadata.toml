@@ -780,3 +780,9 @@ id = "OTQZPuu8liZiqiQbFCrRg"
 uri = "file://plan_fix_annotation_ios_text.txt"
 type = "text"
 title = "PLAN — BATCH fix-annotation-ios-text v2.1"
+
+[[outputs]]
+id = "jmfwKah95w_s4Cah4F5I_"
+uri = "file://plan_fix_annotation_ios_text_3.txt"
+type = "text"
+title = "תוכנית — BATCH fix-annotation-ios-text-3"
