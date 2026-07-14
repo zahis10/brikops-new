@@ -96,6 +96,14 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
   // an in-progress label without stale closures. Same pattern as colorRef.
   const pendingTextRef = useRef(null);
 
+  // BATCH fix-annotation-ios-text-2 (2026-07-13) — RC3: the fixed inset-0
+  // root is LAYOUT-viewport sized; iOS keyboards don't shrink the layout
+  // viewport, so the focused label input sat behind the keyboard and
+  // Safari force-revealed it by panning/ZOOMING the visual viewport (the
+  // field-reported zoom's primary mechanism). rootRef lets the keyboard
+  // handler compress the whole editor into the VISIBLE viewport instead.
+  const rootRef = useRef(null);
+
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
   useEffect(() => { onDiscardRef.current = onDiscard; }, [onDiscard]);
@@ -306,16 +314,55 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
     if (!loaded) return;
 
     const vv = window.visualViewport;
+    const rootEl = rootRef.current;
+
+    // BATCH fix-annotation-ios-text-2 (2026-07-13) — E8/E9: sibling handler
+    // in the SAME effect (reported in review). While the keyboard is open
+    // (vv.height < layout height), pin the editor root to the visual
+    // viewport: height = vv.height, translateY(vv.offsetTop). The input is
+    // then on-screen by construction → Safari's focus-reveal logic has
+    // nothing to pan/zoom. Keyboard close (or cleanup) restores ''.
+    // E9: any document scroll while the fullscreen editor is open is OS
+    // residue — snap back to 0 to keep layout+visual aligned.
+    const applyRootViewportFit = () => {
+      const root = rootRef.current;
+      if (!root || !window.visualViewport) return;
+      const v = window.visualViewport;
+      const keyboardOpen = v.height < window.innerHeight - 1;
+      if (keyboardOpen) {
+        root.style.height = v.height + 'px';
+        root.style.transform = 'translateY(' + v.offsetTop + 'px)';
+      } else {
+        root.style.height = '';
+        root.style.transform = '';
+      }
+      if (window.scrollY !== 0) window.scrollTo(0, 0);
+    };
+
+    const onViewportChange = () => {
+      applyRootViewportFit();
+      applyDisplayScale();
+    };
+
     if (vv) {
-      vv.addEventListener('resize', applyDisplayScale);
+      vv.addEventListener('resize', onViewportChange);
+      // offsetTop changes on OS pans without a resize — same fit handler.
+      vv.addEventListener('scroll', applyRootViewportFit);
     }
-    window.addEventListener('resize', applyDisplayScale);
+    window.addEventListener('resize', onViewportChange);
 
     return () => {
       if (vv) {
-        vv.removeEventListener('resize', applyDisplayScale);
+        vv.removeEventListener('resize', onViewportChange);
+        vv.removeEventListener('scroll', applyRootViewportFit);
       }
-      window.removeEventListener('resize', applyDisplayScale);
+      window.removeEventListener('resize', onViewportChange);
+      // rootEl captured at effect setup (eslint react-hooks/exhaustive-deps:
+      // rootRef.current may differ by cleanup time).
+      if (rootEl) {
+        rootEl.style.height = '';
+        rootEl.style.transform = '';
+      }
     };
   }, [loaded, applyDisplayScale]);
 
@@ -710,7 +757,7 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
   }, [saving, redraw, buildTextStroke]);
 
   const content = (
-    <div className="fixed inset-0 bg-black flex flex-col h-dvh-fallback" dir="rtl"
+    <div ref={rootRef} className="fixed inset-0 bg-black flex flex-col h-dvh-fallback" dir="rtl"
          style={{ zIndex: 10001, pointerEvents: 'auto', touchAction: 'manipulation' }}
 >
       {!loaded && (

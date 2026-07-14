@@ -274,6 +274,73 @@ test('P3: typed-but-uncommitted label + X → confirm modal, no silent close', a
   await m.unmount();
 });
 
+test('P6 (batch-2 E8/E9): visualViewport resize compresses editor root; restore clears it', async () => {
+  // Minimal visualViewport mock — must exist BEFORE mount (the effect
+  // captures window.visualViewport once per loaded-cycle).
+  const listeners = {};
+  const vv = {
+    width: 1024,
+    height: window.innerHeight, // full → keyboard closed
+    offsetTop: 0,
+    addEventListener: (type, fn) => {
+      (listeners[type] = listeners[type] || []).push(fn);
+    },
+    removeEventListener: (type, fn) => {
+      listeners[type] = (listeners[type] || []).filter((f) => f !== fn);
+    },
+  };
+  const fire = (type) =>
+    act(() => {
+      (listeners[type] || []).forEach((fn) => fn());
+    });
+  window.visualViewport = vv;
+  window.scrollTo = jest.fn();
+
+  try {
+    const m = await mount({
+      imageFile: makeFile(),
+      onSave: jest.fn(),
+      onDiscard: jest.fn(),
+    });
+    const root = q('div.fixed.inset-0[dir="rtl"]');
+    expect(root).toBeTruthy();
+    expect(listeners.resize?.length).toBeGreaterThan(0);
+    expect(listeners.scroll?.length).toBeGreaterThan(0);
+
+    // Keyboard opens: vv shrinks + OS pans.
+    vv.height = 400;
+    vv.offsetTop = 25;
+    fire('resize');
+    expect(root.style.height).toBe('400px');
+    expect(root.style.transform).toBe('translateY(25px)');
+
+    // OS pan without resize → scroll event updates the transform.
+    vv.offsetTop = 40;
+    fire('scroll');
+    expect(root.style.transform).toBe('translateY(40px)');
+
+    // E9: residual document scroll snaps back to 0.
+    Object.defineProperty(window, 'scrollY', { value: 33, configurable: true });
+    fire('scroll');
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+
+    // Keyboard closes: full height restores ''.
+    vv.height = window.innerHeight;
+    vv.offsetTop = 0;
+    fire('resize');
+    expect(root.style.height).toBe('');
+    expect(root.style.transform).toBe('');
+
+    // Unmount removes the listeners.
+    await m.unmount();
+    expect(listeners.resize.length).toBe(0);
+    expect(listeners.scroll.length).toBe(0);
+  } finally {
+    delete window.visualViewport;
+  }
+});
+
 test('P4: empty pending input + X → closes immediately (no modal)', async () => {
   const onSave = jest.fn();
   const onDiscard = jest.fn();

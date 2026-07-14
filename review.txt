@@ -1,210 +1,132 @@
 ================================================================================
-REVIEW — BATCH fix-annotation-ios-text v2.1: commit pending text on save/
-discard-guard + suppress iOS double-tap zoom on the annotation editor chrome
-Date: 2026-07-13  |  Branch: staging (base 536132a)  |  FRONTEND ONLY (P0)
-Scope: PhotoAnnotation.js only (OTA-able via Capgo — zero native changes)
-       + NEW unit probe file. No parent components, no ios/, no config,
-       no deps touched.
+REVIEW — BATCH fix-annotation-ios-text-2: keyboard-aware editor height —
+eliminate the iOS focus-reveal pan/zoom (RC3, the primary zoom vector)
+Date: 2026-07-14  |  Branch: staging (base 81eac8b — v2.1 in)  |  FRONTEND ONLY
+Scope: PhotoAnnotation.js + extended existing unit-probe file (OTA-able —
+       zero native changes). No parents, no ios/, no config, no deps touched.
 ================================================================================
 
-STEP 0 — PRE-FLIGHT (reported earlier, "תתחיל" received)
+STEP 0 — PRE-FLIGHT (reported, "תתחיל" received)
 --------------------------------------------------------------------------------
-  [OK] RC1 verified line-by-line: handleSave flushed only the in-progress
-       FREEHAND stroke, ignored pendingText entirely → label-only session
-       hit hasAnnotations=false → onSave(null, false) → parent
-       (NewDefectModal.handlePendingAnnotationSave else-branch) attached
-       the RAW photo. Exactly the field report.
-  [OK] RC1-discard: handleDiscard gated on strokesRef.current.length only →
-       typed-but-uncommitted label closed silently via X too.
-  [OK] RC2 verified: viewport swap (~line 108) lacked viewport-fit=cover
-       (present in index.html:5); touchAction existed ONLY on the canvas
-       container + canvas ('none'); no ignoresViewportScaleLimits anywhere
-       under frontend/ios/ or capacitor.config.json.
-  [OK] Implementation anchors: ref-sync idiom block; commitPendingText
-       editingIndex replace/append; pendingText shape {x,y,value,editingIndex?}.
-  Zero mismatches vs spec. HEAD diff from 922edfe (spec's verification base)
-  was documentation-only — no drift in the touched code paths.
+  [OK] RC3 verified in code: root overlay = fixed inset-0 h-dvh-fallback →
+       LAYOUT-viewport height; no ref, no keyboard adjustment anywhere. The
+       pending-text input sits at the bottom of the flex column →
+       geometrically behind the iOS keyboard → Safari focus-reveal pan/zoom.
+       Matches Zahi's device observation exactly (fires on keyboard open).
+  [OK] Existing F-keyboard effect listens only vv 'resize' + window 'resize'
+       and calls only applyDisplayScale. No vv 'scroll' listener, no
+       rootRef, no scrollTo anywhere in the file — E8/E9 conflict-free.
+  [OK] getPos is rect-based (getBoundingClientRect + scaleRef) — indifferent
+       to root height changes. applyDisplayScale internals untouched.
 
-WHAT CHANGED (git diff --stat)
+WIRING DECISION (as the spec asked to report)
 --------------------------------------------------------------------------------
- frontend/src/components/PhotoAnnotation.js | 73 +++++++++++++-------
-   (57 insertions, 16 deletions — comments included)
- NEW frontend/src/components/__tests__/PhotoAnnotation.pendingtext.test.js
-   (V1 probe, 5 tests, no new dependencies)
+  A SIBLING handler (applyRootViewportFit) inside the SAME existing effect
+  that wires applyDisplayScale — not folded into applyDisplayScale itself
+  (keeps its internals untouched per DO-NOT-TOUCH). Event map:
+    vv 'resize'    → onViewportChange = applyRootViewportFit + applyDisplayScale
+    vv 'scroll'    → applyRootViewportFit only (offsetTop pans, no resize)
+    window 'resize'→ onViewportChange (desktop/no-vv path, unchanged behavior)
+  Keyboard-open detection: vv.height < window.innerHeight - 1 (1px slack).
+  Cleanup removes all three listeners and restores height/transform to ''
+  via rootEl captured at effect setup (eslint react-hooks safe).
 
-EDITS E1-E7 (all in PhotoAnnotation.js)
+EDITS (PhotoAnnotation.js — the only app file changed)
 --------------------------------------------------------------------------------
-  E1  pendingTextRef + sync effect appended to the existing ref-mirror block
-      (same idiom as colorRef/strokesRef/toolRef/textSizeRef).
-  E2  buildTextStroke(curr) extracted from commitPendingText — color/size
-      still captured at COMMIT time, _bbox still omitted (next redraw
-      repopulates). commitPendingText now calls it; behavior byte-identical.
-  E3  handleSave: after the existing freehand flush and BEFORE the
-      hasAnnotations computation — pending-label flush (mirror structure):
-      non-empty pendingText → buildTextStroke → editingIndex REPLACE /
-      else APPEND → setStrokes + setPendingText(null) + redraw. Semantics:
-      "שמור while a non-empty label is typed" = the label IS committed
-      and saved. (textSize reset stays confirm-path-only — save closes
-      the editor anyway.)
-  E4  handleDiscard confirm condition:
-        strokesRef.current.length > 0 || !!pendingTextRef.current?.value.trim()
-      confirmDiscard unchanged. Empty input + X still closes immediately.
-  E5  touchAction:'manipulation' added to (a) the ROOT fixed inset-0 overlay
-      and (b) the pending-text input row. Canvas KEEPS 'none'. fontSize:16
-      input and the viewport swap kept as-is (defense in depth / Android).
-  E6  Stale comment above the input updated: focus-zoom vs double-tap-zoom
-      vectors + why manipulation sits on the root.
-  E7  Viewport swap string now: 'width=device-width, initial-scale=1,
-      maximum-scale=1, user-scalable=no, viewport-fit=cover' (restores
-      notch/safe-area insets while the editor is open). Restore-on-unmount
-      path unchanged.
+  E8  rootRef added to the fixed inset-0 overlay div (~line 761).
+      applyRootViewportFit: keyboard open → root.style.height = vv.height px,
+      root.style.transform = translateY(vv.offsetTop px); keyboard closed
+      (vv.height back to full) → both restored to ''. Also on vv 'scroll'.
+      Result: the WHOLE editor (toolbar, canvas, input row, footer)
+      compresses into the visible viewport above the keyboard; the focused
+      input is on-screen by construction → nothing for Safari to reveal →
+      no pan, no zoom. Canvas keeps rescaling via applyDisplayScale
+      (called AFTER the fit on each resize).
+  E9  Residual-pan guard in the same handler: if (window.scrollY !== 0)
+      window.scrollTo(0, 0). No-op when already 0.
+  E10 All v2.1 changes retained verbatim (pending-text flush, discard
+      guard, touchAction manipulation, viewport-fit=cover, 16px input).
+      Diff shows zero removals outside the listener rewiring.
 
-FULL DIFF (PhotoAnnotation.js — functional hunks)
+DIFF SUMMARY
 --------------------------------------------------------------------------------
-@@ ref block
-+  const pendingTextRef = useRef(null);
-   ...
-+  useEffect(() => { pendingTextRef.current = pendingText; }, [pendingText]);
+ frontend/src/components/PhotoAnnotation.js         | 57 +++++++++++++++--
+ .../__tests__/PhotoAnnotation.pendingtext.test.js  | 67 ++++++++++++++++++
+ 2 files changed, 119 insertions(+), 5 deletions(-)
 
-@@ viewport swap
--      viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
-+      viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
-
-@@ handleDiscard
--    if (strokesRef.current.length > 0) {
-+    if (strokesRef.current.length > 0 || !!pendingTextRef.current?.value.trim()) {
-
-@@ buildTextStroke (extracted; commitPendingText now: const textStroke = buildTextStroke(curr);)
-+  const buildTextStroke = useCallback((curr) => ({
-+    type: 'text',
-+    color: colorRef.current,
-+    size: textSizeRef.current,
-+    x: curr.x,
-+    y: curr.y,
-+    text: curr.value.trim(),
-+  }), []);
-
-@@ handleSave (after freehand flush, before hasAnnotations)
-+    const pt = pendingTextRef.current;
-+    if (pt && pt.value.trim()) {
-+      const textStroke = buildTextStroke(pt);
-+      if (typeof pt.editingIndex === 'number') {
-+        strokesRef.current = strokesRef.current.map((s, i) =>
-+          i === pt.editingIndex ? textStroke : s
-+        );
-+      } else {
-+        strokesRef.current = [...strokesRef.current, textStroke];
-+      }
-+      setStrokes([...strokesRef.current]);
-+      setPendingText(null);
-+      redraw([...strokesRef.current]);
-+    }
-
-@@ root overlay
--         style={{ zIndex: 10001, pointerEvents: 'auto' }}
-+         style={{ zIndex: 10001, pointerEvents: 'auto', touchAction: 'manipulation' }}
-
-@@ pending input row
--             style={{ position: 'relative', zIndex: 20 }}>
-+             style={{ position: 'relative', zIndex: 20, touchAction: 'manipulation' }}
-
-  useCallback deps updated: commitPendingText / handleSave += buildTextStroke
-  (stable, [] deps — no identity churn).
+ Key hunks (PhotoAnnotation.js):
+ @@ -96 +96,14: + const rootRef = useRef(null);  (with RC3 comment)
+ @@ -306 +314,55: existing vv effect gains applyRootViewportFit sibling,
+   onViewportChange composition, vv 'scroll' listener, cleanup restore:
+   +    const applyRootViewportFit = () => {
+   +      const root = rootRef.current;
+   +      if (!root || !window.visualViewport) return;
+   +      const v = window.visualViewport;
+   +      const keyboardOpen = v.height < window.innerHeight - 1;
+   +      if (keyboardOpen) {
+   +        root.style.height = v.height + 'px';
+   +        root.style.transform = 'translateY(' + v.offsetTop + 'px)';
+   +      } else {
+   +        root.style.height = '';
+   +        root.style.transform = '';
+   +      }
+   +      if (window.scrollY !== 0) window.scrollTo(0, 0);
+   +    };
+   +    const onViewportChange = () => {
+   +      applyRootViewportFit();
+   +      applyDisplayScale();
+   +    };
+   (listeners: vv resize→onViewportChange, vv scroll→applyRootViewportFit,
+    window resize→onViewportChange; cleanup removes all + restores styles)
+ @@ -710 +757: root div gains ref={rootRef} (className/style unchanged)
 
 VERIFY
 --------------------------------------------------------------------------------
-V1  UNIT PROBE — frontend/src/components/__tests__/
-    PhotoAnnotation.pendingtext.test.js
-    Tooling (as promised to be reported): CRA jest 27 + jsdom via
-    `craco test` — NO new dependency. @testing-library is NOT installed in
-    this repo, so the probe uses React 19's own act() + createRoot + native
-    DOM events (mousedown/mouseup/click/input). jsdom gaps mocked in-file:
-    window.Image (fires onload async, 800x600), URL.createObjectURL,
-    HTMLCanvasElement.getContext (Proxy stub logging every 2d call —
-    enables per-redraw fillText counting), toBlob (sync fake JPEG blob).
-    ENV NOTE: the optional npm `canvas` package (transitive dep of
-    pdfjs-dist) is require()d eagerly by jsdom and its prebuilt binary
-    needs libuuid.so.1, absent from the default library path here. Fixed
-    at RUN TIME ONLY: LD_LIBRARY_PATH=<nix util-linux lib dir> on the test
-    command. Zero repo/config changes for this.
+V1  NEW unit probe P6 (same file, mocked visualViewport injected pre-mount):
+      resize with height=400/offsetTop=25 → root height '400px',
+        transform 'translateY(25px)'
+      vv 'scroll' with offsetTop=40 (no resize) → transform updates
+      scrollY=33 + scroll event → window.scrollTo(0,0) called (E9)
+      height back to full → both styles restored to ''
+      unmount → resize+scroll listeners removed (count 0)
+    ✓ P6 passed (43 ms)
+V2  Existing 5 pending-text probes unchanged and passing:
+      ✓ P1 label-only save  ✓ P2 edit-replace  ✓ P5 no double-commit
+      ✓ P3 discard modal    ✓ P4 empty close
+    Tests: 6 passed, 6 total  |  Test Suites: 1 passed  |  0 act-warnings
+V3  craco build EXIT=0, 0 warnings (an interim eslint react-hooks warning
+    about ref-in-cleanup was fixed by capturing rootEl at effect setup;
+    final build fully clean). main.836b7685.js 207.13 kB gzip (-59 B).
+    House greps clean: no window.confirm / localStorage / native select /
+    WebkitOverflowScrolling; no new deps; no ios//android/ changes.
+V4  DEVICE (Zahi — acceptance gate, Safari on staging):
+    text tool → tap image → keyboard opens → NO zoom, NO pan; photo
+    (compressed) + input row + שמור/בטל all visible above the keyboard;
+    type + אישור → pill lands where tapped; close keyboard → editor
+    returns to full height; drawing afterwards still accurate.
+    Repeat once in landscape. Android sanity: unchanged (adjustResize
+    already keeps the input visible; handler restores '' at full height).
 
-    RESULT — 5/5 PASS (exit 0, no act() warnings):
-      ✓ P1: label-only pending text is flushed on save → onSave(File, true),
-            NOT (null, false)                                   (126 ms)
-      ✓ P2: saving while editing an existing label REPLACES it (no duplicate
-            stroke) — verified by exactly ONE fillText('תווית מעודכנת') in
-            the final redraw cycle; prefilled input proved edit mode  (96 ms)
-      ✓ P5: commit (אישור) immediately followed by שמור → no double-commit,
-            single label (architect-suggested hardening)         (79 ms)
-      ✓ P3: typed-but-uncommitted label + X → confirm modal
-            ('לבטל את כל השינויים ולסגור?'), onDiscard NOT called (59 ms)
-      ✓ P4: empty pending input + X → closes immediately, no modal (45 ms)
-    Test Suites: 1 passed | Tests: 5 passed | exit 0
-
-V2  Covered by P3+P4 above (jsdom DOM assertions on the real component).
-V3  Confirm-path unchanged: P2/P5 exercise the real commitPendingText path
-    (אישור button) end-to-end in jsdom — commit → pill rendered (fillText)
-    → save. Code-level: commitPendingText behavior byte-identical (E2 is a
-    pure extraction; verified in diff above).
-V4  touch-action layering: root overlay + input row = 'manipulation';
-    canvas/container keep 'none' (grep-verified, diff above); canvas
-    draw/drag/edit still work — P2 drives real mouse events through the
-    canvas listeners (tap→pendingText, tap-on-label→edit) and passes.
-    Swapped viewport string contains viewport-fit=cover (diff above).
-    NOTE: true double-tap gesture behavior is not simulatable in jsdom or
-    a static screenshot — the WebKit gesture layer exists only on device.
-    Honest status: DevTools before/after screenshots of the zoom gesture
-    are NOT reproducible in this environment (no interactive browser);
-    the WebKit-honored mechanism (touch-action: manipulation) is the
-    documented layer and is asserted present at the right nodes. Final
-    word = V7 on your iPhone.
-V5  Desktop-mouse paths regression: P1/P2/P5 drive the REAL canvas mouse
-    listeners (mousedown/mouseup) — text placement, edit-tap hit-test,
-    commit, save all pass. Freehand flush path untouched (diff shows
-    insertion strictly AFTER it). Undo untouched.
-V6  BUILD: cd frontend && CI=false GENERATE_SOURCEMAP=false
-    REACT_APP_BACKEND_URL=https://api.brikops.com npx craco build
-    → EXIT=0, ZERO warnings (grep -c "warning" build log = 0; eslint
-    react-hooks/exhaustive-deps satisfied — deps arrays updated).
-    HOUSE GREPS on both files: window.confirm / localStorage / native
-    <select> / WebkitOverflowScrolling → 0 functional hits (only the
-    pre-existing comments DESCRIBING the window.confirm replacement).
-    Backend untouched → backend probes not run (out of scope).
-
-ARCHITECT REVIEW — PASS
+ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-  "Pass — the PhotoAnnotation changes do accomplish the stated P0 objective."
-  - RC1 fixed correctly (flush before hasAnnotations; replace/append mirrors
-    commitPendingText; discard guard covers pending text).
-  - RC2 mitigation as specified; canvas keeps 'none'; viewport-fit=cover
-    preserved.
-  - "Freehand flush + pending-text flush ordering in handleSave is sound";
-    no drag/edit (F.1a-c) regression evident; residual ref/state timing
-    window deemed non-blocking ("no deterministic failure path in normal
-    event sequencing").
-  - Security: none observed.
-  - Suggested hardening test (Enter/אישור then שמור) → IMPLEMENTED as P5,
-    passes. Device double-tap validation → deferred to V7 (yours).
+  Verdict: PASS. Highlights: fit logic correct and scoped; listener
+  wiring/cleanup sound; E10 constraint compliance confirmed (getPos/
+  scaleRef/applyDisplayScale untouched); ordering fit-before-rescale on
+  resize is sensible; regression coverage improved. No security concerns.
+  Non-blocking suggestion only: throttle scrollTo if jitter ever appears
+  on specific iOS versions (not applied — spec says no-op guard suffices;
+  can revisit if V4 shows jitter).
 
-V7 — YOUR DEVICE GATE (iPhone, staging app)
+RISK / NOTES
 --------------------------------------------------------------------------------
-  1. פתח תמונה בעורך → הקלד תווית → לחץ שמור בלי אישור → התמונה שנשמרת
-     מכילה את התווית.
-  2. הקלד תווית → לחץ X → מודל "לבטל את כל השינויים ולסגור?" מופיע.
-  3. דאבל-טאפ על הבר העליון/התחתון/שורת הקלט → אין זום.
-  4. ציור חופשי + תווית יחד → שניהם בתמונה השמורה.
-  5. sanity אנדרואיד: פתיחת עורך, שמירה, אין רגרסיה.
-
-NOTES / DEVIATIONS
---------------------------------------------------------------------------------
-  - P5 test added beyond spec (architect suggestion) — same file, no deps.
-  - LD_LIBRARY_PATH workaround is command-line-only for running the probe
-    locally; nothing committed. If CI ever runs `craco test`, the same env
-    var (or installing libuuid) will be needed — flagging for the deploy
-    pipeline owner (you).
-  - Before/after screenshots of the zoom gesture: not technically possible
-    headlessly (see V4 note). All other promised outputs delivered.
-  - Files touched: EXACTLY PhotoAnnotation.js + the new test file. Parents,
-    ios/, android/, config, deps — untouched (git status verified).
+  - transform on the fixed root creates a containing block for inner
+    fixed/absolute descendants — all editor children are already absolutely
+    positioned relative to the root or in-flow, so no layout change when
+    transform is '' (keyboard closed = 99% of lifetime).
+  - Desktop/no-visualViewport browsers: applyRootViewportFit early-returns;
+    behavior identical to v2.1.
+  - Orientation change with keyboard open: vv fires resize → fit re-applies
+    with the new dimensions (V4 includes a landscape pass).
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================
