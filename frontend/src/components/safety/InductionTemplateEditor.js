@@ -27,7 +27,11 @@ const sectionsEqual = (a, b) => {
 
 // ind2-fix1: template is keyed by the PROJECT's org — the same key the
 // conduct ceremony reads. projectId is REQUIRED.
-export default function InductionTemplateEditor({ projectId, open, onOpenChange }) {
+// ind2-fix3 D2: canEdit=false → read-only view (no inputs/reorder/save/
+// starter) + contact notice; dirty-guard only in edit mode.
+const READ_ONLY_NOTICE = 'לשינויים יש לפנות לבעל הארגון או למנהל הפרויקט';
+
+export default function InductionTemplateEditor({ projectId, canEdit = false, open, onOpenChange }) {
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(null);
   const [sections, setSections] = useState([]);
@@ -54,7 +58,7 @@ export default function InductionTemplateEditor({ projectId, open, onOpenChange 
       .finally(() => setLoading(false));
   }, [open, projectId]);
 
-  const dirty = !sectionsEqual(sections, loadedSections);
+  const dirty = canEdit && !sectionsEqual(sections, loadedSections);
 
   const requestClose = () => {
     if (dirty && !closeArmed) {
@@ -161,7 +165,7 @@ export default function InductionTemplateEditor({ projectId, open, onOpenChange 
             </div>
           )}
 
-          {emptyState && (
+          {emptyState && canEdit && (
             <div className="border border-dashed border-slate-300 rounded-xl p-6 text-center space-y-3">
               <p className="text-sm text-slate-600">
                 עדיין לא הוגדר תוכן הדרכת אתר לארגון. אפשר להתחיל מתבנית לדוגמה
@@ -174,7 +178,30 @@ export default function InductionTemplateEditor({ projectId, open, onOpenChange 
             </div>
           )}
 
-          {!loading && sections.map((s, idx) => (
+          {emptyState && !canEdit && (
+            <div className="border border-dashed border-slate-300 rounded-xl p-6 text-center">
+              <p className="text-sm text-slate-600">טרם הוגדר תוכן הדרכת אתר</p>
+            </div>
+          )}
+
+          {!loading && !canEdit && (
+            <>
+              {sections.map((s, idx) => (
+                <div key={idx} className="border border-slate-200 rounded-xl p-3 space-y-1 bg-slate-50/50">
+                  <div className="flex items-start gap-2">
+                    <span className="text-xs font-semibold text-slate-400 shrink-0 w-6 text-center pt-0.5">{idx + 1}</span>
+                    <p className="text-sm font-semibold text-slate-900">{s.title}</p>
+                  </div>
+                  <p className="text-sm text-slate-700 whitespace-pre-wrap pr-8">{s.body}</p>
+                </div>
+              ))}
+              <div className="rounded-xl bg-blue-50 border border-blue-100 px-4 py-3">
+                <p className="text-xs text-blue-800 text-center">{READ_ONLY_NOTICE}</p>
+              </div>
+            </>
+          )}
+
+          {!loading && canEdit && sections.map((s, idx) => (
             <div key={idx} className="border border-slate-200 rounded-xl p-3 space-y-2 bg-slate-50/50">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-slate-400 shrink-0 w-6 text-center">{idx + 1}</span>
@@ -225,7 +252,7 @@ export default function InductionTemplateEditor({ projectId, open, onOpenChange 
             </div>
           ))}
 
-          {!loading && (
+          {!loading && canEdit && (
             <Button type="button" variant="outline" className="w-full" onClick={addSection}>
               <Plus className="w-4 h-4 ml-1" />
               הוסף סעיף
@@ -234,15 +261,17 @@ export default function InductionTemplateEditor({ projectId, open, onOpenChange 
         </div>
 
         <DialogFooter className="px-5 py-3 border-t border-slate-100 bg-slate-50 flex flex-row-reverse items-center gap-2 sm:justify-start">
-          <Button
-            type="button"
-            onClick={save}
-            disabled={saving || loading || sections.length === 0}
-            className="min-h-[44px] min-w-[96px]"
-          >
-            {saving && <Loader2 className="w-4 h-4 ml-1 animate-spin" />}
-            שמור
-          </Button>
+          {canEdit && (
+            <Button
+              type="button"
+              onClick={save}
+              disabled={saving || loading || sections.length === 0}
+              className="min-h-[44px] min-w-[96px]"
+            >
+              {saving && <Loader2 className="w-4 h-4 ml-1 animate-spin" />}
+              שמור
+            </Button>
+          )}
           <Button type="button" variant="outline" disabled={saving} className="min-h-[44px]" onClick={requestClose}>
             סגור
           </Button>

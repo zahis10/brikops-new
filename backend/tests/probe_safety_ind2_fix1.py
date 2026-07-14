@@ -71,7 +71,9 @@ async def main():
     ownb_id = f"probe-if1-ownb-{tag}"  # plain owner of org B, NO project membership
     adm_id = f"probe-if1-adm-{tag}"    # org_admin in org B
     bil_id = f"probe-if1-bil-{tag}"    # billing_admin in org B
-    pm_id = f"probe-if1-pm-{tag}"      # PM, plain member of B + project member
+    pm_id = f"probe-if1-pm-{tag}"      # PM, plain org member of B + PROJECT MANAGER of proj (fix3: can_edit)
+    pmn_id = f"probe-if1-pmn-{tag}"    # PM, org member of B, NO project membership
+    mt_id = f"probe-if1-mt-{tag}"      # management_team, project member (read-only)
     con_id = f"probe-if1-con-{tag}"    # contractor, project member
     sup_id = f"probe-if1-sup-{tag}"    # platform super_admin, NO memberships at all
     w1 = f"probe-if1-w1-{tag}"
@@ -88,6 +90,7 @@ async def main():
         (ed_id, "project_manager"), (ownb_id, "project_manager"),
         (adm_id, "project_manager"), (bil_id, "project_manager"),
         (pm_id, "project_manager"), (con_id, "contractor"),
+        (pmn_id, "project_manager"), (mt_id, "management_team"),
     ]
     await db.users.insert_many([
         {"id": uid, "role": role, "full_name": f"משתמש {i}", "user_status": "active",
@@ -107,6 +110,8 @@ async def main():
         {"id": f"if1-om4-{tag}", "org_id": org_b, "user_id": bil_id, "role": "billing_admin"},
         {"id": f"if1-om5-{tag}", "org_id": org_b, "user_id": pm_id, "role": "member"},
         {"id": f"if1-om6-{tag}", "org_id": org_b, "user_id": con_id, "role": "member"},
+        {"id": f"if1-om7-{tag}", "org_id": org_b, "user_id": pmn_id, "role": "member"},
+        {"id": f"if1-om8-{tag}", "org_id": org_b, "user_id": mt_id, "role": "member"},
     ])
     await db.projects.insert_one(
         {"id": proj, "org_id": org_b, "name": f"פרויקט הדמו {tag}", "status": "active"})
@@ -115,7 +120,13 @@ async def main():
         {"id": f"if1-pm2-{tag}", "project_id": proj, "user_id": pm_id, "role": "project_manager"},
         {"id": f"if1-pm3-{tag}", "project_id": proj, "user_id": con_id, "role": "contractor"},
         {"id": f"if1-pm4-{tag}", "project_id": proj, "user_id": adm_id, "role": "project_manager"},
-        {"id": f"if1-pm5-{tag}", "project_id": proj, "user_id": bil_id, "role": "project_manager"},
+        # fix3: bil's PROJECT role is now management_team (reader, NOT
+        # project_manager) — the D1 exclusion is tested on the ORG path;
+        # only a real project_manager row grants edit. Note:
+        # _check_project_access requires role in {project_manager,
+        # management_team}; plain "member" has no safety read access.
+        {"id": f"if1-pm5-{tag}", "project_id": proj, "user_id": bil_id, "role": "management_team"},
+        {"id": f"if1-pm6-{tag}", "project_id": proj, "user_id": mt_id, "role": "management_team"},
     ])
     await db.safety_workers.insert_one(
         {"id": w1, "project_id": proj, "full_name": "עובד דמו", "deletedAt": None,
@@ -182,11 +193,11 @@ async def main():
         r = await c.get(NEW, headers=hdrs[bil_id])
         record("V2d billing_admin GET can_edit=false (D1 exclusion)",
                r.status_code == 200 and r.json().get("can_edit") is False)
-        r = await c.get(NEW, headers=hdrs[pm_id])
-        record("V2e plain PM member GET 200 can_edit=false",
-               r.status_code == 200 and r.json().get("can_edit") is False)
-        r = await c.put(NEW, json={"sections": sections(1, "פורץ")}, headers=hdrs[pm_id])
-        record("V2f plain PM PUT → 403 עברית",
+        r = await c.get(NEW, headers=hdrs[pmn_id])
+        record("V2e PM NON-member GET → 403 (no project access)",
+               r.status_code == 403, f"status={r.status_code}")
+        r = await c.put(NEW, json={"sections": sections(1, "פורץ")}, headers=hdrs[pmn_id])
+        record("V2f PM NON-member PUT → 403 עברית",
                r.status_code == 403 and heb(r.json().get("detail")))
         r = await c.put(NEW, json={"sections": sections(1, "חיוב")}, headers=hdrs[bil_id])
         record("V2g billing_admin PUT → 403", r.status_code == 403)
@@ -240,6 +251,37 @@ async def main():
         r = await c.get("/api/safety/no-such-project/induction-template", headers=sup_h)
         record("V4e super_admin on unknown project → 403/404 (contract locked)",
                r.status_code in (403, 404), f"status={r.status_code}")
+
+        # ---------------- V5 — fix3: PM edits, MT read-only ----------------
+        print("V5 — fix3: PM (project member) can_edit; MT read-only")
+        r = await c.get(NEW, headers=hdrs[pm_id])
+        record("V5a PM project member GET 200 can_edit=true",
+               r.status_code == 200 and r.json().get("can_edit") is True,
+               f"status={r.status_code}")
+        doc_pre = await db.induction_templates.find_one({"org_id": org_b}, {"_id": 0})
+        secs_pm = sections(2, "מנהל פרויקט")
+        r = await c.put(NEW, json={"sections": secs_pm}, headers=hdrs[pm_id])
+        doc_post = await db.induction_templates.find_one({"org_id": org_b}, {"_id": 0})
+        record("V5b PM PUT 200, version +1, same doc under org B",
+               r.status_code == 200 and doc_post["version"] == doc_pre["version"] + 1
+               and doc_post["id"] == doc_pre["id"], f"status={r.status_code}")
+        audit_pm = await db.audit_events.find_one(
+            {"action": "induction_template_saved", "payload.org_id": org_b,
+             "actor_id": pm_id})
+        record("V5c audit row for the PM save", bool(audit_pm))
+        r = await c.get(CONTENT, headers=hdrs[pm_id])
+        record("V5d conduct content serves the PM-saved sections (same key)",
+               r.status_code == 200 and r.json().get("sections") == secs_pm)
+        r = await c.get(NEW, headers=hdrs[mt_id])
+        record("V5e MT project member GET 200 can_edit=false (read-only)",
+               r.status_code == 200 and r.json().get("can_edit") is False,
+               f"status={r.status_code}")
+        r = await c.put(NEW, json={"sections": sections(1, "הנהלה")}, headers=hdrs[mt_id])
+        record("V5f MT PUT → 403 עברית",
+               r.status_code == 403 and heb(r.json().get("detail")))
+        r = await c.get(NEW, headers=hdrs[bil_id])
+        record("V5g billing_admin (project role=member) still can_edit=false",
+               r.status_code == 200 and r.json().get("can_edit") is False)
 
     # cleanup
     await db.organizations.delete_many({"id": {"$in": [org_a, org_b]}})

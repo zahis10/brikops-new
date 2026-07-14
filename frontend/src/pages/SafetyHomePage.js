@@ -78,6 +78,8 @@ export default function SafetyHomePage() {
   // Batch safety-ind1 — server-resolved editor permission (D3 option b):
   // the "תוכן הדרכת אתר" card gates on GET can_edit, never on FE role maps.
   const [inductionCanEdit, setInductionCanEdit] = useState(false);
+  // ind2-fix3 D2: readers (GET succeeded) see the card too — read-only.
+  const [inductionCanRead, setInductionCanRead] = useState(false);
   const [inductionEditorOpen, setInductionEditorOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -395,9 +397,21 @@ export default function SafetyHomePage() {
   // MUST live ABOVE the early returns to keep hook order stable.
   useEffect(() => {
     let cancelled = false;
+    // ind2-fix3: reset on every project change — a stale true from a
+    // previous project must never leak the card into a 403 project.
+    setInductionCanRead(false);
+    setInductionCanEdit(false);
     safetyService.getInductionTemplate(projectId)
-      .then((data) => { if (!cancelled) setInductionCanEdit(data?.can_edit === true); })
-      .catch(() => {});
+      .then((data) => {
+        if (cancelled) return;
+        setInductionCanRead(true);
+        setInductionCanEdit(data?.can_edit === true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setInductionCanRead(false);
+        setInductionCanEdit(false);
+      });
     return () => { cancelled = true; };
   }, [projectId]);
 
@@ -825,7 +839,7 @@ export default function SafetyHomePage() {
                 </div>
               </Card>
             )}
-            {inductionCanEdit && (
+            {inductionCanRead && (
               <Card
                 className="p-4 bg-white shadow-sm cursor-pointer hover:shadow-md transition-shadow"
                 onClick={() => setInductionEditorOpen(true)}
@@ -1259,6 +1273,7 @@ export default function SafetyHomePage() {
 
       <InductionTemplateEditor
         projectId={projectId}
+        canEdit={inductionCanEdit}
         open={inductionEditorOpen}
         onOpenChange={setInductionEditorOpen}
       />

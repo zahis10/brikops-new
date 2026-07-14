@@ -503,7 +503,15 @@ async def _resolve_project_org_edit(user: dict, project_id: str):
     mem = await db.organization_memberships.find_one(
         {"org_id": org_id, "user_id": user["id"]}, {"_id": 0, "role": 1}
     )
-    return org_id, bool(mem and mem.get("role") == "org_admin")
+    if mem and mem.get("role") == "org_admin":
+        return org_id, True
+    # ind2-fix3 D1: project managers OF THIS PROJECT can edit (one indexed
+    # project_memberships lookup). billing_admin exclusion applies to the
+    # ORG path only — a real project_manager membership grants edit.
+    pmem = await db.project_memberships.find_one(
+        {"project_id": project_id, "user_id": user["id"]}, {"_id": 0, "role": 1}
+    )
+    return org_id, bool(pmem and pmem.get("role") == "project_manager")
 
 
 @router.get("/{project_id}/induction-template")
