@@ -1,102 +1,58 @@
 ================================================================================
-REVIEW — BATCH safety-ind2-fix1: מפתח ארגון אחד לכל פיצ'ר ההדרכה
-(תיקון "התוכן נשמר אבל ה-conduct לא רואה") + 2 תיקוני UX ל-conduct
-Date: 2026-07-14  |  Branch: staging (base 9f8e301 — IND-2 in)  |  P1
+REVIEW — MICRO-FIX safety-ind2-fix2: super_admin bypass על can_edit של
+תבנית ההדרכה (יישור לכלל הגישה הביתי)
+Date: 2026-07-14  |  Branch: staging (base 7bbb7d9 — ind2-fix1 in)
 ================================================================================
 
-ROOT CAUSE (אומת בקוד לפני תיקון — probe V1a/V1b משחזר)
+RATIONALE
 --------------------------------------------------------------------------------
-  העורך של IND-1 (GET/PUT /api/safety/induction-template) פתר את הארגון
-  דרך get_user_org(USER) — שורת ה-membership הראשונה של המשתמש. ה-conduct
-  של IND-2 פותר דרך הארגון של הפרויקט (_load_template_via_project).
-  על פרויקט שהארגון שלו שונה מארגון המשתמש (תבנית פרויקטי הדמו!):
-  שמירה תחת org A ← קריאה מ-org B → empty-state למרות תוכן שמור.
-  פיצ'ר אחד, שני מפתחות → עכשיו מפתח אחד: הארגון של הפרויקט.
+  _check_project_access (router.py) כבר עוקף עבור _is_super_admin(user)
+  (platform_role == 'super_admin') — אדמין הפלטפורמה ניגש לכל מקום לתמיכת
+  לקוחות. הריזולברים של can_edit בהדרכה מיישרים עכשיו לאותו כלל בית.
 
-EDITS
+EDITS — קובץ backend יחיד: contractor_ops/safety/induction.py
 --------------------------------------------------------------------------------
-  E1  backend/contractor_ops/safety/induction.py — צמד project-scoped חדש:
-      GET/PUT /api/safety/{project_id}/induction-template.
-      _resolve_project_org_edit(user, project_id) → (org_id, can_edit):
-      can_edit iff המשתמש הוא organizations.owner_user_id של ארגון
-      הפרויקט OR org_admin באותו ארגון (billing_admin מוחרג — סמנטיקת D1).
-      PUT: 404 פרויקט לא קיים, 403 עברית ללא-מנהל; אותה ולידציה
-      (1..200/200/5000), אותו upsert אטומי $inc version, אותו audit
-      (induction_template_saved), אותה צורת תשובה {template, can_edit}.
-      GET: can_edit OR (SAFETY_WRITERS + _check_project_access) — קהל
-      הקריאה של conduct-content, ללא צורך ב-project membership לבעלים.
-      ה-endpoints הארגוניים של IND-1 נשארו ללא שינוי + הערה
-      "unused by FE since ind2-fix1" (תאימות פרובים + קונסולת ארגון עתידית).
-      אין סתירת ראוטים: הסטטיים induction-template/starter נרשמים לפני
-      הדינמי (אומת ב-probe).
-      Paywall: הנתיב החדש מכוסה בתבנית /api/safety/{id} שנוספה ב-IND-2.
-  E2  FE על המפתח הפרויקטלי: api.js getInductionTemplate(projectId) /
-      saveInductionTemplate(projectId, sections) → הראוטים החדשים
-      (starter ללא שינוי); SafetyHomePage מעביר projectId (כרטיס can_edit
-      + תלות effect); InductionTemplateEditor מקבל projectId ומשתמש בצמד
-      החדש. תוצאה: העורך וה-conduct קוראים/כותבים את אותו מסמך, תמיד.
-  E3  SafetyInductionConduct — ה-X של Radix המובנה הוסתר
-      ([&>button]:hidden, כפי שחפף לאייקון הכותרת ב-RTL); X מותאם בקצה
-      ה-inline-end בשורת header flex-row-reverse justify-between (תבנית
-      הדיאלוג הביתית — כמו InductionTemplateEditor); מנוטרל בזמן שמירה.
-      אין חפיפה בשום רוחב.
-  E4  WorkersList — כפתור GraduationCap העירום הוחלף בפקד מסומן:
-      אייקון + טקסט "הדרכת אתר" (רקע/מסגרת purple עדינים), writer-gated
-      + stopPropagation נשמרו, truncate במובייל (max-w-[110px]),
-      aria-label/title מלאים.
-
-DO-NOT-TOUCH — נשמר
---------------------------------------------------------------------------------
-  conduct endpoints/טקס, snapshots, הרחבת חתימה, alerts, riders של IND-2,
-  התנהגות ה-endpoints הארגוניים — ללא נגיעה. אפס תלויות חדשות.
+  E1  _resolve_project_org_edit: אחרי פתרון org_id מהפרויקט (נתיב פרויקט
+      לא קיים ללא שינוי → (None, False)), אם _is_super_admin(user) →
+      (org_id, True). השמירה נשארת ממופתחת לארגון הפרויקט — בדיוק המפתח
+      של conduct. ה-helper הקיים יובא מ-contractor_ops.router (function-
+      scoped, ללא מחזור import) — לא מומש מחדש.
+  E2  _resolve_user_org_edit (הריזולבר הארגוני של IND-1, לא בשימוש FE):
+      אותו bypass אחרי get_user_org. אם ל-super_admin אין שורת ארגון
+      בכלל → נשאר (None, False) בנתיב הארגוני (אין מפתח לשמור תחתיו);
+      הנתיב הפרויקטלי (E1) הוא הדרך הנתמכת — עובד גם בלי memberships.
+  ללא שינויי לוגיקה נוספים. Conduct endpoints ללא נגיעה (מכוסים כבר
+  דרך _check_project_access).
 
 DIFF SUMMARY
 --------------------------------------------------------------------------------
- backend/contractor_ops/safety/induction.py         | 88 +++++++++++++++-
- frontend/src/components/InductionTemplateEditor.js |  8 +-
- frontend/src/components/SafetyInductionConduct.js  | 19 +++-
- frontend/src/pages/SafetyHomePage.js               | 11 ++-
- frontend/src/services/api.js                       | 15 ++--
- NEW: backend/tests/probe_safety_ind2_fix1.py
+ backend/contractor_ops/safety/induction.py |  6 ++++++
+ backend/tests/probe_safety_ind2_fix1.py    | 31 ++++++++++++++++++++++-
+ (הפרוב הורחב בסקשן V4 — fix2)
 
-VERIFICATION (V1–V6)
+VERIFICATION (V1–V3 של הספק)
 --------------------------------------------------------------------------------
-  V1–V3  probe_safety_ind2_fix1.py — 19/19 PASSED:
-    V1  THE BUG משוחזר ואז מתוקן (משתמש org A + פרויקט של org B):
-        BEFORE — PUT ארגוני נשמר תחת A, conduct content → 404 (הסימפטום
-        מהמכשיר); AFTER — PUT project-scoped נשמר תחת B, content 200 עם
-        אותם סעיפים (אותו מסמך), conduct מקצה-לקצה 201.
-    V2  can_edit matrix: בעל ארגון הפרויקט (גם ללא project membership) →
-        true + PUT 200; org_admin → true; billing_admin → false + PUT 403;
-        PM רגיל → false + PUT 403 עברית; contractor GET → 403; unauth →
-        401; פרויקט לא קיים → 403 (ללא הדלפת מידע — non-enumerating).
-    V3  parity: סעיפים ריקים → 422 עברית; כותרת >200 → 422; $inc version
-        +1 על אותו doc id; audit תחת org B.
-  V4  זרימת FE מאומתת דרך ה-API באותו פרויקט: save בעורך → content של
-      conduct מחזיר את אותם סעיפים מיידית (V1c/V1d — אותו מסמך).
-  V5  ויזואלי: ה-X המובנה מוסתר + X מותאם ב-inline-end (אין שני כפתורי X,
-      אין חפיפה עם אייקון הכותרת); כפתור "הדרכת אתר" מסומן עם truncate
-      במובייל. צילומי לפני/אחרי — לבדיקת Zahi במכשיר ה-staging (אין לי
-      session מחובר לצילום מסך אותנטי).
-  V6  py_compile OK; craco build EXIT=0 (CI=false GENERATE_SOURCEMAP=false
-      REACT_APP_BACKEND_URL=https://api.brikops.com); FE tests 13/13;
-      house greps נקיים (window.confirm/native select/localStorage/
-      WebkitOverflowScrolling — ההתאמות היחידות הן קוד auth קיים ב-api.js).
-  רגרסיה מלאה: probe_safety_ind1 30/30 (הארגוניים לא נפגעו) ·
-  probe_safety_ind2 34/34 · w1_alerts 32/32 · diary d1 (on/off) + d2 16/16
-  + d3 36/36 + d4a 17/17 + d4b 23/23 · p3c 8/8 + 3/3.
+  V1  super_admin על פרויקט CROSS-ORG (תבנית הדמו), אפס memberships:
+      GET → 200 can_edit=true (V4a); PUT → 200, נשמר תחת ארגון
+      ה-PROJECT (V4b); conduct content מחזיר את אותם סעיפים — אותו
+      מפתח מקצה-לקצה (V4c). בנוסף: פרויקט לא קיים ל-super_admin →
+      404 (V4e — contract ננעל, המלצת ה-architect).
+  V2  מטריצת הלא-אדמינים ללא שינוי: probe_safety_ind2_fix1 המורחב —
+      24/24 PASSED (כל 19 בדיקות fix1 המקוריות ירוקות; billing_admin
+      עדיין can_edit=false — V4d). רגרסיה: probe_safety_ind1 30/30 ·
+      probe_safety_ind2 34/34.
+  V3  py_compile OK; backend בלבד — אין FE build (אין שינוי frontend);
+      house greps נקיים.
 
 ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-  PASS. אין ממצאים חוסמים ואין הפרות אבטחה. המלצותיו כבר מכוסות:
-  (1) תבנית ה-paywall מוזכרת כאן; (2) שתי משפחות ה-endpoints מתועדות,
-  ה-FE משתמש רק בצמד הפרויקטלי; (3) בדיקת non-enumeration לפרויקט לא
-  קיים כבר בפרוב (V2j).
+  PASS. אין הפרות אבטחה — הרחבת העריכה ל-super_admin היא בחירת מדיניות
+  מפורשת ועקבית עם המודל הקיים. המלצתו היחידה (בדיקת unknown-project
+  ל-super_admin) מומשה כ-V4e וירוקה.
 
 OPEN ITEMS FOR ZAHI
 --------------------------------------------------------------------------------
-  1. אימות ויזואלי במכשיר (V5): ה-X בדיאלוג ה-conduct והכפתור המסומן.
-  2. ה-endpoints הארגוניים חיים אך לא בשימוש FE — למחיקה עתידית אם לא
-     תקום קונסולת ארגון.
+  (ללא חדשים) פריטי fix1 עומדים: אימות ויזואלי במכשיר של ה-X בדיאלוג
+  ה-conduct וכפתור "הדרכת אתר".
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

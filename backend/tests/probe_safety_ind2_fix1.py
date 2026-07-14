@@ -73,6 +73,7 @@ async def main():
     bil_id = f"probe-if1-bil-{tag}"    # billing_admin in org B
     pm_id = f"probe-if1-pm-{tag}"      # PM, plain member of B + project member
     con_id = f"probe-if1-con-{tag}"    # contractor, project member
+    sup_id = f"probe-if1-sup-{tag}"    # platform super_admin, NO memberships at all
     w1 = f"probe-if1-w1-{tag}"
 
     await db.organizations.insert_many([
@@ -93,6 +94,10 @@ async def main():
          "session_version": 0, "phone_e164": f"+9725077{i:05d}", "last_login_at": now_iso}
         for i, (uid, role) in enumerate(users)
     ])
+    await db.users.insert_one(
+        {"id": sup_id, "role": "project_manager", "platform_role": "super_admin",
+         "full_name": "אדמין פלטפורמה", "user_status": "active", "session_version": 0,
+         "phone_e164": "+97250799999", "last_login_at": now_iso})
     # ed: FIRST membership row points at org A → get_user_org resolves A.
     # ed is ALSO org_admin of B — but the old org-level route never sees B.
     await db.organization_memberships.insert_many([
@@ -212,10 +217,34 @@ async def main():
             {"action": "induction_template_saved", "payload.org_id": org_b})
         record("V3d audit induction_template_saved under org B", bool(audit))
 
+        # ---------------- V4 — fix2: super_admin bypass ----------------
+        print("V4 — fix2: super_admin bypass (house access rule)")
+        sup_h = h(sup_id, "project_manager")
+        r = await c.get(NEW, headers=sup_h)
+        record("V4a super_admin (no memberships) GET 200 can_edit=true",
+               r.status_code == 200 and r.json().get("can_edit") is True,
+               f"status={r.status_code}")
+        secs_sup = sections(2, "אדמין")
+        r = await c.put(NEW, json={"sections": secs_sup}, headers=sup_h)
+        doc_sup = await db.induction_templates.find_one({"org_id": org_b}, {"_id": 0})
+        record("V4b super_admin PUT 200, saved under the PROJECT's org (B)",
+               r.status_code == 200 and doc_sup
+               and doc_sup["languages"]["he"]["sections"] == secs_sup,
+               f"status={r.status_code}")
+        r = await c.get(CONTENT, headers=hdrs[ed_id])
+        record("V4c conduct content returns the super_admin-saved sections (same key)",
+               r.status_code == 200 and r.json().get("sections") == secs_sup)
+        r = await c.get(NEW, headers=hdrs[bil_id])
+        record("V4d non-admin matrix unchanged: billing_admin still can_edit=false",
+               r.status_code == 200 and r.json().get("can_edit") is False)
+        r = await c.get("/api/safety/no-such-project/induction-template", headers=sup_h)
+        record("V4e super_admin on unknown project → 403/404 (contract locked)",
+               r.status_code in (403, 404), f"status={r.status_code}")
+
     # cleanup
     await db.organizations.delete_many({"id": {"$in": [org_a, org_b]}})
     await db.subscriptions.delete_many({"org_id": {"$in": [org_a, org_b]}})
-    await db.users.delete_many({"id": {"$in": [u for u, _ in users]}})
+    await db.users.delete_many({"id": {"$in": [u for u, _ in users] + [sup_id]}})
     await db.organization_memberships.delete_many({"org_id": {"$in": [org_a, org_b]}})
     await db.projects.delete_many({"id": proj})
     await db.project_memberships.delete_many({"project_id": proj})

@@ -130,9 +130,12 @@ async def _resolve_user_org_edit(user: dict):
     billing_admin excluded per D1.
     """
     from contractor_ops.billing import get_user_org
+    from contractor_ops.router import _is_super_admin
     org = await get_user_org(user["id"])
     if not org:
         return None, False
+    if _is_super_admin(user):
+        return org, True
     if org.get("owner_user_id") == user["id"]:
         return org, True
     db = get_db()
@@ -489,6 +492,9 @@ async def _resolve_project_org_edit(user: dict, project_id: str):
     org_id = (proj or {}).get("org_id")
     if not org_id:
         return None, False
+    from contractor_ops.router import _is_super_admin
+    if _is_super_admin(user):
+        return org_id, True
     org = await db.organizations.find_one({"id": org_id}, {"_id": 0, "id": 1, "owner_user_id": 1})
     if not org:
         return org_id, False
