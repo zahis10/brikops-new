@@ -1,0 +1,102 @@
+================================================================================
+תוכנית עבודה — BATCH billing-contracted-binds
+הרובד המחושב מחייב לפי יחידות בחוזה (admin-set); peak הופך למידע דריפט
+תאריך: 14/07/2026 · ענף: staging · עדיפות: P0-trust
+סטטוס: PRE-FLIGHT הושלם — ממתין ל"תתחיל" (אין קידוד עד אישור)
+================================================================================
+
+הבעיה מהשטח
+--------------------------------------------------------------------------------
+מגרש 808: ה-UI הציג ₪465, PayPlus חייבה ₪4,605.
+4,605 = 450 (רישיון) + 277 × 15 — כי cycle_peak_units (277) לא מתאפס
+לעולם, והחיוב מחשב billable = max(contracted, peak).
+
+המודל הנעול (זהי, 14/07)
+--------------------------------------------------------------------------------
+1. manual_override.total_monthly — מחיר אדמין. מכריע. ללא נגיעה.
+2. founder_6m — 499. ללא נגיעה.
+3. calculated — רישיון (450 ראשון / קבוע קיים לנוסף) +
+   15 × יחידות בחוזה (המספר שהאדמין קבע). peak/observed לעולם לא
+   משנים את החיוב — חריגה מוצגת כמידע דריפט בלבד.
+
+STEP 0 — ממצאי ה-PRE-FLIGHT (בוצע)
+--------------------------------------------------------------------------------
+אתרי הקריאה של peak בכסף — שניים בלבד, היעד של E1:
+  billing.py:1633  compute_org_billing_amount — billable = max(contracted, peak)
+  billing.py:1748  create_payment_request (לולאה פר-פרויקט) — אותה תבנית
+בשניהם peak כבר עבר max(peak, observed, contracted); ענף
+total_units_declared כבר עוקף את ה-peak — הבעיה רק בענף ה-else.
+
+שרשרת הכסף: get_billable_amount (billing.py:1660) = מקור יחיד:
+override → 499 → compute_org_billing_amount. צרכנים: GET subscription
+(billing_router:209 — דף הארגון + כפתור התשלום), token-cron חידושים
+(billing_router:1049), אימות webhook (1572), admin dashboard/router,
+billing.py:990. תיקון שני האתרים מיישר את כולם בבת אחת.
+
+כל קוראי calculate_monthly — סיווג:
+  דורשים שינוי: billing.py:1636, 1750 בלבד (מקבלים max).
+  לא דורשים: billing.py:113 (pending), 596, 757, 1015, 1036, 1204,
+  1401 (admin sync — יאומת בקידוד), billing_plans.py:95,
+  invoicing.py:104, demo_seed.py:605 — כולם כבר contracted/declared.
+
+כתיבות peak (נשארות): billing.py:120, 685-691, 717-718, 770-772, 974,
+1018, 1167-1175 (_refresh_peak_units), 1188, 1206, 1231 — כולל הקריאות
+ל-_refresh_peak_units בתוך אתרי החיוב (תחזוקת נתונים).
+
+Frontend: UpgradeWizard.js — קבועים 450/450/15 (שורות 6-8), preview
+מקומי (55), displayTotal (66); ProjectBillingEditModal.js — קבועים
+(10-12); "שיא במחזור" ב-ProjectBillingCard.js:127 + OrgBillingPage.js:1866.
+
+טסטים קיימים (V6): test_billing.py, test_billing_v1.py,
+test_scope_aware_paywall.py + פרובי ה-cron.
+
+EDITS מתוכננים
+--------------------------------------------------------------------------------
+E1 נתיב החיוב (backend, הרובד המחושב בלבד):
+   בשני האתרים (1633, 1748): billable = contracted בלבד. הקריאות
+   ל-_refresh_peak_units והכתיבות נשארות בדיוק כהיום — הנתון נשמר,
+   פשוט לא נקרא בחישוב כסף. override/founder חוזרים לפני הענף
+   המחושב — byte-untouched מובטח מבנית.
+
+E2 מספר אחד מהשרת (frontend):
+   הרחבת GET subscription (המקור הקיים של billableAmount/billableSource)
+   להחזיר {amount, breakdown}; UpgradeWizard מפסיק לחשב מקומית —
+   סיכום + כפתור התשלום מציגים את מספר השרת (אותו מספר ש-PayPlus
+   מקבלת, מבנית). ProjectBillingEditModal — ה"הערכה" נשארת אך
+   המחירים מהשרת; אפס כפילויות 450/15 ב-FE.
+
+E3 הצגת דריפט (מידע, לא כסף):
+   בכרטיס הפרויקט בדף הארגון, כאשר observed > contracted:
+   "בשימוש {observed} יחידות · בחוזה {contracted} — לעדכון החיוב פנו
+   למנהל המערכת". AdminBillingPage: badge דריפט פר-פרויקט לזהי.
+   ללא חיוב אוטומטי, ללא חסימה. (interceptor בהוספת יחידות — follow-up
+   מתועד, לא בבאץ' הזה.)
+
+DO NOT TOUCH
+--------------------------------------------------------------------------------
+override/founder (byte-parity מוכח בפרוב) · מכניקת PayPlus/token-cron
+(רק מקור הסכום) · GreenInvoice · מע"מ (נשאר כלול) · mark_paid ·
+apply_pending_decreases · idempotency/שימוש-חוזר בבקשה פתוחה ·
+כתיבות peak/observed · אין סכימה/מיגרציות/תלויות חדשות.
+
+VERIFY — הבטרייה המלאה
+--------------------------------------------------------------------------------
+V1 מקרה השטח: contracted=1, peak=277 → בקשת תשלום 465; תצוגת
+   הוויזרד מהשרת 465; הסכום ל-PayPlus 465 — מספר אחד, שלושה קריאים,
+   מקור אחד (שלוש assertions בפרוב).
+V2 שוויון רבדים: override ללא שינוי לפני/אחרי; founder → 499.
+V3 ארגון רב-פרויקטים: רישיונות + Σ(contracted×15); peak מנוטרל.
+V4 idempotency/אין חיוב כפול: reuse של בקשה פתוחה; פרובי token-cron
+   הקיימים רצים ירוקים.
+V5 דריפט: observed>contracted → שורת מידע + badge; שווה/פחות → נעדר;
+   כתיבות peak עדיין מתעדכנות.
+V6 py_compile · craco build CI=true EXIT=0 · house greps · כל חבילת
+   טסטי החיוב הקיימת ירוקה.
+V7 מכשיר (זהי, staging): מגרש 808 — כרטיס החיוב, סיכום הוויזרד,
+   כפתור התשלום ודף PayPlus — כולם 465.
+
+תוצרים: review.txt (אנומרציה, דיפים, תמלילי V1-V6) המסתיים
+"AWAITING ZAHI APPROVAL — DO NOT DEPLOY" + .local/.commit_message.
+
+ממתין ל"תתחיל".
+================================================================================
