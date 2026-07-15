@@ -277,7 +277,7 @@ class TestTierResolution:
         assert calculate_monthly(200) == PROJECT_LICENSE_FIRST + 200 * PRICE_PER_UNIT
         assert calculate_monthly(0) == PROJECT_LICENSE_FIRST
         assert calculate_monthly(100, project_index=2) == PROJECT_LICENSE_ADDITIONAL + 100 * PRICE_PER_UNIT
-        assert calculate_monthly(100, plan_id="founder_6m") == 500
+        assert calculate_monthly(100, plan_id="founder_6m") == 499
         assert calculate_monthly(100, manual_override={"total_monthly": 3000}) == 3000
 
 

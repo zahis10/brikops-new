@@ -998,7 +998,6 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
 
     projects = []
     billed_project_ids = set()
-    from contractor_ops.billing_plans import calculate_monthly
     for pb in project_billings:
         proj = await db.projects.find_one(
             {'id': pb['project_id']},
@@ -1006,20 +1005,13 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
         )
         total_units_declared = proj.get('total_units') if proj else None
 
+        # Quota (total_units) is display/info only — it never overrides
+        # contracted-based pricing fields (contracted binds).
         project_data = {
             **pb,
             'project_name': proj.get('name', '') if proj else '',
             'total_units_declared': total_units_declared,
         }
-
-        if total_units_declared is not None and total_units_declared > 0:
-            plan_id = pb.get('plan_id')
-            computed_monthly = calculate_monthly(total_units_declared, plan_id=plan_id, project_index=1)
-            project_data['contracted_units'] = total_units_declared
-            project_data['monthly_total'] = computed_monthly
-            project_data['cycle_peak_units'] = total_units_declared
-            project_data['pending_contracted_units'] = None
-            project_data['pending_effective_from'] = None
 
         projects.append(project_data)
         billed_project_ids.add(pb['project_id'])
@@ -1029,23 +1021,16 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
     ).to_list(1000)
     for proj in all_org_projects:
         if proj['id'] not in billed_project_ids:
-            total_units_declared = proj.get('total_units')
-            contracted_units = 0
-            monthly_total = 0
-            if total_units_declared is not None and total_units_declared > 0:
-                from contractor_ops.billing_plans import calculate_monthly
-                contracted_units = total_units_declared
-                monthly_total = calculate_monthly(total_units_declared, plan_id='standard', project_index=1)
-
+            # No billing configured — quota must not synthesize a price.
             projects.append({
                 'project_id': proj['id'],
                 'org_id': org_id,
                 'project_name': proj.get('name', ''),
                 'plan_id': None,
-                'contracted_units': contracted_units,
+                'contracted_units': 0,
                 'status': None,
-                'monthly_total': monthly_total,
-                'total_units_declared': total_units_declared,
+                'monthly_total': 0,
+                'total_units_declared': proj.get('total_units'),
             })
 
     org_members = await db.organization_memberships.find(
@@ -1199,18 +1184,9 @@ def _build_project_billing_dict(pb: dict, observed: int, project: dict) -> dict:
         'billing_contact_note': pb.get('billing_contact_note'),
         'pending_contracted_units': pb.get('pending_contracted_units'),
         'pending_effective_from': pb.get('pending_effective_from'),
-        'total_units_declared': None,
+        # Quota is display-only — never overrides contracted-based pricing.
+        'total_units_declared': total_units if (total_units is not None and total_units > 0) else None,
     }
-    if total_units is not None and total_units > 0:
-        from contractor_ops.billing_plans import calculate_monthly
-        plan_id = pb.get('plan_id')
-        computed_monthly = calculate_monthly(total_units, plan_id=plan_id, project_index=1)
-        d['contracted_units'] = total_units
-        d['cycle_peak_units'] = total_units
-        d['monthly_total'] = computed_monthly
-        d['pending_contracted_units'] = None
-        d['pending_effective_from'] = None
-        d['total_units_declared'] = total_units
     return d
 
 

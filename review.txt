@@ -75,18 +75,26 @@ ARCHITECT REVIEW
   שנגעו; אין רגרסיות אבטחה.
   ממצא יחיד (חוסם לדעתו, מחוץ להיקף לפי הספק): ראו OPEN ITEMS #1.
 
+COMPLETIONS (אושרו ע"י זהי אחרי אישור הדיף) — בוצעו
+--------------------------------------------------------------------------------
+  C1  הוסרה דריסת התצוגה מהמכסה בכל נתיבי הקריאה:
+      - get_billing_for_org: כרטיסי פרויקט מחויב מציגים contracted/
+        monthly_total מ-pb בלבד; total_units_declared נשאר כשדה מידע.
+      - פרויקטים ללא חיוב: המכסה לא מסנתזת מחיר (contracted=0, monthly=0).
+      - _build_project_billing_dict: הוסרה הדריסה; המכסה מוצגת רק
+        כ-total_units_declared.
+      פרוב ייעודי (ALL_PASS): שינוי total_units מ-None ל-300 לא שינה אף
+      סכום מוצג/מחויב — compute=570, get_billable=570, subscription=570,
+      כרטיסי org=570, project_dict=570, create_payment_request=570.
+  C2  תוקן test_calculate_monthly_pricing: founder_6m == 499 (היה 500).
+      py_compile OK; הוסר import מת של calculate_monthly.
+  ‎* טסטי אינטגרציה חיים אחרים שנכשלו (RBAC 404 מכוון של require_super_admin
+    שמסתיר קיום route, ו"No projects found" בדמו-דאטה מקומי) — תלויי סביבה,
+    קדם-קיימים, לא נגועים בקוד ששונה.
+
 OPEN ITEMS — לשיקול זהי
 --------------------------------------------------------------------------------
-  1) get_billing_for_org (billing.py ~1013-1080): בלוקי התצוגה של כרטיסי
-     הפרויקטים עדיין דורסים contracted_units/monthly_total מ-
-     total_units_declared כשהמכסה מוגדרת — כלומר בתצוגת כרטיס הפרויקט
-     (pb.monthly_total) המכסה עדיין משפיעה על מספר מוצג. החיוב בפועל
-     אינו מושפע (כל מסלולי הכסף עוברים דרך compute_org_billing_amount),
-     והבלוק סומן בספק DO-NOT-TOUCH ולכן לא שונה. הארכיטקט ממליץ להסיר
-     את הדריסה בבאץ' המשך + טסט רגרסיה: שינוי total_units לא משנה סכומים.
-  2) טסט מיושן test_calculate_monthly_pricing (founder=500 במקום 499) —
-     מומלץ לתקן בבאץ' תחזוקה.
-  3) checkout sandbox override (amount=5.0 כש-PAYPLUS_ENV!=production) —
+  1) checkout sandbox override (amount=5.0 כש-PAYPLUS_ENV!=production) —
      לא נגעתי, כמוסכם.
 
 DEPLOY NOTES
