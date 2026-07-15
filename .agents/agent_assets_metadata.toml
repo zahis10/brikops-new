@@ -792,3 +792,9 @@ id = "y1VGZFKgX7_kjUKGRMlDb"
 uri = "file://plan_billing_contracted_binds.txt"
 type = "text"
 title = "תוכנית — BATCH billing-contracted-binds"
+
+[[outputs]]
+id = "XjX0ehACCAtLRmoIWNuDr"
+uri = "file://billing-contracted-binds-v2.diff.txt"
+type = "text"
+title = "Diff מלא — BATCH billing-contracted-binds v2"

@@ -1,0 +1,567 @@
+diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
+index 4a7b2ed..8bb92cd 100644
+--- a/backend/contractor_ops/admin_router.py
++++ b/backend/contractor_ops/admin_router.py
+@@ -188,7 +188,7 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
+ 
+     all_pbs = await db.project_billing.find(
+         {'org_id': {'$in': org_ids}, 'status': 'active'},
+-        {'_id': 0, 'org_id': 1, 'plan_id': 1, 'project_id': 1},
++        {'_id': 0, 'org_id': 1, 'plan_id': 1, 'project_id': 1, 'contracted_units': 1},
+     ).to_list(5000)
+     pb_map = {}
+     for pb in all_pbs:
+@@ -212,7 +212,15 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
+         async for row in db.units.aggregate(active_units_pipeline):
+             active_count_map[row['_id']] = row['count']
+ 
+-    from contractor_ops.billing import get_billable_amount
++    from contractor_ops.billing import get_billable_amount, compute_observed_units
++    observed_map = {}
++    for pb in all_pbs:
++        pid = pb.get('project_id')
++        if pid and pid not in observed_map:
++            try:
++                observed_map[pid] = await compute_observed_units(pid)
++            except Exception:
++                observed_map[pid] = None
+     result = []
+     for org in orgs:
+         sub = sub_map.get(org['id'])
+@@ -227,6 +235,7 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
+ 
+         pb_for_org = pb_map.get(org['id'], [])
+         plan_by_project = {pb.get('project_id'): pb.get('plan_id') for pb in pb_for_org if pb.get('project_id')}
++        contracted_by_project = {pb.get('project_id'): pb.get('contracted_units') for pb in pb_for_org if pb.get('project_id')}
+         enriched_projects = []
+         for p in proj_by_org.get(org['id'], []):
+             enriched_projects.append({
+@@ -235,12 +244,16 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
+                 'total_units': p.get('total_units'),
+                 'active_units_count': active_count_map.get(p['id'], 0),
+                 'plan_id': plan_by_project.get(p['id']),
++                'contracted_units': contracted_by_project.get(p['id']),
++                'observed_units': observed_map.get(p['id']),
+             })
+         for pb in pb_for_org:
+             if not pb.get('project_id') or pb.get('project_id') not in proj_by_id:
+                 enriched_projects.append({
+                     'id': pb.get('project_id'),
+                     'plan_id': pb.get('plan_id'),
++                    'contracted_units': pb.get('contracted_units'),
++                    'observed_units': observed_map.get(pb.get('project_id')),
+                 })
+ 
+         result.append({
+diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
+index 26e439c..c0f2c95 100644
+--- a/backend/contractor_ops/billing.py
++++ b/backend/contractor_ops/billing.py
+@@ -990,9 +990,11 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
+         billing_info = await get_billable_amount(org_id, 'monthly')
+         billable_amount = billing_info['amount']
+         billable_source = billing_info['source']
++        billable_breakdown = billing_info.get('breakdown', [])
+     except Exception:
+         billable_amount = total_monthly
+         billable_source = 'calculated'
++        billable_breakdown = []
+ 
+     projects = []
+     billed_project_ids = set()
+@@ -1109,6 +1111,7 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
+             'total_monthly': total_monthly,
+             'billable_amount': billable_amount,
+             'billable_source': billable_source,
++            'billable_breakdown': billable_breakdown,
+             'effective_access': access.value,
+             'read_only_reason': reason,
+             'subscription_status': snapshot['subscription_status'],
+@@ -1617,20 +1620,17 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
+             )
+             total_units_declared = proj.get('total_units') if proj else None
+ 
+-            if total_units_declared is not None and total_units_declared > 0:
+-                billable = total_units_declared
+-                contracted = total_units_declared
+-                observed = await compute_observed_units(pb['project_id'])
+-                peak = total_units_declared
+-            else:
+-                contracted = pb.get('contracted_units', 0)
+-                observed = await compute_observed_units(pb['project_id'])
+-                await _refresh_peak_units(pb, observed)
+-                pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
+-                contracted = pb.get('contracted_units', 0)
+-                peak = pb.get('cycle_peak_units', contracted)
+-                peak = max(peak, observed, contracted)
+-                billable = max(contracted, peak)
++            # Contracted units are the ONLY money input for the calculated
++            # tier. total_units_declared (quota) is display/info only;
++            # peak/observed keep being maintained (drift data) but are
++            # never read when computing the charge.
++            observed = await compute_observed_units(pb['project_id'])
++            await _refresh_peak_units(pb, observed)
++            pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
++            contracted = pb.get('contracted_units', 0)
++            peak = pb.get('cycle_peak_units', contracted)
++            peak = max(peak, observed, contracted)
++            billable = contracted
+ 
+             plan_id = pb.get('plan_id')
+             proj_monthly = calculate_monthly(
+@@ -1701,12 +1701,18 @@ async def get_billable_amount(org_id: str, cycle: str = 'monthly', plan_override
+     calc_result = await compute_org_billing_amount(org_id, cycle)
+     amount = calc_result['amount_ils']
+     logger.info("BILLING_AMOUNT org=%s cycle=%s amount=%s source=calculated", org_id, cycle, amount)
+-    return {'amount': amount, 'source': 'calculated', 'plan_id': plan_id, 'org_id': org_id, 'cycle': cycle}
++    return {
++        'amount': amount,
++        'source': 'calculated',
++        'plan_id': plan_id,
++        'org_id': org_id,
++        'cycle': cycle,
++        'breakdown': calc_result['breakdown'],
++    }
+ 
+ 
+ async def create_payment_request(org_id: str, user_id: str, cycle: str, note: str = '', contact_email: str = '', requested_by_kind: str = 'unknown') -> dict:
+     db = get_db()
+-    from contractor_ops.billing_plans import calculate_monthly
+     now = _now()
+ 
+     await apply_pending_decreases(org_id)
+@@ -1730,40 +1736,13 @@ async def create_payment_request(org_id: str, user_id: str, cycle: str, note: st
+     renewal = await preview_renewal(org_id, cycle)
+     requested_paid_until = renewal['new_paid_until']
+ 
+-    total_monthly = 0
+-    billing_breakdown = []
+-    project_billings = await db.project_billing.find(
+-        {'org_id': org_id, 'status': 'active'}, {'_id': 0}
+-    ).to_list(1000)
+-    if project_billings:
+-        sorted_pbs = sorted(project_billings, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
+-        for idx, pb in enumerate(sorted_pbs):
+-            contracted = pb.get('contracted_units', 0)
+-            observed = await compute_observed_units(pb['project_id'])
+-            await _refresh_peak_units(pb, observed)
+-            pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
+-            contracted = pb.get('contracted_units', 0)
+-            peak = pb.get('cycle_peak_units', contracted)
+-            peak = max(peak, observed, contracted)
+-            billable = max(contracted, peak)
+-            plan_id = pb.get('plan_id')
+-            proj_monthly = calculate_monthly(
+-                billable, plan_id=plan_id, project_index=idx + 1
+-            )
+-            total_monthly += proj_monthly
+-            proj = await db.projects.find_one({'id': pb['project_id']}, {'_id': 0, 'name': 1})
+-            billing_breakdown.append({
+-                'project_id': pb.get('project_id'),
+-                'project_name': proj.get('name', '') if proj else '',
+-                'plan_id': plan_id,
+-                'contracted_units': contracted,
+-                'observed_units': observed,
+-                'cycle_peak_units': peak,
+-                'billable_units': billable,
+-                'monthly_total': proj_monthly,
+-            })
+-
+-    amount_ils = total_monthly if cycle == 'monthly' else total_monthly * 12
++    # Single source of truth: the same computation that feeds
++    # GET subscription (compute_org_billing_amount). One loop, one number —
++    # what the org billing page shows is exactly what gets charged.
++    calc_result = await compute_org_billing_amount(org_id, cycle)
++    total_monthly = calc_result['total_monthly']
++    billing_breakdown = calc_result['breakdown']
++    amount_ils = calc_result['amount_ils']
+ 
+     if amount_ils == 0:
+         logger.warning(f"[BILLING-PAYMENT-REQ] amount_ils=0 for org {org_id} — no active project billing configured")
+diff --git a/frontend/src/components/PlanSelector.js b/frontend/src/components/PlanSelector.js
+index 5948f83..45d5104 100644
+--- a/frontend/src/components/PlanSelector.js
++++ b/frontend/src/components/PlanSelector.js
+@@ -1,7 +1,7 @@
+ import React from 'react';
+ import { Check, Crown, Building2 } from 'lucide-react';
+ 
+-export default function PlanSelector({ plans, onSelect, currentPlan, loading, selectedPlan }) {
++export default function PlanSelector({ plans, onSelect, currentPlan, loading, selectedPlan, pricing }) {
+   if (!plans) return null;
+ 
+   const founder = plans.founder;
+@@ -80,7 +80,11 @@ export default function PlanSelector({ plans, onSelect, currentPlan, loading, se
+           <Building2 className="w-5 h-5 text-emerald-500" />
+           <span className="font-bold text-slate-800">תוכנית רגילה</span>
+         </div>
+-        <div className="text-lg font-bold text-slate-900 mb-1">₪450<span className="text-sm font-normal text-slate-500"> רישיון + ₪15/יחידה לחודש</span></div>
++        {pricing?.license_first != null && pricing?.price_per_unit != null ? (
++          <div className="text-lg font-bold text-slate-900 mb-1">₪{pricing.license_first}<span className="text-sm font-normal text-slate-500"> רישיון + ₪{pricing.price_per_unit}/יחידה לחודש</span></div>
++        ) : (
++          <div className="text-lg font-bold text-slate-900 mb-1"><span className="text-sm font-normal text-slate-500">רישיון + תשלום לפי יחידה</span></div>
++        )}
+         <div className="text-xs text-slate-500 mb-2">ללא הגבלת פרויקטים ויחידות</div>
+         {selectedPlan === 'standard' && (
+           <div className="absolute top-2 left-2">
+diff --git a/frontend/src/components/ProjectBillingCard.js b/frontend/src/components/ProjectBillingCard.js
+index 12a9f40..c072ad8 100644
+--- a/frontend/src/components/ProjectBillingCard.js
++++ b/frontend/src/components/ProjectBillingCard.js
+@@ -121,10 +121,10 @@ export default function ProjectBillingCard({ projectId, userRole, canEdit }) {
+                 <span className="text-slate-500">יחידות בפועל</span>
+                 <span className={`font-medium ${warning ? 'text-amber-600' : 'text-slate-700'}`}>{billing.observed_units}</span>
+               </div>
+-              {billing.cycle_peak_units > billing.contracted_units && (
+-                <div className="flex items-center gap-1 text-xs text-amber-700 mt-1" title="החיוב נקבע לפי השיא החודשי כדי למנוע שינויים תכופים">
++              {billing.observed_units > billing.contracted_units && (
++                <div className="flex items-center gap-1 text-xs text-amber-700 mt-1">
+                   <Info className="w-3 h-3" />
+-                  <span>שיא במחזור: {billing.cycle_peak_units} יחידות</span>
++                  <span>בשימוש {billing.observed_units} יחידות · בחוזה {billing.contracted_units} — לעדכון החיוב פנו למנהל המערכת</span>
+                 </div>
+               )}
+               {billing.pending_contracted_units != null && (
+diff --git a/frontend/src/components/ProjectBillingEditModal.js b/frontend/src/components/ProjectBillingEditModal.js
+index 8c60834..dcc64ca 100644
+--- a/frontend/src/components/ProjectBillingEditModal.js
++++ b/frontend/src/components/ProjectBillingEditModal.js
+@@ -7,10 +7,6 @@ import {
+   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+ } from './ui/dialog';
+ 
+-const LICENSE_FIRST = 450;
+-const LICENSE_ADDITIONAL = 450;
+-const PRICE_PER_UNIT = 15;
+-
+ export default function ProjectBillingEditModal({ open, onClose, projectBilling, onSaved }) {
+   const [units, setUnits] = useState('');
+   const [saving, setSaving] = useState(false);
+@@ -37,10 +33,11 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
+   }, [open]);
+ 
+   const preview = useMemo(() => {
+-    if (parsedUnits < 1) return null;
+-    const lf = serverPricing?.license_first ?? LICENSE_FIRST;
+-    const la = serverPricing?.license_additional ?? LICENSE_ADDITIONAL;
+-    const ppu = serverPricing?.price_per_unit ?? PRICE_PER_UNIT;
++    if (parsedUnits < 1 || !serverPricing) return null;
++    const lf = serverPricing.license_first;
++    const la = serverPricing.license_additional;
++    const ppu = serverPricing.price_per_unit;
++    if (lf == null || ppu == null) return null;
+     const licenseFee = lf;
+     const unitCost = parsedUnits * ppu;
+     return { licenseFee, unitCost, total: licenseFee + unitCost, pricePerUnit: ppu, licenseAdditional: la };
+diff --git a/frontend/src/components/UpgradeWizard.js b/frontend/src/components/UpgradeWizard.js
+index 3fb14c4..5fb62d8 100644
+--- a/frontend/src/components/UpgradeWizard.js
++++ b/frontend/src/components/UpgradeWizard.js
+@@ -3,15 +3,13 @@ import { billingService } from '../services/api';
+ import { formatCurrency } from '../utils/billingLabels';
+ import { toast } from 'sonner';
+ import { Loader2, Check, ChevronDown, ChevronUp, Info, CreditCard } from 'lucide-react';
+-const LICENSE_FIRST = 450;
+-const LICENSE_ADDITIONAL = 450;
+-const PRICE_PER_UNIT = 15;
+-
+ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPaymentRequested, renewalCycle, onCycleChange, selectedPlan: externalSelectedPlan, billableAmount, billableSource }) {
+   const [selectedProjectId, setSelectedProjectId] = useState('');
+   const [units, setUnits] = useState('');
+   const [saving, setSaving] = useState(false);
+   const [serverPricing, setServerPricing] = useState(null);
++  const [serverQuote, setServerQuote] = useState(null);
++  const [quoteLoading, setQuoteLoading] = useState(false);
+   const [step, setStep] = useState(1);
+   const [result, setResult] = useState(null);
+   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+@@ -53,17 +51,17 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
+   const parsedUnits = parseInt(units) || 0;
+ 
+   const preview = useMemo(() => {
+-    if (parsedUnits < 1) return null;
+-    const lf = serverPricing?.license_first ?? LICENSE_FIRST;
+-    const la = serverPricing?.license_additional ?? LICENSE_ADDITIONAL;
+-    const ppu = serverPricing?.price_per_unit ?? PRICE_PER_UNIT;
++    if (parsedUnits < 1 || !serverPricing) return null;
++    const lf = serverPricing.license_first;
++    const la = serverPricing.license_additional;
++    const ppu = serverPricing.price_per_unit;
++    if (lf == null || ppu == null) return null;
+     const licenseFee = lf;
+     const unitCost = parsedUnits * ppu;
+     return { licenseFee, unitCost, total: licenseFee + unitCost, pricePerUnit: ppu, licenseAdditional: la };
+   }, [parsedUnits, serverPricing]);
+ 
+   const hasOverride = billableSource === 'override' || billableSource === 'founder_plan';
+-  const displayTotal = hasOverride ? billableAmount : (preview?.total ?? 0);
+ 
+   const canProceedToStep2 = !!selectedProjectId;
+   const canProceedToStep3 = parsedUnits >= 1;
+@@ -86,13 +84,36 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
+     }
+   };
+ 
+-  const handleStandardSubmit = async () => {
++  const goToSummary = async () => {
+     if (!selectedProjectId || parsedUnits < 1) return;
+-    setSaving(true);
++    setQuoteLoading(true);
++    setServerQuote(null);
+     try {
+       const payload = { plan_id: 'standard', contracted_units: parsedUnits };
+       await billingService.updateProjectBilling(selectedProjectId, payload);
++      const data = await billingService.orgBilling(orgId);
++      const sub = data?.subscription;
++      if (sub?.billable_amount == null) {
++        toast.error('לא התקבל סכום מהשרת — נסה שוב');
++        return;
++      }
++      setServerQuote({
++        amount: sub.billable_amount,
++        source: sub.billable_source,
++        breakdown: sub.billable_breakdown || [],
++      });
++      setStep(3);
++    } catch (err) {
++      toast.error(err.response?.data?.detail || 'שגיאה בחישוב הסכום');
++    } finally {
++      setQuoteLoading(false);
++    }
++  };
+ 
++  const handleStandardSubmit = async () => {
++    if (!selectedProjectId || parsedUnits < 1) return;
++    setSaving(true);
++    try {
+       const result = await billingService.checkout(orgId, renewalCycle || 'monthly', 'standard');
+       if (result.payment_page_link) {
+         window.location.href = result.payment_page_link;
+@@ -282,7 +303,7 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
+                   </div>
+                   <div className="border-t border-slate-200 pt-2 flex justify-between">
+                     <span className="text-sm font-medium text-slate-700">סה״כ חודשי</span>
+-                    <span className="text-lg font-bold text-slate-900">{formatCurrency(displayTotal)}</span>
++                    <span className="text-lg font-bold text-slate-900">{formatCurrency(billableAmount ?? 0)}</span>
+                   </div>
+                 </>
+               ) : (
+@@ -306,11 +327,12 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
+             </div>
+           )}
+           <button
+-            onClick={() => { if (canProceedToStep3) setStep(3); }}
+-            disabled={!canProceedToStep3}
+-            className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-lg text-sm transition-colors"
++            onClick={() => { if (canProceedToStep3) goToSummary(); }}
++            disabled={!canProceedToStep3 || quoteLoading}
++            className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
+           >
+-            המשך לסיכום
++            {quoteLoading && <Loader2 className="w-4 h-4 animate-spin" />}
++            {quoteLoading ? 'מחשב סכום...' : 'המשך לסיכום'}
+           </button>
+         </div>
+       )}
+@@ -331,33 +353,31 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
+               <span className="text-slate-500">יחידות</span>
+               <span className="font-medium text-slate-700">{parsedUnits}</span>
+             </div>
+-            {preview && (
++            {serverQuote && (
+               <>
+-                {hasOverride ? (
++                {(serverQuote.source === 'override' || serverQuote.source === 'founder_plan') ? (
+                   <div className="border-t border-slate-200 pt-2">
+                     <div className="text-xs text-amber-600 font-medium mb-1">
+-                      {billableSource === 'override' ? '💰 תמחור מותאם אישית' : '🌟 תוכנית מייסדים'}
++                      {serverQuote.source === 'override' ? '💰 תמחור מותאם אישית' : '🌟 תוכנית מייסדים'}
+                     </div>
+                     <div className="flex justify-between">
+                       <span className="text-sm font-medium text-slate-700">סה״כ חודשי</span>
+-                      <span className="text-lg font-bold text-slate-900">{formatCurrency(displayTotal)}</span>
++                      <span className="text-lg font-bold text-slate-900">{formatCurrency(serverQuote.amount)}</span>
+                     </div>
+                   </div>
+                 ) : (
+                   <>
+                     <div className="border-t border-slate-200 pt-2 space-y-1">
+-                      <div className="flex justify-between text-xs">
+-                        <span className="text-slate-500">רישיון פרויקט</span>
+-                        <span className="text-slate-700">{formatCurrency(preview.licenseFee)}</span>
+-                      </div>
+-                      <div className="flex justify-between text-xs">
+-                        <span className="text-slate-500">{parsedUnits} יחידות × {formatCurrency(preview.pricePerUnit)}</span>
+-                        <span className="text-slate-700">{formatCurrency(preview.unitCost)}</span>
+-                      </div>
++                      {serverQuote.breakdown.map((line) => (
++                        <div key={line.project_id} className="flex justify-between text-xs">
++                          <span className="text-slate-500">{line.project_name || 'פרויקט'} — {line.billable_units} יחידות</span>
++                          <span className="text-slate-700">{formatCurrency(line.monthly_total)}</span>
++                        </div>
++                      ))}
+                     </div>
+                     <div className="border-t border-slate-200 pt-2 flex justify-between">
+-                      <span className="text-sm font-medium text-slate-700">סה״כ חודשי (הערכה)</span>
+-                      <span className="text-lg font-bold text-slate-900">{formatCurrency(preview.total)}</span>
++                      <span className="text-sm font-medium text-slate-700">סה״כ חודשי</span>
++                      <span className="text-lg font-bold text-slate-900">{formatCurrency(serverQuote.amount)}</span>
+                     </div>
+                   </>
+                 )}
+@@ -367,11 +387,11 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
+ 
+           <button
+             onClick={handleStandardSubmit}
+-            disabled={saving}
++            disabled={saving || !serverQuote}
+             className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-medium py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
+           >
+             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+-            {saving ? 'מעביר לתשלום...' : `שלם באשראי — ₪${displayTotal.toLocaleString()}`}
++            {saving ? 'מעביר לתשלום...' : `שלם באשראי — ₪${(serverQuote?.amount ?? 0).toLocaleString()}`}
+           </button>
+         </div>
+       )}
+diff --git a/frontend/src/pages/AdminBillingPage.js b/frontend/src/pages/AdminBillingPage.js
+index 722dafb..94fff9e 100644
+--- a/frontend/src/pages/AdminBillingPage.js
++++ b/frontend/src/pages/AdminBillingPage.js
+@@ -221,6 +221,11 @@ const ProjectQuotaRow = ({ project, onUpdated }) => {
+         <span className="text-xs text-slate-500 whitespace-nowrap">
+           {activeCount} / {declared ?? '—'} יחידות
+         </span>
++        {project.contracted_units != null && project.observed_units != null && project.observed_units > project.contracted_units && (
++          <span className="text-xs px-1.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 whitespace-nowrap" title={`בשימוש ${project.observed_units} יחידות · בחוזה ${project.contracted_units}`}>
++            דריפט: {project.observed_units}/{project.contracted_units}
++          </span>
++        )}
+       </div>
+       {!editing ? (
+         <button
+diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
+index ebaa814..d3ff5b6 100644
+--- a/frontend/src/pages/OrgBillingPage.js
++++ b/frontend/src/pages/OrgBillingPage.js
+@@ -103,6 +103,7 @@ export default function OrgBillingPage() {
+   const [invoiceConfirm, setInvoiceConfirm] = useState(null);
+ 
+   const [renewalCycle, setRenewalCycle] = useState('monthly');
++  const [serverPlanPricing, setServerPlanPricing] = useState(null);
+   const [renewalPreview, setRenewalPreview] = useState(null);
+   const [renewalLoading, setRenewalLoading] = useState(false);
+ 
+@@ -346,6 +347,13 @@ export default function OrgBillingPage() {
+ 
+   useEffect(() => { loadMembers(); }, [loadMembers]);
+ 
++  useEffect(() => {
++    billingService.listActivePlans().then(d => {
++      const plans = Array.isArray(d) ? d : d?.plans;
++      if (plans?.length > 0) setServerPlanPricing(plans[0]);
++    }).catch(() => {});
++  }, []);
++
+   useEffect(() => {
+     if (!loading && !membersLoading && location.hash === '#responsibility' && responsibilityRef.current) {
+       setTimeout(() => {
+@@ -1139,6 +1147,7 @@ export default function OrgBillingPage() {
+               currentPlan={sub?.plan_id}
+               selectedPlan={selectedPlan}
+               loading={false}
++              pricing={serverPlanPricing}
+             />
+           )}
+ 
+@@ -1166,12 +1175,13 @@ export default function OrgBillingPage() {
+             const lockedDate = isFounderExpiring ? new Date(sub.plan_locked_until) : null;
+             const daysLeft = lockedDate ? Math.ceil((lockedDate - new Date()) / 86400000) : null;
+             const founderExpiring = daysLeft !== null && daysLeft <= 30;
+-            const projectedStandard = data.projects?.reduce((sum, pb) => {
+-              const units = (pb.total_units_declared != null && pb.total_units_declared > 0) ? pb.total_units_declared : (pb.contracted_units || 0);
+-              const ppu = pb.price_per_unit || 15;
+-              const license = 450;
++            const canProject = serverPlanPricing?.license_first != null && serverPlanPricing?.price_per_unit != null;
++            const projectedStandard = canProject ? (data.projects?.reduce((sum, pb) => {
++              const units = pb.contracted_units || 0;
++              const ppu = pb.price_per_unit ?? serverPlanPricing.price_per_unit;
++              const license = serverPlanPricing.license_first;
+               return sum + license + (units * ppu);
+-            }, 0) || 0;
++            }, 0) || 0) : null;
+             if (!founderExpiring) return null;
+             const formattedDate = lockedDate.toLocaleDateString('he-IL');
+             return (
+@@ -1181,9 +1191,11 @@ export default function OrgBillingPage() {
+                     ? `תוכנית המייסדים מסתיימת בתאריך ${formattedDate}`
+                     : `תוכנית המייסדים הסתיימה בתאריך ${formattedDate}`}
+                 </p>
+-                <p>
+-                  {`לאחר סיום, המנוי יעבור לתוכנית רגילה בעלות ${projectedStandard.toLocaleString()}₪/חודש`}
+-                </p>
++                {projectedStandard != null && (
++                  <p>
++                    {`לאחר סיום, המנוי יעבור לתוכנית רגילה בעלות ${projectedStandard.toLocaleString()}₪/חודש`}
++                  </p>
++                )}
+               </div>
+             );
+           })()}
+@@ -1835,35 +1847,33 @@ export default function OrgBillingPage() {
+                       )}
+                     </div>
+                   )}
+-                  {pb.total_units_declared != null && pb.total_units_declared > 0 && (
+-                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 my-2 space-y-1 text-xs">
+-                      <div className="font-medium text-slate-700 mb-1">איך המחיר מחושב:</div>
+-                      <div className="flex items-center justify-between">
+-                        <span className="text-slate-500">הצהרת יחידות:</span>
+-                        <span className="font-medium">{pb.total_units_declared} יחידות</span>
+-                      </div>
+-                      <div className="flex items-center justify-between">
+-                        <span className="text-slate-500">רישיון פרויקט:</span>
+-                        <span className="font-medium">450₪</span>
+-                      </div>
+-                      <div className="flex items-center justify-between">
+-                        <span className="text-slate-500">{pb.total_units_declared} יחידות × 15₪:</span>
+-                        <span className="font-medium">{pb.total_units_declared * 15}₪</span>
+-                      </div>
+-                      <div className="flex items-center justify-between border-t border-slate-200 pt-1">
+-                        <span className="font-semibold text-slate-800">סה"כ חודשי:</span>
+-                        <span className="font-bold text-slate-900">{(450 + pb.total_units_declared * 15).toLocaleString()}₪</span>
++                  {(() => {
++                    const serverLine = (sub?.billable_breakdown || []).find(l => l.project_id === pb.project_id);
++                    if (!serverLine) return null;
++                    return (
++                      <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 my-2 space-y-1 text-xs">
++                        <div className="font-medium text-slate-700 mb-1">איך המחיר מחושב:</div>
++                        <div className="flex items-center justify-between">
++                          <span className="text-slate-500">יחידות בחוזה:</span>
++                          <span className="font-medium">{serverLine.contracted_units} יחידות</span>
++                        </div>
++                        <div className="flex items-center justify-between border-t border-slate-200 pt-1">
++                          <span className="font-semibold text-slate-800">סה"כ חודשי:</span>
++                          <span className="font-bold text-slate-900">{formatCurrency(serverLine.monthly_total)}</span>
++                        </div>
+                       </div>
+-                    </div>
+-                  )}
++                    );
++                  })()}
+                   <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
+                     <div>יחידות: <span className="font-medium text-slate-700">{pb.contracted_units}</span></div>
+-                    <div>₪/יחידה: <span className="font-medium text-slate-700">{formatCurrency(pb.price_per_unit ?? 15)}</span></div>
++                    {pb.price_per_unit != null && (
++                      <div>₪/יחידה: <span className="font-medium text-slate-700">{formatCurrency(pb.price_per_unit)}</span></div>
++                    )}
+                   </div>
+-                  {pb.cycle_peak_units > pb.contracted_units && (
+-                    <div className="flex items-center gap-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1" title="החיוב נקבע לפי השיא החודשי כדי למנוע שינויים תכופים">
++                  {pb.observed_units > pb.contracted_units && (
++                    <div className="flex items-center gap-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1">
+                       <Info className="w-3 h-3" />
+-                      <span>שיא במחזור: {pb.cycle_peak_units} יחידות</span>
++                      <span>בשימוש {pb.observed_units} יחידות · בחוזה {pb.contracted_units} — לעדכון החיוב פנו למנהל המערכת</span>
+                     </div>
+                   )}
+                   {pb.pending_contracted_units != null && (
