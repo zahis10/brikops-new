@@ -14,6 +14,7 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../components/ui/select';
 import { diaryService, projectService } from '../services/api';
+import { downloadBlob } from '../utils/fileDownload';
 import WorkDiaryEntryView from '../components/diary/WorkDiaryEntryView';
 import { STATUS_HE, NO_WORK_REASONS } from '../components/diary/diaryLabels';
 
@@ -168,14 +169,7 @@ export default function WorkDiaryPage() {
     try {
       const res = await diaryService.exportMonthlyPdf(projectId, month);
       const blob = new Blob([res.data], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `diary_${month}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await downloadBlob(blob, `diary_${month}.pdf`, 'application/pdf');
     } catch (err) {
       const d = err?.response?.data?.detail;
       toast.error(typeof d === 'string' ? d : 'שגיאה בהפקת PDF חודשי');

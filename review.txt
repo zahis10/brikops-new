@@ -1,73 +1,63 @@
 ================================================================================
-REVIEW — BATCH safety-ind3-fix2: תיקון טופו ערבית בתעודה + שורות הדרכה לחיצות
-(F1 סעיפים בערבית כריבועים, F2 שורות הדרכה בכרטיס עובד לחיצות)
+REVIEW — BATCH safety-ind3-fix3: הורדות PDF/Excel באפליקציה (iOS/Android)
 Date: 2026-07-15  |  Branch: staging
 ================================================================================
 
-רקע: בדיקת מכשיר שנייה של zahi על ind3. שאר הבאץ' אושר — לא נגעתי בו.
+רקע: הורדות blob דרך עוגן <a download> לא נתמכות ב-WebView של האפליקציה.
+הפתרון הקיים utils/fileDownload.js::downloadBlob (web=עוגן, native=
+Filesystem+Share sheet, מוכח בדף רישום הבטיחות) — נותב לכל מוקדי ההורדה.
+שינוי JS בלבד — ios/ ו-android/ לא נגעו (אומת ב-git status). נשאר OTA.
 
-F1 — סעיפי התעודה בערבית הוצגו כריבועים (tofu)
+F1 — תעודת הדרכה
 --------------------------------------------------------------------------------
-  שורש אמיתי: Rubik (גם ה-build המלא) מכיל ערבית בסיסית (0600–06FF)
-  אבל לא Arabic Presentation Forms (FE70–FEFF) — הצורות המעוצבות
-  ש-arabic_reshaper מייצר בפועל. לכן ע בסיסי "קיים" אבל הטקסט המרונדר
-  יוצא ריבועים.
-  תיקונים ב-backend/contractor_ops/safety/induction.py:
-  1. פונט ערבי ייעודי: backend/fonts/Amiri-Regular.ttf (1,699 גליפים,
-     מכסה גם 0x0639 בסיסי וגם 0xFECB המעוצב) — נרשם עם אימות כיסוי
-     ומשמש לרינדור סעיפים בערבית.
-  2. שער כשירות פונט לפני רינדור: לכל שפה נבדק גליף מדגם (he א,
-     ar ع מעוצב 0xFECB, en 'A', ru А; zh מדולג — פונט CID). חוסר →
-     logger.error + שגיאת 500 מפורשת בעברית ("שגיאת פונט...") במקום
-     טופו שקט.
-  3. הגנת Rubik-Bold הורחבה: נבדקים גם א (0x05D0) וגם ع (0x0639).
-  4. helper חדש mixed(): שם עובד ערבי (محمد خالد) ותווית שפה בטבלת
-     הפרטים ובשורת החתימה — ריצות ערביות נעטפות ב-Amiri וריצות CJK
-     ב-STSong-Light (אחרי XML-escape). בלי זה השם עצמו היה טופו.
+  utils/inductionCertificate.js — קוד העוגן הידני הוחלף בקריאה אחת:
+  downloadBlob(blob, filename, 'application/pdf'). מכסה גם את כפתור
+  "תעודה" בשורות הכרטיס וגם את "הורדת תעודת הדרכה (PDF)" במודאל הראיות.
 
-F2 — שורות הדרכה בכרטיס העובד הפכו לחיצות
+F2 — אותה משפחה
 --------------------------------------------------------------------------------
-  frontend/src/components/safety/SafetyWorkerCard.js:
-  כל שורת הדרכה היא כעת כפתור (chevron + hover):
-  - הדרכת אתר חתומה → פותחת את InductionEvidenceModal הקיים (ראיות).
-  - הדרכה רגילה → מעבר ללשונית "הדרכות" עם מיקוד על השורה.
-  קישור התעודה בתוך השורה הומר מ-<a> ל-span נגיש-מקלדת (אין עוגן
-  מקונן בתוך כפתור).
-  frontend/src/pages/SafetyHomePage.js + TrainingsList:
-  state חדש focusTrainingId; prop highlightId — פתיחה אוטומטית של
-  הקבוצה, גלילה לשורה, טבעת הדגשה סגולה; ההדגשה מתנקה ביציאה מהלשונית.
-  אין שינוי backend — training_id כבר קיים ב-payload.
+  components/ProjectDataExportTab.js — ייצוא אקסל מלא (xlsx) → downloadBlob.
+  components/diary/WorkDiaryEntryView.js — PDF יומן יומי → downloadBlob.
+
+F3 — סריקת כל createObjectURL ב-frontend/src (סיווג מלא)
+--------------------------------------------------------------------------------
+  הורדות נוספות שנותבו (מעבר לספק):
+  - components/safety/SafetyExportMenu.js — ייצוא רישום בטיחות xlsx/PDF.
+    ה-helper המקומי שונה ל-downloadResponse (שומר פענוח שם קובץ מ-
+    Content-Disposition), mime לפי סיומת, עם await.
+  - components/safety/SafetyTourRunner.js — PDF סיור בטיחות.
+  - pages/WorkDiaryPage.js — PDF יומן חודשי.
+  - pages/HandoverProtocolPage.js — PDF פרוטוקול מסירה
+    (downloadBlobAsFile מאציל ל-downloadBlob; שני מוקדי הקריאה עם await
+    כדי ששגיאות native ייתפסו ב-try/catch הקיים; מסלול הנפילה משיתוף →
+    הורדה עטוף בטיפול שגיאה משלו).
+  תצוגות מקדימות — לא נגעו (createObjectURL לגיטימי):
+  NewDefectModal, PhotoAnnotation, HandoverItemModal, HandoverMeterForm,
+  HandoverSectionPage, ApartmentDashboardPage (תמונות ממתינות),
+  StageDetailPage (תצוגות/העלאות תמונה), TaskDetailPage, imageCompress,
+  utils/fileDownload.js עצמו (מסלול web).
 
 אימות
 --------------------------------------------------------------------------------
-  probe_safety_ind3.py — 31/31 PASS (30 קיימים + V4j חדש: כיסוי גליפים
-  Rubik-Bold he+ar בסיסי, Amiri ערבית מעוצבת).
-  רגרסיות (ללא שינוי): ind2_fix4 21/21, ind2 34/34, ind2_fix1 31/31,
-  ind1 30/30, w1_alerts 32/32. סה"כ 179/179.
-  Frontend: build מלא עם CI=true — עבר נקי (אזהרות = שגיאות).
-  כשל לא-קשור ידוע: test_defects_summary_includes_safety_open_count.
-  ביקורת ארכיטקט: PASS.
+  טסט חדש src/utils/__tests__/fileDownload.web.test.js (jsdom):
+  מסלול web נשאר עוגן — createObjectURL, קליק אחד, revoke, שם קובץ
+  (כולל עברית) ב-download; Filesystem/Share לא נקראים.
+  טסטי FE: 15/15 PASS (3 חבילות). build מלא CI=true — עבר נקי.
+  הערת סביבה: הרצת jest מקומית דרשה LD_LIBRARY_PATH ל-libuuid (חבילת
+  canvas של jsdom) — עניין סביבתי בלבד, לא שינוי קוד.
+  ביקורת ארכיטקט: סבב 1 מצא חוסר await ב-HandoverProtocolPage (שגיאת
+  native הייתה עלולה להיבלע) — תוקן בשני המוקדים + עטיפת fallback.
+  device: יש לאמת הורדה על מכשיר; web ממשיך להוריד כרגיל (מכוסה בטסט).
 
-QUALITY GATE — 5 קבצי דוגמה מצורפים לאישור ויזואלי (2+ עמודים כ"א)
+קבצים שהשתנו (JS בלבד)
 --------------------------------------------------------------------------------
-  attached_assets/cert_sample_he.pdf — עברית, 3 עמודים.
-  attached_assets/cert_sample_en.pdf — אנגלית, 3 עמודים.
-  attached_assets/cert_sample_ru.pdf — רוסית, 3 עמודים.
-  attached_assets/cert_sample_ar.pdf — ערבית, 2 עמודים. נבדק ויזואלית:
-    סעיפים, הצהרה, שם העובד محمد خالد ושורת חתימה — הכל מרונדר תקין.
-  attached_assets/cert_sample_zh.pdf — סינית, 3 עמודים. הטקסט הסיני
-    (כולל השם 王磊) קיים ב-PDF (אומת ב-pdftotext); בתצוגה מקדימה במחשב
-    ללא פונטים סיניים ייתכנו ריבועים — STSong-Light הוא פונט CID
-    סטנדרטי; יש לאמת על המכשיר כרגיל.
-
-קבצים שהשתנו
---------------------------------------------------------------------------------
-  backend/fonts/Amiri-Regular.ttf                     (חדש — פונט ערבי)
-  backend/contractor_ops/safety/induction.py          (F1: Amiri, שער
-                                                       כשירות, mixed())
-  backend/tests/probe_safety_ind3.py                  (V4j)
-  frontend/src/components/safety/SafetyWorkerCard.js  (F2: שורות לחיצות)
-  frontend/src/pages/SafetyHomePage.js                (F2: ניתוב ומיקוד)
-  frontend/src/components/safety/TrainingsList.js     (F2: highlightId)
+  frontend/src/utils/inductionCertificate.js
+  frontend/src/components/ProjectDataExportTab.js
+  frontend/src/components/diary/WorkDiaryEntryView.js
+  frontend/src/components/safety/SafetyExportMenu.js
+  frontend/src/components/safety/SafetyTourRunner.js
+  frontend/src/pages/WorkDiaryPage.js
+  frontend/src/pages/HandoverProtocolPage.js
+  frontend/src/utils/__tests__/fileDownload.web.test.js   (חדש — טסט)
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

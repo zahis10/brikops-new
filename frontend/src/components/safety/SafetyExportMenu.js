@@ -5,6 +5,7 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from '../ui/dropdown-menu';
 import { safetyService } from '../../services/api';
+import { downloadBlob } from '../../utils/fileDownload';
 
 function yyyymmdd() {
   const d = new Date();
@@ -13,7 +14,14 @@ function yyyymmdd() {
   return `${d.getFullYear()}${m}${day}`;
 }
 
-function downloadBlob(response, fallbackName) {
+function mimeFor(filename) {
+  if (/\.xlsx$/i.test(filename)) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (/\.pdf$/i.test(filename)) return 'application/pdf';
+  if (/\.csv$/i.test(filename)) return 'text/csv';
+  return 'application/octet-stream';
+}
+
+async function downloadResponse(response, fallbackName) {
   const disp = response?.headers?.['content-disposition'] || '';
   const match = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
   let filename = fallbackName;
@@ -25,14 +33,8 @@ function downloadBlob(response, fallbackName) {
       filename = match[1];
     }
   }
-  const url = window.URL.createObjectURL(new Blob([response.data]));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.URL.revokeObjectURL(url);
+  const mime = mimeFor(filename);
+  await downloadBlob(new Blob([response.data], { type: mime }), filename, mime);
 }
 
 export default function SafetyExportMenu({
@@ -70,7 +72,7 @@ export default function SafetyExportMenu({
         response = await safetyService.exportPdfRegister(projectId);
         fallback = `safety_register_${shortId}_${stamp}.pdf`;
       }
-      downloadBlob(response, fallback);
+      await downloadResponse(response, fallback);
       toast.success('הקובץ הורד בהצלחה');
     } catch (err) {
       toast.error('שגיאה בייצוא — נסה שוב');

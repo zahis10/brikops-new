@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Download, Loader2, FileSpreadsheet, Archive, CheckCircle, AlertCircle } from 'lucide-react';
 import { exportService, dataExportService } from '../services/api';
+import { downloadBlob } from '../utils/fileDownload';
 import { toast } from 'sonner';
 
 const ProjectDataExportTab = ({ projectId, projectName }) => {
@@ -39,14 +40,11 @@ const ProjectDataExportTab = ({ projectId, projectName }) => {
       const blob = new Blob([response.data], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `full_export_${projectName || 'project'}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      await downloadBlob(
+        blob,
+        `full_export_${projectName || 'project'}.xlsx`,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
       toast.success('הקובץ הורד בהצלחה');
     } catch (err) {
       toast.error(err?.response?.status === 403 ? 'אין הרשאה' : 'שגיאה בייצוא');

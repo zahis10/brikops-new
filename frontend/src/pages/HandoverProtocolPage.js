@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { handoverService } from '../services/api';
+import { downloadBlob } from '../utils/fileDownload';
 import { toast } from 'sonner';
 import { t } from '../i18n';
 import { useAuth } from '../contexts/AuthContext';
@@ -280,15 +281,8 @@ const HandoverProtocolPage = () => {
     return `protocol_mesira_${type}_${apt}${floor ? '_' + floor : ''}.pdf`;
   };
 
-  const downloadBlobAsFile = (blob, filename) => {
-    const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    URL.revokeObjectURL(url);
-    a.remove();
+  const downloadBlobAsFile = async (blob, filename) => {
+    await downloadBlob(new Blob([blob], { type: 'application/pdf' }), filename, 'application/pdf');
   };
 
   const handlePdfError = async (err) => {
@@ -327,7 +321,7 @@ const HandoverProtocolPage = () => {
     setPdfLoading(true);
     try {
       const blob = await handoverService.getPdfBlob(projectId, protocolId);
-      downloadBlobAsFile(blob, buildPdfFilename());
+      await downloadBlobAsFile(blob, buildPdfFilename());
     } catch (err) {
       await handlePdfError(err);
     } finally {
@@ -366,7 +360,13 @@ const HandoverProtocolPage = () => {
       if (err?.name === 'AbortError') {
       } else if (err?.name === 'NotAllowedError') {
         toast.info('לא ניתן לשתף, מוריד PDF במקום...');
-        if (blob) downloadBlobAsFile(blob, buildPdfFilename());
+        if (blob) {
+          try {
+            await downloadBlobAsFile(blob, buildPdfFilename());
+          } catch (dlErr) {
+            await handlePdfError(dlErr);
+          }
+        }
       } else {
         await handlePdfError(err);
       }

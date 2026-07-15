@@ -15,6 +15,7 @@ import {
 } from '../ui/select';
 import { useAuth } from '../../contexts/AuthContext';
 import { diaryService, safetyService } from '../../services/api';
+import { downloadBlob } from '../../utils/fileDownload';
 import { compressImage } from '../../utils/imageCompress';
 import SafetySignaturePad from '../safety/SafetySignaturePad';
 import {
@@ -213,14 +214,7 @@ export default function WorkDiaryEntryView({
       await flush(); // the PDF should reflect what the user sees
       const res = await diaryService.exportEntryPdf(projectId, entry.id);
       const blob = new Blob([res.data], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `diary_${local.diary_date}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await downloadBlob(blob, `diary_${local.diary_date}.pdf`, 'application/pdf');
     } catch (err) {
       toast.error('ייצוא PDF נכשל');
     } finally {

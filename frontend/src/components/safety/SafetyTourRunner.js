@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { safetyService, projectService } from '../../services/api';
+import { downloadBlob } from '../../utils/fileDownload';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -264,14 +265,7 @@ export default function SafetyTourRunner({ projectId, tour, open, onClose, onCha
     try {
       const res = await safetyService.exportTourPdf(projectId, t.id);
       const blob = new Blob([res.data], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `safety_tour_${String(t.id).slice(0, 8)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await downloadBlob(blob, `safety_tour_${String(t.id).slice(0, 8)}.pdf`, 'application/pdf');
     } catch (err) {
       toast.error('ייצוא PDF נכשל');
     } finally {
