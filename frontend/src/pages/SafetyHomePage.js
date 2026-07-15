@@ -136,6 +136,9 @@ export default function SafetyHomePage() {
   const [inductionFor, setInductionFor] = useState(null); // batch safety-ind2
   const [reInductConfirm, setReInductConfirm] = useState(null); // ind2-fix4 E2
   const [evidenceFor, setEvidenceFor] = useState(null); // ind2-fix4 E4
+  // ind3-fix2 F2: training row to highlight/scroll-to after navigating from
+  // the worker card. Cleared once the user leaves the trainings tab.
+  const [focusTrainingId, setFocusTrainingId] = useState(null);
   const [trainingSigning, setTrainingSigning] = useState(false);
   // Batch safety-p2-1d — read-only detail modal (row tap opens it).
   const [detailDoc, setDetailDoc] = useState(null);
@@ -312,6 +315,11 @@ export default function SafetyHomePage() {
     })();
     return () => { cancelled = true; };
   }, [projectId, filter, loading, flagOff, forbidden]);
+
+  // ind3-fix2 F2: drop the training highlight once the user leaves the tab.
+  useEffect(() => {
+    if (activeTab !== 'trainings' && focusTrainingId) setFocusTrainingId(null);
+  }, [activeTab, focusTrainingId]);
 
   // Clear selection whenever the filter changes or the active tab leaves documents.
   useEffect(() => { setSelectedIds(new Set()); }, [filter]);
@@ -808,6 +816,7 @@ export default function SafetyHomePage() {
                 items={trainingsView.items}
                 workers={workers.items}
                 isWriter={isWriter}
+                highlightId={focusTrainingId}
                 onEdit={(t) => setTrainingForm({ open: true, record: t, renewFrom: null })}
                 onRenew={(t) => setTrainingForm({ open: true, record: null, renewFrom: t })}
                 onSign={(t) => setTrainingSignFor(t)}
@@ -1145,6 +1154,13 @@ export default function SafetyHomePage() {
           setWorkerChain(null);
           setTrainingCardLock(w);
           setTrainingForm({ open: true, record: null, renewFrom: null });
+        }}
+        /* ind3-fix2 F2: training rows in the worker card navigate — */
+        onOpenEvidence={(t) => { setWorkerCard(null); setEvidenceFor(t); }}
+        onOpenTraining={(t) => {
+          setWorkerCard(null);
+          setFocusTrainingId(t.id);
+          setActiveTab('trainings');
         }}
       />
 
@@ -1770,8 +1786,28 @@ function WorkersList({ items, isWriter, onEdit, onOpenCard, onInduct }) {
   );
 }
 
-function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign, onViewEvidence, onReconduct, onDownloadCertificate }) {
+function TrainingsList({ items, workers, isWriter, highlightId, onEdit, onRenew, onSign, onViewEvidence, onReconduct, onDownloadCertificate }) {
   const [expandedKeys, setExpandedKeys] = useState(() => new Set());
+  // ind3-fix2 F2: when navigated from the worker card — auto-expand the group
+  // holding the target row (it may be an older record) and scroll it into view.
+  const highlightRef = useRef(null);
+  useEffect(() => {
+    if (!highlightId || !items?.length) return;
+    const target = items.find((t) => t.id === highlightId);
+    if (target) {
+      setExpandedKeys((prev) => {
+        const key = `${target.worker_id}|${target.training_type}`;
+        if (prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.add(key);
+        return next;
+      });
+    }
+    const raf = requestAnimationFrame(() => {
+      highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [highlightId, items]);
   const toggle = (key) => () => setExpandedKeys((prev) => {
     const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -1809,7 +1845,8 @@ function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign, onVi
     return (
       <li
         key={tr.id}
-        className={`px-4 py-3 flex items-start gap-3 hover:bg-slate-50${isOld ? ' opacity-60 bg-slate-50' : ''}`}
+        ref={tr.id === highlightId ? highlightRef : undefined}
+        className={`px-4 py-3 flex items-start gap-3 hover:bg-slate-50${isOld ? ' opacity-60 bg-slate-50' : ''}${tr.id === highlightId ? ' ring-2 ring-inset ring-purple-400 bg-purple-50/50' : ''}`}
       >
         <div className="flex-1 min-w-0">
           <p className="font-medium text-slate-900 truncate">{tr.training_type}</p>

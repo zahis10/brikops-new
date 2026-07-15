@@ -305,6 +305,17 @@ async def main():
         record("V4i RGBA transparency flattened to white (no black box)",
                all(v > 240 for v in _px), f"pixel={_px}")
 
+        # V4j — ind3-fix2 F1: vendored fonts cover the glyphs actually drawn:
+        # Rubik-Bold א+ع (base), Amiri the SHAPED Arabic presentation form ع.
+        from reportlab.pdfbase.ttfonts import TTFont as _TTFont
+        _fonts_dir = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "fonts")
+        _bold = _TTFont("_ChkBold", os.path.join(_fonts_dir, "Rubik-Bold.ttf")).face.charToGlyph or {}
+        _amiri = _TTFont("_ChkAmiri", os.path.join(_fonts_dir, "Amiri-Regular.ttf")).face.charToGlyph or {}
+        record("V4j font coverage: Rubik-Bold he+ar base, Amiri shaped Arabic",
+               0x05D0 in _bold and 0x0639 in _bold
+               and 0x0639 in _amiri and 0xFECB in _amiri)
+
     # cleanup
     await db.organizations.delete_many({"id": org})
     await db.subscriptions.delete_many({"org_id": org})

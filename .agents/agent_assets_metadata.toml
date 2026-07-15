@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "REVIEW — safety-ind3-fix1 (תיקון תעודת PDF)"
+title = "דוח באץ' ind3-fix2 — לאישור זהי"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
@@ -803,10 +803,28 @@ title = "Diff מלא — BATCH billing-contracted-binds v2"
 id = "aMxVX7Rv2KuV13EmH9Aft"
 uri = "file://attached_assets/cert_sample_he.pdf"
 type = "pdf"
-title = "דוגמה — תעודת הדרכה בעברית (3 עמודים)"
+title = "דוגמה — תעודה בעברית"
 
 [[outputs]]
 id = "mqZitfvC_duvIt1a86fwf"
 uri = "file://attached_assets/cert_sample_zh.pdf"
 type = "pdf"
-title = "דוגמה — תעודת הדרכה בסינית (3 עמודים)"
+title = "דוגמה — תעודה בסינית"
+
+[[outputs]]
+id = "BgVuc5QfkDWnBTVSe03wh"
+uri = "file://attached_assets/cert_sample_en.pdf"
+type = "pdf"
+title = "דוגמה — תעודה באנגלית"
+
+[[outputs]]
+id = "evfR6AJzNpu9NixdJN6Dt"
+uri = "file://attached_assets/cert_sample_ru.pdf"
+type = "pdf"
+title = "דוגמה — תעודה ברוסית"
+
+[[outputs]]
+id = "LPgR4exMWOuu4aL0D7TCP"
+uri = "file://attached_assets/cert_sample_ar.pdf"
+type = "pdf"
+title = "דוגמה — תעודה בערבית"

@@ -20,6 +20,7 @@ evidentiary signature, dedup snapshot writer on uidx_ics). Conduct-side
 org resolution goes via the PROJECT (sign_training idiom), NOT
 get_user_org. NO delete endpoints; en/ru/ar content = IND-3.
 """
+import re
 import hashlib
 import json
 import uuid
@@ -906,11 +907,26 @@ def _build_induction_certificate_pdf(org_name, project_name, worker_name,
     try:
         bold_path = os.path.join(fonts_dir, "Rubik-Bold.ttf")
         tt = TTFont("Rubik-Bold", bold_path)
-        if 0x05D0 in (tt.face.charToGlyph or {}):
+        # ind3-fix2 F1: verify BOTH א and ع base glyphs before trusting the file.
+        _cmap = tt.face.charToGlyph or {}
+        if 0x05D0 in _cmap and 0x0639 in _cmap:
             pdfmetrics.registerFont(tt)
             bold_font = "Rubik-Bold"
     except Exception:
         logger.exception("induction certificate: Rubik-Bold registration failed — falling back to Rubik")
+    # ind3-fix2 F1: Arabic sections need Arabic PRESENTATION FORMS
+    # (U+FE70–FEFF, produced by arabic_reshaper) — Rubik carries only the
+    # base Arabic block, so shaped Arabic renders as tofu. Amiri covers the
+    # presentation forms; register it (verified) as the Arabic section font.
+    arabic_font = None
+    try:
+        am = TTFont("Amiri", os.path.join(fonts_dir, "Amiri-Regular.ttf"))
+        _acmap = am.face.charToGlyph or {}
+        if 0x0639 in _acmap and 0xFECB in _acmap:  # base ع + shaped ع
+            pdfmetrics.registerFont(am)
+            arabic_font = "Amiri"
+    except Exception:
+        logger.exception("induction certificate: Amiri registration failed")
     # ind3-fix1 F3: zh sections via reportlab's built-in CID font — no new
     # font files.
     try:
@@ -923,6 +939,22 @@ def _build_induction_certificate_pdf(org_name, project_name, worker_name,
             return ""
         reshaped = arabic_reshaper.reshape(str(text))
         return get_display(reshaped)
+
+    # ind3-fix2 F1: Rubik lacks Arabic PRESENTATION FORMS and CJK — worker
+    # names / language labels in the details table and signature line would
+    # tofu. Wrap Arabic runs in Amiri and CJK runs in STSong-Light via
+    # Paragraph <font> markup (XML-escaped first; the escape does not touch
+    # these ranges).
+    _AR_RUN = re.compile(r"[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]+")
+    _CJK_RUN = re.compile(r"[\u3000-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]+")
+
+    def mixed(text):
+        shaped = heb(text)
+        esc = (shaped.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+        if arabic_font:
+            esc = _AR_RUN.sub(lambda m: f'<font face="{arabic_font}">{m.group(0)}</font>', esc)
+        esc = _CJK_RUN.sub(lambda m: f'<font face="STSong-Light">{m.group(0)}</font>', esc)
+        return esc
 
     SLATE_700 = colors.HexColor("#334155")
     SLATE_500 = colors.HexColor("#64748B")
@@ -949,9 +981,36 @@ def _build_induction_certificate_pdf(org_name, project_name, worker_name,
     # RIGHT alignment; en/ru → plain LTR Rubik; zh → STSong-Light LTR.
     lang = (content_language or "he").strip() or "he"
     is_rtl = lang in ("he", "ar")
-    sec_font = "STSong-Light" if lang == "zh" else "Rubik"
-    sec_bold = "STSong-Light" if lang == "zh" else bold_font
+    if lang == "zh":
+        sec_font = sec_bold = "STSong-Light"
+    elif lang == "ar":
+        sec_font = sec_bold = arabic_font  # may be None → fitness check below
+    else:
+        sec_font = "Rubik"
+        sec_bold = bold_font
     sec_align = TA_RIGHT if is_rtl else TA_LEFT
+
+    # ind3-fix2 F1: font-fitness gate — BEFORE rendering, verify the chosen
+    # section font actually covers a probe character of the language as it
+    # will be drawn (ar → the SHAPED presentation form). A miss is an
+    # explicit, logged 500 — never silent tofu.
+    _PROBE = {"he": 0x05D0, "ar": 0xFECB, "en": ord("A"), "ru": 0x0410}
+    probe_cp = _PROBE.get(lang)
+    if content_sections and lang != "zh" and probe_cp is not None:
+        _ok = False
+        if sec_font:
+            try:
+                _f = pdfmetrics.getFont(sec_font)
+                _ok = probe_cp in (_f.face.charToGlyph or {})
+            except Exception:
+                _ok = False
+        if not _ok:
+            logger.error(
+                "induction certificate: section font %r lacks probe glyph U+%04X "
+                "for language %r — refusing to render tofu", sec_font, probe_cp, lang)
+            raise HTTPException(
+                status_code=500,
+                detail="שגיאת פונט בהפקת התעודה: הפונט אינו תומך בשפת ההדרכה — יש לפנות לתמיכה")
     st_sec_title = ParagraphStyle("CertSecTitle", fontName=sec_bold, fontSize=11,
                                   alignment=sec_align, textColor=SLATE_700, leading=16,
                                   spaceBefore=4)
@@ -1013,7 +1072,7 @@ def _build_induction_certificate_pdf(org_name, project_name, worker_name,
     if sig.get("via_interpreter") and sig.get("interpreter_name"):
         rows.append(("מתורגמן/ת", f"באמצעות מתורגמן/ת: {sig['interpreter_name']}"))
     table_data = [
-        [Paragraph(heb(v), st_value), Paragraph(heb(k), st_label)]
+        [Paragraph(mixed(v), st_value), Paragraph(heb(k), st_label)]
         for k, v in rows
     ]
     tbl = Table(table_data, colWidths=[11 * cm, 4 * cm])
@@ -1056,7 +1115,7 @@ def _build_induction_certificate_pdf(org_name, project_name, worker_name,
 
     # ---- F3(4): signature block ----
     signed_line = f"חתימת העובד: {sig.get('name') or ''} · {_il_date(sig.get('signed_at'))}"
-    els.append(Paragraph(heb(signed_line), st_value))
+    els.append(Paragraph(mixed(signed_line), st_value))
     els.append(Spacer(1, 2 * mm))
     sig_added = False
     if signature_url:
