@@ -1,92 +1,88 @@
 ================================================================================
-REVIEW — BATCH safety-ind2-fix4: ליטוש הדרכת אתר — מצב "הודרך" בשורת העובד,
-מסך ראיות מלא (תוכן + הצהרה + חתימה), וסגירת עקיפת born-signed
-(חידוש / הוספה ידנית / החתמה ידנית של "הדרכת אתר").
-Date: 2026-07-15  |  Branch: staging  |  Base: bcf796b
+REVIEW — BATCH safety-ind3: תוכן הדרכת אתר ב-5 שפות (he/en/ru/ar/zh) עם
+טיוטת תרגום אוטומטי (Google Translate) לבדיקת הארגון, טקס בשפה שנבחרה,
+ותעודת הדרכה PDF להדרכה חתומה.
+Date: 2026-07-15  |  Branch: staging  |  Base: e994b9d
 ================================================================================
 
-STEP 0 — ממצאי אימות (תואם לספק, לא נעצר)
+STEP 0 — ממצאי אימות (תואם לספק, סטייה אחת מדווחת)
 --------------------------------------------------------------------------------
-  list_workers: backend/contractor_ops/safety/workers.py:126 — מחזיר
-  {items, total, limit, offset}; items ללא id_number_hash (PII).
-  אוסף ההדרכות: safety_trainings — שדות worker_id, training_type,
-  expires_at, worker_signature (עם snapshot_id/content_hash/
-  attestation_text מהטקס), deletedAt.
-  INDUCTION_TRAINING_TYPE="הדרכת אתר" — induction.py:48; conduct ~327
-  כותב ישירות ל-DB (לא דרך create_training).
-  העקיפה אומתה: onRenew על שורת הדרכת אתר פתח טופס גנרי →
-  POST /trainings יצר "הדרכת אתר" לא-חתומה → "החתמה" חתמה בלי טקס.
-  WorkersList props: items→isWriter→onEdit→onOpenCard→onInduct.
+  שלב בחירת השפה בטקס כבר דינמי מ-languages_filled (מ-ind2) — רק התוויות
+  היו קשיחות. שלב הקריאה הציג תמיד את הסעיפים העבריים (content.sections).
+  ⚠ סטייה תוספתית: GET /induction/content מחזיר כעת גם
+  sections_by_language (מפה לכל השפות המלאות) — כך שלב הקריאה מציג
+  בדיוק את מה שיישמר ב-snapshot, בלי לגעת ב-POST conduct (שכבר שומר
+  snapshot לפי השפה מאז ind2). המפתח sections הישן נשאר (תאימות).
+  תבנית PDF קיימת: פונטי Rubik ב-backend/fonts + arabic_reshaper/bidi —
+  Rubik ללא גליפים סיניים ⇒ תווית השפה בתעודה עבור zh היא
+  "סינית (Chinese)" (טקסט ההדרכה עצמו אינו מודפס בתעודה — אין בעיה).
 
-EDITS (5 קבצים + פרוב חדש, +~330/-40)
+EDITS (backend 1, frontend 5 + util חדש, פרוב חדש)
 --------------------------------------------------------------------------------
-  E1  workers.py list_workers — תוספתית 'induction_valid_until' לכל עובד:
-      max(expires_at) על הדרכות אתר חתומות (worker_signature≠null,
-      deletedAt=null) — אגרגציה אחת לכל העמוד (בלי N+1), null באין.
-      אפס שינוי בשאר הצורה, אפס PII חדש.
-  E2  SafetyHomePage.js WorkersList — כפתור 🎓 בשלושה מצבים:
-      אין → "הדרכת אתר" (סגול, כמו היום); בתוקף → ירוק
-      "הודרך · עד DD/MM/YY" + AlertDialog אישור לפני העברה מחדש;
-      פג → ענבר "פג תוקף · העבר מחדש" → פותח טקס ישירות.
-  E3  induction.py — GET /{pid}/induction/evidence/{training_id} (חדש,
-      קריאה-בלבד): אותו שער כמו קריאת הדרכות (_check_project_access,
-      super_admin עובר). חייב הדרכת-אתר חתומה, אחרת 404 עברית. מחזיר
-      sections מה-snapshot (דרך sig.snapshot_id), attestation_text, שדות
-      שפה/מתורגמן, content_version/hash, פרטי חותם + signature_display_url
-      (generate_url — מפתח-במנוחה כמו כל החתימות).
-  E4  InductionEvidenceModal.js (חדש) — מודאל קריאה-בלבד: הסעיפים
-      כפי-שנקראו (ממוספרים), ההצהרה, בלוק חתימה (שם, תאריך, תמונה/מוקלדת).
-      טעינה/שגיאה בעברית. פעולת "צפייה" (Eye) על שורות הדרכת אתר בטאב.
-  E5  סגירת העקיפה:
-      a. create_training: type == "הדרכת אתר" (אחרי trim) → 422
-         "הדרכת אתר נוצרת רק דרך תהליך ההדרכה (כפתור 🎓 אצל העובד)".
-      b. sign_training: הדרכת אתר (כולל שורות legacy לא-חתומות) → 422.
-      c. FE: על שורות הדרכת אתר — חידוש/החתמה הוסרו; "העבר מחדש" פותח
-         את הטקס לעובד (איתור לפי tr.worker_id; אם העובד מעבר לעמוד
-         הטעון — אובייקט מינימלי עם ה-id, ה-backend מאמת). עיפרון נשאר.
-      d. update_training: שינוי training_type אל/מ- הסוג → 422.
-      conduct_induction לא נגוע (כותב ישירות, לא דרך הראוטים).
+  E1  induction.py — POST /{pid}/induction-template/translate: טיוטת
+      תרגום של הסעיפים העבריים הנוכחיים בלבד, לא נשמר דבר (draft:true).
+      שער עריכה זהה ל-PUT (בעל ארגון / org_admin). TRANSLATE_MOCK=1
+      לפרובים; מפתח חסר → 503; כשל ספק → 502; אין עברית → 409; יעד לא
+      נתמך → 422. zh→zh-CN מול ה-API. המפתח GOOGLE_TRANSLATE_API_KEY
+      נקרא מה-env בלבד.
+  E2  induction.py — PUT תבנית ברמת פרויקט מקבל {languages: {code:
+      {sections}}} (he חובה; sections ריקים מסירים שפה; קוד לא מוכר 422;
+      מבנה סעיפים שגוי — מחרוזת/אובייקט/סקלרים — 422 ולא 500). גוף
+      legacy {sections} ממשיך לעבוד ($set על languages.he בלבד, משמר
+      שפות אחרות). $inc version אחד בכל שמירה. PUT הארגוני הישן נותר
+      he-בלבד (לא בשימוש ה-FE).
+  E3  InductionTemplateEditor.js — טאבים he/en/ru/ar/zh עם נקודת "יש
+      תוכן", dir לכל שפה, כפתור "תרגם אוטומטית מעברית" + באנר ענבר
+      "טיוטת תרגום אוטומטי — עברו על התוכן ותקנו לפני שמירה". שמירה
+      שולחת את מפת השפות המלאה; dirty-guard חוצה טאבים; מצב קריאה-בלבד
+      ו-modal={false} נשמרו.
+  E4  SafetyInductionConduct.js — תוויות שפה בשם המקומי (עברית/English/
+      Русский/العربية/中文); שלב הקריאה מציג sections_by_language[בחירה]
+      עם dir מתאים ("אחרת" קוראת עברית עם מתורגמן — ללא שינוי).
+  E5  induction.py — GET /{pid}/induction/certificate/{tid}: תעודת PDF
+      להדרכת אתר חתומה בלבד (סמנטיקת evidence — אותם שערים ו-404).
+      Rubik + עיצוב RTL, פרטי עובד/פרויקט/ארגון, תאריכים, הצהרה, חתימה
+      (תמונה או מוקלדת), content_version/hash. StreamingResponse עם שם
+      קובץ עברי RFC5987. כפתורי "תעודה" (הורדת blob) במודאל הראיות
+      ובשורות הדרכה חתומות בטאב ההדרכות (util משותף
+      frontend/src/utils/inductionCertificate.js — בלי import מעגלי).
 
-DO-NOT-TOUCH — קוים
+PROBES — backend/tests/probe_safety_ind3.py (חדש): 28/28 PASS
 --------------------------------------------------------------------------------
-  conduct_induction פנימי, snapshots, עורך תבנית והרשאותיו, קבועי הטקסט
-  המשפטי, DEFAULT_INDUCTION_VALIDITY_DAYS, התראות פגי-תוקף (הדרכת אתר
-  ממשיכה לזרום בהן כרגיל), קבצי חיוב. אין סכימה, אין תלויות חדשות.
+  V1 תרגום (7): mock draft מבנה 1:1, לא נשמר דבר (version ללא שינוי),
+     409 בלי עברית, 422 he/יעד לא נתמך, 403 לא-עורך, 401.
+  V2 שמירה רב-לשונית (10): מפה מלאה → $inc אחד; en ריק הוסר; he ריק
+     422; קוד זר 422; ארבעה מבני sections שגויים → 422 (הקשחת
+     הארכיטקט); גוף legacy משמר ru/ar; GET content עם
+     languages_filled + sections_by_language.
+  V3 טקס ברוסית (4): 201 עם language_read=ru; ה-snapshot מכיל את
+     הסעיפים הרוסיים; שפה לא מלאה (en) → 422; evidence מחזיר ru.
+  V4 תעודה (7): 200 application/pdf עם %PDF ושם קובץ RFC5987; לא-הדרכה
+     404; לא-חתומה 404; זר 403; לא מאומת 401; management_team חבר
+     פרויקט → 200.
 
-VERIFY — תמלולים
+REGRESSION — הכל ירוק
 --------------------------------------------------------------------------------
-  V1-V3 פרוב חדש probe_safety_ind2_fix4.py (אפליקציה אמיתית in-process,
-  Mongo מקומי, JWT אמיתיים) — 21/21 PASS:
-    V1 (5): induction_valid_until == expires_at לעובד חתום; null לעובד
-        בלי; שורת legacy לא-חתומה לא נספרת; אין id_number_hash ברשימה;
-        MAX על שתי הדרכות חתומות.
-    V2 (8): יצירה עם הסוג → 422 עברית; עם רווחים → 422; סוג אחר → 201;
-        החתמת legacy לא-חתומה → 422; החתמת הדרכה רגילה → 200; PATCH
-        rename אל → 422; rename מ- → 422; PATCH לא-קשור → 200.
-    V3 (8): evidence 200 עם sections זהים ל-snapshot; content_hash תואם
-        לחתימה ול-snapshot; הצהרה+חותם נכונים; מקרה "אחרת"+מתורגמן —
-        via_interpreter/שמות/שפות נישאים והמתורגמן בהצהרה; הדרכה רגילה →
-        404; לא-חתומה → 404; בלי גישה לפרויקט → 403; בלי טוקן → 401.
-  V4 רגרסיות:
-    probe_safety_ind1.py     30/30 PASS
-    probe_safety_ind2.py     34/34 PASS (V3a עודכן: הגארד 422 קודם ל-409
-                             — הדחייה נשמרת, הסטטוס השתנה בכוונה)
-    probe_safety_ind2_fix1.py 31/31 PASS
-    probe_safety_w1_alerts.py 32/32 PASS
-    pytest safety: test_safety_registration + test_defect_safety_tag —
-      18 PASS, 1 FAIL קיים-מראש (test_defects_summary_includes_safety_
-      open_count — mock שמחליף רק את pr.get_db בעוד _get_project_role
-      שב-projects_router קורא ל-get_db של הראוטר; קבצים שלא נגענו בהם.
-      לא קשור לבאטץ').
-    py_compile על כל safety/* — OK.
-    craco build CI=true → EXIT=0 (פעמיים — כולל אחרי תיקון ה-fallback);
-    FE tests 13/13 PASS.
-  ביקורת ארכיטקט: PASS — "born-signed enforcement correctly closed";
-    ההערה היחידה (fallback ל"העבר מחדש" כשהעובד מחוץ לעמוד) תוקנה.
-  V5 DEVICE (זהי, staging): (1) עובד עם הדרכה בתוקף — "הודרך · עד ..."
-      + אישור בלחיצה; (2) טאב הדרכות: צפייה → תוכן+הצהרה+חתימה,
-      חידוש/החתמה נעלמו, "העבר מחדש" פותח טקס; (3) הוסף הדרכה עם
-      "הדרכת אתר" → חסום בהודעה העברית; (4) הדרכות רגילות ללא שינוי.
+  probe_safety_ind2_fix4  21/21    probe_safety_ind2       34/34
+  probe_safety_ind2_fix1  31/31    probe_safety_ind1       30/30
+  probe_safety_w1_alerts  32/32
+  py_compile OK · craco build "Compiled successfully" · FE tests 13/13.
+  (כשל ידוע שאינו קשור: test_defects_summary_includes_safety_open_count.)
+
+ARCHITECT REVIEW
+--------------------------------------------------------------------------------
+  ממצא חוסם יחיד: מבני sections שגויים במפת השפות גרמו ל-500 במקום 422
+  — תוקן (בדיקת list-of-dicts לפני הוולידציה) + 4 פרובים שליליים.
+  שאר הממצאים: שער התעודה זהה ל-evidence ✓, אין import מעגלי ✓, מצב
+  ה-editor רב-הטאבים תקין ✓, אין ממצאי אבטחה.
+
+NOTE FOR ZAHI (deploy prep): create a Google Cloud Translation API key and
+add GOOGLE_TRANSLATE_API_KEY to the EB environment BEFORE the stag test —
+exact click-steps will be handed when the batch reaches staging.
+V6 DEVICE (Zahi, staging): editor → Русский tab → תרגם אוטומטית → review →
+save; conduct a test worker in Русский → ru content shows → sign →
+evidence shows ru sections → תעודה downloads; Hebrew flow unchanged;
+"אחרת"+interpreter unchanged.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================

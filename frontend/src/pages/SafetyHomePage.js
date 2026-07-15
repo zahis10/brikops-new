@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
   Users, TrendingUp, ShieldAlert, Wrench, Filter, Plus, Pencil, Camera, FileText, ClipboardList,
-  ChevronLeft, Bell, BookOpen, Eye,
+  ChevronLeft, Bell, BookOpen, Eye, Download,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
@@ -43,6 +43,7 @@ import SafetySignaturePad from '../components/safety/SafetySignaturePad';
 import SafetyInductionConduct from '../components/safety/SafetyInductionConduct';
 import InductionTemplateEditor from '../components/safety/InductionTemplateEditor';
 import InductionEvidenceModal from '../components/safety/InductionEvidenceModal';
+import { downloadInductionCertificatePdf } from '../utils/inductionCertificate';
 import {
   CATEGORY_HE, SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE, INCIDENT_STATUS_HE,
   TOUR_TYPE_HE, TOUR_STATUS_HE,
@@ -811,6 +812,15 @@ export default function SafetyHomePage() {
                 onRenew={(t) => setTrainingForm({ open: true, record: null, renewFrom: t })}
                 onSign={(t) => setTrainingSignFor(t)}
                 onViewEvidence={(t) => setEvidenceFor(t)}
+                onDownloadCertificate={async (t) => {
+                  try {
+                    await downloadInductionCertificatePdf(
+                      projectId, t.id,
+                      (workers.items || []).find((x) => x.id === t.worker_id)?.full_name);
+                  } catch (e) {
+                    toast.error('הורדת התעודה נכשלה');
+                  }
+                }}
                 onReconduct={(t) => {
                   const w = (workers.items || []).find((x) => x.id === t.worker_id);
                   // Fallback: the workers page is capped — a minimal worker
@@ -1760,7 +1770,7 @@ function WorkersList({ items, isWriter, onEdit, onOpenCard, onInduct }) {
   );
 }
 
-function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign, onViewEvidence, onReconduct }) {
+function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign, onViewEvidence, onReconduct, onDownloadCertificate }) {
   const [expandedKeys, setExpandedKeys] = useState(() => new Set());
   const toggle = (key) => () => setExpandedKeys((prev) => {
     const next = new Set(prev);
@@ -1827,6 +1837,18 @@ function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign, onVi
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {/* ind3 E5 — certificate PDF on SIGNED induction rows */}
+          {isInduction && tr.worker_signature && (
+            <button
+              type="button"
+              aria-label="הורדת תעודת הדרכת אתר"
+              title="הורדת תעודת הדרכת אתר"
+              onClick={(e) => { e.stopPropagation(); onDownloadCertificate && onDownloadCertificate(tr); }}
+              className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 inline-flex items-center gap-1"
+            >
+              <Download className="w-3.5 h-3.5" /> תעודה
+            </button>
+          )}
           {tr.worker_signature ? (
             isInduction ? (
               <button

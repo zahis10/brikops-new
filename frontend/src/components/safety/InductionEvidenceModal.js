@@ -2,17 +2,21 @@
 // exactly what the worker read (snapshot sections), the attestation text
 // and the signature. No edit affordances by design.
 import React, { useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '../ui/dialog';
 import { Badge } from '../ui/badge';
+import { Button } from '../ui/button';
 import { safetyService } from '../../services/api';
+import { downloadInductionCertificatePdf } from '../../utils/inductionCertificate';
 
 export default function InductionEvidenceModal({ projectId, training, workers, open, onClose }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     if (!open || !training) return;
@@ -49,6 +53,28 @@ export default function InductionEvidenceModal({ projectId, training, workers, o
         )}
         {!loading && !error && data && (
           <div className="space-y-4 text-sm">
+            {/* ind3 E5 — certificate PDF download */}
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={downloading}
+              onClick={async () => {
+                setDownloading(true);
+                try {
+                  await downloadInductionCertificatePdf(projectId, training.id, workerName);
+                } catch (e) {
+                  toast.error('הורדת התעודה נכשלה');
+                } finally {
+                  setDownloading(false);
+                }
+              }}
+            >
+              {downloading
+                ? <Loader2 className="w-4 h-4 ml-1 animate-spin" />
+                : <Download className="w-4 h-4 ml-1" />}
+              הורדת תעודת הדרכה (PDF)
+            </Button>
             <div className="flex flex-wrap gap-2 items-center">
               <Badge className="bg-emerald-100 text-emerald-800">חתום</Badge>
               {data.trained_at && (

@@ -735,6 +735,32 @@ export const safetyService = {
     );
     return r.data;
   },
+  // ind3 E2 — multi-language save: {code: {sections: [...]}}.
+  async saveInductionTemplateLanguages(projectId, languages) {
+    const r = await axios.put(
+      `${API}/safety/${projectId}/induction-template`,
+      { languages },
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+  // ind3 E1 — Google-Translate DRAFT (persists nothing server-side).
+  async translateInductionTemplate(projectId, targetLanguage) {
+    const r = await axios.post(
+      `${API}/safety/${projectId}/induction-template/translate`,
+      { target_language: targetLanguage },
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
+  // ind3 E5 — certificate PDF (blob download).
+  async downloadInductionCertificate(projectId, trainingId) {
+    const r = await axios.get(
+      `${API}/safety/${projectId}/induction/certificate/${trainingId}`,
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    return r.data;
+  },
 };
 
 // Work Diary (יומן עבודה) — batch diary-d2. Wraps the 7 flag-gated D1

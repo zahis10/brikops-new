@@ -22,6 +22,11 @@ function workerInitials(name) {
     .map((p) => p[0]).join('') || '?';
 }
 
+// ind3 E4 — native labels for the content languages; choices themselves
+// render dynamically from languages_filled (already dynamic since ind2).
+const LANG_NATIVE = { he: 'עברית', en: 'English', ru: 'Русский', ar: 'العربية', zh: '中文' };
+const LANG_DIR = { he: 'rtl', ar: 'rtl' };
+
 const EMPTY_STATE_COPY =
   "לא הוגדר תוכן הדרכת אתר — מנהל הארגון מגדיר אותו בכרטיס 'תוכן הדרכת אתר' שבטאב הסקירה";
 
@@ -69,6 +74,12 @@ const SafetyInductionConduct = ({ projectId, worker, open, onClose, onConducted 
 
   const isOther = languageChoice === 'other';
   const otherBlocked = isOther && (!workerLanguage.trim() || !interpreterName.trim());
+
+  // ind3 E4 — the READ step shows the CHOSEN language ("other" reads he via
+  // interpreter — backend mirror). Fallback to he sections (legacy shape).
+  const displayedLanguage = isOther || !languageChoice ? 'he' : languageChoice;
+  const displayedSections =
+    content?.sections_by_language?.[displayedLanguage] || content?.sections || [];
 
   const attestationText = isOther
     ? (content?.legal_text_interpreter || '')
@@ -175,7 +186,7 @@ const SafetyInductionConduct = ({ projectId, worker, open, onClose, onConducted 
                         : 'border-slate-200 hover:bg-slate-50 text-slate-700'
                     }`}
                   >
-                    {lang === 'he' ? 'עברית' : lang}
+                    {LANG_NATIVE[lang] || lang}
                   </button>
                 ))}
                 <button
@@ -246,8 +257,13 @@ const SafetyInductionConduct = ({ projectId, worker, open, onClose, onConducted 
                   </p>
                 </div>
               </div>
-              <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto p-4 space-y-4">
-                {(content.sections || []).map((s, i) => (
+              <div
+                ref={scrollRef}
+                onScroll={onScroll}
+                className="flex-1 overflow-y-auto p-4 space-y-4"
+                dir={LANG_DIR[displayedLanguage] || 'ltr'}
+              >
+                {displayedSections.map((s, i) => (
                   <div key={i}>
                     <h3 className="text-sm font-semibold text-slate-900 mb-1">{i + 1}. {s.title}</h3>
                     <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{s.body}</p>
