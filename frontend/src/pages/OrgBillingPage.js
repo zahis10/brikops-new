@@ -172,6 +172,12 @@ export default function OrgBillingPage() {
 
   const sub = data?.subscription;
   const subStatus = sub?.subscription_status || 'none';
+  const orgDecisive = sub && (sub.billable_source === 'override' || sub.billable_source === 'founder_plan');
+  const orgDecisiveLabel = orgDecisive
+    ? (sub.billable_source === 'override'
+        ? `💰 תמחור מותאם אישית: ₪${Number(sub.billable_amount || 0).toLocaleString()} לחודש לארגון`
+        : `🌟 תוכנית מייסדים: ₪${Number(sub.billable_amount || 0).toLocaleString()} לחודש לארגון`)
+    : null;
   const needsUpgrade = subStatus === 'expired' || subStatus === 'past_due' || subStatus === 'none';
   const isTrial = subStatus === 'trial';
   const isActive = subStatus === 'active';
@@ -1277,10 +1283,13 @@ export default function OrgBillingPage() {
                             ערוך
                           </button>
                           {isConfigured && (
-                            <span className="text-sm font-bold text-slate-900 flex-shrink-0">{formatCurrency(pb.monthly_total)}/חודש</span>
+                            <span className={`text-sm font-bold flex-shrink-0 ${orgDecisive ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{formatCurrency(pb.monthly_total)}/חודש</span>
                           )}
                         </div>
                       </div>
+                      {isConfigured && orgDecisive && (
+                        <div className="text-xs font-medium text-emerald-700">{orgDecisiveLabel}</div>
+                      )}
                       {isConfigured ? (
                         <div className="flex items-center gap-3 text-xs text-slate-500">
                           <span className="font-medium text-slate-700">{getPlanLabel(pb.plan_id)}</span>
@@ -1833,9 +1842,12 @@ export default function OrgBillingPage() {
                           ערוך
                         </button>
                       )}
-                      <span className="text-sm font-bold text-slate-900 flex-shrink-0">{formatCurrency(pb.monthly_total)}/חודש</span>
+                      <span className={`text-sm font-bold flex-shrink-0 ${orgDecisive ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{formatCurrency(pb.monthly_total)}/חודש</span>
                     </div>
                   </div>
+                  {orgDecisive && (
+                    <div className="text-xs font-medium text-emerald-700">{orgDecisiveLabel}</div>
+                  )}
                   {pb.plan_id && (
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-slate-500">חבילה:</span>

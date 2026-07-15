@@ -1,105 +1,72 @@
 ================================================================================
-REVIEW — BATCH billing-contracted-binds v2: contracted_units הוא קלט הכסף
-היחיד במסלול המחושב; מכסה (total_units) לתצוגה בלבד; peak/observed = דריפט
-Date: 2026-07-14  |  Branch: staging
+REVIEW — BATCH billing-display-override: מחיר ארגוני מכריע (override/מייסדים)
+מוצג עם קו-חוצה על המחיר המחושב-לפרויקט. תצוגה בלבד — אפס נגיעה בכסף.
+Date: 2026-07-15  |  Branch: staging  |  Base: c307b94
 ================================================================================
 
-DECISIONS (Zahi 2026-07-14) — כפי שמומשו
+BACKGROUND (ממצא השטח של זהי)
 --------------------------------------------------------------------------------
-  D1  Option A — איחוד: compute_org_billing_amount הוא מקור אמת יחיד;
-      create_payment_request קורא לו במקום לולאה כפולה.
-  D2  contracted תמיד מנצח: billable = contracted_units בלבד.
-      total_units_declared (מכסה) לא משפיע על החיוב; peak/observed ממשיכים
-      להתעדכן ולהיכתב כנתוני דריפט בלבד.
-  D3  אפס 450/15 מקודדים-קשיח ב-frontend/src — הכל מהשרת.
+  ארגון צ.ע יזמות עם override אדמין של ‎₪410, אבל כרטיס חיוב הפרויקט של
+  מגרש 808 הציג ‎₪3,450 מחושב ללא כל אינדיקציה ל-override. מסלולי הכסף
+  עצמם תקינים (נשלחו ב-c307b94) — זה תיקון אמון-תצוגה בלבד.
 
-EDITS
+EDITS (3 קבצים, +42/-5)
 --------------------------------------------------------------------------------
-  E1  backend/contractor_ops/billing.py — compute_org_billing_amount:
-      הוסר מעקף total_units_declared; billable=contracted; רענון/כתיבת
-      peak+observed נשמרו. create_payment_request: הלולאה הכפולה הוחלפה
-      בקריאה ל-compute_org_billing_amount (הוסר import מת של
-      calculate_monthly). זהות התנהגות ל-override/founder נשמרה: founder
-      דרך pb.plan_id (499); manual_override ברמת המנוי מעולם לא הוחל
-      במסלול בקשת-תשלום — גם קודם.
-  E2  billing.py — get_billable_amount (מסלול calculated) מחזיר 'breakdown'
-      (תוספתי); get_billing_for_org מוסיף 'billable_breakdown' ל-payload
-      של subscription (תוספתי).
-  E3  backend/contractor_ops/admin_router.py — /admin/billing/orgs:
-      כל פרויקט מועשר כולל contracted_units + observed_units
-      (compute_observed_units לכל pb פעיל).
-  E4  frontend/src/components/UpgradeWizard.js — הוסרו קבועי 450/15;
-      אומדן שלב-2 רק מ-serverPricing (listActivePlans); goToSummary חדש:
-      שומר יחידות (updateProjectBilling) → מושך orgBilling → שלב-3 מציג
-      billable_amount + billable_breakdown מהשרת; כפתור התשלום מציג את
-      סכום השרת ונעול ללא ציטוט.
-  E5  frontend/src/components/ProjectBillingEditModal.js — הוסרו הקבועים;
-      תצוגה מקדימה רק כש-serverPricing נטען.
-  E6  frontend/src/pages/OrgBillingPage.js — בלוק "איך המחיר מחושב"
-      (450/15 קשיח לפי הצהרה) הוחלף בשורת breakdown מהשרת לפי project_id;
-      שורת "שיא במחזור" (tooltip מטעה) הוחלפה בשורת דריפט:
-      "בשימוש X יחידות · בחוזה Y — לעדכון החיוב פנו למנהל המערכת";
-      תחזית פקיעת-מייסדים משתמשת ב-serverPlanPricing (מוסתרת אם אין).
-  E7  frontend/src/components/ProjectBillingCard.js — שורת שיא → שורת דריפט.
-  E8  frontend/src/pages/AdminBillingPage.js — תג דריפט לפרויקט
-      (observed>contracted): "דריפט: X/Y".
-  E9  frontend/src/components/PlanSelector.js — טקסט ₪450/₪15 קשיח הוחלף
-      ב-prop pricing מהשרת (fallback טקסט גנרי ללא מספרים).
+  E1  backend/contractor_ops/billing.py — get_billing_for_project מחזיר
+      תוספתית 'org_billable': {amount, source} ממקור האמת היחיד
+      get_billable_amount(org_id,'monthly'). על חריגה → None (הלקוח נופל
+      לתצוגה של היום). שום שדה קיים לא השתנה.
+  E2  frontend/src/components/ProjectBillingCard.js — כאשר
+      org_billable.source הוא 'override' או 'founder_plan':
+      "סה״כ חודשי לפרויקט" מוצג בקו-חוצה (line-through, אפור), ומתחתיו:
+        override      → "💰 תמחור מותאם אישית: ₪X לחודש לארגון"
+        founder_plan  → "🌟 תוכנית מייסדים: ₪X לחודש לארגון"
+      source='calculated' או org_billable חסר/null → התצוגה של היום 1:1.
+  E3  frontend/src/pages/OrgBillingPage.js — אותו טיפול בשני מקומות
+      הרינדור של כרטיסי הפרויקט (סקשן "תמחור פרויקטים" + כרטיסי הפירוט),
+      באמצעות sub.billable_source / sub.billable_amount שכבר קיימים
+      ב-payload — ללא fetch חדש.
 
-PROBES / VERIFICATION — הכל עבר (ALL_PASS)
+DO-NOT-TOUCH — קוים
 --------------------------------------------------------------------------------
-  V1  contracted=1, peak=277 → 465 זהה בשלושת המסלולים
-      (compute / get_billable_amount / create_payment_request).
-  V2  override: get_billable=1234 (source=override); founder: 499 בשני
-      המסלולים — זהות-בייטים להתנהגות הקודמת.
-  V3  רב-פרויקטי: 10+20 יחידות → 1350; billable==contracted בכל שורה.
-  V4  אידמפוטנטיות: קריאה כפולה — אותו סכום, ללא דריפט מצב.
-  V5  דריפט: observed=7, contracted=2 → billable=2, סכום 480; שדות
-      observed/contracted קיימים ב-breakdown.
-  V6  (סטטי) סנכרון אדמין מ-contracted — billing.py:1382 units=contracted.
-  V7  GET billing תוספתי: billable_breakdown קיים, billable_amount=465;
-      צרכנים קיימים (renewals cron, webhook) לא נשברים — שדות נוספו בלבד.
-  V10 quota=200 ≠ contracted=5 ≠ peak=50 → 525 בשלושת המסלולים; המכסה
-      לא משפיעה.
-  ‎+ py_compile OK; babel parse OK על כל קבצי ה-JS שנערכו;
-  ‎+ FE build (CI=true) עבר; FE tests 13/13 עברו;
-  ‎+ Backend billing tests: 17 עברו, 1 נכשל — כשל קדם-קיים שאינו קשור
-    (test_calculate_monthly_pricing מצפה founder=500; הקוד מחזיר 499 כנדרש
-    בספק; הקבצים לא נגעו בבאץ' הזה).
-  ‎+ grep בית: אפס LICENSE_FIRST/PRICE_PER_UNIT/450/15 תמחוריים
-    ב-frontend/src.
+  אפס שינוי במסלולי כסף (compute/get_billable_amount פנימיים,
+  create_payment_request, checkout, webhook, cron), UpgradeWizard,
+  PlanSelector, ProjectBillingEditModal, שורות דריפט ואזהרת חריגה.
+  אין סכימה, אין מיגרציות, אין תלויות חדשות.
+
+VERIFY — תמלולים
+--------------------------------------------------------------------------------
+  V1  פרוב ייעודי (DB מקומי נקי): org עם manual_override=410, פרויקט
+      contracted=200 → get_billing_for_project החזיר
+      org_billable={"amount":410,"source":"override"}; כל המפתחות הקיימים
+      נשמרו והמפתח החדש היחיד הוא org_billable (הוכחת תוספתיות);
+      billing.monthly_total נשאר 3,450 (בדיוק המקרה של מגרש 808). PASS
+  V2  org מייסדים → {"amount":499,"source":"founder_plan"}; org מחושב →
+      amount==compute_org_billing_amount (3,450) ו-source='calculated'
+      (ה-FE לא מציג קו-חוצה במקרה זה). PASS
+  V3  org עם override: subscription.billable_breakdown=[] בpayload הארגון
+      → בלוק "איך המחיר מחושב" נסתר אוטומטית (מותנה בקיום שורת breakdown).
+      billable_source='override', billable_amount=410. PASS
+  V4  פרויקט בארגון ללא מנוי → org_billable=null; ה-FE בטוח גם כשהשדה
+      חסר לגמרי (אופרטורים מותנים בלבד). PASS
+  V5  py_compile OK · craco build EXIT=0 (CI=true) · טסטי FE ‏13/13 ·
+      חבילת billing: ‏18 עוברים; אותם כשלים קדם-קיימים תלויי-סביבה
+      (404 מכוון של require_super_admin שמסתיר route; חוסר דמו-דאטה) —
+      לא נגועים בשינוי. פרוב נמחק לאחר הריצה.
+  V6  בדיקת מכשיר (זהי, אחרי דיפלוי): מגרש 808 — 3,450 בקו-חוצה +
+      "תמחור מותאם אישית: ₪410 לחודש לארגון" בכרטיס הפרויקט ובעמוד
+      הארגון; אשף/כפתור תשלום עדיין 410. (צילום before/after — בשטח.)
 
 ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-  אישר: מסלולי החיוב נכונים ואחודים; הסרת המחירים הקשיחים הושלמה ברכיבים
-  שנגעו; אין רגרסיות אבטחה.
-  ממצא יחיד (חוסם לדעתו, מחוץ להיקף לפי הספק): ראו OPEN ITEMS #1.
+  PASS. תוספתי ותצוגתי בלבד; אין מוטציות במסלולי כסף; תאימות לאחור
+  בטוחה ללקוחות ישנים; אין ממצאי אבטחה. המלצות לא-חוסמות: טסט FE קטן
+  לקו-החוצה (באץ' תחזוקה עתידי).
 
-COMPLETIONS (אושרו ע"י זהי אחרי אישור הדיף) — בוצעו
+PUSH SCOPE
 --------------------------------------------------------------------------------
-  C1  הוסרה דריסת התצוגה מהמכסה בכל נתיבי הקריאה:
-      - get_billing_for_org: כרטיסי פרויקט מחויב מציגים contracted/
-        monthly_total מ-pb בלבד; total_units_declared נשאר כשדה מידע.
-      - פרויקטים ללא חיוב: המכסה לא מסנתזת מחיר (contracted=0, monthly=0).
-      - _build_project_billing_dict: הוסרה הדריסה; המכסה מוצגת רק
-        כ-total_units_declared.
-      פרוב ייעודי (ALL_PASS): שינוי total_units מ-None ל-300 לא שינה אף
-      סכום מוצג/מחויב — compute=570, get_billable=570, subscription=570,
-      כרטיסי org=570, project_dict=570, create_payment_request=570.
-  C2  תוקן test_calculate_monthly_pricing: founder_6m == 499 (היה 500).
-      py_compile OK; הוסר import מת של calculate_monthly.
-  ‎* טסטי אינטגרציה חיים אחרים שנכשלו (RBAC 404 מכוון של require_super_admin
-    שמסתיר קיום route, ו"No projects found" בדמו-דאטה מקומי) — תלויי סביבה,
-    קדם-קיימים, לא נגועים בקוד ששונה.
-
-OPEN ITEMS — לשיקול זהי
---------------------------------------------------------------------------------
-  1) checkout sandbox override (amount=5.0 כש-PAYPLUS_ENV!=production) —
-     לא נגעתי, כמוסכם.
-
-DEPLOY NOTES
---------------------------------------------------------------------------------
-  - הדחיפה חייבת להכיל שינויי billing בלבד (8 קבצים, ראו EDITS).
-  - אין מיגרציות DB; שדות ה-API החדשים תוספתיים בלבד.
+  הבאץ' הזה בלבד: billing.py, ProjectBillingCard.js, OrgBillingPage.js.
+  הערה: הדחיפה הקודמת ל-staging (contracted-binds v2 + completions,
+  c307b94) עדיין לא בוצעה בפועל — ממתינה ל"דחוף"; שתיהן יכולות לצאת יחד.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

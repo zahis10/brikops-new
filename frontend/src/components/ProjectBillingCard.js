@@ -41,6 +41,13 @@ export default function ProjectBillingCard({ projectId, userRole, canEdit }) {
 
   const billing = data.billing;
   const warning = billing ? getObservedUnitsWarning(billing.observed_units, billing.contracted_units) : null;
+  const orgBillable = data.org_billable;
+  const orgDecisive = orgBillable && (orgBillable.source === 'override' || orgBillable.source === 'founder_plan');
+  const orgDecisiveLabel = orgDecisive
+    ? (orgBillable.source === 'override'
+        ? `💰 תמחור מותאם אישית: ₪${Number(orgBillable.amount || 0).toLocaleString()} לחודש לארגון`
+        : `🌟 תוכנית מייסדים: ₪${Number(orgBillable.amount || 0).toLocaleString()} לחודש לארגון`)
+    : null;
 
   return (
     <div className="bg-white rounded-lg border border-slate-200 p-4 space-y-4" dir="rtl">
@@ -134,9 +141,18 @@ export default function ProjectBillingCard({ projectId, userRole, canEdit }) {
                 </div>
               )}
             </div>
-            <div className="border-t border-slate-200 pt-2 flex items-center justify-between">
-              <span className="text-sm text-slate-500">סה״כ חודשי לפרויקט</span>
-              <span className="text-lg font-bold text-slate-900">{formatCurrency(billing.monthly_total)}</span>
+            <div className="border-t border-slate-200 pt-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-500">סה״כ חודשי לפרויקט</span>
+                <span className={orgDecisive ? 'text-lg font-bold text-slate-400 line-through' : 'text-lg font-bold text-slate-900'}>
+                  {formatCurrency(billing.monthly_total)}
+                </span>
+              </div>
+              {orgDecisive && (
+                <div className="text-xs font-medium text-emerald-700 mt-1 text-left" dir="rtl">
+                  {orgDecisiveLabel}
+                </div>
+              )}
             </div>
             {warning && (
               <div className="text-xs text-amber-600 bg-amber-50 px-2 py-1.5 rounded">

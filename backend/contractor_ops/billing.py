@@ -1231,6 +1231,15 @@ async def get_billing_for_project(project_id: str) -> dict:
         'trial_end_at': sub.get('trial_end_at') if sub and computed_status == 'trial' else None,
         'billing': _build_project_billing_dict(pb, observed, project) if pb else None,
     }
+
+    # Additive: org-level decisive price (override/founder) for display-only
+    # strikethrough on the calculated per-project price. Never affects money paths.
+    try:
+        billable = await get_billable_amount(org_id, 'monthly')
+        result['org_billable'] = {'amount': billable['amount'], 'source': billable['source']}
+    except Exception:
+        result['org_billable'] = None
+
     return result
 
 
