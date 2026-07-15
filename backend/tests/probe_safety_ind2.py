@@ -275,7 +275,10 @@ async def main():
                          data={"signer_name": "מישהו", "signature_type": "typed",
                                "typed_name": "מישהו"},
                          headers=hdrs[pm_id])
-        record("V3a /signature on conducted training → 409", r.status_code == 409)
+        # ind2-fix4 E5b: the induction-type guard (422) now fires BEFORE the
+        # already-signed check (409) — either way the sign is rejected.
+        record("V3a /signature on conducted training → rejected (422 guard / 409 signed)",
+               r.status_code in (409, 422))
         r = await c.patch(f"/api/safety/{proj1}/trainings/{t1['id']}",
                           json={"location": "אתר", "worker_signature": {"name": "זיוף"}},
                           headers=hdrs[pm_id])

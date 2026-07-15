@@ -480,6 +480,65 @@ async def conduct_induction(
 
 
 # =====================================================================
+# ind2-fix4 E3 — read-only evidence view of a signed induction training
+# =====================================================================
+@router.get("/{project_id}/induction/evidence/{training_id}")
+async def get_induction_evidence(
+    project_id: str,
+    training_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Read-only: exactly what the worker read (snapshot sections), the
+    attestation text and the signature. Same gate as reading trainings."""
+    db = get_db()
+    await _check_project_access(user, project_id)
+
+    tr = await db.safety_trainings.find_one(
+        {"id": training_id, "project_id": project_id, "deletedAt": None}, {"_id": 0})
+    if not tr or str(tr.get("training_type") or "").strip() != INDUCTION_TRAINING_TYPE:
+        raise HTTPException(status_code=404, detail="הדרכת אתר לא נמצאה")
+    sig = tr.get("worker_signature")
+    if not sig:
+        raise HTTPException(status_code=404, detail="הדרכת האתר אינה חתומה — אין ראיות להצגה")
+
+    sections = None
+    snapshot_id = sig.get("snapshot_id")
+    if snapshot_id:
+        snap = await db.induction_content_snapshots.find_one(
+            {"id": snapshot_id}, {"_id": 0, "sections": 1})
+        sections = (snap or {}).get("sections")
+    if sections is None:
+        raise HTTPException(status_code=404, detail="תוכן ההדרכה החתומה לא נמצא")
+
+    signature_display_url = None
+    if sig.get("signature_ref"):
+        try:
+            signature_display_url = generate_url(sig["signature_ref"])
+        except Exception:
+            signature_display_url = None
+
+    return {
+        "training_id": training_id,
+        "worker_id": tr.get("worker_id"),
+        "sections": sections,
+        "attestation_text": sig.get("attestation_text"),
+        "language_read": sig.get("language_read"),
+        "worker_language": sig.get("worker_language"),
+        "via_interpreter": sig.get("via_interpreter"),
+        "interpreter_name": sig.get("interpreter_name"),
+        "content_version": sig.get("content_version"),
+        "content_hash": sig.get("content_hash"),
+        "signer_name": sig.get("name"),
+        "signed_at": sig.get("signed_at"),
+        "signature_type": sig.get("signature_type"),
+        "typed_name": sig.get("typed_name"),
+        "signature_display_url": signature_display_url,
+        "trained_at": tr.get("trained_at"),
+        "expires_at": tr.get("expires_at"),
+    }
+
+
+# =====================================================================
 # ind2-fix1 — PROJECT-scoped editor pair (ONE org key for the feature)
 # =====================================================================
 async def _resolve_project_org_edit(user: dict, project_id: str):

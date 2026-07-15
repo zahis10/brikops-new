@@ -151,6 +151,27 @@ async def list_workers(
     for it in items:
         it.pop("id_number_hash", None)
         it["photo_display_url"] = _photo_display(it.get("photo_ref"))
+
+    # ind2-fix4 E1 (additive): per-worker induction status — max expires_at
+    # over SIGNED induction trainings, ONE aggregation for the page (no N+1).
+    from contractor_ops.safety.induction import INDUCTION_TRAINING_TYPE
+    worker_ids = [it["id"] for it in items if it.get("id")]
+    valid_map = {}
+    if worker_ids:
+        agg = await db.safety_trainings.aggregate([
+            {"$match": {
+                "project_id": project_id,
+                "deletedAt": None,
+                "training_type": INDUCTION_TRAINING_TYPE,
+                "worker_id": {"$in": worker_ids},
+                "worker_signature": {"$ne": None},
+            }},
+            {"$group": {"_id": "$worker_id", "max_expires": {"$max": "$expires_at"}}},
+        ]).to_list(length=len(worker_ids))
+        valid_map = {row["_id"]: row.get("max_expires") for row in agg}
+    for it in items:
+        it["induction_valid_until"] = valid_map.get(it.get("id"))
+
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 

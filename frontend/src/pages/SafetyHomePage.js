@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
   Users, TrendingUp, ShieldAlert, Wrench, Filter, Plus, Pencil, Camera, FileText, ClipboardList,
-  ChevronLeft, Bell, BookOpen,
+  ChevronLeft, Bell, BookOpen, Eye,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
@@ -42,6 +42,7 @@ import SafetyEquipmentForm from '../components/safety/SafetyEquipmentForm';
 import SafetySignaturePad from '../components/safety/SafetySignaturePad';
 import SafetyInductionConduct from '../components/safety/SafetyInductionConduct';
 import InductionTemplateEditor from '../components/safety/InductionTemplateEditor';
+import InductionEvidenceModal from '../components/safety/InductionEvidenceModal';
 import {
   CATEGORY_HE, SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE, INCIDENT_STATUS_HE,
   TOUR_TYPE_HE, TOUR_STATUS_HE,
@@ -50,6 +51,8 @@ import {
 // Writers = the two project roles the safety backend accepts for create/edit
 // (safety_router.py SAFETY_WRITERS). The "+"/edit affordances gate on these.
 const SAFETY_WRITERS = ['project_manager', 'management_team'];
+// ind2-fix4: the induction training type — must match backend INDUCTION_TRAINING_TYPE.
+const INDUCTION_TYPE = 'הדרכת אתר';
 const VALID_TABS = ['overview', 'documents', 'observations', 'tours', 'tasks', 'workers', 'trainings', 'incidents', 'equipment'];
 const SEVERITY_COLOR = {
   '1': 'bg-blue-100 text-blue-800',
@@ -130,6 +133,8 @@ export default function SafetyHomePage() {
   const [trainingCardLock, setTrainingCardLock] = useState(null);
   const [trainingSignFor, setTrainingSignFor] = useState(null);
   const [inductionFor, setInductionFor] = useState(null); // batch safety-ind2
+  const [reInductConfirm, setReInductConfirm] = useState(null); // ind2-fix4 E2
+  const [evidenceFor, setEvidenceFor] = useState(null); // ind2-fix4 E4
   const [trainingSigning, setTrainingSigning] = useState(false);
   // Batch safety-p2-1d — read-only detail modal (row tap opens it).
   const [detailDoc, setDetailDoc] = useState(null);
@@ -786,7 +791,15 @@ export default function SafetyHomePage() {
                 isWriter={isWriter}
                 onEdit={(w) => setWorkerForm({ open: true, record: w })}
                 onOpenCard={(w) => setWorkerCard(w)}
-                onInduct={(w) => setInductionFor(w)}
+                onInduct={(w) => {
+                  // ind2-fix4 E2: valid induction → confirm before re-conduct
+                  const today = new Date().toISOString().slice(0, 10);
+                  if (w.induction_valid_until && w.induction_valid_until.slice(0, 10) >= today) {
+                    setReInductConfirm(w);
+                  } else {
+                    setInductionFor(w);
+                  }
+                }}
               />
             </TabsContent>
             <TabsContent value="trainings" className="p-0 m-0">
@@ -797,6 +810,14 @@ export default function SafetyHomePage() {
                 onEdit={(t) => setTrainingForm({ open: true, record: t, renewFrom: null })}
                 onRenew={(t) => setTrainingForm({ open: true, record: null, renewFrom: t })}
                 onSign={(t) => setTrainingSignFor(t)}
+                onViewEvidence={(t) => setEvidenceFor(t)}
+                onReconduct={(t) => {
+                  const w = (workers.items || []).find((x) => x.id === t.worker_id);
+                  // Fallback: the workers page is capped — a minimal worker
+                  // object (id only) still lets the ceremony run; the backend
+                  // validates the worker id on conduct.
+                  setInductionFor(w || { id: t.worker_id, full_name: t.worker_name || '' });
+                }}
               />
             </TabsContent>
             <TabsContent value="incidents" className="p-0 m-0">
@@ -1019,7 +1040,40 @@ export default function SafetyHomePage() {
         worker={inductionFor}
         open={!!inductionFor}
         onClose={() => setInductionFor(null)}
-        onConducted={reloadTrainings}
+        onConducted={() => { reloadTrainings(); reloadWorkers(); }}
+      />
+
+      {/* ind2-fix4 E2: confirm before re-conducting a still-valid induction */}
+      <AlertDialog open={!!reInductConfirm} onOpenChange={(o) => { if (!o) setReInductConfirm(null); }}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>הדרכת אתר בתוקף</AlertDialogTitle>
+            <AlertDialogDescription>
+              לעובד יש הדרכת אתר בתוקף עד {reInductConfirm?.induction_valid_until?.slice(0, 10)}. להעביר הדרכה מחדש?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ביטול</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const w = reInductConfirm;
+                setReInductConfirm(null);
+                setInductionFor(w);
+              }}
+            >
+              העבר מחדש
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ind2-fix4 E4: read-only evidence of a signed induction */}
+      <InductionEvidenceModal
+        projectId={projectId}
+        training={evidenceFor}
+        workers={workers.items}
+        open={!!evidenceFor}
+        onClose={() => setEvidenceFor(null)}
       />
 
       <SafetySignaturePad
@@ -1632,6 +1686,31 @@ function WorkerThumb({ worker }) {
 
 function WorkersList({ items, isWriter, onEdit, onOpenCard, onInduct }) {
   if (!items?.length) return <EmptyState icon={Users} text="אין עובדים רשומים" />;
+  const today = new Date().toISOString().slice(0, 10);
+  // ind2-fix4 E2: three visual states from induction_valid_until
+  const inductBtn = (w) => {
+    const until = w.induction_valid_until ? w.induction_valid_until.slice(0, 10) : null;
+    if (until && until >= today) {
+      const [y, m, d] = until.split('-');
+      return {
+        label: `הודרך · עד ${d}/${m}/${y.slice(2)}`,
+        title: 'הדרכת אתר בתוקף — לחיצה תפתח העברה מחדש (עם אישור)',
+        cls: 'px-2 py-1.5 rounded-lg hover:bg-emerald-100 text-emerald-700 bg-emerald-50 border border-emerald-100 shrink-0 flex items-center gap-1 max-w-[130px]',
+      };
+    }
+    if (until) {
+      return {
+        label: 'פג תוקף · העבר מחדש',
+        title: 'הדרכת האתר פגה — העבר מחדש',
+        cls: 'px-2 py-1.5 rounded-lg hover:bg-amber-100 text-amber-700 bg-amber-50 border border-amber-100 shrink-0 flex items-center gap-1 max-w-[150px]',
+      };
+    }
+    return {
+      label: 'הדרכת אתר',
+      title: 'בצע הדרכת אתר',
+      cls: 'px-2 py-1.5 rounded-lg hover:bg-purple-100 text-purple-700 bg-purple-50 border border-purple-100 shrink-0 flex items-center gap-1 max-w-[110px]',
+    };
+  };
   return (
     <ul className="divide-y divide-slate-100">
       {items.map((w) => (
@@ -1649,17 +1728,22 @@ function WorkersList({ items, isWriter, onEdit, onOpenCard, onInduct }) {
           </div>
           {isWriter && (
             <>
-              {/* ind2-fix1 E4: labeled control instead of a bare icon */}
-              <button
-                type="button"
-                aria-label="בצע הדרכת אתר"
-                title="בצע הדרכת אתר"
-                onClick={(e) => { e.stopPropagation(); onInduct(w); }}
-                className="px-2 py-1.5 rounded-lg hover:bg-purple-100 text-purple-700 bg-purple-50 border border-purple-100 shrink-0 flex items-center gap-1 max-w-[110px]"
-              >
-                <GraduationCap className="w-4 h-4 shrink-0" />
-                <span className="text-xs font-medium truncate">הדרכת אתר</span>
-              </button>
+              {/* ind2-fix1 E4 / ind2-fix4 E2: labeled 3-state induction control */}
+              {(() => {
+                const b = inductBtn(w);
+                return (
+                  <button
+                    type="button"
+                    aria-label={b.title}
+                    title={b.title}
+                    onClick={(e) => { e.stopPropagation(); onInduct(w); }}
+                    className={b.cls}
+                  >
+                    <GraduationCap className="w-4 h-4 shrink-0" />
+                    <span className="text-xs font-medium truncate">{b.label}</span>
+                  </button>
+                );
+              })()}
               <button
                 type="button"
                 aria-label="ערוך עובד"
@@ -1676,7 +1760,7 @@ function WorkersList({ items, isWriter, onEdit, onOpenCard, onInduct }) {
   );
 }
 
-function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign }) {
+function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign, onViewEvidence, onReconduct }) {
   const [expandedKeys, setExpandedKeys] = useState(() => new Set());
   const toggle = (key) => () => setExpandedKeys((prev) => {
     const next = new Set(prev);
@@ -1709,6 +1793,9 @@ function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign }) {
 
   const renderRow = (tr, { isOld }) => {
     const expired = tr.expires_at && tr.expires_at.slice(0, 10) < today;
+    // ind2-fix4 E4+E5c: induction rows — evidence view instead of
+    // חידוש/החתמה; re-conduct goes through the full ceremony.
+    const isInduction = (tr.training_type || '').trim() === INDUCTION_TYPE;
     return (
       <li
         key={tr.id}
@@ -1741,7 +1828,16 @@ function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign }) {
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {tr.worker_signature ? (
-            tr.worker_signature.signature_display_url ? (
+            isInduction ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onViewEvidence && onViewEvidence(tr); }}
+                className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 inline-flex items-center gap-1"
+                title="צפייה בראיות ההדרכה"
+              >
+                <Eye className="w-3.5 h-3.5" /> צפייה
+              </button>
+            ) : tr.worker_signature.signature_display_url ? (
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); window.open(tr.worker_signature.signature_display_url, '_blank', 'noopener'); }}
@@ -1757,7 +1853,7 @@ function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign }) {
                 חתום
               </span>
             )
-          ) : (isWriter && (
+          ) : (isWriter && !isInduction && (
             <Button
               type="button"
               variant="outline"
@@ -1768,14 +1864,25 @@ function TrainingsList({ items, workers, isWriter, onEdit, onRenew, onSign }) {
             </Button>
           ))}
           {isWriter && !isOld && (
-            <Button
-              type="button"
-              variant="outline"
-              className="h-8 px-3 text-xs"
-              onClick={(e) => { e.stopPropagation(); onRenew(tr); }}
-            >
-              חידוש
-            </Button>
+            isInduction ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8 px-3 text-xs"
+                onClick={(e) => { e.stopPropagation(); onReconduct && onReconduct(tr); }}
+              >
+                העבר מחדש
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8 px-3 text-xs"
+                onClick={(e) => { e.stopPropagation(); onRenew(tr); }}
+              >
+                חידוש
+              </Button>
+            )
           )}
           {isWriter && (
             <button

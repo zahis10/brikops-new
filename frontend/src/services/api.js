@@ -727,6 +727,14 @@ export const safetyService = {
     );
     return r.data;
   },
+  // ind2-fix4 E3 — read-only evidence of a signed induction training.
+  async getInductionEvidence(projectId, trainingId) {
+    const r = await axios.get(
+      `${API}/safety/${projectId}/induction/evidence/${trainingId}`,
+      { headers: getAuthHeader() }
+    );
+    return r.data;
+  },
 };
 
 // Work Diary (יומן עבודה) — batch diary-d2. Wraps the 7 flag-gated D1

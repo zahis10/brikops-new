@@ -66,6 +66,12 @@ async def create_training(
     db = get_db()
     await _check_project_access(user, project_id)
 
+    # ind2-fix4 E5a: induction trainings are BORN SIGNED via the conduct
+    # ceremony only — the generic create route must not mint them unsigned.
+    from contractor_ops.safety.induction import INDUCTION_TRAINING_TYPE
+    if payload.training_type.strip() == INDUCTION_TRAINING_TYPE:
+        raise HTTPException(status_code=422, detail="הדרכת אתר נוצרת רק דרך תהליך ההדרכה (כפתור 🎓 אצל העובד)")
+
     worker = await db.safety_workers.find_one({
         "id": payload.worker_id,
         "project_id": project_id,
@@ -182,6 +188,16 @@ async def update_training(
         raise HTTPException(status_code=410, detail="training deleted")
 
     updates = payload.model_dump(exclude_unset=True)
+
+    # ind2-fix4 E5d: no sideways renames around the born-signed guard —
+    # training_type may not change TO or FROM the induction type.
+    if "training_type" in updates and updates["training_type"] is not None:
+        from contractor_ops.safety.induction import INDUCTION_TRAINING_TYPE
+        new_type = str(updates["training_type"]).strip()
+        old_type = str(before.get("training_type") or "").strip()
+        if (new_type == INDUCTION_TRAINING_TYPE) != (old_type == INDUCTION_TRAINING_TYPE):
+            raise HTTPException(status_code=422, detail="הדרכת אתר נוצרת רק דרך תהליך ההדרכה (כפתור 🎓 אצל העובד)")
+
     updates["updated_at"] = _now()
     updates["updated_by"] = user["id"]
 
@@ -237,6 +253,11 @@ async def sign_training(
         {"id": training_id, "project_id": project_id, "deletedAt": None})
     if not training:
         raise HTTPException(status_code=404, detail="training not found")
+    # ind2-fix4 E5b: legacy unsigned induction rows must be re-conducted,
+    # never signed blind (no content, no evidence).
+    from contractor_ops.safety.induction import INDUCTION_TRAINING_TYPE
+    if str(training.get("training_type") or "").strip() == INDUCTION_TRAINING_TYPE:
+        raise HTTPException(status_code=422, detail="הדרכת אתר נוצרת רק דרך תהליך ההדרכה (כפתור 🎓 אצל העובד)")
     if training.get("worker_signature"):
         raise HTTPException(status_code=409, detail="ההדרכה כבר חתומה")
     name = (signer_name or "").strip()
