@@ -770,7 +770,12 @@ def _image_to_jpeg_buf(img_data_bytes):
     img = PILImage.open(io.BytesIO(img_data_bytes))
     img.verify()
     img = PILImage.open(io.BytesIO(img_data_bytes))
-    if img.mode not in ('RGB',):
+    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+        rgba = img.convert('RGBA')
+        bg = PILImage.new('RGB', rgba.size, (255, 255, 255))
+        bg.paste(rgba, mask=rgba.split()[-1])
+        img = bg
+    elif img.mode not in ('RGB',):
         img = img.convert('RGB')
     max_px = 800
     if img.width > max_px or img.height > max_px:

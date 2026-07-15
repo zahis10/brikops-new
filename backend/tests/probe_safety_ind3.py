@@ -276,6 +276,35 @@ async def main():
         record("V4g management_team project member → 200", r.status_code == 200,
                f"status={r.status_code}")
 
+        # V4h — certificate PDF text contains ALL snapshot section titles (F3)
+        pdf_bytes = r.content
+        pdf_text = ""
+        try:
+            import subprocess, tempfile
+            with tempfile.NamedTemporaryFile(suffix=".pdf") as tf:
+                tf.write(pdf_bytes)
+                tf.flush()
+                pdf_text = subprocess.run(
+                    ["pdftotext", tf.name, "-"], capture_output=True,
+                    timeout=30).stdout.decode("utf-8", "ignore")
+        except Exception as e:
+            pdf_text = f"<extract failed: {e}>"
+        record("V4h certificate PDF contains all ru snapshot section titles",
+               all(s["title"] in pdf_text for s in ru_secs),
+               f"len(text)={len(pdf_text)}")
+
+        # V4i — transparent RGBA canvas signature flattens onto WHITE (F2)
+        import io as _io
+        from PIL import Image as _PILImage
+        _im = _PILImage.new("RGBA", (120, 60), (0, 0, 0, 0))
+        _b = _io.BytesIO()
+        _im.save(_b, "PNG")
+        from contractor_ops.export_router import _image_to_jpeg_buf
+        _flat = _PILImage.open(_image_to_jpeg_buf(_b.getvalue()))
+        _px = _flat.convert("RGB").getpixel((5, 5))
+        record("V4i RGBA transparency flattened to white (no black box)",
+               all(v > 240 for v in _px), f"pixel={_px}")
+
     # cleanup
     await db.organizations.delete_many({"id": org})
     await db.subscriptions.delete_many({"org_id": org})

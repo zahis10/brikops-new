@@ -1,88 +1,64 @@
 ================================================================================
-REVIEW — BATCH safety-ind3: תוכן הדרכת אתר ב-5 שפות (he/en/ru/ar/zh) עם
-טיוטת תרגום אוטומטי (Google Translate) לבדיקת הארגון, טקס בשפה שנבחרה,
-ותעודת הדרכה PDF להדרכה חתומה.
-Date: 2026-07-15  |  Branch: staging  |  Base: e994b9d
+REVIEW — BATCH safety-ind3-fix1: תיקון תעודת הדרכה PDF לאחר בדיקת מכשיר
+(F1 כותרת ג'יבריש, F2 חתימה כמלבן שחור, F3 תעודה כמסמך ראיות מלא)
+Date: 2026-07-15  |  Branch: staging
 ================================================================================
 
-STEP 0 — ממצאי אימות (תואם לספק, סטייה אחת מדווחת)
---------------------------------------------------------------------------------
-  שלב בחירת השפה בטקס כבר דינמי מ-languages_filled (מ-ind2) — רק התוויות
-  היו קשיחות. שלב הקריאה הציג תמיד את הסעיפים העבריים (content.sections).
-  ⚠ סטייה תוספתית: GET /induction/content מחזיר כעת גם
-  sections_by_language (מפה לכל השפות המלאות) — כך שלב הקריאה מציג
-  בדיוק את מה שיישמר ב-snapshot, בלי לגעת ב-POST conduct (שכבר שומר
-  snapshot לפי השפה מאז ind2). המפתח sections הישן נשאר (תאימות).
-  תבנית PDF קיימת: פונטי Rubik ב-backend/fonts + arabic_reshaper/bidi —
-  Rubik ללא גליפים סיניים ⇒ תווית השפה בתעודה עבור zh היא
-  "סינית (Chinese)" (טקסט ההדרכה עצמו אינו מודפס בתעודה — אין בעיה).
+רקע: בדיקת מכשיר של zahi מצאה 3 כשלים בתעודת ההדרכה. שאר ind3
+(לשוניות/תרגום/טקס/ראיות) אושר במכשיר — לא נגעתי בו.
 
-EDITS (backend 1, frontend 5 + util חדש, פרוב חדש)
+F1 — כותרת התעודה הוצגה כריבועים (tofu)
 --------------------------------------------------------------------------------
-  E1  induction.py — POST /{pid}/induction-template/translate: טיוטת
-      תרגום של הסעיפים העבריים הנוכחיים בלבד, לא נשמר דבר (draft:true).
-      שער עריכה זהה ל-PUT (בעל ארגון / org_admin). TRANSLATE_MOCK=1
-      לפרובים; מפתח חסר → 503; כשל ספק → 502; אין עברית → 409; יעד לא
-      נתמך → 422. zh→zh-CN מול ה-API. המפתח GOOGLE_TRANSLATE_API_KEY
-      נקרא מה-env בלבד.
-  E2  induction.py — PUT תבנית ברמת פרויקט מקבל {languages: {code:
-      {sections}}} (he חובה; sections ריקים מסירים שפה; קוד לא מוכר 422;
-      מבנה סעיפים שגוי — מחרוזת/אובייקט/סקלרים — 422 ולא 500). גוף
-      legacy {sections} ממשיך לעבוד ($set על languages.he בלבד, משמר
-      שפות אחרות). $inc version אחד בכל שמירה. PUT הארגוני הישן נותר
-      he-בלבד (לא בשימוש ה-FE).
-  E3  InductionTemplateEditor.js — טאבים he/en/ru/ar/zh עם נקודת "יש
-      תוכן", dir לכל שפה, כפתור "תרגם אוטומטית מעברית" + באנר ענבר
-      "טיוטת תרגום אוטומטי — עברו על התוכן ותקנו לפני שמירה". שמירה
-      שולחת את מפת השפות המלאה; dirty-guard חוצה טאבים; מצב קריאה-בלבד
-      ו-modal={false} נשמרו.
-  E4  SafetyInductionConduct.js — תוויות שפה בשם המקומי (עברית/English/
-      Русский/العربية/中文); שלב הקריאה מציג sections_by_language[בחירה]
-      עם dir מתאים ("אחרת" קוראת עברית עם מתורגמן — ללא שינוי).
-  E5  induction.py — GET /{pid}/induction/certificate/{tid}: תעודת PDF
-      להדרכת אתר חתומה בלבד (סמנטיקת evidence — אותם שערים ו-404).
-      Rubik + עיצוב RTL, פרטי עובד/פרויקט/ארגון, תאריכים, הצהרה, חתימה
-      (תמונה או מוקלדת), content_version/hash. StreamingResponse עם שם
-      קובץ עברי RFC5987. כפתורי "תעודה" (הורדת blob) במודאל הראיות
-      ובשורות הדרכה חתומות בטאב ההדרכות (util משותף
-      frontend/src/utils/inductionCertificate.js — בלי import מעגלי).
+  שורש: backend/fonts/Rubik-Bold.ttf היה subset לטיני בלבד (221 גליפים,
+  ללא עברית). הוחלף ב-Rubik 700 מלא מ-fonts.gstatic.com (885 גליפים,
+  עברית + ערבית, משקל OS/2 = 700).
+  הגנה: הבונה מוודא בזמן רישום הפונט ש-א (0x05D0) קיים ב-charToGlyph;
+  אם לא — נסיגה ל-Rubik רגיל במקום ג'יבריש.
 
-PROBES — backend/tests/probe_safety_ind3.py (חדש): 28/28 PASS
+F2 — חתימת עובד (PNG שקוף) הודפסה כמלבן שחור
 --------------------------------------------------------------------------------
-  V1 תרגום (7): mock draft מבנה 1:1, לא נשמר דבר (version ללא שינוי),
-     409 בלי עברית, 422 he/יעד לא נתמך, 403 לא-עורך, 401.
-  V2 שמירה רב-לשונית (10): מפה מלאה → $inc אחד; en ריק הוסר; he ריק
-     422; קוד זר 422; ארבעה מבני sections שגויים → 422 (הקשחת
-     הארכיטקט); גוף legacy משמר ru/ar; GET content עם
-     languages_filled + sections_by_language.
-  V3 טקס ברוסית (4): 201 עם language_read=ru; ה-snapshot מכיל את
-     הסעיפים הרוסיים; שפה לא מלאה (en) → 422; evidence מחזיר ru.
-  V4 תעודה (7): 200 application/pdf עם %PDF ושם קובץ RFC5987; לא-הדרכה
-     404; לא-חתומה 404; זר 403; לא מאומת 401; management_team חבר
-     פרויקט → 200.
+  שורש אמיתי: export_router._image_to_jpeg_buf ביצע convert('RGB') על
+  RGBA — אלפא שקוף הופך לשחור בהמרת JPEG.
+  תיקון במקור: השטחת RGBA/LA/P-שקוף על רקע לבן דרך מסכת אלפא לפני
+  קידוד JPEG. מיטיב עם כל ייצוא PDF במערכת (ליקויים, מסירה וכו').
+  בנוסף, בבונה התעודה: השטחה הגנתית + שמירת יחס גובה-רוחב (מקס' 5×2.5
+  ס"מ) + מסגרת דקה סביב החתימה.
 
-REGRESSION — הכל ירוק
+F3 — התעודה נבנתה מחדש כמסמך ראיות מלא
 --------------------------------------------------------------------------------
-  probe_safety_ind2_fix4  21/21    probe_safety_ind2       34/34
-  probe_safety_ind2_fix1  31/31    probe_safety_ind1       30/30
-  probe_safety_w1_alerts  32/32
-  py_compile OK · craco build "Compiled successfully" · FE tests 13/13.
-  (כשל ידוע שאינו קשור: test_defects_summary_includes_safety_open_count.)
+  ה-endpoint שולף כעת את induction_content_snapshots לפי snapshot_id של
+  החתימה ומעביר לבונה את הסעיפים + שפת הקריאה.
+  מבנה התעודה: כותרת BrikOps + שם תעודה, טבלת פרטי עובד (שם, תאריך,
+  תוקף, שפת ההדרכה), כל סעיפי ה-snapshot בשפה שהעובד קרא (he/ar RTL
+  עם עיצוב bidi; en/ru LTR; zh בפונט CID סיני STSong-Light), הצהרת
+  העובד, בלוק חתימה (תמונה/שם מוקלד + תאריך), וכותרת תחתונה עם גרסת
+  תוכן + hash. מרובת עמודים עם מספור "עמוד X מתוך Y" (מעבר כפול).
 
-ARCHITECT REVIEW
+אימות
 --------------------------------------------------------------------------------
-  ממצא חוסם יחיד: מבני sections שגויים במפת השפות גרמו ל-500 במקום 422
-  — תוקן (בדיקת list-of-dicts לפני הוולידציה) + 4 פרובים שליליים.
-  שאר הממצאים: שער התעודה זהה ל-evidence ✓, אין import מעגלי ✓, מצב
-  ה-editor רב-הטאבים תקין ✓, אין ממצאי אבטחה.
+  probe_safety_ind3.py — 30/30 PASS (28 קיימים + 2 חדשים):
+    V4h — טקסט ה-PDF מכיל את כל כותרות הסעיפים מה-snapshot (F3).
+    V4i — PNG שקוף מושטח ללבן, לא שחור (F2).
+  רגרסיות (ללא שינוי): ind2_fix4 21/21, ind2 34/34, ind2_fix1 31/31,
+  ind1 30/30, w1_alerts 32/32. סה"כ 178/178.
+  כשל לא-קשור ידוע: test_defects_summary_includes_safety_open_count
+  (קיים מלפני הבאץ').
+  ביקורת ארכיטקט: PASS. שתי המלצות הפרוב יושמו (V4h+V4i).
 
-NOTE FOR ZAHI (deploy prep): create a Google Cloud Translation API key and
-add GOOGLE_TRANSLATE_API_KEY to the EB environment BEFORE the stag test —
-exact click-steps will be handed when the batch reaches staging.
-V6 DEVICE (Zahi, staging): editor → Русский tab → תרגם אוטומטית → review →
-save; conduct a test worker in Русский → ru content shows → sign →
-evidence shows ru sections → תעודה downloads; Hebrew flow unchanged;
-"אחרת"+interpreter unchanged.
+QUALITY GATE — שני קבצי דוגמה מצורפים לאישור ויזואלי
+--------------------------------------------------------------------------------
+  attached_assets/cert_sample_he.pdf — טקס בעברית, 10 סעיפים, 3 עמודים.
+  attached_assets/cert_sample_zh.pdf — טקס בסינית, 10 סעיפים, 3 עמודים.
+  נבדק ויזואלית: כותרת עברית תקינה, חתימה על רקע לבן, כל הסעיפים
+  מודפסים, מספור עמודים. הערה: בתצוגה מקדימה במחשב ללא פונטים סיניים
+  ייתכנו ריבועים בטקסט הסיני — הטקסט קיים ב-PDF (STSong-Light הוא פונט
+  CID סטנדרטי של Adobe); יש לאמת על המכשיר כרגיל.
+
+קבצים שהשתנו
+--------------------------------------------------------------------------------
+  backend/fonts/Rubik-Bold.ttf                 (הוחלף — פונט מלא)
+  backend/contractor_ops/safety/induction.py   (endpoint + בונה תעודה)
+  backend/contractor_ops/export_router.py      (השטחת שקיפות ב-JPEG)
+  backend/tests/probe_safety_ind3.py           (V4h, V4i)
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================

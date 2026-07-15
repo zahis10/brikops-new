@@ -828,6 +828,11 @@ async def get_induction_certificate(
         except Exception:
             sig_url = None
 
+    # ind3-fix1 F3: the certificate is the COMPLETE evidence document —
+    # include the snapshot sections exactly as the worker read them.
+    snap = await db.induction_content_snapshots.find_one(
+        {"id": sig.get("snapshot_id")}, {"_id": 0}) or {}
+
     pdf_bytes = _build_induction_certificate_pdf(
         org_name=(org or {}).get("name") or "",
         project_name=(proj or {}).get("name") or "",
@@ -836,6 +841,8 @@ async def get_induction_certificate(
         expires_at=tr.get("expires_at"),
         sig=sig,
         signature_url=sig_url,
+        content_sections=snap.get("sections") or [],
+        content_language=snap.get("language") or sig.get("language_read") or "he",
     )
 
     import io as _io
@@ -861,9 +868,13 @@ def _il_date(val) -> str:
 
 
 def _build_induction_certificate_pdf(org_name, project_name, worker_name,
-                                     trained_at, expires_at, sig, signature_url):
-    """reportlab A4, Hebrew RTL per the diary/defects export pattern —
-    build in memory, return bytes (house lesson)."""
+                                     trained_at, expires_at, sig, signature_url,
+                                     content_sections=None, content_language="he"):
+    """reportlab A4 — the COMPLETE evidence document (ind3-fix1 F3):
+    header + details, ALL snapshot sections in the language read, the
+    attestation as signed, signature block, and a content version+hash
+    footer. Multi-page with "עמוד X מתוך Y" numbering. Built in memory,
+    returns bytes (house lesson)."""
     import io
     import os
     import arabic_reshaper
@@ -872,18 +883,38 @@ def _build_induction_certificate_pdf(org_name, project_name, worker_name,
     from reportlab.lib.units import cm, mm
     from reportlab.lib import colors
     from reportlab.lib.styles import ParagraphStyle
-    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage,
     )
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.pdfgen import canvas as rl_canvas
 
     fonts_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "fonts")
     try:
         pdfmetrics.registerFont(TTFont("Rubik", os.path.join(fonts_dir, "Rubik-Regular.ttf")))
-        pdfmetrics.registerFont(TTFont("Rubik-Bold", os.path.join(fonts_dir, "Rubik-Bold.ttf")))
+    except Exception:
+        pass
+    # ind3-fix1 F1: the shipped Rubik-Bold was a Latin-only subset → the
+    # Hebrew title rendered as tofu. The full-coverage Bold is now vendored;
+    # still verify Hebrew coverage at register time and fall back to the
+    # Regular face (scaled) if the file is ever swapped for a bad subset.
+    bold_font = "Rubik"
+    try:
+        bold_path = os.path.join(fonts_dir, "Rubik-Bold.ttf")
+        tt = TTFont("Rubik-Bold", bold_path)
+        if 0x05D0 in (tt.face.charToGlyph or {}):
+            pdfmetrics.registerFont(tt)
+            bold_font = "Rubik-Bold"
+    except Exception:
+        logger.exception("induction certificate: Rubik-Bold registration failed — falling back to Rubik")
+    # ind3-fix1 F3: zh sections via reportlab's built-in CID font — no new
+    # font files.
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
     except Exception:
         pass
 
@@ -897,9 +928,9 @@ def _build_induction_certificate_pdf(org_name, project_name, worker_name,
     SLATE_500 = colors.HexColor("#64748B")
     PURPLE = colors.HexColor("#7C3AED")
 
-    st_brand = ParagraphStyle("CertBrand", fontName="Rubik-Bold", fontSize=12,
+    st_brand = ParagraphStyle("CertBrand", fontName=bold_font, fontSize=12,
                               alignment=TA_CENTER, textColor=PURPLE, leading=16)
-    st_title = ParagraphStyle("CertTitle", fontName="Rubik-Bold", fontSize=20,
+    st_title = ParagraphStyle("CertTitle", fontName=bold_font, fontSize=20,
                               alignment=TA_CENTER, textColor=SLATE_700, leading=26)
     st_sub = ParagraphStyle("CertSub", fontName="Rubik", fontSize=11,
                             alignment=TA_CENTER, textColor=SLATE_500, leading=15)
@@ -907,10 +938,48 @@ def _build_induction_certificate_pdf(org_name, project_name, worker_name,
                               alignment=TA_RIGHT, textColor=SLATE_500, leading=12)
     st_value = ParagraphStyle("CertValue", fontName="Rubik", fontSize=11,
                               alignment=TA_RIGHT, textColor=SLATE_700, leading=15)
+    st_h2 = ParagraphStyle("CertH2", fontName=bold_font, fontSize=13,
+                           alignment=TA_RIGHT, textColor=SLATE_700, leading=18)
     st_attest = ParagraphStyle("CertAttest", fontName="Rubik", fontSize=11,
                                alignment=TA_CENTER, textColor=SLATE_700, leading=17)
     st_footer = ParagraphStyle("CertFooter", fontName="Rubik", fontSize=8,
                                alignment=TA_CENTER, textColor=SLATE_500, leading=11)
+
+    # ind3-fix1 F3: per-language section styles. he/ar → reshaper+bidi and
+    # RIGHT alignment; en/ru → plain LTR Rubik; zh → STSong-Light LTR.
+    lang = (content_language or "he").strip() or "he"
+    is_rtl = lang in ("he", "ar")
+    sec_font = "STSong-Light" if lang == "zh" else "Rubik"
+    sec_bold = "STSong-Light" if lang == "zh" else bold_font
+    sec_align = TA_RIGHT if is_rtl else TA_LEFT
+    st_sec_title = ParagraphStyle("CertSecTitle", fontName=sec_bold, fontSize=11,
+                                  alignment=sec_align, textColor=SLATE_700, leading=16,
+                                  spaceBefore=4)
+    st_sec_body = ParagraphStyle("CertSecBody", fontName=sec_font, fontSize=10,
+                                 alignment=sec_align, textColor=SLATE_700, leading=15)
+
+    def sec_text(text):
+        return heb(text) if is_rtl else str(text or "")
+
+    # ind3-fix1 F3: "עמוד X מתוך Y" via the two-pass numbered-canvas pattern.
+    class _NumberedCanvas(rl_canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            rl_canvas.Canvas.__init__(self, *args, **kwargs)
+            self._saved_states = []
+
+        def showPage(self):
+            self._saved_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            total = len(self._saved_states)
+            for i, state in enumerate(self._saved_states, start=1):
+                self.__dict__.update(state)
+                self.setFont("Rubik", 8)
+                self.setFillColor(SLATE_500)
+                self.drawCentredString(A4[0] / 2, 1 * cm, heb(f"עמוד {i} מתוך {total}"))
+                rl_canvas.Canvas.showPage(self)
+            rl_canvas.Canvas.save(self)
 
     output = io.BytesIO()
     doc = SimpleDocTemplate(output, pagesize=A4,
@@ -956,6 +1025,19 @@ def _build_induction_certificate_pdf(org_name, project_name, worker_name,
     els.append(tbl)
     els.append(Spacer(1, 8 * mm))
 
+    # ---- F3(2): ALL snapshot sections in the language the worker read ----
+    if content_sections:
+        els.append(Paragraph(heb("תוכן ההדרכה כפי שנקרא"), st_h2))
+        els.append(Spacer(1, 2 * mm))
+        for i, s in enumerate(content_sections, start=1):
+            title = (s or {}).get("title") or ""
+            body = (s or {}).get("body") or ""
+            els.append(Paragraph(sec_text(f"{i}. {title}"), st_sec_title))
+            els.append(Paragraph(sec_text(body), st_sec_body))
+            els.append(Spacer(1, 2 * mm))
+        els.append(Spacer(1, 6 * mm))
+
+    # ---- F3(3): the attestation exactly as signed ----
     if sig.get("attestation_text"):
         att = Table(
             [[Paragraph(heb(sig["attestation_text"]), st_attest)]],
@@ -972,6 +1054,7 @@ def _build_induction_certificate_pdf(org_name, project_name, worker_name,
         els.append(att)
         els.append(Spacer(1, 8 * mm))
 
+    # ---- F3(4): signature block ----
     signed_line = f"חתימת העובד: {sig.get('name') or ''} · {_il_date(sig.get('signed_at'))}"
     els.append(Paragraph(heb(signed_line), st_value))
     els.append(Spacer(1, 2 * mm))
@@ -981,15 +1064,43 @@ def _build_induction_certificate_pdf(org_name, project_name, worker_name,
             from contractor_ops.export_router import _fetch_image_for_pdf
             buf = _fetch_image_for_pdf(signature_url)
             if buf:
-                img = RLImage(buf, width=5 * cm, height=2.5 * cm, kind="proportional")
-                img.hAlign = "RIGHT"
-                els.append(img)
+                # ind3-fix1 F2: pads are saved with a TRANSPARENT background —
+                # embedding the RGBA directly rendered a black rectangle.
+                # Flatten onto white (alpha as mask) BEFORE embedding; keep
+                # the aspect ratio; thin border around the image.
+                from PIL import Image as PILImage
+                im = PILImage.open(buf)
+                if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+                    im = im.convert("RGBA")
+                    flat = PILImage.new("RGB", im.size, (255, 255, 255))
+                    flat.paste(im, mask=im.split()[-1])
+                    im = flat
+                else:
+                    im = im.convert("RGB")
+                flat_buf = io.BytesIO()
+                im.save(flat_buf, format="PNG")
+                flat_buf.seek(0)
+                max_w, max_h = 5 * cm, 2.5 * cm
+                ratio = min(max_w / im.width, max_h / im.height)
+                img = RLImage(flat_buf, width=im.width * ratio, height=im.height * ratio)
+                frame = Table([[img]])
+                frame.setStyle(TableStyle([
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ]))
+                frame.hAlign = "RIGHT"
+                els.append(frame)
                 sig_added = True
         except Exception:
             logger.exception("induction certificate: signature image embed failed")
     if not sig_added and sig.get("typed_name"):
         els.append(Paragraph(heb(f'"{sig["typed_name"]}" (חתימה מוקלדת)'), st_value))
 
+    # ---- F3(5): content identifiers footer — flows to the LAST page ----
     els.append(Spacer(1, 12 * mm))
     footer = (
         f"גרסת תוכן {sig.get('content_version')} · "
@@ -997,5 +1108,5 @@ def _build_induction_certificate_pdf(org_name, project_name, worker_name,
     )
     els.append(Paragraph(heb(footer), st_footer))
 
-    doc.build(els)
+    doc.build(els, canvasmaker=_NumberedCanvas)
     return output.getvalue()
