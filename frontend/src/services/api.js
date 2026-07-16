@@ -395,6 +395,51 @@ export const safetyService = {
     return response.data;
   },
 
+  // Batch qrg1-entry-gate — worker entry QR admin API
+  async getEntryToken(projectId, workerId) {
+    const response = await axios.post(
+      `${API}/safety/${projectId}/workers/${workerId}/entry-token`,
+      {},
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async rotateEntryToken(projectId, workerId) {
+    const response = await axios.post(
+      `${API}/safety/${projectId}/workers/${workerId}/entry-token/rotate`,
+      {},
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async getEntryQrPng(projectId, workerId) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/workers/${workerId}/entry-qr.png`,
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    return response.data;
+  },
+  async setWorkerBlock(projectId, workerId, isBlocked, reason = null) {
+    const response = await axios.patch(
+      `${API}/safety/${projectId}/workers/${workerId}/block`,
+      { is_blocked: isBlocked, reason },
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async listGateScans(projectId, params = {}) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/gate-scans`,
+      { headers: getAuthHeader(), params }
+    );
+    return response.data;
+  },
+  // PUBLIC — no auth header on purpose (guard's phone, no account).
+  async getGateStatus(token) {
+    const response = await axios.get(`${API}/gate/${token}`);
+    return response.data;
+  },
+
   async getScore(projectId, refresh = false) {
     const params = refresh ? { refresh: 'true' } : {};
     const response = await axios.get(

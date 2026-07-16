@@ -55,6 +55,8 @@ const MyProjectsPage = React.lazy(() => import('./pages/MyProjectsPage'));
 const ContractorDashboard = React.lazy(() => import('./pages/ContractorDashboard'));
 const OwnershipTransferPage = React.lazy(() => import('./pages/OwnershipTransferPage'));
 const ProjectDashboardPage = React.lazy(() => import('./pages/ProjectDashboardPage'));
+// qrg1 — public entry-gate status page (no auth; scanned by gate guards).
+const GatePage = React.lazy(() => import('./pages/GatePage'));
 const FloorDetailPage = React.lazy(() => import('./pages/FloorDetailPage'));
 const StageDetailPage = React.lazy(() => import('./pages/StageDetailPage'));
 const QCFloorSelectionPage = React.lazy(() => import('./pages/QCFloorSelectionPage'));
@@ -268,6 +270,7 @@ const AppRoutes = () => {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/phone-login" element={<Navigate to="/login" replace />} />
         <Route path="/safety/:projectId" element={<SafetyShortRedirect />} />
+        <Route path="/gate/:token" element={<GatePage />} />
         <Route path="/auth/wa" element={<WaLoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/register-management" element={<RegisterManagementPage />} />

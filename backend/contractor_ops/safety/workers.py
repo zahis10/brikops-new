@@ -22,6 +22,7 @@ from contractor_ops.safety._shared import (  # noqa: F401
     _retention_date,
     get_current_user,
     get_db,
+    logger,
     re,
     require_roles,
     router,
@@ -117,6 +118,15 @@ async def create_worker(
     await _audit("safety_worker", doc["id"], "created", user["id"], {
         "project_id": project_id, "after": audit_after,
     })
+    # qrg1: entry token auto-created on worker creation; WA auto-send is
+    # entirely behind WA_ENTRY_QR_ENABLED (default off). Never fails creation.
+    try:
+        from contractor_ops.safety.gate import ensure_entry_token, maybe_send_entry_qr
+        tok = await ensure_entry_token(db, project_id, doc["id"])
+        await maybe_send_entry_qr(db, project_id, doc, tok)
+    except Exception as e:
+        logger.error(f"[GATE] entry-token bootstrap failed worker={doc['id']}: {e}")
+
     result = SafetyWorker(**doc)
     result.photo_display_url = _photo_display(doc.get("photo_ref"))
     return result
@@ -263,5 +273,12 @@ async def delete_worker(
     await _audit("safety_worker", worker_id, "deleted", user["id"], {
         "project_id": project_id, "deletion_reason": body.reason,
     })
+
+    # qrg1: removing a worker revokes all its entry tokens → gate page invalid.
+    try:
+        from contractor_ops.safety.gate import revoke_entry_tokens
+        await revoke_entry_tokens(db, project_id, worker_id)
+    except Exception as e:
+        logger.error(f"[GATE] token revoke failed worker={worker_id}: {e}")
 
 

@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { X, FileText, GraduationCap, AlertCircle, ChevronLeft } from 'lucide-react';
+import {
+  X, FileText, GraduationCap, AlertCircle, ChevronLeft,
+  QrCode, Printer, RefreshCw, Ban,
+} from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose,
 } from '../ui/dialog';
@@ -7,6 +10,8 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { INCIDENT_TYPE_HE, SEVERITY_HE } from './safetyLabels';
 import { safetyService } from '../../services/api';
+import { downloadBlob } from '../../utils/fileDownload';
+import { toast } from 'sonner';
 
 // Read-only worker card. Mirrors SafetyDocumentDetail's chrome (Dialog
 // modal={false} + outside-close prevention + [&>button]:hidden). Fetches the
@@ -42,12 +47,88 @@ const INDUCTION_TYPE = 'הדרכת אתר';
 
 export default function SafetyWorkerCard({
   projectId, worker, open, onClose, isWriter, companies = [], onEditWorker, onAddTraining,
-  onOpenEvidence, onOpenTraining,
+  onOpenEvidence, onOpenTraining, onBlockChanged,
 }) {
   const [trainings, setTrainings] = useState([]);
   const [incidents, setIncidents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [avatarBroken, setAvatarBroken] = useState(false);
+  // qrg1 — entry-gate controls. Local blocked state so the chip flips
+  // instantly; onBlockChanged lets the parent reload the list.
+  const [blocked, setBlocked] = useState(null);
+  const [qrBusy, setQrBusy] = useState(false);
+
+  useEffect(() => {
+    setBlocked(worker?.blocked || null);
+  }, [worker?.id, worker?.blocked]);
+
+  const isBlocked = !!blocked?.is_blocked;
+
+  const downloadQr = async () => {
+    if (qrBusy) return;
+    setQrBusy(true);
+    try {
+      const blob = await safetyService.getEntryQrPng(projectId, worker.id);
+      await downloadBlob(blob, `entry-qr-${worker.full_name || worker.id}.png`, 'image/png');
+    } catch (e) {
+      toast.error('הורדת קוד הכניסה נכשלה');
+    } finally {
+      setQrBusy(false);
+    }
+  };
+
+  // Print view: object-URL img in a new window → window.print().
+  const printQr = async () => {
+    if (qrBusy) return;
+    setQrBusy(true);
+    try {
+      const blob = await safetyService.getEntryQrPng(projectId, worker.id);
+      const url = window.URL.createObjectURL(blob);
+      const w = window.open('', '_blank');
+      if (!w) { toast.error('חלון ההדפסה נחסם על ידי הדפדפן'); return; }
+      w.document.write(`
+        <html dir="rtl"><head><title>קוד כניסה</title></head>
+        <body style="text-align:center;font-family:sans-serif;padding:24px">
+          <h2 style="margin-bottom:4px">${(worker.full_name || '').replace(/</g, '&lt;')}</h2>
+          <p style="color:#555;margin-top:0">קוד כניסה לאתר — BrikOps</p>
+          <img src="${url}" style="width:320px;height:320px" onload="window.print()" />
+        </body></html>`);
+      w.document.close();
+    } catch (e) {
+      toast.error('פתיחת תצוגת ההדפסה נכשלה');
+    } finally {
+      setQrBusy(false);
+    }
+  };
+
+  const rotateQr = async () => {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm('חידוש הקוד יבטל את הקוד הקיים — כל QR מודפס/שנשלח יפסיק לעבוד. להמשיך?')) return;
+    if (qrBusy) return;
+    setQrBusy(true);
+    try {
+      await safetyService.rotateEntryToken(projectId, worker.id);
+      toast.success('קוד הכניסה חודש — יש להפיץ QR חדש');
+    } catch (e) {
+      toast.error('חידוש הקוד נכשל');
+    } finally {
+      setQrBusy(false);
+    }
+  };
+
+  const toggleBlock = async () => {
+    const next = !isBlocked;
+    // eslint-disable-next-line no-alert
+    if (next && !window.confirm('לחסום את העובד לכניסה לאתר? עמוד הסריקה יציג "אין כניסה".')) return;
+    try {
+      const res = await safetyService.setWorkerBlock(projectId, worker.id, next);
+      setBlocked(res.blocked);
+      toast.success(next ? 'העובד נחסם לכניסה' : 'החסימה הוסרה');
+      onBlockChanged && onBlockChanged(worker.id, res.blocked);
+    } catch (e) {
+      toast.error('עדכון החסימה נכשל');
+    }
+  };
 
   useEffect(() => {
     if (!open || !worker?.id) return undefined;
@@ -117,7 +198,10 @@ export default function SafetyWorkerCard({
               </div>
             )}
             <div className="min-w-0">
-              <h3 className="text-lg font-bold text-slate-900">{worker.full_name}</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-bold text-slate-900">{worker.full_name}</h3>
+                {isBlocked && <Badge className="bg-red-100 text-red-800 shrink-0">חסום</Badge>}
+              </div>
               {worker.profession && <p className="text-sm text-slate-500 mt-0.5">{worker.profession}</p>}
             </div>
           </div>
@@ -132,6 +216,54 @@ export default function SafetyWorkerCard({
             <Field label="הערות">
               <p className="whitespace-pre-wrap">{worker.notes}</p>
             </Field>
+          )}
+
+          {isWriter && (
+            /* qrg1 — entry-gate controls: QR share/print/rotate + block toggle */
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <QrCode className="w-4 h-4 text-slate-500" />
+                <p className="text-sm font-semibold text-slate-700">קוד כניסה לאתר</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={downloadQr}
+                  disabled={qrBusy}
+                  className="px-3 py-2 rounded-lg bg-blue-50 text-blue-700 border border-blue-100 hover:bg-blue-100 text-sm font-medium flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <QrCode className="w-4 h-4" /> הורד / שתף QR
+                </button>
+                <button
+                  type="button"
+                  onClick={printQr}
+                  disabled={qrBusy}
+                  className="px-3 py-2 rounded-lg bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100 text-sm font-medium flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Printer className="w-4 h-4" /> הדפסה
+                </button>
+                <button
+                  type="button"
+                  onClick={rotateQr}
+                  disabled={qrBusy}
+                  className="px-3 py-2 rounded-lg bg-amber-50 text-amber-700 border border-amber-100 hover:bg-amber-100 text-sm font-medium flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <RefreshCw className="w-4 h-4" /> חדש קוד
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleBlock}
+                  className={isBlocked
+                    ? 'px-3 py-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100 hover:bg-emerald-100 text-sm font-medium flex items-center gap-1.5'
+                    : 'px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-100 hover:bg-red-100 text-sm font-medium flex items-center gap-1.5'}
+                >
+                  <Ban className="w-4 h-4" /> {isBlocked ? 'הסר חסימה' : 'חסום כניסה'}
+                </button>
+              </div>
+              {isBlocked && blocked?.reason && (
+                <p className="text-xs text-red-600">סיבת חסימה: {blocked.reason}</p>
+              )}
+            </div>
           )}
 
           <div className="space-y-1.5">

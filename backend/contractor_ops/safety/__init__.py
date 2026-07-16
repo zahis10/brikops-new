@@ -15,5 +15,6 @@ from contractor_ops.safety import equipment  # noqa: F401
 from contractor_ops.safety import score_exports  # noqa: F401
 from contractor_ops.safety import uploads  # noqa: F401
 from contractor_ops.safety import induction  # noqa: F401
+from contractor_ops.safety import gate  # noqa: F401
 from contractor_ops.safety import indexes  # noqa: F401
 from contractor_ops.safety.indexes import ensure_safety_indexes  # noqa: F401

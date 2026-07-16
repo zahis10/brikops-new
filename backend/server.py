@@ -461,6 +461,10 @@ if ENABLE_SAFETY_MODULE:
         router as safety_registration_router,
     )
     app.include_router(safety_registration_router)
+    # qrg1-entry-gate — PUBLIC gate status router (no auth; own module with
+    # local throttle + noindex). Gated by the same flag: disabled == 404.
+    from contractor_ops.safety.gate_public import router as gate_public_router
+    app.include_router(gate_public_router)
     logger.info("Safety module ENABLED — router registered at /api/safety")
 else:
     logger.info("Safety module disabled (ENABLE_SAFETY_MODULE=false)")

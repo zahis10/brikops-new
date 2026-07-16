@@ -1,63 +1,864 @@
 ================================================================================
-REVIEW — BATCH safety-ind3-fix3: הורדות PDF/Excel באפליקציה (iOS/Android)
-Date: 2026-07-15  |  Branch: staging
+BATCH qrg1-entry-gate — REVIEW
+BrikOps — worker entry QR gate: per-project entry tokens, public live status
+page, manual worker block, scan log, QR distribution
+Branch: staging | Date: 2026-07-16
+Spec (sole binding source): attached_assets/Pasted---1784204799966_1784204799967.txt
 ================================================================================
 
-רקע: הורדות blob דרך עוגן <a download> לא נתמכות ב-WebView של האפליקציה.
-הפתרון הקיים utils/fileDownload.js::downloadBlob (web=עוגן, native=
-Filesystem+Share sheet, מוכח בדף רישום הבטיחות) — נותב לכל מוקדי ההורדה.
-שינוי JS בלבד — ios/ ו-android/ לא נגעו (אומת ב-git status). נשאר OTA.
+STEP 0 — FINDINGS / DESIGN DECISIONS
+------------------------------------
+1. Token model: worker_entry_tokens collection. token = secrets.token_urlsafe(24)
+   (32 chars, ~192 bits entropy). Fields: id, token, org_id, project_id,
+   worker_id, status(active/revoked), created_at, revoked_at, rotated_from, qr_ref.
+2. Single-active-token invariant is enforced at DB level: partial unique index
+   uidx_wet_active on (project_id, worker_id, status) where status=="active".
+   ensure_entry_token / rotate_entry_token handle DuplicateKeyError atomically
+   (concurrent ensure returns existing token; concurrent rotate converges
+   last-writer-wins to exactly one active token). Added after architect review
+   flagged the read-then-write race; verified by concurrency probes V9a/V9b.
+3. Public status endpoint /api/gate/{token} (gate_public.py):
+   - Separate router, NO auth import; registered in server.py only under
+     ENABLE_SAFETY_MODULE.
+   - Neutral {"state":"invalid"} for unknown/revoked token or missing worker —
+     no information leak.
+   - Decision matrix: red if worker blocked or induction missing/expired;
+     green otherwise, with warnings array (expiry-soon etc.).
+   - X-Robots-Tag: noindex, nofollow on every response.
+   - Throttling is two-layer: the app-wide unauthenticated per-IP limiter
+     (30 req/min, Mongo-backed, in server.py middleware) fires first; the
+     module's own in-memory 60/min per-IP throttle is defense-in-depth.
+   - Every scan (valid or not) written to gate_scan_log.
+4. Writer endpoints (gate.py), restricted to SAFETY_WRITERS
+   (project_manager, management_team):
+   - GET  .../workers/{id}/entry-token       (ensure-on-demand)
+   - POST .../workers/{id}/entry-token/rotate
+   - GET  .../workers/{id}/entry-qr.png      (QR PNG, qrcode lib, stored at
+     safety/{project_id}/entry-qr/{token_id}.png via storage backend)
+   - PATCH .../workers/{id}/block            (+ audit event worker_block_change)
+   - GET  .../gate-scans                     (scan-log list)
+   Contractor gets 403 on block/rotate (probe V4e).
+5. Worker lifecycle hooks (workers.py): on create — ensure token + optional WA
+   send; on delete — revoke all tokens (best-effort).
+6. WhatsApp auto-send: behind WA_ENTRY_QR_ENABLED (default FALSE — zero sends
+   unless explicitly enabled). Template name WA_TEMPLATE_WORKER_ENTRY_QR.
+   _send_wa_template extended with header_image_url=None keyword (approved
+   exemption); header component added only for https URLs; all existing call
+   sites unaffected (byte-identical behavior, probe V6f).
+7. Frontend:
+   - /gate/:token public page (GatePage.js): mobile-first RTL, green/red/
+     invalid states + warnings, no auth header on the public API call.
+   - SafetyWorkerCard.js: "קוד כניסה" section — QR download/share/print,
+     rotate (with confirm), block toggle + חסום chip.
+   - SafetyHomePage.js: gate-scans section under תיעוד tab (writers only),
+     חסום chip in workers list.
+8. New indexes: uidx_wet_token (unique token), idx_wet_project_worker,
+   uidx_wet_active (partial unique), idx_gsl_project_ts — 34 safety indexes total.
+9. ios/ and android/ untouched. requirements.txt: qrcode==8.2 pinned.
 
-F1 — תעודת הדרכה
---------------------------------------------------------------------------------
-  utils/inductionCertificate.js — קוד העוגן הידני הוחלף בקריאה אחת:
-  downloadBlob(blob, filename, 'application/pdf'). מכסה גם את כפתור
-  "תעודה" בשורות הכרטיס וגם את "הורדת תעודת הדרכה (PDF)" במודאל הראיות.
+FILES CHANGED
+-------------
+ backend/config.py                                  |   5 +
+ backend/contractor_ops/reminder_service.py         |  17 ++-
+ backend/contractor_ops/safety/__init__.py          |   1 +
+ backend/contractor_ops/safety/indexes.py           |  22 +++-
+ backend/contractor_ops/safety/workers.py           |  17 +++
+ backend/requirements.txt                           |   1 +
+ backend/server.py                                  |   4 +
+ frontend/src/App.js                                |   3 +
+ frontend/src/components/safety/SafetyWorkerCard.js | 138 ++++++++++++++++++++-
+ frontend/src/pages/SafetyHomePage.js               |  68 +++++++++-
+ frontend/src/services/api.js                       |  45 +++++++
+ 11 files changed, 312 insertions(+), 9 deletions(-)
+?? backend/contractor_ops/safety/gate.py
+?? backend/contractor_ops/safety/gate_public.py
+?? backend/tests/probe_safety_qrg1.py
+?? frontend/src/pages/GatePage.js
 
-F2 — אותה משפחה
---------------------------------------------------------------------------------
-  components/ProjectDataExportTab.js — ייצוא אקסל מלא (xlsx) → downloadBlob.
-  components/diary/WorkDiaryEntryView.js — PDF יומן יומי → downloadBlob.
+VERIFICATION SUMMARY
+--------------------
+- backend/tests/probe_safety_qrg1.py: 42/42 PASS (transcript below), incl.
+  V9 concurrency probes added after architect review.
+- Existing probe suites (regression): ind1 30/30, ind2 34/34, ind2_fix1 31/31,
+  ind2_fix4 21/21, ind3 31/31, w1_alerts 32/32 — all green.
+  (Two suites initially failed on stale seed data left by an earlier aborted
+  run — cleaned up; no code issue.)
+- pytest safety files: 18 passed, 1 failed — test_defects_summary_includes_
+  safety_open_count, the KNOWN pre-existing unrelated failure (unchanged).
+- Frontend: CI=true production build clean; test suite 15/15 passed.
+- py_compile: all touched backend modules OK.
+- House greps: no console.log/TODO in new files; gate_public.py contains no
+  auth import; no ios/android files touched.
+- App boots normally (workflow restart verified).
 
-F3 — סריקת כל createObjectURL ב-frontend/src (סיווג מלא)
---------------------------------------------------------------------------------
-  הורדות נוספות שנותבו (מעבר לספק):
-  - components/safety/SafetyExportMenu.js — ייצוא רישום בטיחות xlsx/PDF.
-    ה-helper המקומי שונה ל-downloadResponse (שומר פענוח שם קובץ מ-
-    Content-Disposition), mime לפי סיומת, עם await.
-  - components/safety/SafetyTourRunner.js — PDF סיור בטיחות.
-  - pages/WorkDiaryPage.js — PDF יומן חודשי.
-  - pages/HandoverProtocolPage.js — PDF פרוטוקול מסירה
-    (downloadBlobAsFile מאציל ל-downloadBlob; שני מוקדי הקריאה עם await
-    כדי ששגיאות native ייתפסו ב-try/catch הקיים; מסלול הנפילה משיתוף →
-    הורדה עטוף בטיפול שגיאה משלו).
-  תצוגות מקדימות — לא נגעו (createObjectURL לגיטימי):
-  NewDefectModal, PhotoAnnotation, HandoverItemModal, HandoverMeterForm,
-  HandoverSectionPage, ApartmentDashboardPage (תמונות ממתינות),
-  StageDetailPage (תצוגות/העלאות תמונה), TaskDetailPage, imageCompress,
-  utils/fileDownload.js עצמו (מסלול web).
+ARCHITECT REVIEW
+----------------
+Initial review flagged ONE blocking issue: ensure/rotate were read-then-write,
+allowing multiple simultaneously-active tokens under concurrency (weakens
+revocation semantics). FIXED: partial unique index uidx_wet_active + atomic
+DuplicateKeyError handling in both paths; verified by new concurrency probes
+V9a (10 parallel ensures → 1 active), V9b (10 parallel rotates → 1 active),
+V9c (index present & unique). No other serious authz/injection/leak findings.
 
-אימות
---------------------------------------------------------------------------------
-  טסט חדש src/utils/__tests__/fileDownload.web.test.js (jsdom):
-  מסלול web נשאר עוגן — createObjectURL, קליק אחד, revoke, שם קובץ
-  (כולל עברית) ב-download; Filesystem/Share לא נקראים.
-  טסטי FE: 15/15 PASS (3 חבילות). build מלא CI=true — עבר נקי.
-  הערת סביבה: הרצת jest מקומית דרשה LD_LIBRARY_PATH ל-libuuid (חבילת
-  canvas של jsdom) — עניין סביבתי בלבד, לא שינוי קוד.
-  ביקורת ארכיטקט: סבב 1 מצא חוסר await ב-HandoverProtocolPage (שגיאת
-  native הייתה עלולה להיבלע) — תוקן בשני המוקדים + עטיפת fallback.
-  device: יש לאמת הורדה על מכשיר; web ממשיך להוריד כרגיל (מכוסה בטסט).
+FULL PROBE TRANSCRIPT (probe_safety_qrg1.py)
+--------------------------------------------
+[SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****0001,****9991
+2026-07-16 13:15:49,580 - server - INFO - [STARTUP] SMS_MODE=stub APP_MODE=dev SMS_ENABLED=True SMS_CLIENT_ENABLED=True
+2026-07-16 13:15:50,325 - server - INFO - Safety module ENABLED — router registered at /api/safety
+2026-07-16 13:15:50,325 - server - INFO - Work Diary disabled (ENABLE_WORK_DIARY=false)
+2026-07-16 13:15:50,707 - server - INFO - [SPA] Serving frontend from /home/runner/workspace/frontend/build
+2026-07-16 13:15:50,783 - contractor_ops.safety._shared - INFO - Safety indices ensured (34 total across 13 collections)
+2026-07-16 13:15:50,868 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/29a12761-1966-4554-bdba-acf433e4f6c7.png size=816
+2026-07-16 13:15:50,870 - server - INFO - [REQ] rid=50e01484 POST /api/safety/probe-qrg-p1-9dcee74c/workers status=201 duration=57.3ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:50,872 - httpx - INFO - HTTP Request: POST http://probe/api/safety/probe-qrg-p1-9dcee74c/workers "HTTP/1.1 201 Created"
+2026-07-16 13:15:50,892 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/d2619129-1fdc-412d-9f7c-2b6430e79e3f.png size=823
+2026-07-16 13:15:50,893 - server - INFO - [REQ] rid=5fbd77be POST /api/safety/probe-qrg-p1-9dcee74c/workers/qrg-pre-9dcee74c/entry-token status=200 duration=14.5ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:50,895 - httpx - INFO - HTTP Request: POST http://probe/api/safety/probe-qrg-p1-9dcee74c/workers/qrg-pre-9dcee74c/entry-token "HTTP/1.1 200 OK"
+2026-07-16 13:15:50,906 - server - INFO - [REQ] rid=175ae62d POST /api/safety/probe-qrg-p1-9dcee74c/workers/qrg-pre-9dcee74c/entry-token status=200 duration=5.2ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:50,908 - httpx - INFO - HTTP Request: POST http://probe/api/safety/probe-qrg-p1-9dcee74c/workers/qrg-pre-9dcee74c/entry-token "HTTP/1.1 200 OK"
+2026-07-16 13:15:50,923 - server - INFO - [REQ] rid=9880f862 DELETE /api/safety/probe-qrg-p1-9dcee74c/workers/qrg-pre-9dcee74c status=204 duration=11.1ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:50,928 - httpx - INFO - HTTP Request: DELETE http://probe/api/safety/probe-qrg-p1-9dcee74c/workers/qrg-pre-9dcee74c "HTTP/1.1 204 No Content"
+2026-07-16 13:15:50,942 - server - INFO - [REQ] rid=a6d5f8ea GET /api/gate/P17IdlJ3T-_mpcBWaH5oBnGUJ6xTaIE3 status=200 duration=10.7ms
+2026-07-16 13:15:50,952 - httpx - INFO - HTTP Request: GET http://probe/api/gate/P17IdlJ3T-_mpcBWaH5oBnGUJ6xTaIE3 "HTTP/1.1 200 OK"
+2026-07-16 13:15:50,974 - server - INFO - [REQ] rid=ab52103f GET /api/gate/bHJUNipXghxTdcBT-plD1ji7_o5RisSj status=200 duration=18.3ms
+2026-07-16 13:15:50,983 - httpx - INFO - HTTP Request: GET http://probe/api/gate/bHJUNipXghxTdcBT-plD1ji7_o5RisSj "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,043 - server - INFO - [REQ] rid=e6ed679c PUT /api/safety/probe-qrg-p1-9dcee74c/induction-template status=200 duration=42.8ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:51,051 - httpx - INFO - HTTP Request: PUT http://probe/api/safety/probe-qrg-p1-9dcee74c/induction-template "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,114 - server - INFO - [REQ] rid=cd8ec4c2 POST /api/safety/probe-qrg-p1-9dcee74c/induction/conduct status=201 duration=46.5ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:51,123 - httpx - INFO - HTTP Request: POST http://probe/api/safety/probe-qrg-p1-9dcee74c/induction/conduct "HTTP/1.1 201 Created"
+2026-07-16 13:15:51,153 - server - INFO - [REQ] rid=4e920623 GET /api/gate/bHJUNipXghxTdcBT-plD1ji7_o5RisSj status=200 duration=25.9ms
+2026-07-16 13:15:51,162 - httpx - INFO - HTTP Request: GET http://probe/api/gate/bHJUNipXghxTdcBT-plD1ji7_o5RisSj "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,199 - server - INFO - [REQ] rid=07dcbcbd GET /api/gate/bHJUNipXghxTdcBT-plD1ji7_o5RisSj status=200 duration=30.9ms
+2026-07-16 13:15:51,208 - httpx - INFO - HTTP Request: GET http://probe/api/gate/bHJUNipXghxTdcBT-plD1ji7_o5RisSj "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,272 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/18f5164e-7070-45a0-b3d6-808a49694fd8.png size=810
+2026-07-16 13:15:51,276 - server - INFO - [REQ] rid=b1cfb299 POST /api/safety/probe-qrg-p1-9dcee74c/workers status=201 duration=51.3ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:51,285 - httpx - INFO - HTTP Request: POST http://probe/api/safety/probe-qrg-p1-9dcee74c/workers "HTTP/1.1 201 Created"
+2026-07-16 13:15:51,316 - server - INFO - [REQ] rid=ed2fb6e9 GET /api/gate/s0JS4QxOoEKFBROJX34u3iNfudGATgDF status=200 duration=22.3ms
+2026-07-16 13:15:51,325 - httpx - INFO - HTTP Request: GET http://probe/api/gate/s0JS4QxOoEKFBROJX34u3iNfudGATgDF "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,340 - server - INFO - [REQ] rid=7000a8ab GET /api/gate/definitely-not-a-real-token-1234567890 status=200 duration=11.1ms
+2026-07-16 13:15:51,348 - httpx - INFO - HTTP Request: GET http://probe/api/gate/definitely-not-a-real-token-1234567890 "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,375 - server - INFO - [REQ] rid=ea638b34 GET /api/safety/probe-qrg-p1-9dcee74c/gate-scans status=200 duration=18.2ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:51,384 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qrg-p1-9dcee74c/gate-scans "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,395 - server - INFO - [REQ] rid=0816e838 GET /api/safety/probe-qrg-p1-9dcee74c/gate-scans status=403 duration=8.4ms user=probe-qrg-con-9dcee74c
+2026-07-16 13:15:51,404 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qrg-p1-9dcee74c/gate-scans "HTTP/1.1 403 Forbidden"
+2026-07-16 13:15:51,418 - server - INFO - [REQ] rid=60c81802 GET /api/safety/probe-qrg-p1-9dcee74c/gate-scans status=403 duration=10.4ms user=probe-qrg-out-9dcee74c
+2026-07-16 13:15:51,429 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qrg-p1-9dcee74c/gate-scans "HTTP/1.1 403 Forbidden"
+2026-07-16 13:15:51,481 - server - INFO - [REQ] rid=c58d896a PATCH /api/safety/probe-qrg-p1-9dcee74c/workers/74f85641-369f-4ca2-9793-646c1d601665/block status=200 duration=36.2ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:51,491 - httpx - INFO - HTTP Request: PATCH http://probe/api/safety/probe-qrg-p1-9dcee74c/workers/74f85641-369f-4ca2-9793-646c1d601665/block "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,510 - server - INFO - [REQ] rid=57d9768d GET /api/gate/bHJUNipXghxTdcBT-plD1ji7_o5RisSj status=200 duration=15.1ms
+2026-07-16 13:15:51,519 - httpx - INFO - HTTP Request: GET http://probe/api/gate/bHJUNipXghxTdcBT-plD1ji7_o5RisSj "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,573 - server - INFO - [REQ] rid=4bb938f1 PATCH /api/safety/probe-qrg-p1-9dcee74c/workers/74f85641-369f-4ca2-9793-646c1d601665/block status=200 duration=34.8ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:51,582 - httpx - INFO - HTTP Request: PATCH http://probe/api/safety/probe-qrg-p1-9dcee74c/workers/74f85641-369f-4ca2-9793-646c1d601665/block "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,606 - server - INFO - [REQ] rid=94c05be6 GET /api/gate/bHJUNipXghxTdcBT-plD1ji7_o5RisSj status=200 duration=21.2ms
+2026-07-16 13:15:51,615 - httpx - INFO - HTTP Request: GET http://probe/api/gate/bHJUNipXghxTdcBT-plD1ji7_o5RisSj "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,633 - server - INFO - [PAYWALL:SCOPED_OK] user=probe-qrg-con-9dcee74c path=/api/safety/probe-qrg-p1-9dcee74c/workers/74f85641-369f-4ca2-9793-646c1d601665/block resolved_org=probe-qrg-org-9dcee74c decision=allow
+2026-07-16 13:15:51,661 - server - INFO - [REQ] rid=d0857ecd PATCH /api/safety/probe-qrg-p1-9dcee74c/workers/74f85641-369f-4ca2-9793-646c1d601665/block status=403 duration=25.1ms user=probe-qrg-con-9dcee74c
+2026-07-16 13:15:51,670 - httpx - INFO - HTTP Request: PATCH http://probe/api/safety/probe-qrg-p1-9dcee74c/workers/74f85641-369f-4ca2-9793-646c1d601665/block "HTTP/1.1 403 Forbidden"
+2026-07-16 13:15:51,712 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/8ee137ec-6a35-4c6e-8e6b-59a24383a0ad.png size=799
+2026-07-16 13:15:51,718 - server - INFO - [REQ] rid=55b0f4cb POST /api/safety/probe-qrg-p1-9dcee74c/workers/74f85641-369f-4ca2-9793-646c1d601665/entry-token/rotate status=200 duration=31.9ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:51,726 - httpx - INFO - HTTP Request: POST http://probe/api/safety/probe-qrg-p1-9dcee74c/workers/74f85641-369f-4ca2-9793-646c1d601665/entry-token/rotate "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,751 - server - INFO - [REQ] rid=1bd46060 GET /api/gate/z09d448BlWWYeWA11NyLB_v8Mf-A-u11 status=200 duration=20.5ms
+2026-07-16 13:15:51,759 - httpx - INFO - HTTP Request: GET http://probe/api/gate/z09d448BlWWYeWA11NyLB_v8Mf-A-u11 "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,773 - server - INFO - [REQ] rid=584f0e11 GET /api/gate/bHJUNipXghxTdcBT-plD1ji7_o5RisSj status=200 duration=10.7ms
+2026-07-16 13:15:51,782 - httpx - INFO - HTTP Request: GET http://probe/api/gate/bHJUNipXghxTdcBT-plD1ji7_o5RisSj "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,818 - server - INFO - [REQ] rid=6740a15b GET /api/safety/probe-qrg-p1-9dcee74c/workers/74f85641-369f-4ca2-9793-646c1d601665/entry-qr.png status=200 duration=29.0ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:51,873 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qrg-p1-9dcee74c/workers/74f85641-369f-4ca2-9793-646c1d601665/entry-qr.png "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,932 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/67e41a5c-f5d2-46c2-91f4-fdb52c58d833.png size=790
+2026-07-16 13:15:51,939 - server - INFO - [REQ] rid=f6464922 POST /api/safety/probe-qrg-p1-9dcee74c/workers status=201 duration=47.5ms user=probe-qrg-pm-9dcee74c
+2026-07-16 13:15:51,945 - httpx - INFO - HTTP Request: POST http://probe/api/safety/probe-qrg-p1-9dcee74c/workers "HTTP/1.1 201 Created"
+2026-07-16 13:15:51,973 - server - INFO - [REQ] rid=dc7e7e74 GET /api/gate/z09d448BlWWYeWA11NyLB_v8Mf-A-u11 status=200 duration=24.7ms
+2026-07-16 13:15:51,981 - httpx - INFO - HTTP Request: GET http://probe/api/gate/z09d448BlWWYeWA11NyLB_v8Mf-A-u11 "HTTP/1.1 200 OK"
+2026-07-16 13:15:51,999 - server - INFO - [REQ] rid=d24ca807 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=11.1ms
+2026-07-16 13:15:52,010 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,024 - server - INFO - [REQ] rid=1f33e811 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=11.3ms
+2026-07-16 13:15:52,031 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,044 - server - INFO - [REQ] rid=103206c0 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=9.3ms
+2026-07-16 13:15:52,053 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,066 - server - INFO - [REQ] rid=0a2358a0 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=9.8ms
+2026-07-16 13:15:52,072 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,085 - server - INFO - [REQ] rid=adc24c33 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=9.8ms
+2026-07-16 13:15:52,092 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,105 - server - INFO - [REQ] rid=78b530b1 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=9.7ms
+2026-07-16 13:15:52,113 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,129 - server - INFO - [REQ] rid=0b8b88e0 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=11.2ms
+2026-07-16 13:15:52,139 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,153 - server - INFO - [REQ] rid=a970440a GET /api/gate/burst-token-not-real-000000000000 status=200 duration=10.1ms
+2026-07-16 13:15:52,160 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,174 - server - INFO - [REQ] rid=89fd71f2 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=11.0ms
+2026-07-16 13:15:52,185 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,201 - server - INFO - [REQ] rid=acabbf43 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=12.2ms
+2026-07-16 13:15:52,211 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,225 - server - INFO - [REQ] rid=77ae5982 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=10.3ms
+2026-07-16 13:15:52,233 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,249 - server - INFO - [REQ] rid=2439a3c4 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=10.5ms
+2026-07-16 13:15:52,258 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,273 - server - INFO - [REQ] rid=934ea9ba GET /api/gate/burst-token-not-real-000000000000 status=200 duration=11.0ms
+2026-07-16 13:15:52,281 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,295 - server - INFO - [REQ] rid=ab98c96b GET /api/gate/burst-token-not-real-000000000000 status=200 duration=10.3ms
+2026-07-16 13:15:52,303 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,318 - server - INFO - [REQ] rid=8d8db5fe GET /api/gate/burst-token-not-real-000000000000 status=200 duration=10.4ms
+2026-07-16 13:15:52,324 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,340 - server - INFO - [REQ] rid=51672987 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=10.6ms
+2026-07-16 13:15:52,350 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,364 - server - INFO - [REQ] rid=9741480a GET /api/gate/burst-token-not-real-000000000000 status=200 duration=10.2ms
+2026-07-16 13:15:52,374 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,389 - server - INFO - [REQ] rid=fbf07a5d GET /api/gate/burst-token-not-real-000000000000 status=200 duration=10.8ms
+2026-07-16 13:15:52,397 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,412 - server - INFO - [REQ] rid=b244077d GET /api/gate/burst-token-not-real-000000000000 status=200 duration=10.2ms
+2026-07-16 13:15:52,421 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,434 - server - INFO - [REQ] rid=7ce0ffef GET /api/gate/burst-token-not-real-000000000000 status=200 duration=9.7ms
+2026-07-16 13:15:52,443 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,460 - server - INFO - [REQ] rid=dbadc94c GET /api/gate/burst-token-not-real-000000000000 status=200 duration=11.8ms
+2026-07-16 13:15:52,469 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,483 - server - INFO - [REQ] rid=3f427455 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=9.9ms
+2026-07-16 13:15:52,490 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,509 - server - INFO - [REQ] rid=55e1878e GET /api/gate/burst-token-not-real-000000000000 status=200 duration=13.3ms
+2026-07-16 13:15:52,518 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,543 - server - INFO - [REQ] rid=01b46922 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=18.9ms
+2026-07-16 13:15:52,552 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,568 - server - INFO - [REQ] rid=7682574d GET /api/gate/burst-token-not-real-000000000000 status=200 duration=12.5ms
+2026-07-16 13:15:52,578 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,592 - server - INFO - [REQ] rid=b1abb660 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=10.2ms
+2026-07-16 13:15:52,600 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,615 - server - INFO - [REQ] rid=1c599edd GET /api/gate/burst-token-not-real-000000000000 status=200 duration=9.5ms
+2026-07-16 13:15:52,622 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,639 - server - INFO - [REQ] rid=0f4252b7 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=12.0ms
+2026-07-16 13:15:52,648 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,662 - server - INFO - [REQ] rid=afbe414a GET /api/gate/burst-token-not-real-000000000000 status=200 duration=10.1ms
+2026-07-16 13:15:52,671 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,686 - server - INFO - [REQ] rid=38b61a68 GET /api/gate/burst-token-not-real-000000000000 status=200 duration=10.7ms
+2026-07-16 13:15:52,696 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 200 OK"
+2026-07-16 13:15:52,703 - server - WARNING - [RATE-LIMIT] kind=ip key=127.0.0.1 path=/api/gate/burst-token-not-real-000000000000
+2026-07-16 13:15:52,704 - server - INFO - [REQ] rid=ffa2094c GET /api/gate/burst-token-not-real-000000000000 status=429 duration=4.6ms
+2026-07-16 13:15:52,713 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 429 Too Many Requests"
+2026-07-16 13:15:52,720 - server - WARNING - [RATE-LIMIT] kind=ip key=127.0.0.1 path=/api/gate/burst-token-not-real-000000000000
+2026-07-16 13:15:52,721 - server - INFO - [REQ] rid=b0c07488 GET /api/gate/burst-token-not-real-000000000000 status=429 duration=4.2ms
+2026-07-16 13:15:52,730 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 429 Too Many Requests"
+2026-07-16 13:15:52,738 - server - WARNING - [RATE-LIMIT] kind=ip key=127.0.0.1 path=/api/gate/burst-token-not-real-000000000000
+2026-07-16 13:15:52,739 - server - INFO - [REQ] rid=6f2662ad GET /api/gate/burst-token-not-real-000000000000 status=429 duration=4.4ms
+2026-07-16 13:15:52,747 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 429 Too Many Requests"
+2026-07-16 13:15:52,754 - server - WARNING - [RATE-LIMIT] kind=ip key=127.0.0.1 path=/api/gate/burst-token-not-real-000000000000
+2026-07-16 13:15:52,755 - server - INFO - [REQ] rid=1696e522 GET /api/gate/burst-token-not-real-000000000000 status=429 duration=4.4ms
+2026-07-16 13:15:52,764 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 429 Too Many Requests"
+2026-07-16 13:15:52,772 - server - WARNING - [RATE-LIMIT] kind=ip key=127.0.0.1 path=/api/gate/burst-token-not-real-000000000000
+2026-07-16 13:15:52,773 - server - INFO - [REQ] rid=6678238f GET /api/gate/burst-token-not-real-000000000000 status=429 duration=4.6ms
+2026-07-16 13:15:52,783 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 429 Too Many Requests"
+2026-07-16 13:15:52,790 - server - WARNING - [RATE-LIMIT] kind=ip key=127.0.0.1 path=/api/gate/burst-token-not-real-000000000000
+2026-07-16 13:15:52,792 - server - INFO - [REQ] rid=aef3329d GET /api/gate/burst-token-not-real-000000000000 status=429 duration=5.9ms
+2026-07-16 13:15:52,801 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 429 Too Many Requests"
+2026-07-16 13:15:52,811 - server - WARNING - [RATE-LIMIT] kind=ip key=127.0.0.1 path=/api/gate/burst-token-not-real-000000000000
+2026-07-16 13:15:52,812 - server - INFO - [REQ] rid=47053ab8 GET /api/gate/burst-token-not-real-000000000000 status=429 duration=7.1ms
+2026-07-16 13:15:52,823 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 429 Too Many Requests"
+2026-07-16 13:15:52,833 - server - WARNING - [RATE-LIMIT] kind=ip key=127.0.0.1 path=/api/gate/burst-token-not-real-000000000000
+2026-07-16 13:15:52,834 - server - INFO - [REQ] rid=7e4e1f90 GET /api/gate/burst-token-not-real-000000000000 status=429 duration=5.2ms
+2026-07-16 13:15:52,840 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 429 Too Many Requests"
+2026-07-16 13:15:52,848 - server - WARNING - [RATE-LIMIT] kind=ip key=127.0.0.1 path=/api/gate/burst-token-not-real-000000000000
+2026-07-16 13:15:52,849 - server - INFO - [REQ] rid=1b127bfe GET /api/gate/burst-token-not-real-000000000000 status=429 duration=4.3ms
+2026-07-16 13:15:52,857 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 429 Too Many Requests"
+2026-07-16 13:15:52,868 - server - WARNING - [RATE-LIMIT] kind=ip key=127.0.0.1 path=/api/gate/burst-token-not-real-000000000000
+2026-07-16 13:15:52,869 - server - INFO - [REQ] rid=70162028 GET /api/gate/burst-token-not-real-000000000000 status=429 duration=6.7ms
+2026-07-16 13:15:52,878 - httpx - INFO - HTTP Request: GET http://probe/api/gate/burst-token-not-real-000000000000 "HTTP/1.1 429 Too Many Requests"
+2026-07-16 13:15:52,977 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/392ad495-744f-4403-a017-6245524537a3.png size=836
+2026-07-16 13:15:53,000 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/c7de88cc-9ed1-42a7-a96d-d8af66941dad.png size=849
+2026-07-16 13:15:53,014 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/c9af6d31-6a7c-40cb-bfed-00df9e322ce8.png size=846
+2026-07-16 13:15:53,029 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/dbb519ce-2624-4df4-bed6-2268398f0844.png size=853
+2026-07-16 13:15:53,039 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/f0b9445d-ede3-4ab4-84e1-c752e7e17d06.png size=817
+2026-07-16 13:15:53,049 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/7b267d7b-d3f3-4e5e-9fab-f52f30c334b4.png size=790
+2026-07-16 13:15:53,057 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/4c496508-0b2a-4aff-aa4b-73a1d7dcc538.png size=814
+2026-07-16 13:15:53,065 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/af819389-4601-454f-a94b-25d1daabb877.png size=818
+2026-07-16 13:15:53,079 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/c8243c53-56e0-4b2a-a10f-996f74ef2320.png size=869
+2026-07-16 13:15:53,091 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/6e4dd9db-d972-4c3c-baa3-92a9a272f07f.png size=905
+2026-07-16 13:15:53,161 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/c799227f-ee0b-4b97-9469-e21afb97bb6e.png size=851
+2026-07-16 13:15:53,171 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/9a5286db-1e57-4512-bbad-69db0b48e47e.png size=840
+2026-07-16 13:15:53,188 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/b813b648-6fd1-4b24-96a6-358a92a5bc54.png size=790
+2026-07-16 13:15:53,196 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/4c279a1d-5de5-4258-a9f6-615e5fdb6a9b.png size=852
+2026-07-16 13:15:53,207 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/2aff481e-a07a-4ebd-bc75-5a1db814d2cf.png size=851
+2026-07-16 13:15:53,218 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/baf94ac4-9538-41b2-884e-0dccadbd668a.png size=847
+2026-07-16 13:15:53,227 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/cf29c36e-2c28-4f40-9894-528831c9ed81.png size=816
+2026-07-16 13:15:53,237 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/bd491b9d-e5fd-40d7-8e2f-4bed40791d04.png size=855
+2026-07-16 13:15:53,246 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/8277ab3b-33ee-4279-b406-d836f26e35df.png size=843
+2026-07-16 13:15:53,261 - services.object_storage - INFO - [STORAGE:LOCAL:SAVED] path=/home/runner/workspace/backend/uploads/safety/probe-qrg-p1-9dcee74c/entry-qr/fee26dff-5f9e-43f6-9334-a01d1d21ca30.png size=841
+V1 — token lifecycle
+  [PASS] V1a token auto-created on worker create
+  [PASS] V1b token >=32 url-safe chars — len=32
+  [PASS] V1c token doc has org/project/worker + qr_ref
+  [PASS] V1d unique index rejects duplicate token
+  [PASS] V1e ensure-on-demand for pre-existing worker → 200 + token + gate_url — 200
+  [PASS] V1f ensure is idempotent (same token back)
+  [PASS] V1g worker delete accepted — 204
+  [PASS] V1h deleted worker's token → neutral invalid — {"state":"invalid"}
+V2 — status matrix
+  [PASS] V2a no induction → red-induction — {'state': 'red', 'reason': 'induction', 'first_name': 'עובד', 'project_name': 'פרויקט 9dcee74c'}
+  [PASS] V2b red payload has NO phone/id fields
+  [PASS] V2c signed induction → green with first name + validity — {'state': 'green', 'first_name': 'עובד', 'photo_display_url': None, 'project_name': 'פרויקט 9dcee74c', 'induction_valid_until': '2027-02-01', 'warnings': []}
+  [PASS] V2d green payload has NO phone/id fields + first name only
+  [PASS] V2e expired other training → green + yellow warning — [{'type': 'עבודה בגובה', 'expired_at': '2026-07-13'}]
+  [PASS] V2f expired induction → red-induction with expired_at — {'state': 'red', 'reason': 'induction', 'first_name': 'עובד', 'project_name': 'פרויקט 9dcee74c', 'expired_at': '2026-07-11'}
+  [PASS] V2g bad token → SAME neutral invalid body
+V3 — scan log
+  [PASS] V3a scan log rows written for project hits — n=4
+  [PASS] V3b invalid hits logged too — n=222
+  [PASS] V3c PM list 200 + worker names resolved — 200
+  [PASS] V3d contractor 403 — 403
+  [PASS] V3e outsider PM 403 — 403
+V4 — block flow
+  [PASS] V4a PATCH block → 200 — 200 {"id":"74f85641-369f-4ca2-9793-646c1d601665","blocked":{"is_blocked":true,"reason":"הפרת בטיחות","by":"probe-qrg-pm-9dcee74c","at":"2026-07-16T13:15:5
+  [PASS] V4b gate red-blocked instantly — {'state': 'red', 'reason': 'blocked', 'first_name': 'עובד', 'project_name': 'פרויקט 9dcee74c'}
+  [PASS] V4c audit event worker_block_change written
+  [PASS] V4d unblock restores green
+  [PASS] V4e contractor cannot block (403) — 403
+V5 — rotation
+  [PASS] V5a rotate → 200 + new token differs
+  [PASS] V5b new token works (green)
+  [PASS] V5c old token → neutral invalid
+  [PASS] V5d rotated doc: rotated_from + fresh qr_ref
+  [PASS] V5e QR PNG endpoint returns a real PNG
+V6 — WA auto-send
+  [PASS] V6a flag OFF (default) → ZERO _send_wa_template calls so far — calls=0
+  [PASS] V6b worker creation still 201 with flag on
+  [PASS] V6c exactly one send attempted — calls=1
+  [PASS] V6d named params worker_name+project_name; E.164 phone — names={'worker_name', 'project_name'} to=+972501112233
+  [PASS] V6e header_image_url wired (https or None-if-local-storage) — hdr=https://app.brikops.com/api/uploads/safety/probe-qrg-p1-9dce
+V7 — throttle + noindex
+  [PASS] V7a X-Robots-Tag noindex present
+  [PASS] V7b burst → 429 (normal pace unaffected) — first429=30
+  [PASS] V7c module throttle: 61st hit in window → 429
+V9 — token concurrency (single-active-token invariant)
+  [PASS] V9a 10 concurrent ensures → exactly 1 active token — active=1
+  [PASS] V9b 10 concurrent rotates → exactly 1 active token — active=1 total=7
+  [PASS] V9c partial unique index uidx_wet_active exists
+  [PASS] V6f _send_wa_template signature: header_image_url default None
 
-קבצים שהשתנו (JS בלבד)
---------------------------------------------------------------------------------
-  frontend/src/utils/inductionCertificate.js
-  frontend/src/components/ProjectDataExportTab.js
-  frontend/src/components/diary/WorkDiaryEntryView.js
-  frontend/src/components/safety/SafetyExportMenu.js
-  frontend/src/components/safety/SafetyTourRunner.js
-  frontend/src/pages/WorkDiaryPage.js
-  frontend/src/pages/HandoverProtocolPage.js
-  frontend/src/utils/__tests__/fileDownload.web.test.js   (חדש — טסט)
+============================================================
+TOTAL: 42  PASS: 42  FAIL: 0
+ALL GREEN
 
+FULL DIFF OF MODIFIED FILES
+---------------------------
+(New files gate.py 351 lines, gate_public.py 188, GatePage.js 113,
+probe_safety_qrg1.py 398 — available in working tree.)
+
+diff --git a/backend/config.py b/backend/config.py
+index 1e41c57..09d0846 100644
+--- a/backend/config.py
++++ b/backend/config.py
+@@ -95,6 +95,11 @@ WA_REMINDER_TEMPLATE_HE = os.environ.get('WA_REMINDER_TEMPLATE_HE', 'brikops_con
+ WA_DIGEST_TEMPLATE_HE = os.environ.get('WA_DIGEST_TEMPLATE_HE', 'brikops_daily_digest_he')
+ # Batch safety-w1-alerts — Meta-approved Utility template (he), 3 named params.
+ WA_TEMPLATE_SAFETY_EXPIRY = os.environ.get('WA_TEMPLATE_SAFETY_EXPIRY', 'safety_expiry_alert')
++# Batch qrg1-entry-gate — worker entry QR template (image header + 2 named
++# body params). Auto-send is gated by WA_ENTRY_QR_ENABLED (default FALSE —
++# flips on only after Meta approves the template).
++WA_TEMPLATE_WORKER_ENTRY_QR = os.environ.get('WA_TEMPLATE_WORKER_ENTRY_QR', 'worker_entry_qr')
++WA_ENTRY_QR_ENABLED = os.environ.get('WA_ENTRY_QR_ENABLED', 'false').lower() == 'true'
+ 
+ # ----- Stream A 2026-05-01 — contractor digest multi-language template family -----
+ # Mirrors WA_DEFECT_TEMPLATES pattern (lines 80-85). One template per language.
+diff --git a/backend/contractor_ops/reminder_service.py b/backend/contractor_ops/reminder_service.py
+index a3c3406..110c9b6 100644
+--- a/backend/contractor_ops/reminder_service.py
++++ b/backend/contractor_ops/reminder_service.py
+@@ -138,7 +138,10 @@ async def _resolve_phone_for_company(company_id: str) -> Optional[str]:
+     return None
+ 
+ 
+-async def _send_wa_template(to_phone: str, template_name: str, body_params: list, button_params: list = None, lang_code: str = "he") -> dict:
++async def _send_wa_template(to_phone: str, template_name: str, body_params: list, button_params: list = None, lang_code: str = "he", header_image_url: str = None) -> dict:
++    # qrg1: header_image_url (optional, default None) adds an image-header
++    # component — same structure as NotificationEngine.send_message. Existing
++    # call sites pass nothing and are byte-identical in behavior.
+     if not _wa_enabled:
+         logger.info(f"[REMINDER:DRY-RUN] template={template_name} to={mask_phone(to_phone)}")
+         return {"success": True, "dry_run": True, "provider_message_id": f"dry_{uuid.uuid4().hex[:12]}"}
+@@ -152,9 +155,17 @@ async def _send_wa_template(to_phone: str, template_name: str, body_params: list
+             param["parameter_name"] = p["parameter_name"]
+         params.append(param)
+ 
+-    components = [
++    components = []
++    if header_image_url and header_image_url.startswith('https://'):
++        components.append({
++            "type": "header",
++            "parameters": [
++                {"type": "image", "image": {"link": header_image_url}}
++            ]
++        })
++    components.append(
+         {"type": "body", "parameters": params}
+-    ]
++    )
+     if button_params:
+         for bp in button_params:
+             components.append({
+diff --git a/backend/contractor_ops/safety/__init__.py b/backend/contractor_ops/safety/__init__.py
+index d03709c..a1def93 100644
+--- a/backend/contractor_ops/safety/__init__.py
++++ b/backend/contractor_ops/safety/__init__.py
+@@ -15,5 +15,6 @@ from contractor_ops.safety import equipment  # noqa: F401
+ from contractor_ops.safety import score_exports  # noqa: F401
+ from contractor_ops.safety import uploads  # noqa: F401
+ from contractor_ops.safety import induction  # noqa: F401
++from contractor_ops.safety import gate  # noqa: F401
+ from contractor_ops.safety import indexes  # noqa: F401
+ from contractor_ops.safety.indexes import ensure_safety_indexes  # noqa: F401
+diff --git a/backend/contractor_ops/safety/indexes.py b/backend/contractor_ops/safety/indexes.py
+index 81846c8..4a83c0f 100644
+--- a/backend/contractor_ops/safety/indexes.py
++++ b/backend/contractor_ops/safety/indexes.py
+@@ -148,4 +148,24 @@ async def ensure_safety_indexes(db) -> None:
+         background=True, unique=True, name="uidx_ics_org_version_lang",
+     )
+ 
+-    logger.info("Safety indices ensured (30 total across 11 collections)")
++    # qrg1-entry-gate — 3 across 2 collections.
++    await db.worker_entry_tokens.create_index(
++        [("token", 1)],
++        background=True, unique=True, name="uidx_wet_token",
++    )
++    await db.worker_entry_tokens.create_index(
++        [("project_id", 1), ("worker_id", 1)],
++        background=True, name="idx_wet_project_worker",
++    )
++    # single ACTIVE token per (project, worker) — DB-level race guard
++    await db.worker_entry_tokens.create_index(
++        [("project_id", 1), ("worker_id", 1), ("status", 1)],
++        background=True, unique=True, name="uidx_wet_active",
++        partialFilterExpression={"status": "active"},
++    )
++    await db.gate_scan_log.create_index(
++        [("project_id", 1), ("ts", -1)],
++        background=True, name="idx_gsl_project_ts",
++    )
++
++    logger.info("Safety indices ensured (34 total across 13 collections)")
+diff --git a/backend/contractor_ops/safety/workers.py b/backend/contractor_ops/safety/workers.py
+index 5eed662..f0670c3 100644
+--- a/backend/contractor_ops/safety/workers.py
++++ b/backend/contractor_ops/safety/workers.py
+@@ -22,6 +22,7 @@ from contractor_ops.safety._shared import (  # noqa: F401
+     _retention_date,
+     get_current_user,
+     get_db,
++    logger,
+     re,
+     require_roles,
+     router,
+@@ -117,6 +118,15 @@ async def create_worker(
+     await _audit("safety_worker", doc["id"], "created", user["id"], {
+         "project_id": project_id, "after": audit_after,
+     })
++    # qrg1: entry token auto-created on worker creation; WA auto-send is
++    # entirely behind WA_ENTRY_QR_ENABLED (default off). Never fails creation.
++    try:
++        from contractor_ops.safety.gate import ensure_entry_token, maybe_send_entry_qr
++        tok = await ensure_entry_token(db, project_id, doc["id"])
++        await maybe_send_entry_qr(db, project_id, doc, tok)
++    except Exception as e:
++        logger.error(f"[GATE] entry-token bootstrap failed worker={doc['id']}: {e}")
++
+     result = SafetyWorker(**doc)
+     result.photo_display_url = _photo_display(doc.get("photo_ref"))
+     return result
+@@ -264,4 +274,11 @@ async def delete_worker(
+         "project_id": project_id, "deletion_reason": body.reason,
+     })
+ 
++    # qrg1: removing a worker revokes all its entry tokens → gate page invalid.
++    try:
++        from contractor_ops.safety.gate import revoke_entry_tokens
++        await revoke_entry_tokens(db, project_id, worker_id)
++    except Exception as e:
++        logger.error(f"[GATE] token revoke failed worker={worker_id}: {e}")
++
+ 
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index 8974e74..40bb64d 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -124,3 +124,4 @@ websockets==15.0.1
+ yarl==1.22.0
+ zipp==3.23.0
+ zopfli==0.4.1
++qrcode==8.2
+diff --git a/backend/server.py b/backend/server.py
+index 894d9bb..b5e2cd1 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -461,6 +461,10 @@ if ENABLE_SAFETY_MODULE:
+         router as safety_registration_router,
+     )
+     app.include_router(safety_registration_router)
++    # qrg1-entry-gate — PUBLIC gate status router (no auth; own module with
++    # local throttle + noindex). Gated by the same flag: disabled == 404.
++    from contractor_ops.safety.gate_public import router as gate_public_router
++    app.include_router(gate_public_router)
+     logger.info("Safety module ENABLED — router registered at /api/safety")
+ else:
+     logger.info("Safety module disabled (ENABLE_SAFETY_MODULE=false)")
+diff --git a/frontend/src/App.js b/frontend/src/App.js
+index ea51b54..2a203df 100644
+--- a/frontend/src/App.js
++++ b/frontend/src/App.js
+@@ -55,6 +55,8 @@ const MyProjectsPage = React.lazy(() => import('./pages/MyProjectsPage'));
+ const ContractorDashboard = React.lazy(() => import('./pages/ContractorDashboard'));
+ const OwnershipTransferPage = React.lazy(() => import('./pages/OwnershipTransferPage'));
+ const ProjectDashboardPage = React.lazy(() => import('./pages/ProjectDashboardPage'));
++// qrg1 — public entry-gate status page (no auth; scanned by gate guards).
++const GatePage = React.lazy(() => import('./pages/GatePage'));
+ const FloorDetailPage = React.lazy(() => import('./pages/FloorDetailPage'));
+ const StageDetailPage = React.lazy(() => import('./pages/StageDetailPage'));
+ const QCFloorSelectionPage = React.lazy(() => import('./pages/QCFloorSelectionPage'));
+@@ -268,6 +270,7 @@ const AppRoutes = () => {
+         <Route path="/login" element={<LoginPage />} />
+         <Route path="/phone-login" element={<Navigate to="/login" replace />} />
+         <Route path="/safety/:projectId" element={<SafetyShortRedirect />} />
++        <Route path="/gate/:token" element={<GatePage />} />
+         <Route path="/auth/wa" element={<WaLoginPage />} />
+         <Route path="/register" element={<RegisterPage />} />
+         <Route path="/register-management" element={<RegisterManagementPage />} />
+diff --git a/frontend/src/components/safety/SafetyWorkerCard.js b/frontend/src/components/safety/SafetyWorkerCard.js
+index 9bb608d..ff64ee5 100644
+--- a/frontend/src/components/safety/SafetyWorkerCard.js
++++ b/frontend/src/components/safety/SafetyWorkerCard.js
+@@ -1,5 +1,8 @@
+ import React, { useEffect, useState } from 'react';
+-import { X, FileText, GraduationCap, AlertCircle, ChevronLeft } from 'lucide-react';
++import {
++  X, FileText, GraduationCap, AlertCircle, ChevronLeft,
++  QrCode, Printer, RefreshCw, Ban,
++} from 'lucide-react';
+ import {
+   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose,
+ } from '../ui/dialog';
+@@ -7,6 +10,8 @@ import { Button } from '../ui/button';
+ import { Badge } from '../ui/badge';
+ import { INCIDENT_TYPE_HE, SEVERITY_HE } from './safetyLabels';
+ import { safetyService } from '../../services/api';
++import { downloadBlob } from '../../utils/fileDownload';
++import { toast } from 'sonner';
+ 
+ // Read-only worker card. Mirrors SafetyDocumentDetail's chrome (Dialog
+ // modal={false} + outside-close prevention + [&>button]:hidden). Fetches the
+@@ -42,12 +47,88 @@ const INDUCTION_TYPE = 'הדרכת אתר';
+ 
+ export default function SafetyWorkerCard({
+   projectId, worker, open, onClose, isWriter, companies = [], onEditWorker, onAddTraining,
+-  onOpenEvidence, onOpenTraining,
++  onOpenEvidence, onOpenTraining, onBlockChanged,
+ }) {
+   const [trainings, setTrainings] = useState([]);
+   const [incidents, setIncidents] = useState([]);
+   const [loading, setLoading] = useState(false);
+   const [avatarBroken, setAvatarBroken] = useState(false);
++  // qrg1 — entry-gate controls. Local blocked state so the chip flips
++  // instantly; onBlockChanged lets the parent reload the list.
++  const [blocked, setBlocked] = useState(null);
++  const [qrBusy, setQrBusy] = useState(false);
++
++  useEffect(() => {
++    setBlocked(worker?.blocked || null);
++  }, [worker?.id, worker?.blocked]);
++
++  const isBlocked = !!blocked?.is_blocked;
++
++  const downloadQr = async () => {
++    if (qrBusy) return;
++    setQrBusy(true);
++    try {
++      const blob = await safetyService.getEntryQrPng(projectId, worker.id);
++      await downloadBlob(blob, `entry-qr-${worker.full_name || worker.id}.png`, 'image/png');
++    } catch (e) {
++      toast.error('הורדת קוד הכניסה נכשלה');
++    } finally {
++      setQrBusy(false);
++    }
++  };
++
++  // Print view: object-URL img in a new window → window.print().
++  const printQr = async () => {
++    if (qrBusy) return;
++    setQrBusy(true);
++    try {
++      const blob = await safetyService.getEntryQrPng(projectId, worker.id);
++      const url = window.URL.createObjectURL(blob);
++      const w = window.open('', '_blank');
++      if (!w) { toast.error('חלון ההדפסה נחסם על ידי הדפדפן'); return; }
++      w.document.write(`
++        <html dir="rtl"><head><title>קוד כניסה</title></head>
++        <body style="text-align:center;font-family:sans-serif;padding:24px">
++          <h2 style="margin-bottom:4px">${(worker.full_name || '').replace(/</g, '&lt;')}</h2>
++          <p style="color:#555;margin-top:0">קוד כניסה לאתר — BrikOps</p>
++          <img src="${url}" style="width:320px;height:320px" onload="window.print()" />
++        </body></html>`);
++      w.document.close();
++    } catch (e) {
++      toast.error('פתיחת תצוגת ההדפסה נכשלה');
++    } finally {
++      setQrBusy(false);
++    }
++  };
++
++  const rotateQr = async () => {
++    // eslint-disable-next-line no-alert
++    if (!window.confirm('חידוש הקוד יבטל את הקוד הקיים — כל QR מודפס/שנשלח יפסיק לעבוד. להמשיך?')) return;
++    if (qrBusy) return;
++    setQrBusy(true);
++    try {
++      await safetyService.rotateEntryToken(projectId, worker.id);
++      toast.success('קוד הכניסה חודש — יש להפיץ QR חדש');
++    } catch (e) {
++      toast.error('חידוש הקוד נכשל');
++    } finally {
++      setQrBusy(false);
++    }
++  };
++
++  const toggleBlock = async () => {
++    const next = !isBlocked;
++    // eslint-disable-next-line no-alert
++    if (next && !window.confirm('לחסום את העובד לכניסה לאתר? עמוד הסריקה יציג "אין כניסה".')) return;
++    try {
++      const res = await safetyService.setWorkerBlock(projectId, worker.id, next);
++      setBlocked(res.blocked);
++      toast.success(next ? 'העובד נחסם לכניסה' : 'החסימה הוסרה');
++      onBlockChanged && onBlockChanged(worker.id, res.blocked);
++    } catch (e) {
++      toast.error('עדכון החסימה נכשל');
++    }
++  };
+ 
+   useEffect(() => {
+     if (!open || !worker?.id) return undefined;
+@@ -117,7 +198,10 @@ export default function SafetyWorkerCard({
+               </div>
+             )}
+             <div className="min-w-0">
+-              <h3 className="text-lg font-bold text-slate-900">{worker.full_name}</h3>
++              <div className="flex items-center gap-2">
++                <h3 className="text-lg font-bold text-slate-900">{worker.full_name}</h3>
++                {isBlocked && <Badge className="bg-red-100 text-red-800 shrink-0">חסום</Badge>}
++              </div>
+               {worker.profession && <p className="text-sm text-slate-500 mt-0.5">{worker.profession}</p>}
+             </div>
+           </div>
+@@ -134,6 +218,54 @@ export default function SafetyWorkerCard({
+             </Field>
+           )}
+ 
++          {isWriter && (
++            /* qrg1 — entry-gate controls: QR share/print/rotate + block toggle */
++            <div className="space-y-1.5">
++              <div className="flex items-center gap-2">
++                <QrCode className="w-4 h-4 text-slate-500" />
++                <p className="text-sm font-semibold text-slate-700">קוד כניסה לאתר</p>
++              </div>
++              <div className="flex flex-wrap gap-2">
++                <button
++                  type="button"
++                  onClick={downloadQr}
++                  disabled={qrBusy}
++                  className="px-3 py-2 rounded-lg bg-blue-50 text-blue-700 border border-blue-100 hover:bg-blue-100 text-sm font-medium flex items-center gap-1.5 disabled:opacity-50"
++                >
++                  <QrCode className="w-4 h-4" /> הורד / שתף QR
++                </button>
++                <button
++                  type="button"
++                  onClick={printQr}
++                  disabled={qrBusy}
++                  className="px-3 py-2 rounded-lg bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100 text-sm font-medium flex items-center gap-1.5 disabled:opacity-50"
++                >
++                  <Printer className="w-4 h-4" /> הדפסה
++                </button>
++                <button
++                  type="button"
++                  onClick={rotateQr}
++                  disabled={qrBusy}
++                  className="px-3 py-2 rounded-lg bg-amber-50 text-amber-700 border border-amber-100 hover:bg-amber-100 text-sm font-medium flex items-center gap-1.5 disabled:opacity-50"
++                >
++                  <RefreshCw className="w-4 h-4" /> חדש קוד
++                </button>
++                <button
++                  type="button"
++                  onClick={toggleBlock}
++                  className={isBlocked
++                    ? 'px-3 py-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100 hover:bg-emerald-100 text-sm font-medium flex items-center gap-1.5'
++                    : 'px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-100 hover:bg-red-100 text-sm font-medium flex items-center gap-1.5'}
++                >
++                  <Ban className="w-4 h-4" /> {isBlocked ? 'הסר חסימה' : 'חסום כניסה'}
++                </button>
++              </div>
++              {isBlocked && blocked?.reason && (
++                <p className="text-xs text-red-600">סיבת חסימה: {blocked.reason}</p>
++              )}
++            </div>
++          )}
++
+           <div className="space-y-1.5">
+             <div className="flex items-center gap-2">
+               <GraduationCap className="w-4 h-4 text-slate-500" />
+diff --git a/frontend/src/pages/SafetyHomePage.js b/frontend/src/pages/SafetyHomePage.js
+index daeb57f..ee621b2 100644
+--- a/frontend/src/pages/SafetyHomePage.js
++++ b/frontend/src/pages/SafetyHomePage.js
+@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+ import {
+   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
+   Users, TrendingUp, ShieldAlert, Wrench, Filter, Plus, Pencil, Camera, FileText, ClipboardList,
+-  ChevronLeft, Bell, BookOpen, Eye, Download,
++  ChevronLeft, Bell, BookOpen, Eye, Download, QrCode,
+ } from 'lucide-react';
+ import { toast } from 'sonner';
+ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
+@@ -778,6 +778,10 @@ export default function SafetyHomePage() {
+                 onEdit={(d) => setDocForm({ open: true, record: d, kind: 'observation' })}
+                 onOpenDetail={(d) => setDetailDoc(d)}
+               />
++              {/* qrg1 — entry-gate scan log (writers only), self-fetching */}
++              {isWriter && activeTab === 'observations' && (
++                <GateScansSection projectId={projectId} />
++              )}
+             </TabsContent>
+             <TabsContent value="tours" className="p-0 m-0">
+               <ToursList
+@@ -1162,6 +1166,8 @@ export default function SafetyHomePage() {
+           setFocusTrainingId(t.id);
+           setActiveTab('trainings');
+         }}
++        /* qrg1 — block toggled in the card → refresh the list chip */
++        onBlockChanged={() => reloadWorkers()}
+       />
+ 
+       {activeTab === 'documents' && selectedIds.size > 0 && (
+@@ -1643,6 +1649,59 @@ function ObservationsList({
+   );
+ }
+ 
++// qrg1 — entry-gate scan log ("סריקות כניסה"). Self-fetching, writers only.
++// Rendered under the תיעוד tab; newest first; verdict chip per row.
++const SCAN_RESULT_HE = {
++  green: { label: 'מאושר', cls: 'bg-green-100 text-green-800' },
++  red: { label: 'אין כניסה', cls: 'bg-red-100 text-red-800' },
++  invalid: { label: 'קוד לא תקף', cls: 'bg-slate-200 text-slate-600' },
++};
++
++function GateScansSection({ projectId }) {
++  const [scans, setScans] = useState({ items: [], total: 0, loading: true });
++
++  useEffect(() => {
++    let cancelled = false;
++    safetyService.listGateScans(projectId, { limit: 50 })
++      .then((res) => { if (!cancelled) setScans({ items: res.items || [], total: res.total || 0, loading: false }); })
++      .catch(() => { if (!cancelled) setScans({ items: [], total: 0, loading: false }); });
++    return () => { cancelled = true; };
++  }, [projectId]);
++
++  return (
++    <div className="border-t border-slate-200">
++      <div className="px-4 py-3 flex items-center gap-2 bg-slate-50">
++        <QrCode className="w-4 h-4 text-slate-500" />
++        <p className="text-sm font-semibold text-slate-700">סריקות כניסה ({scans.total})</p>
++      </div>
++      {scans.loading ? (
++        <p className="px-4 py-4 text-sm text-slate-400">טוען…</p>
++      ) : !scans.items.length ? (
++        <p className="px-4 py-4 text-sm text-slate-400">אין סריקות עדיין</p>
++      ) : (
++        <ul className="divide-y divide-slate-100">
++          {scans.items.map((s) => {
++            const r = SCAN_RESULT_HE[s.result] || SCAN_RESULT_HE.invalid;
++            return (
++              <li key={s.id} className="px-4 py-2.5 flex items-center gap-3">
++                <Badge className={`${r.cls} shrink-0`}>{r.label}</Badge>
++                <div className="flex-1 min-w-0">
++                  <p className="text-sm font-medium text-slate-900 truncate">
++                    {s.worker_name || '—'}
++                  </p>
++                </div>
++                <time className="text-xs text-slate-400 shrink-0" dir="ltr">
++                  {(s.ts || '').slice(0, 16).replace('T', ' ')}
++                </time>
++              </li>
++            );
++          })}
++        </ul>
++      )}
++    </div>
++  );
++}
++
+ function TasksList({ items, isWriter, onEdit }) {
+   if (!items?.length) return <EmptyState icon={Wrench} text="אין משימות בטיחות פתוחות" />;
+   const nowIso = new Date().toISOString();
+@@ -1747,7 +1806,12 @@ function WorkersList({ items, isWriter, onEdit, onOpenCard, onInduct }) {
+           className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50 cursor-pointer">
+           <WorkerThumb worker={w} />
+           <div className="flex-1 min-w-0">
+-            <p className="font-medium text-slate-900 truncate">{w.full_name}</p>
++            <div className="flex items-center gap-2">
++              <p className="font-medium text-slate-900 truncate">{w.full_name}</p>
++              {w.blocked?.is_blocked && (
++                <Badge className="bg-red-100 text-red-800 shrink-0">חסום</Badge>
++              )}
++            </div>
+             <p className="text-xs text-slate-500 truncate">
+               {w.profession || 'ללא מקצוע'}{w.phone && ` · ${w.phone}`}
+             </p>
+diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+index 39cec65..bc2fd86 100644
+--- a/frontend/src/services/api.js
++++ b/frontend/src/services/api.js
+@@ -395,6 +395,51 @@ export const safetyService = {
+     return response.data;
+   },
+ 
++  // Batch qrg1-entry-gate — worker entry QR admin API
++  async getEntryToken(projectId, workerId) {
++    const response = await axios.post(
++      `${API}/safety/${projectId}/workers/${workerId}/entry-token`,
++      {},
++      { headers: getAuthHeader() }
++    );
++    return response.data;
++  },
++  async rotateEntryToken(projectId, workerId) {
++    const response = await axios.post(
++      `${API}/safety/${projectId}/workers/${workerId}/entry-token/rotate`,
++      {},
++      { headers: getAuthHeader() }
++    );
++    return response.data;
++  },
++  async getEntryQrPng(projectId, workerId) {
++    const response = await axios.get(
++      `${API}/safety/${projectId}/workers/${workerId}/entry-qr.png`,
++      { headers: getAuthHeader(), responseType: 'blob' }
++    );
++    return response.data;
++  },
++  async setWorkerBlock(projectId, workerId, isBlocked, reason = null) {
++    const response = await axios.patch(
++      `${API}/safety/${projectId}/workers/${workerId}/block`,
++      { is_blocked: isBlocked, reason },
++      { headers: getAuthHeader() }
++    );
++    return response.data;
++  },
++  async listGateScans(projectId, params = {}) {
++    const response = await axios.get(
++      `${API}/safety/${projectId}/gate-scans`,
++      { headers: getAuthHeader(), params }
++    );
++    return response.data;
++  },
++  // PUBLIC — no auth header on purpose (guard's phone, no account).
++  async getGateStatus(token) {
++    const response = await axios.get(`${API}/gate/${token}`);
++    return response.data;
++  },
++
+   async getScore(projectId, refresh = false) {
+     const params = refresh ? { refresh: 'true' } : {};
+     const response = await axios.get(
+
+================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

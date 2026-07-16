@@ -148,4 +148,24 @@ async def ensure_safety_indexes(db) -> None:
         background=True, unique=True, name="uidx_ics_org_version_lang",
     )
 
-    logger.info("Safety indices ensured (30 total across 11 collections)")
+    # qrg1-entry-gate — 3 across 2 collections.
+    await db.worker_entry_tokens.create_index(
+        [("token", 1)],
+        background=True, unique=True, name="uidx_wet_token",
+    )
+    await db.worker_entry_tokens.create_index(
+        [("project_id", 1), ("worker_id", 1)],
+        background=True, name="idx_wet_project_worker",
+    )
+    # single ACTIVE token per (project, worker) — DB-level race guard
+    await db.worker_entry_tokens.create_index(
+        [("project_id", 1), ("worker_id", 1), ("status", 1)],
+        background=True, unique=True, name="uidx_wet_active",
+        partialFilterExpression={"status": "active"},
+    )
+    await db.gate_scan_log.create_index(
+        [("project_id", 1), ("ts", -1)],
+        background=True, name="idx_gsl_project_ts",
+    )
+
+    logger.info("Safety indices ensured (34 total across 13 collections)")

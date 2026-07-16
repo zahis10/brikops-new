@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
   Users, TrendingUp, ShieldAlert, Wrench, Filter, Plus, Pencil, Camera, FileText, ClipboardList,
-  ChevronLeft, Bell, BookOpen, Eye, Download,
+  ChevronLeft, Bell, BookOpen, Eye, Download, QrCode,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
@@ -778,6 +778,10 @@ export default function SafetyHomePage() {
                 onEdit={(d) => setDocForm({ open: true, record: d, kind: 'observation' })}
                 onOpenDetail={(d) => setDetailDoc(d)}
               />
+              {/* qrg1 — entry-gate scan log (writers only), self-fetching */}
+              {isWriter && activeTab === 'observations' && (
+                <GateScansSection projectId={projectId} />
+              )}
             </TabsContent>
             <TabsContent value="tours" className="p-0 m-0">
               <ToursList
@@ -1162,6 +1166,8 @@ export default function SafetyHomePage() {
           setFocusTrainingId(t.id);
           setActiveTab('trainings');
         }}
+        /* qrg1 — block toggled in the card → refresh the list chip */
+        onBlockChanged={() => reloadWorkers()}
       />
 
       {activeTab === 'documents' && selectedIds.size > 0 && (
@@ -1643,6 +1649,59 @@ function ObservationsList({
   );
 }
 
+// qrg1 — entry-gate scan log ("סריקות כניסה"). Self-fetching, writers only.
+// Rendered under the תיעוד tab; newest first; verdict chip per row.
+const SCAN_RESULT_HE = {
+  green: { label: 'מאושר', cls: 'bg-green-100 text-green-800' },
+  red: { label: 'אין כניסה', cls: 'bg-red-100 text-red-800' },
+  invalid: { label: 'קוד לא תקף', cls: 'bg-slate-200 text-slate-600' },
+};
+
+function GateScansSection({ projectId }) {
+  const [scans, setScans] = useState({ items: [], total: 0, loading: true });
+
+  useEffect(() => {
+    let cancelled = false;
+    safetyService.listGateScans(projectId, { limit: 50 })
+      .then((res) => { if (!cancelled) setScans({ items: res.items || [], total: res.total || 0, loading: false }); })
+      .catch(() => { if (!cancelled) setScans({ items: [], total: 0, loading: false }); });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  return (
+    <div className="border-t border-slate-200">
+      <div className="px-4 py-3 flex items-center gap-2 bg-slate-50">
+        <QrCode className="w-4 h-4 text-slate-500" />
+        <p className="text-sm font-semibold text-slate-700">סריקות כניסה ({scans.total})</p>
+      </div>
+      {scans.loading ? (
+        <p className="px-4 py-4 text-sm text-slate-400">טוען…</p>
+      ) : !scans.items.length ? (
+        <p className="px-4 py-4 text-sm text-slate-400">אין סריקות עדיין</p>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {scans.items.map((s) => {
+            const r = SCAN_RESULT_HE[s.result] || SCAN_RESULT_HE.invalid;
+            return (
+              <li key={s.id} className="px-4 py-2.5 flex items-center gap-3">
+                <Badge className={`${r.cls} shrink-0`}>{r.label}</Badge>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-900 truncate">
+                    {s.worker_name || '—'}
+                  </p>
+                </div>
+                <time className="text-xs text-slate-400 shrink-0" dir="ltr">
+                  {(s.ts || '').slice(0, 16).replace('T', ' ')}
+                </time>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function TasksList({ items, isWriter, onEdit }) {
   if (!items?.length) return <EmptyState icon={Wrench} text="אין משימות בטיחות פתוחות" />;
   const nowIso = new Date().toISOString();
@@ -1747,7 +1806,12 @@ function WorkersList({ items, isWriter, onEdit, onOpenCard, onInduct }) {
           className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50 cursor-pointer">
           <WorkerThumb worker={w} />
           <div className="flex-1 min-w-0">
-            <p className="font-medium text-slate-900 truncate">{w.full_name}</p>
+            <div className="flex items-center gap-2">
+              <p className="font-medium text-slate-900 truncate">{w.full_name}</p>
+              {w.blocked?.is_blocked && (
+                <Badge className="bg-red-100 text-red-800 shrink-0">חסום</Badge>
+              )}
+            </div>
             <p className="text-xs text-slate-500 truncate">
               {w.profession || 'ללא מקצוע'}{w.phone && ` · ${w.phone}`}
             </p>

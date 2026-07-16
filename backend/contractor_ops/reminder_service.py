@@ -138,7 +138,10 @@ async def _resolve_phone_for_company(company_id: str) -> Optional[str]:
     return None
 
 
-async def _send_wa_template(to_phone: str, template_name: str, body_params: list, button_params: list = None, lang_code: str = "he") -> dict:
+async def _send_wa_template(to_phone: str, template_name: str, body_params: list, button_params: list = None, lang_code: str = "he", header_image_url: str = None) -> dict:
+    # qrg1: header_image_url (optional, default None) adds an image-header
+    # component — same structure as NotificationEngine.send_message. Existing
+    # call sites pass nothing and are byte-identical in behavior.
     if not _wa_enabled:
         logger.info(f"[REMINDER:DRY-RUN] template={template_name} to={mask_phone(to_phone)}")
         return {"success": True, "dry_run": True, "provider_message_id": f"dry_{uuid.uuid4().hex[:12]}"}
@@ -152,9 +155,17 @@ async def _send_wa_template(to_phone: str, template_name: str, body_params: list
             param["parameter_name"] = p["parameter_name"]
         params.append(param)
 
-    components = [
+    components = []
+    if header_image_url and header_image_url.startswith('https://'):
+        components.append({
+            "type": "header",
+            "parameters": [
+                {"type": "image", "image": {"link": header_image_url}}
+            ]
+        })
+    components.append(
         {"type": "body", "parameters": params}
-    ]
+    )
     if button_params:
         for bp in button_params:
             components.append({

@@ -1,5 +1,6 @@
 - [Mongo partial-index null limits](mongo-partial-index-null.md) — partialFilterExpression can't express {field: null}; use a compound unique index including the soft-delete field instead.
 - [Draft-only mutation race pattern](draft-mutation-atomicity.md) — read-time status checks aren't enough; every draft-only update must re-assert status inside the update_one filter.
 - [HTTP probe seeding](http-probe-seeding.md) — full-middleware ASGI probes need project_memberships + org membership + ISO-string paid_until; force local MONGO_URL.
+- [Global IP rate limiter](global-ip-rate-limiter.md) — app-wide 30/min unauth per-IP Mongo-backed limiter fires before module throttles; clear otp_rate_limits before burst probes.
 - [PDF multi-language fonts](pdf-multilang-fonts.md) — reshaped Arabic needs presentation-form glyphs (Amiri, probe 0xFECB); PIL RGBA→RGB turns alpha black; gate fonts before render.
 - [CI=true builds](ci-true-builds.md) — Zahi standing rule: all frontend verification builds must run with CI=true (deploy pipeline treats warnings as errors; CI=false hides eslint blockers).
