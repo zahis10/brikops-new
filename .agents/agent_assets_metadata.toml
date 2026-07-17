@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "Batch qrg-share-fix — Review (awaiting approval)"
+title = "Batch qrg-ux1 review — awaiting approval"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
@@ -852,3 +852,9 @@ id = "rT4pTjWHd4C8IFTAW6wiy"
 uri = "file://screenshots/qrg_share_fix_gate_green.jpg"
 type = "image"
 title = "Green pass page with its own QR"
+
+[[outputs]]
+id = "NOEJQa57iuctJ-XLN5RNh"
+uri = "file://screenshots/qrg_ux1_overview_guests.jpg"
+type = "image"
+title = "Safety overview tab (סקירה) after the change"

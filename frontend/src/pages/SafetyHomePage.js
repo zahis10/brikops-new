@@ -129,7 +129,7 @@ export default function SafetyHomePage() {
   const [trainingForm, setTrainingForm] = useState({ open: false, record: null, renewFrom: null });
   const [incidentForm, setIncidentForm] = useState({ open: false, record: null });
   const [addChooserOpen, setAddChooserOpen] = useState(false);
-  // qrg-guest B-FE-2 — issue-dialog open state (button lives in the header)
+  // qrg-guest B-FE-2 — issue-dialog open state (button lives in the overview tab guests section)
   const [guestIssueOpen, setGuestIssueOpen] = useState(false);
   const [equipForm, setEquipForm] = useState({ open: false });
   const [workerChain, setWorkerChain] = useState(null);
@@ -662,18 +662,6 @@ export default function SafetyHomePage() {
           </button>
         )}
 
-        {/* qrg-guest — one-day guest pass issuing (workers tab only) */}
-        {isWriter && activeTab === 'workers' && (
-          <button
-            type="button"
-            onClick={() => setGuestIssueOpen(true)}
-            className="px-3 py-2 text-sm rounded-lg bg-amber-500 text-white hover:bg-amber-600 flex items-center gap-1 min-h-[44px]"
-          >
-            <QrCode className="w-4 h-4" />
-            הנפק קוד אורח
-          </button>
-        )}
-
         <SafetyExportMenu
           projectId={projectId}
           currentFilter={filter}
@@ -829,15 +817,6 @@ export default function SafetyHomePage() {
                   }
                 }}
               />
-              {/* qrg-guest — issued guest passes (writers only), self-fetching */}
-              {isWriter && activeTab === 'workers' && (
-                <GuestPassSection
-                  projectId={projectId}
-                  projectName={project?.name || ''}
-                  issueOpen={guestIssueOpen}
-                  onIssueOpenChange={setGuestIssueOpen}
-                />
-              )}
             </TabsContent>
             <TabsContent value="trainings" className="p-0 m-0">
               <TrainingsList
@@ -986,6 +965,31 @@ export default function SafetyHomePage() {
                 tone="info"
               />
             </div>
+
+            {/* qrg-ux1 — guest passes moved here from the workers tab:
+                issuing/managing one-day guest codes belongs to the overview,
+                not the workers list. Writers only; same issueOpen state. */}
+            {isWriter && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold text-slate-900">אורחים</h3>
+                  <button
+                    type="button"
+                    onClick={() => setGuestIssueOpen(true)}
+                    className="px-3 py-2 text-sm rounded-lg bg-amber-500 text-white hover:bg-amber-600 flex items-center gap-1 min-h-[44px]"
+                  >
+                    <QrCode className="w-4 h-4" />
+                    הנפק קוד אורח
+                  </button>
+                </div>
+                <GuestPassSection
+                  projectId={projectId}
+                  projectName={project?.name || ''}
+                  issueOpen={guestIssueOpen}
+                  onIssueOpenChange={setGuestIssueOpen}
+                />
+              </div>
+            )}
           </TabsContent>
         </Tabs>
       </div>

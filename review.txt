@@ -1,115 +1,96 @@
-================================================================================
-BATCH qrg-share-fix — Task #542 — REVIEW
-Entry codes ship as a MESSAGE with a link; green pass page renders its own QR
-Branch: staging | Date: 2026-07-17
-================================================================================
+BATCH qrg-ux1 — REVIEW
+Task #543 — Move guest pass issuance to the safety overview tab (FE-only)
+Date: 2026-07-17 | Branch: staging
 
-STEP 0 — FINDINGS
---------------------------------------------------------------------------------
-- Share flows before this batch downloaded/shared a naked QR PNG (fileDownload
-  helpers). Recipients received an image with no context and the guard-scan
-  flow depended on the saved image.
-- Project-name source for S3: SafetyHomePage already loads the project object;
-  both SafetyWorkerCard and GuestPassSection are rendered from SafetyHomePage,
-  which now passes projectName={project?.name || ''} to each. No new fetch.
-- Guest list API (_pass_list_item in guest.py) exposed qr_display_url but no
-  gate link; raw token was (correctly) never exposed — kept that way.
-- Public gate page (GatePage.js) showed GREEN state text only; no QR on
-  screen, so the link alone was not a complete "boarding pass".
-- server.py has a global /api/ middleware forcing Cache-Control
-  no-cache/no-store on every API response — it overrode the qr.png caching
-  headers and needed a scoped exemption (see S5a note below).
+============================================================
+SCOPE
+============================================================
+Frontend-only UX change per spec (attached_assets/Pasted---1784292443605_1784292443605.txt):
+- The "הנפק קוד אורח" (issue guest code) button and the GuestPassSection
+  (issued passes list + issue dialog) move from the workers (עובדים) tab
+  to the bottom of the overview (סקירה) tab in the safety module.
+- Zero backend changes.
 
-CHANGES (git diff --stat)
---------------------------------------------------------------------------------
- backend/contractor_ops/safety/gate_public.py       | 46 ++++++++++++++++++++++
- backend/contractor_ops/safety/guest.py             |  4 ++
- backend/server.py                                  | 11 ++++--
- frontend/src/components/safety/SafetyWorkerCard.js | 30 ++++++++++----
- frontend/src/pages/GatePage.js                     | 25 +++++++++++-
- frontend/src/pages/SafetyHomePage.js               | 41 +++++++++++++------
- frontend/src/utils/fileDownload.js                 | 40 +++++++++++++++++++
- 7 files changed, 172 insertions(+), 25 deletions(-)
- (new file: backend/tests/probe_safety_qrg_share_fix.py)
+Files changed:
+- frontend/src/pages/SafetyHomePage.js (1 file, +25 / -21)
 
-S1 — shareText() (frontend/src/utils/fileDownload.js)
-  New helper: Capacitor native Share.share({text}) (user-cancel tolerated),
-  web navigator.share({text}) (AbortError treated as success), fallback
-  clipboard copy returning {copied:true}. downloadBlob untouched.
+============================================================
+DIFF (frontend/src/pages/SafetyHomePage.js)
+============================================================
+@@ -129,7 +129,7 @@
+   const [addChooserOpen, setAddChooserOpen] = useState(false);
+-  // qrg-guest B-FE-2 — issue-dialog open state (button lives in the header)
++  // qrg-guest B-FE-2 — issue-dialog open state (button lives in the overview tab guests section)
+   const [guestIssueOpen, setGuestIssueOpen] = useState(false);
 
-S2/S3 — Worker share as message (SafetyWorkerCard.js + SafetyHomePage.js)
-  Button renamed "שלח קוד". Flow: getEntryToken → gate_url → shareText(msg).
-  Toast on clipboard fallback: "ההודעה הועתקה — הדבק ושלח".
-  Message sent (WA-style preview):
-    שלום {שם פרטי}, זהו קוד הכניסה האישי שלך לאתר {שם פרויקט}.
-    פתח/י את הקישור והצג/י את הקוד שמופיע בו לסורק בכניסה לאתר.
-    שמור/י על הודעה זו: https://app.brikops.com/gate/{token}
+@@ -662,18 +662,6 @@  (header action area)
+-        {/* qrg-guest — one-day guest pass issuing (workers tab only) */}
+-        {isWriter && activeTab === 'workers' && (
+-          <button ... onClick={() => setGuestIssueOpen(true)} ...>
+-            <QrCode className="w-4 h-4" />
+-            הנפק קוד אורח
+-          </button>
+-        )}
 
-S4 — Guest share as message (guest.py + SafetyHomePage.js GuestPassSection)
-  _pass_list_item adds gate_url (derived; raw token still NOT exposed).
-  Issue-success + list re-share buttons send the message ("שלח קוד", Send
-  icon). printQr flow unchanged (image-based).
-  Message sent:
-    שלום {שם אורח}, זהו קוד הכניסה שלך לאתר {שם פרויקט} לתאריך {תאריך}.
-    יש להיכנס לקישור, לקרוא את תדריך הבטיחות ולחתום לפני ההגעה לאתר: {קישור}
+@@ -829,15 +817,6 @@  (workers TabsContent)
+-              {/* qrg-guest — issued guest passes (writers only), self-fetching */}
+-              {isWriter && activeTab === 'workers' && (
+-                <GuestPassSection
+-                  projectId={projectId}
+-                  projectName={project?.name || ''}
+-                  issueOpen={guestIssueOpen}
+-                  onIssueOpenChange={setGuestIssueOpen}
+-                />
+-              )}
 
-S5a — Public QR endpoint (gate_public.py)
-  NEW GET /api/gate/{token}/qr.png (unauthenticated, like the gate page):
-  per-IP throttle (XFF-aware), 20-128 token length pre-check, active
-  worker_entry_tokens OR guest_entry_passes lookup (id-only projection),
-  neutral 404 "קוד לא תקף" on any miss, StreamingResponse of the QR PNG
-  encoding _gate_url(token) — ZERO information gain (the bytes encode only
-  the URL the caller already has). Headers: X-Robots-Tag "noindex, nofollow",
-  Cache-Control "private, max-age=3600".
-  server.py note: the global /api/ no-store middleware now skips responses
-  where the endpoint set an explicit Cache-Control. Only qr.png does; every
-  other API response keeps the no-store default (verified by regressions).
+@@ -986,6 +965,31 @@  (overview TabsContent, after KPI grid)
++            {/* qrg-ux1 — guest passes moved here from the workers tab:
++                issuing/managing one-day guest codes belongs to the overview,
++                not the workers list. Writers only; same issueOpen state. */}
++            {isWriter && (
++              <div className="space-y-3">
++                <div className="flex items-center justify-between gap-3">
++                  <h3 className="text-sm font-semibold text-slate-900">אורחים</h3>
++                  <button type="button" onClick={() => setGuestIssueOpen(true)}
++                    className="px-3 py-2 text-sm rounded-lg bg-amber-500 text-white hover:bg-amber-600 flex items-center gap-1 min-h-[44px]">
++                    <QrCode className="w-4 h-4" />
++                    הנפק קוד אורח
++                  </button>
++                </div>
++                <GuestPassSection
++                  projectId={projectId}
++                  projectName={project?.name || ''}
++                  issueOpen={guestIssueOpen}
++                  onIssueOpenChange={setGuestIssueOpen}
++                />
++              </div>
++            )}
 
-S5b — QR on green pass page (GatePage.js)
-  GateQrCard (180px img from `${API}/gate/${token}/qr.png`, caption
-  "הצג לסורק בכניסה", hides itself on img error) rendered on worker GREEN
-  and guest GREEN only. Red/expired/invalid states unchanged.
-
+============================================================
 VERIFICATION
---------------------------------------------------------------------------------
-V1 — New probe backend/tests/probe_safety_qrg_share_fix.py: 14/14 PASS
-  - entry-token ensure returns token + gate_url
-  - worker/guest token → 200 image/png, PNG magic
-  - noindex + private cache headers survive middleware (xrt=noindex, nofollow;
-    cc=private, max-age=3600)
-  - body is bytes only, QR bytes == locally-encoded QR of _gate_url(token)
-    (zero info gain)
-  - unknown / short / revoked token → neutral 404
-  - gate _check_throttle → 429 past limit; HTTP burst → 429 within limit+2
-  - guest list item includes gate_url == _gate_url(token); NO raw token
-    field; existing keys unchanged (only gate_url added)
+============================================================
+1. Grep checks — clean:
+   - No guest button / GuestPassSection left in header or workers tab.
+   - No remaining activeTab==='workers' guest gating.
+2. Production build (CI=true REACT_APP_BACKEND_URL=https://api.brikops.com
+   npx craco build): EXIT CODE 0.
+   Bundle frontend/build/static/js/main.6ad9bef8.js references api.brikops.com — OK.
+3. Visual check on dev bundle with seeded demo project:
+   Safety overview tab renders correctly (screenshots/qrg_ux1_overview_guests.jpg);
+   the "אורחים" section with the amber issue button sits at the bottom of the
+   overview tab, gated to writers only. Workers tab shows workers only.
+   Seed data fully cleaned up afterwards; ENABLE_SAFETY_MODULE removed from backend/.env.
+4. Architect code review: PASS — correct removal from workers tab/header,
+   correct placement, props and state wiring intact, no leftover references,
+   RTL/Hebrew consistent, no security concerns. Stale comment noted by the
+   review was fixed and the bundle rebuilt (EXIT 0).
 
-V2 — Regressions:
-  - probe_safety_qrg_guest.py .......... 30/30 PASS
-  - probe_safety_qrg1.py ............... 42/42 PASS
-  - probe_safety_qrg1_fix1.py .......... 18/18 PASS
-  - safety pytest (test_safety_registration.py + test_defect_safety_tag.py):
-    18 passed + 1 pre-existing known failure
-    (test_defects_summary_includes_safety_open_count — unrelated, known)
-  - py_compile on ALL backend .py files: OK
+============================================================
+COMMIT MESSAGE (.local/.commit_message)
+============================================================
+fix(safety): guest pass issuance moves to the safety overview tab
 
-V3 — Build & visual:
-  - CI=true production frontend build: SUCCESS; final bundle rebuilt with
-    REACT_APP_BACKEND_URL=https://api.brikops.com and verified
-    (frontend/build/static/js/main.d55df1ce.js references api.brikops.com).
-  - Screenshot screenshots/qrg_share_fix_gate_green.jpg: green worker pass
-    page "מאושר לכניסה" with induction validity line AND the new QR card
-    ("הצג לסורק בכניסה") rendered from the live endpoint.
-  - Temporary ENABLE_SAFETY_MODULE flag + demo data used for the screenshot
-    were removed; backend/.env restored.
+Issuing and managing one-day guest passes now lives in the safety overview
+tab, where it belongs — the workers tab returns to workers only.
 
-ARCHITECT REVIEW
---------------------------------------------------------------------------------
-PASS — no blocking functional or security defects. Public QR endpoint leaks
-no PII (image bytes encode only the gate URL the caller already has);
-enumeration resistance via high-entropy tokens + neutral 404 + throttling.
-Cache middleware change correctly scoped. Optional (non-blocking) follow-ups:
-monitor /api/gate/* 429 rates after rollout; central XFF trust hardening.
-
-================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
