@@ -384,4 +384,21 @@ async def list_gate_scans(
             names[w["id"]] = w.get("full_name")
     for it in items:
         it["worker_name"] = names.get(it.get("worker_id"))
+    # qrg-guest: resolve guest names for rows carrying guest_pass_id and tag
+    # them — extra keys ONLY on guest rows; worker rows stay byte-compatible.
+    guest_ids = list({it["guest_pass_id"] for it in items if it.get("guest_pass_id")})
+    if guest_ids:
+        guests = {}
+        cursor = db.guest_entry_passes.find(
+            {"id": {"$in": guest_ids}},
+            {"_id": 0, "id": 1, "guest_name": 1, "guest_company": 1},
+        )
+        async for g in cursor:
+            guests[g["id"]] = g
+        for it in items:
+            g = guests.get(it.get("guest_pass_id"))
+            if g:
+                it["guest_name"] = g.get("guest_name")
+                it["guest_company"] = g.get("guest_company")
+                it["is_guest"] = True
     return {"items": items, "total": total, "limit": limit, "offset": offset, "summary": summary}

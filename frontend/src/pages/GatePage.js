@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
-import { CheckCircle2, XCircle, AlertTriangle, HelpCircle, ArrowRight } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, HelpCircle, ArrowRight, Eraser, Loader2 } from 'lucide-react';
 import { safetyService } from '../services/api';
 
 // Batch qrg1-entry-gate — PUBLIC live entry-gate status page (/gate/:token).
@@ -52,6 +52,182 @@ function GateBackButton() {
   );
 }
 
+// qrg-guest B-FE-1 — full-screen briefing + INLINE signature canvas.
+// Canvas mechanics mirror SafetySignaturePad (draw/clear/toBlob) but rendered
+// inline: NO Radix Dialog, NO app-only imports — this is the public page.
+function GuestBriefingScreen({ token, data, onSigned }) {
+  const [signerName, setSignerName] = useState(data.guest_name || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const canvasRef = useRef(null);
+  const ctxRef = useRef(null);
+  const isDrawingRef = useRef(false);
+  const hasDrawnRef = useRef(false);
+
+  const initCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ratio = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * ratio;
+    canvas.height = rect.height * ratio;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(ratio, ratio);
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctxRef.current = ctx;
+    hasDrawnRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(initCanvas, 100);
+    return () => clearTimeout(timer);
+  }, [initCanvas]);
+
+  const getPos = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    if (e.touches && e.touches.length > 0) {
+      return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+    }
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+  const startDraw = (e) => {
+    e.preventDefault();
+    isDrawingRef.current = true;
+    const ctx = ctxRef.current;
+    if (!ctx) return;
+    const pos = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+  };
+  const draw = (e) => {
+    e.preventDefault();
+    if (!isDrawingRef.current) return;
+    const ctx = ctxRef.current;
+    if (!ctx) return;
+    hasDrawnRef.current = true;
+    const pos = getPos(e);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+  };
+  const endDraw = (e) => {
+    e.preventDefault();
+    isDrawingRef.current = false;
+  };
+  const clearCanvas = () => {
+    const canvas = canvasRef.current;
+    const ctx = ctxRef.current;
+    if (canvas && ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      hasDrawnRef.current = false;
+    }
+  };
+
+  const handleSubmit = async () => {
+    setError('');
+    if (!signerName.trim()) {
+      setError('יש להזין שם החותם');
+      return;
+    }
+    if (!hasDrawnRef.current) {
+      setError('יש לצייר חתימה לפני אישור');
+      return;
+    }
+    setSaving(true);
+    try {
+      const canvas = canvasRef.current;
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const res = await safetyService.signGuestPass(token, blob, signerName.trim());
+      onSigned(res);
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status === 409) setError('התדריך כבר נחתם');
+      else setError(err?.response?.data?.detail || 'שגיאה בשליחת החתימה — נסה שוב');
+      setSaving(false);
+    }
+  };
+
+  // Briefing text: first line is the title, rest are the numbered clauses.
+  const lines = (data.briefing_text || '').split('\n');
+  const title = lines[0] || 'תדריך בטיחות למבקרים';
+  const body = lines.slice(1).join('\n');
+
+  return (
+    <div dir="rtl" className="min-h-screen bg-slate-50 flex flex-col">
+      <GateBackButton />
+      <div className="bg-amber-500 text-white px-5 pt-8 pb-5 text-center">
+        <h1 className="text-xl font-extrabold">{title}</h1>
+        <p className="mt-2 text-sm font-semibold">
+          {data.guest_name}{data.guest_company ? ` · ${data.guest_company}` : ''}
+        </p>
+      </div>
+      <div className="flex-1 px-5 py-5 max-w-md w-full mx-auto space-y-5">
+        <pre className="whitespace-pre-wrap font-sans text-[15px] leading-relaxed text-slate-800 text-right">
+          {body}
+        </pre>
+
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-slate-700">שם החותם</label>
+          <input
+            type="text"
+            value={signerName}
+            onChange={(e) => setSignerName(e.target.value)}
+            placeholder="שם החותם"
+            dir="rtl"
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white
+              focus:outline-none focus:ring-2 focus:ring-amber-300 focus:border-amber-400"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <div className="border-2 border-slate-300 rounded-xl overflow-hidden bg-white">
+            <canvas
+              ref={canvasRef}
+              style={{ width: '100%', height: '180px', touchAction: 'none' }}
+              className="cursor-crosshair"
+              onMouseDown={startDraw}
+              onMouseMove={draw}
+              onMouseUp={endDraw}
+              onMouseLeave={endDraw}
+              onTouchStart={startDraw}
+              onTouchMove={draw}
+              onTouchEnd={endDraw}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={clearCanvas}
+            className="flex items-center gap-1.5 text-xs text-slate-500 font-medium px-2 py-1"
+          >
+            <Eraser className="w-3.5 h-3.5" />
+            נקה
+          </button>
+        </div>
+
+        {error && (
+          <p className="text-sm text-red-600 font-medium text-center">{error}</p>
+        )}
+
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={saving}
+          className="w-full flex items-center justify-center gap-1.5 py-3.5 bg-amber-500 text-white rounded-xl text-base font-bold
+            active:scale-[0.98] disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+          אני מאשר/ת ומאשר/ת חתימה
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function GatePage() {
   const { token } = useParams();
   const [state, setState] = useState({ loading: true, data: null, error: false });
@@ -90,6 +266,31 @@ export default function GatePage() {
     );
   }
 
+  // qrg-guest — unsigned pass: full-screen briefing + inline signature.
+  if (d.state === 'guest_briefing') {
+    return (
+      <GuestBriefingScreen
+        token={token}
+        data={d}
+        onSigned={(res) => setState({ loading: false, data: res, error: false })}
+      />
+    );
+  }
+
+  // qrg-guest — signed but wrong day.
+  if (d.state === 'red' && d.reason === 'guest_date') {
+    return (
+      <div dir="rtl" className="min-h-screen bg-red-600 flex flex-col items-center justify-center px-6 text-center text-white">
+        <GateBackButton />
+        <XCircle className="w-24 h-24 mb-4" />
+        <h1 className="text-4xl font-extrabold">אין כניסה</h1>
+        {d.guest_name && <p className="text-2xl mt-3 font-semibold">{d.guest_name}</p>}
+        <p className="text-xl mt-2 opacity-90">האישור תקף ליום {d.valid_on} בלבד</p>
+        <p className="mt-6 text-sm opacity-75">יש לפנות למנהל העבודה</p>
+      </div>
+    );
+  }
+
   if (d.state === 'red') {
     return (
       <div dir="rtl" className="min-h-screen bg-red-600 flex flex-col items-center justify-center px-6 text-center text-white">
@@ -106,6 +307,20 @@ export default function GatePage() {
         </p>
         {d.project_name && <p className="mt-6 text-sm opacity-75">{d.project_name}</p>}
         <p className="mt-1 text-sm opacity-75">יש לפנות למנהל העבודה</p>
+      </div>
+    );
+  }
+
+  // qrg-guest — signed guest, valid today.
+  if (d.state === 'green' && d.reason === 'guest') {
+    return (
+      <div dir="rtl" className="min-h-screen bg-green-600 flex flex-col items-center justify-center px-6 text-center text-white">
+        <GateBackButton />
+        <CheckCircle2 className="w-20 h-20" />
+        <h1 className="text-4xl font-extrabold mt-4">אורח מאושר לכניסה</h1>
+        <p className="text-2xl mt-3 font-semibold">{d.guest_name}</p>
+        {d.guest_company && <p className="text-lg mt-1 opacity-90">{d.guest_company}</p>}
+        <p className="text-lg mt-3 opacity-90">מאושר ליום {d.valid_on}</p>
       </div>
     );
   }

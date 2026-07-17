@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH qrg1-fix1 — Review (AWAITING ZAHI APPROVAL)"
+title = "BATCH qrg-guest — Review (awaiting approval)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
@@ -828,3 +828,21 @@ id = "LPgR4exMWOuu4aL0D7TCP"
 uri = "file://attached_assets/cert_sample_ar.pdf"
 type = "pdf"
 title = "דוגמה — תעודה בערבית"
+
+[[outputs]]
+id = "o5w-TRF3V0ETOyv3JEd5r"
+uri = "file://screenshots/qrg_guest_briefing.jpg"
+type = "image"
+title = "Guest briefing + signature page"
+
+[[outputs]]
+id = "yDYOIv97RBvUtyoIYoeZD"
+uri = "file://screenshots/qrg_guest_green.jpg"
+type = "image"
+title = "Guest GREEN — approved for today"
+
+[[outputs]]
+id = "efTTS1-7YTEp8SSxYvg7p"
+uri = "file://screenshots/qrg_guest_red_date.jpg"
+type = "image"
+title = "Guest RED — wrong date"

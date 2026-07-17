@@ -439,6 +439,46 @@ export const safetyService = {
     const response = await axios.get(`${API}/gate/${token}`);
     return response.data;
   },
+  // qrg-guest — authed guest-pass CRUD (SAFETY_WRITERS)
+  async createGuestPass(projectId, body) {
+    const response = await axios.post(
+      `${API}/safety/${projectId}/guest-passes`,
+      body,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async listGuestPasses(projectId, params = {}) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/guest-passes`,
+      { headers: getAuthHeader(), params }
+    );
+    return response.data;
+  },
+  async revokeGuestPass(projectId, passId) {
+    const response = await axios.post(
+      `${API}/safety/${projectId}/guest-passes/${passId}/revoke`,
+      {},
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async getGuestQrPng(projectId, passId) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/guest-passes/${passId}/qr.png`,
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    return response.data;
+  },
+  // PUBLIC — the guest signs the visitor briefing on their own phone.
+  // NO auth header on purpose; token-gated multipart POST.
+  async signGuestPass(token, blob, signerName) {
+    const form = new FormData();
+    form.append('signature_image', blob, 'sig.png');
+    form.append('signer_name', signerName);
+    const response = await axios.post(`${API}/gate/${token}/guest-sign`, form);
+    return response.data;
+  },
 
   async getScore(projectId, refresh = false) {
     const params = refresh ? { refresh: 'true' } : {};

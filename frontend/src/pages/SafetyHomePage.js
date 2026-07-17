@@ -19,6 +19,7 @@ import {
 import { Button } from '../components/ui/button';
 import { Switch } from '../components/ui/switch';
 import { safetyService, projectService, projectCompanyService, userService } from '../services/api';
+import { downloadBlob } from '../utils/fileDownload';
 import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
 import SafetyKpiCard from '../components/safety/SafetyKpiCard';
 import SafetyFilterSheet, {
@@ -128,6 +129,8 @@ export default function SafetyHomePage() {
   const [trainingForm, setTrainingForm] = useState({ open: false, record: null, renewFrom: null });
   const [incidentForm, setIncidentForm] = useState({ open: false, record: null });
   const [addChooserOpen, setAddChooserOpen] = useState(false);
+  // qrg-guest B-FE-2 — issue-dialog open state (button lives in the header)
+  const [guestIssueOpen, setGuestIssueOpen] = useState(false);
   const [equipForm, setEquipForm] = useState({ open: false });
   const [workerChain, setWorkerChain] = useState(null);
   const [workerCard, setWorkerCard] = useState(null);
@@ -659,6 +662,18 @@ export default function SafetyHomePage() {
           </button>
         )}
 
+        {/* qrg-guest — one-day guest pass issuing (workers tab only) */}
+        {isWriter && activeTab === 'workers' && (
+          <button
+            type="button"
+            onClick={() => setGuestIssueOpen(true)}
+            className="px-3 py-2 text-sm rounded-lg bg-amber-500 text-white hover:bg-amber-600 flex items-center gap-1 min-h-[44px]"
+          >
+            <QrCode className="w-4 h-4" />
+            הנפק קוד אורח
+          </button>
+        )}
+
         <SafetyExportMenu
           projectId={projectId}
           currentFilter={filter}
@@ -814,6 +829,14 @@ export default function SafetyHomePage() {
                   }
                 }}
               />
+              {/* qrg-guest — issued guest passes (writers only), self-fetching */}
+              {isWriter && activeTab === 'workers' && (
+                <GuestPassSection
+                  projectId={projectId}
+                  issueOpen={guestIssueOpen}
+                  onIssueOpenChange={setGuestIssueOpen}
+                />
+              )}
             </TabsContent>
             <TabsContent value="trainings" className="p-0 m-0">
               <TrainingsList
@@ -1783,9 +1806,13 @@ function GateScansSection({ projectId }) {
                 <Badge className={`${r.cls} shrink-0`}>{r.label}</Badge>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-slate-900 truncate">
-                    {s.worker_name || '—'}
+                    {s.is_guest ? (s.guest_name || '—') : (s.worker_name || '—')}
                   </p>
                 </div>
+                {/* qrg-guest — tag guest rows */}
+                {s.is_guest && (
+                  <Badge className="bg-amber-100 text-amber-800 shrink-0">אורח</Badge>
+                )}
                 <time className="text-xs text-slate-400 shrink-0" dir="ltr">
                   {(s.ts || '').slice(0, 16).replace('T', ' ')}
                 </time>
@@ -1794,6 +1821,233 @@ function GateScansSection({ projectId }) {
           })}
         </ul>
       )}
+    </div>
+  );
+}
+
+// qrg-guest B-FE-2 — issue dialog + compact issued-passes list (workers tab).
+// The QR share/print reuses the worker-card pattern (downloadBlob + print view).
+const GUEST_STATUS_CHIP = (p) => {
+  if (p.status === 'revoked') return { label: 'בוטל', cls: 'bg-slate-200 text-slate-600' };
+  if (p.signed) return { label: 'נחתם', cls: 'bg-green-100 text-green-800' };
+  return { label: 'ממתין לחתימה', cls: 'bg-amber-100 text-amber-800' };
+};
+
+function GuestPassSection({ projectId, issueOpen, onIssueOpenChange }) {
+  const [passes, setPasses] = useState({ items: [], total: 0, loading: true });
+  const [form, setForm] = useState({ name: '', company: '', date: '' });
+  const [saving, setSaving] = useState(false);
+  const [issued, setIssued] = useState(null); // last created pass (QR view)
+  const [qrBusy, setQrBusy] = useState(false);
+
+  const reload = React.useCallback(() => {
+    safetyService.listGuestPasses(projectId, { limit: 50 })
+      .then((res) => setPasses({ items: res.items || [], total: res.total || 0, loading: false }))
+      .catch(() => setPasses({ items: [], total: 0, loading: false }));
+  }, [projectId]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  useEffect(() => {
+    if (issueOpen) {
+      setForm({ name: '', company: '', date: new Date().toISOString().slice(0, 10) });
+      setIssued(null);
+    }
+  }, [issueOpen]);
+
+  const submit = async () => {
+    if (form.name.trim().length < 2) { toast.error('יש להזין שם אורח'); return; }
+    if (!form.company.trim()) { toast.error('יש להזין חברה/תפקיד'); return; }
+    setSaving(true);
+    try {
+      const res = await safetyService.createGuestPass(projectId, {
+        guest_name: form.name.trim(),
+        guest_company: form.company.trim(),
+        valid_on: form.date,
+      });
+      setIssued(res);
+      reload();
+      toast.success('קוד האורח הונפק');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'הנפקת קוד האורח נכשלה');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const shareQr = async (pass) => {
+    if (qrBusy) return;
+    setQrBusy(true);
+    try {
+      const blob = await safetyService.getGuestQrPng(projectId, pass.id);
+      await downloadBlob(blob, `guest-qr-${pass.guest_name || pass.id}.png`, 'image/png');
+    } catch (e) {
+      toast.error('הורדת קוד האורח נכשלה');
+    } finally {
+      setQrBusy(false);
+    }
+  };
+
+  const printQr = async (pass) => {
+    if (qrBusy) return;
+    setQrBusy(true);
+    try {
+      const blob = await safetyService.getGuestQrPng(projectId, pass.id);
+      const url = window.URL.createObjectURL(blob);
+      const w = window.open('', '_blank');
+      if (!w) { toast.error('חלון ההדפסה נחסם על ידי הדפדפן'); return; }
+      w.document.write(`
+        <html dir="rtl"><head><title>קוד אורח</title></head>
+        <body style="text-align:center;font-family:sans-serif;padding:24px">
+          <h2 style="margin-bottom:4px">${(pass.guest_name || '').replace(/</g, '&lt;')}</h2>
+          <p style="color:#555;margin-top:0">קוד אורח ליום ${(pass.valid_on || '').replace(/</g, '&lt;')} — BrikOps</p>
+          <img src="${url}" style="width:320px;height:320px" onload="window.print()" />
+        </body></html>`);
+      w.document.close();
+    } catch (e) {
+      toast.error('פתיחת תצוגת ההדפסה נכשלה');
+    } finally {
+      setQrBusy(false);
+    }
+  };
+
+  const revoke = async (pass) => {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm('לבטל את קוד האורח? עמוד הסריקה יציג "קוד לא תקף".')) return;
+    try {
+      await safetyService.revokeGuestPass(projectId, pass.id);
+      toast.success('קוד האורח בוטל');
+      reload();
+    } catch (e) {
+      toast.error('ביטול קוד האורח נכשל');
+    }
+  };
+
+  return (
+    <div className="border-t border-slate-200">
+      <div className="px-4 py-3 flex items-center gap-2 bg-slate-50">
+        <QrCode className="w-4 h-4 text-slate-500" />
+        <p className="text-sm font-semibold text-slate-700">קודי אורחים ({passes.total})</p>
+      </div>
+      {passes.loading ? (
+        <p className="px-4 py-4 text-sm text-slate-400">טוען…</p>
+      ) : !passes.items.length ? (
+        <p className="px-4 py-4 text-sm text-slate-400">לא הונפקו קודי אורח עדיין</p>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {passes.items.map((p) => {
+            const chip = GUEST_STATUS_CHIP(p);
+            return (
+              <li key={p.id} className="px-4 py-2.5 flex items-center gap-3">
+                <Badge className={`${chip.cls} shrink-0`}>{chip.label}</Badge>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-900 truncate">
+                    {p.guest_name} · {p.guest_company}
+                  </p>
+                  <p className="text-xs text-slate-500" dir="ltr">{p.valid_on}</p>
+                </div>
+                {p.status === 'active' && (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="שתף QR"
+                      onClick={() => shareQr(p)}
+                      className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => revoke(p)}
+                      className="text-xs text-red-600 font-medium px-2 py-1 rounded-lg hover:bg-red-50 shrink-0"
+                    >
+                      ביטול
+                    </button>
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <Dialog open={issueOpen} onOpenChange={(o) => { if (!saving) onIssueOpenChange(o); }}>
+        <DialogContent className="max-w-md" dir="rtl">
+          <DialogHeader className="text-right">
+            <DialogTitle className="text-base font-bold text-slate-800">
+              {issued ? 'קוד אורח הונפק' : 'הנפקת קוד אורח ליום'}
+            </DialogTitle>
+          </DialogHeader>
+          {issued ? (
+            <div className="space-y-4 text-center">
+              {issued.qr_display_url && (
+                <img
+                  src={issued.qr_display_url}
+                  alt="QR"
+                  className="w-48 h-48 mx-auto border border-slate-200 rounded-xl"
+                />
+              )}
+              <p className="text-sm text-slate-700 font-medium">
+                {issued.guest_name} · {issued.guest_company}
+              </p>
+              <p className="text-xs text-slate-500">מאושר ליום {issued.valid_on} — לאחר חתימת תדריך המבקרים</p>
+              <div className="flex gap-2">
+                <Button className="flex-1" disabled={qrBusy} onClick={() => shareQr(issued)}>
+                  <Download className="w-4 h-4 ml-1" />
+                  שיתוף / הורדה
+                </Button>
+                <Button variant="outline" className="flex-1" disabled={qrBusy} onClick={() => printQr(issued)}>
+                  הדפסה
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">שם האורח</label>
+                <input
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                  dir="rtl"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">חברה / תפקיד</label>
+                <input
+                  type="text"
+                  value={form.company}
+                  onChange={(e) => setForm((f) => ({ ...f, company: e.target.value }))}
+                  dir="rtl"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">תאריך הביקור</label>
+                <input
+                  type="date"
+                  value={form.date}
+                  onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            {issued ? (
+              <Button variant="outline" onClick={() => onIssueOpenChange(false)}>סגור</Button>
+            ) : (
+              <>
+                <Button variant="outline" disabled={saving} onClick={() => onIssueOpenChange(false)}>ביטול</Button>
+                <Button disabled={saving} onClick={submit} className="bg-amber-500 hover:bg-amber-600">
+                  הנפק קוד
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

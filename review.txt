@@ -1,606 +1,152 @@
 ================================================================================
-REVIEW — BATCH qrg1-fix1: QR gate field polish
+REVIEW — BATCH qrg-guest: one-day guest entry passes
 Branch: staging | Date: 2026-07-17
 ================================================================================
 
 STEP 0 FINDINGS (verified before coding)
 --------------------------------------------------------------------------------
-- App.js renders the four global banners (OfflineBanner, PaywallConnector,
-  TrialBanner, CompleteAccountBanner) at the top level; wrapped them in a tiny
-  AppChromeBanners component (useLocation) that renders none of them on /gate/*.
-- gate.py::list_gate_scans existed with RBAC dependency + project access check;
-  filters added on top of the existing query (additive only).
-- gate_public.py used request.client.host as the throttle key; server.py's
-  global limiter derives x-forwarded-for (first IP before comma) → client.host.
-  B4 now matches that exactly (split on comma, first non-empty IP).
-- safetyService worker listing method: listWorkers(projectId, params = {})
-  in frontend/src/services/api.js — used for the worker filter select
-  (limit 200).
-- /projects-for-contractor report: MyProjectsPage's route/data flow LOOPS a
-  contractor-only user straight back to the contractor dashboard (redirect on
-  contractor-only role) — so navigating there is a broken exit. Per spec, B2
-  was implemented WITHOUT /projects navigation: an in-dashboard "כל הפרויקטים"
-  button (LayoutGrid, before NotificationBell, shown only with 2+ projects)
-  that resets the project selection to "all" and scrolls to the project chips
-  row. Mixed-role users are unaffected.
+(a) gate_status worker-branch end: in gate_public.py the worker lookup is
+    `tok = await db.worker_entry_tokens.find_one({"token": token, ...})`;
+    when tok is None the old code returned the neutral {"state":"invalid"}.
+    The guest branch slots in exactly there — inside `if not tok:` we first
+    try guest_entry_passes by token; only if THAT also misses (or the pass
+    is revoked) do we return the same neutral {"state":"invalid"}. The
+    worker green/red path below is untouched.
+(b) validate_upload WITHOUT a user — ANSWER: contractor_ops' validate_upload
+    keys its rate-limit/quota bookkeeping on the authenticated user id, so it
+    CANNOT be used on the public guest-sign endpoint (there is no user).
+    Per the spec's fallback, the public endpoint does INLINE validation
+    instead: hard 600KB byte cap via read(cap+1) length check, PNG magic
+    bytes (\x89PNG\r\n\x1a\n) AND content-type image/png → otherwise 422.
+    The per-IP _check_throttle (same helper the worker gate uses) runs first.
+(c) "הנפק קוד אורח" button home: SafetyHomePage's workers tab header renders
+    the "הוסף עובד" action for isWriter users; the amber guest button was
+    placed alongside it, and GuestPassSection renders inside the workers
+    TabsContent below GateScansSection.
 
 WHAT CHANGED
 --------------------------------------------------------------------------------
-B1a GatePage.js — GateBackButton, NATIVE ONLY (Capacitor.isNativePlatform()):
-    floating semi-transparent circular button, top-right (RTL), ArrowRight,
-    aria-label "חזרה"; history back if possible else navigate('/').
-    Rendered on ALL 4 states (loading / error / form / success).
-    Browser view unchanged (no button).
-B1b App.js — AppChromeBanners wrapper: the 4 global banners are skipped on
-    /gate/* routes only; behavior identical everywhere else.
-B2  ContractorDashboard.js — "כל הפרויקטים" header button (LayoutGrid) before
-    NotificationBell, shown when the user has 2+ projects; sets selection to
-    "all" and scrolls to the project chips row.
-B2b LogOut button now opens AlertDialog "לצאת מהמשתמש?" (אישור/ביטול) before
-    handleLogout, for all users.
-B3  gate.py::list_gate_scans — optional Query params worker_id / result
-    (green|red|invalid, else 422 Hebrew) / date_from / date_to (YYYY-MM-DD,
-    else 422 Hebrew); ISO ts range filter; ADDITIVE `summary` aggregation
-    (total / green / red / invalid) over the same filter. Existing response
-    keys byte-compatible. New index idx_gsl_project_worker_ts
-    (project_id, worker_id, ts desc) in indexes.py (log now "35 total").
-B3d SafetyHomePage.js GateScansSection — RTL filter row: worker select
-    (safetyService.listWorkers, limit 200), result select, date preset chips
-    (היום / 7 ימים / החודש / הכל) + counts strip from `summary`; refetch on
-    change; limit 50.
-B4  gate_public.py — throttle key: x-forwarded-for FIRST IP (comma-split,
-    trimmed) → request.client.host → 'unknown'. Matches server.py limiter.
+G1  backend/contractor_ops/safety/guest.py (NEW): GUEST_BRIEFING constant
+    (spec text verbatim, Hebrew, locked) + get_guest_briefing() →
+    (text, version=1, sha256-hash[:12]).
+G3  guest.py authed router (SAFETY_WRITERS only, project-access checked):
+      POST /api/safety/{project_id}/guest-passes  → 201 (name 2+ chars,
+        company required, valid_on ISO date, default israel_today; token via
+        _new_token ≥32 chars; QR PNG stored at
+        safety/{pid}/guest-passes/{id}/qr.png via _qr_png_bytes/_gate_url)
+      GET  .../guest-passes            → paginated list, newest first
+      POST .../guest-passes/{id}/revoke → status=revoked + audit event
+        guest_pass_revoked
+      GET  .../guest-passes/{id}/qr.png → PNG passthrough (authed only)
+    Registered in safety/__init__.py after the gate router.
+G4  gate_public.py public GET /api/gate/{token} guest branch (worker miss
+    only): unsigned → state=guest_briefing (first name+company+briefing
+    text/version, NO PII); signed & valid_on==israel_today → green
+    reason=guest; signed & other day → red reason=guest_date; revoked or
+    unknown → neutral {"state":"invalid"}. Every guest scan logged to
+    gate_scan_log with guest_pass_id (worker rows unchanged — key absent).
+G5  gate_public.py public POST /api/gate/{token}/guest-sign: per-IP
+    throttle → neutral 404 on unknown/revoked/worker token → 409 Hebrew if
+    already signed → signer_name required (≤120 chars else 422) → inline
+    600KB cap + PNG magic + content-type checks (422) → signature stored at
+    safety/{pid}/guest-passes/{id}/sig.png → SIGN-ONCE enforced by
+    re-asserting {status:"active", briefing.signed:False} INSIDE the
+    update_one filter (modified_count==0 → 409, no double write). Public
+    response never contains signature_ref.
+IDX indexes.py: uidx_gep_token (unique token) + idx_gep_project_valid
+    (project_id, valid_on) — log line now "37 total across 14 collections".
+LST gate.py list_gate_scans: guest rows resolved via $in on
+    guest_entry_passes → guest_name/guest_company/is_guest added ONLY on
+    guest rows; worker rows byte-compatible; filters+summary intact.
+FE  api.js: createGuestPass/listGuestPasses/revokeGuestPass/getGuestQrPng
+    (authed) + signGuestPass (PUBLIC multipart — NO auth header).
+    GatePage.js: GuestBriefingScreen — briefing text, signer name, inline
+    signature canvas, sign → live green; green guest ("אורח מאושר לכניסה",
+    "מאושר ליום …") and red guest_date ("האישור תקף ליום … בלבד") states.
+    SafetyHomePage.js: amber "הנפק קוד אורח" header button (workers tab,
+    writers only) → issue dialog (name/company/date, default today) → QR
+    view with share/download + print; GuestPassSection list with chips
+    נחתם / ממתין לחתימה / בוטל + revoke; GateScansSection guest rows show
+    guest name + "אורח" badge.
 
-NOT TOUCHED: public gate payload shape, tokens/rotation, QR generation,
-WA send, reminders, ios/android, dependencies.
+SECURITY (the new public WRITE surface — all server-side)
+--------------------------------------------------------------------------------
+- Writes possible ONLY for a live, active, UNSIGNED pass found by token;
+  unknown/revoked/worker tokens → neutral 404, nothing written.
+- Sign-once lock is atomic (re-asserted in the update filter) — concurrent
+  double-sign cannot produce two writes; loser gets 409 "התדריך כבר נחתם".
+- 600KB hard cap read BEFORE full buffering (read cap+1), PNG magic bytes +
+  content-type both required, signer_name capped at 120 chars (architect
+  hardening suggestion, implemented).
+- Per-IP _check_throttle applied (same as worker gate).
+- No PII beyond first name+company on any public response; signature_ref
+  never leaves the server on public routes (probe asserts this).
+- gate_public.py still imports NO authenticated dependencies.
+
+V1 — NEW PROBE: backend/tests/probe_safety_qrg_guest.py → 30/30 PASS
+--------------------------------------------------------------------------------
+issue 201 (token ≥32, valid_on=israel_today, QR stored) / contractor 403 /
+1-char name 422 / bad date 422 · GET unsigned → guest_briefing with
+name+company+briefing v1, NO phone/id/signature fields · sign valid PNG →
+200 green guest today; DB signed=true + version/hash · GET after sign →
+green guest · second sign → 409 "התדריך כבר נחתם" · valid_on future → red
+guest_date · revoke → 200; GET → neutral invalid; sign → 404 · unknown
+token → 404 · >600KB → 422 · non-PNG bytes → 422 · content-type jpeg → 422
+· empty signer 422 · signer_name >120 chars → 422 (failed attempts write
+nothing) · guest scans logged + tagged (guest_name/is_guest); worker rows
+byte-compatible; summary + filters intact · authed list 3 items with
+correct statuses; contractor 403; qr.png 200 PNG.
+
+V2 — REGRESSION
+--------------------------------------------------------------------------------
+- probe_safety_qrg1.py            42/42 PASS
+- probe_safety_qrg1_fix1.py       18/18 PASS
+- probe_safety_ind1.py            30/30 PASS
+- probe_safety_ind2.py            34/34 PASS
+- probe_safety_ind2_fix1.py       31/31 PASS
+- probe_safety_ind2_fix4.py       21/21 PASS
+- probe_safety_ind3.py            31/31 PASS
+- probe_safety_w1_alerts.py       4 date-dependent failures — today is
+  FRIDAY: reminder-day preferences skip Fri/Sat, known + expected, not a
+  regression (same note as previous batches).
+- pytest safety files: 18 passed, 1 failed — the long-standing pre-existing
+  test_defects_summary_includes_safety_open_count failure (unrelated).
+- py_compile: all changed backend files OK.
+- CI=true craco build (REACT_APP_BACKEND_URL=https://app.brikops.com):
+  SUCCESS — "The build folder is ready to be deployed" (only the usual
+  pre-existing capacitor source-map warnings). Final deployed bundle
+  re-verified: prod URL baked, no dev-domain remnants.
+- FE tests: none match safety/gate patterns (no test files) — n/a.
+- House greps: no console.log/debugger/TODO added; no signature_ref in any
+  public payload builder; gate_public.py has no get_current_user import.
 
 ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-Architect flagged one severe issue: the initial B4 used the raw XFF header
-without comma-splitting (multi-hop chains would dilute the throttle), and the
-probe's V2 assertions measured tuple length instead of the hit count.
-Both FIXED: gate_public.py now normalizes to the first IP exactly like
-server.py; probe V2a/V2b assert the actual count and a new V2d locks the
-comma-chain case ("1.1.1.1, 10.0.0.1, ..." → one bucket, count=2).
-All other items were assessed functionally aligned and low-risk.
+PASS — "implementation satisfies the qrg-guest objective end-to-end without
+blocking functional or security regressions … no serious security violation
+observed." Non-blocking suggestion (signer_name max length) was implemented
+(≤120 → 422); probe re-run 30/30 after the change. Orphan-signature cleanup
+on the rare storage-write/DB-race was noted as optional operational
+hardening — not done (out of batch scope).
 
-VALIDATION
+SCREENSHOTS (screenshots/, real end-to-end renders of the built bundle)
 --------------------------------------------------------------------------------
-V1  NEW probe backend/tests/probe_safety_qrg1_fix1.py — 18/18 GREEN
-    (filters, summary, Hebrew 422s, RBAC 403, backward compat,
-     XFF bucket separation + comma-chain normalization V2a-d).
-V2  probe_safety_qrg1.py rerun — 42/42 GREEN.
-V3  Full safety suites GREEN:
-      probe_safety_ind1.py       30/30 (after cleaning leftover snapshot docs
-                                        from prior runs — env residue, not code)
-      probe_safety_ind2.py       34/34
-      probe_safety_ind2_fix1.py  31/31
-      probe_safety_ind2_fix4.py  21/21
-      probe_safety_ind3.py       31/31
-      probe_safety_w1_alerts.py  4 date-dependent FAILs ONLY: today is Friday
-        (Israel weekday 5) and default reminder-day prefs exclude Friday —
-        skip reason "day_5_not_in_user_days". No reminder code was touched in
-        this batch; suite passes on Sun-Thu.
-    pytest tests/test_defect_safety_tag.py tests/test_safety_registration.py:
-      18 passed, 1 failed — test_defects_summary_includes_safety_open_count,
-      the KNOWN pre-existing unrelated failure.
-    py_compile: OK. CI=true GENERATE_SOURCEMAP=false craco build: PASS
-    (with REACT_APP_BACKEND_URL set, per craco guard). FE tests: 15/15 PASS.
-    House greps: no console.log / TODO / FIXME / debugger in changed files.
+- qrg_guest_briefing.jpg — public guest briefing + signature pad (unsigned):
+  header "תדריך בטיחות למבקרים — אתר בנייה", guest "דוד לוי · אדריכל -
+  סטודיו לוי", 5-point briefing, signer-name field, signature canvas.
+- qrg_guest_green.jpg    — GREEN "אורח מאושר לכניסה", name/company,
+  "מאושר ליום 2026-07-17".
+- qrg_guest_red_date.jpg — RED "אין כניסה", "האישור תקף ליום 2026-07-19
+  בלבד", "יש לפנות למנהל העבודה".
+NOTE: the issue dialog + guest-pass list live behind login; they were
+verified by the probe (30/30) and are covered by the V3 device checklist.
+Demo passes used for the screenshots were deleted afterwards; the temporary
+safety-module env flag was removed and the prod bundle rebuilt/restored.
 
-SCREENSHOTS NOTE: the gate back button is NATIVE-ONLY (Capacitor) by spec, so
-it cannot appear in a web screenshot — verify on device per V4 device checks
-(1 project → no projects button; 2+ → button shown; logout shows confirm).
-
-V1 PROBE TRANSCRIPT (fresh run)
+V3 DEVICE CHECKS (Zahi, prod after deploy)
 --------------------------------------------------------------------------------
-[SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****0001,****9991
-2026-07-17 04:21:18,246 - server - INFO - [STARTUP] SMS_MODE=stub APP_MODE=dev SMS_ENABLED=True SMS_CLIENT_ENABLED=True
-2026-07-17 04:21:18,899 - server - INFO - Safety module ENABLED — router registered at /api/safety
-2026-07-17 04:21:18,899 - server - INFO - Work Diary disabled (ENABLE_WORK_DIARY=false)
-2026-07-17 04:21:19,239 - server - INFO - [SPA] Serving frontend from /home/runner/workspace/frontend/build
-2026-07-17 04:21:19,319 - contractor_ops.safety._shared - INFO - Safety indices ensured (35 total across 13 collections)
-2026-07-17 04:21:19,346 - server - INFO - [REQ] rid=cbff8f8c GET /api/safety/probe-qf1-p1-8a73f8f6/gate-scans status=200 duration=22.0ms user=probe-qf1-pm-8a73f8f6
-2026-07-17 04:21:19,348 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qf1-p1-8a73f8f6/gate-scans "HTTP/1.1 200 OK"
-2026-07-17 04:21:19,357 - server - INFO - [REQ] rid=55529571 GET /api/safety/probe-qf1-p1-8a73f8f6/gate-scans status=200 duration=8.2ms user=probe-qf1-pm-8a73f8f6
-2026-07-17 04:21:19,359 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qf1-p1-8a73f8f6/gate-scans?worker_id=qf1-w1-8a73f8f6 "HTTP/1.1 200 OK"
-2026-07-17 04:21:19,373 - server - INFO - [REQ] rid=ae6eb00a GET /api/safety/probe-qf1-p1-8a73f8f6/gate-scans status=200 duration=12.7ms user=probe-qf1-pm-8a73f8f6
-2026-07-17 04:21:19,375 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qf1-p1-8a73f8f6/gate-scans?result=red "HTTP/1.1 200 OK"
-2026-07-17 04:21:19,384 - server - INFO - [REQ] rid=1d4c6fe3 GET /api/safety/probe-qf1-p1-8a73f8f6/gate-scans status=200 duration=7.9ms user=probe-qf1-pm-8a73f8f6
-2026-07-17 04:21:19,385 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qf1-p1-8a73f8f6/gate-scans?date_from=2026-07-15&date_to=2026-07-17 "HTTP/1.1 200 OK"
-2026-07-17 04:21:19,394 - server - INFO - [REQ] rid=b99be13b GET /api/safety/probe-qf1-p1-8a73f8f6/gate-scans status=200 duration=7.7ms user=probe-qf1-pm-8a73f8f6
-2026-07-17 04:21:19,396 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qf1-p1-8a73f8f6/gate-scans?date_to=2026-07-12 "HTTP/1.1 200 OK"
-2026-07-17 04:21:19,405 - server - INFO - [REQ] rid=13e72914 GET /api/safety/probe-qf1-p1-8a73f8f6/gate-scans status=200 duration=8.1ms user=probe-qf1-pm-8a73f8f6
-2026-07-17 04:21:19,407 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qf1-p1-8a73f8f6/gate-scans?worker_id=qf1-w1-8a73f8f6&result=green&date_from=2026-07-15 "HTTP/1.1 200 OK"
-2026-07-17 04:21:19,412 - server - INFO - [REQ] rid=71cecef5 GET /api/safety/probe-qf1-p1-8a73f8f6/gate-scans status=422 duration=4.6ms user=probe-qf1-pm-8a73f8f6
-2026-07-17 04:21:19,414 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qf1-p1-8a73f8f6/gate-scans?result=junk "HTTP/1.1 422 Unprocessable Entity"
-2026-07-17 04:21:19,419 - server - INFO - [REQ] rid=aaa46e4c GET /api/safety/probe-qf1-p1-8a73f8f6/gate-scans status=422 duration=3.9ms user=probe-qf1-pm-8a73f8f6
-2026-07-17 04:21:19,421 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qf1-p1-8a73f8f6/gate-scans?date_from=17-07-2026 "HTTP/1.1 422 Unprocessable Entity"
-2026-07-17 04:21:19,426 - server - INFO - [REQ] rid=11266bd1 GET /api/safety/probe-qf1-p1-8a73f8f6/gate-scans status=422 duration=3.9ms user=probe-qf1-pm-8a73f8f6
-2026-07-17 04:21:19,427 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qf1-p1-8a73f8f6/gate-scans?date_to=junk "HTTP/1.1 422 Unprocessable Entity"
-2026-07-17 04:21:19,432 - server - INFO - [REQ] rid=3dfaa3bd GET /api/safety/probe-qf1-p1-8a73f8f6/gate-scans status=403 duration=3.4ms user=probe-qf1-con-8a73f8f6
-2026-07-17 04:21:19,434 - httpx - INFO - HTTP Request: GET http://probe/api/safety/probe-qf1-p1-8a73f8f6/gate-scans "HTTP/1.1 403 Forbidden"
-2026-07-17 04:21:19,444 - server - INFO - [REQ] rid=a40c3c13 GET /api/gate/qf1-not-a-real-token-000000000000 status=200 duration=6.4ms
-2026-07-17 04:21:19,446 - httpx - INFO - HTTP Request: GET http://probe/api/gate/qf1-not-a-real-token-000000000000 "HTTP/1.1 200 OK"
-2026-07-17 04:21:19,453 - server - INFO - [REQ] rid=c7896ac7 GET /api/gate/qf1-not-a-real-token-000000000000 status=200 duration=5.7ms
-2026-07-17 04:21:19,454 - httpx - INFO - HTTP Request: GET http://probe/api/gate/qf1-not-a-real-token-000000000000 "HTTP/1.1 200 OK"
-2026-07-17 04:21:19,461 - server - INFO - [REQ] rid=45c25193 GET /api/gate/qf1-not-a-real-token-000000000000 status=200 duration=6.2ms
-2026-07-17 04:21:19,466 - httpx - INFO - HTTP Request: GET http://probe/api/gate/qf1-not-a-real-token-000000000000 "HTTP/1.1 200 OK"
-2026-07-17 04:21:19,480 - server - INFO - [REQ] rid=b39f359e GET /api/gate/qf1-not-a-real-token-000000000000 status=200 duration=7.3ms
-2026-07-17 04:21:19,482 - httpx - INFO - HTTP Request: GET http://probe/api/gate/qf1-not-a-real-token-000000000000 "HTTP/1.1 200 OK"
-2026-07-17 04:21:19,490 - server - INFO - [REQ] rid=ea443c03 GET /api/gate/qf1-not-a-real-token-000000000000 status=200 duration=6.5ms
-2026-07-17 04:21:19,492 - httpx - INFO - HTTP Request: GET http://probe/api/gate/qf1-not-a-real-token-000000000000 "HTTP/1.1 200 OK"
-2026-07-17 04:21:19,498 - server - INFO - [REQ] rid=c50c5dfb GET /api/gate/qf1-not-a-real-token-000000000000 status=200 duration=5.4ms
-2026-07-17 04:21:19,500 - httpx - INFO - HTTP Request: GET http://probe/api/gate/qf1-not-a-real-token-000000000000 "HTTP/1.1 200 OK"
-V1 — gate-scans filters + summary
-  [PASS] V1a no-params → 200, old keys + additive summary — 200 keys=['items', 'limit', 'offset', 'summary', 'total']
-  [PASS] V1b unfiltered totals: total=5, summary matches seed — total=5 summary={'green': 3, 'red': 1, 'invalid': 1, 'total': 5}
-  [PASS] V1c worker names resolved on rows
-  [PASS] V1d worker_id filter → only his rows — total=3
-  [PASS] V1e worker-filtered summary {green:2,red:1,invalid:0,total:3} — {'green': 2, 'red': 1, 'invalid': 0, 'total': 3}
-  [PASS] V1f result=red → only red rows
-  [PASS] V1g date range excludes outside days (3 today-rows only) — total=3 summary={'green': 2, 'red': 0, 'invalid': 1, 'total': 3}
-  [PASS] V1h date_to alone → only the 10-day-old row — total=1
-  [PASS] V1i combined worker+result+date AND correctly (2 rows) — total=2
-  [PASS] V1j result=junk → 422 Hebrew detail — 422
-  [PASS] V1k date_from=junk → 422 Hebrew detail — 422
-  [PASS] V1l date_to=junk → 422 — 422
-  [PASS] V1m contractor still 403 — 403
-  [PASS] V1n idx_gsl_project_worker_ts exists
-V2 — throttle key (x-forwarded-for)
-  [PASS] V2a different XFF values → separate buckets — keys=['1.1.1.1', '2.2.2.2']
-  [PASS] V2b same XFF value shares one bucket (count=2) — count=2
-  [PASS] V2c no header → falls back to client.host bucket — keys=['127.0.0.1']
-  [PASS] V2d comma-chain XFF → first IP bucket, chain variance ignored — keys=['1.1.1.1'] count=2
+Issue pass today → QR to phone → briefing → sign → GREEN → rescan stays
+green → tomorrow-pass shows red today → revoke → "קוד לא תקף" → guest scans
+appear in סריקות כניסה tagged אורח.
 
-============================================================
-TOTAL: 18  PASS: 18  FAIL: 0
-ALL GREEN
-
-DIFFS
---------------------------------------------------------------------------------
-diff --git a/backend/contractor_ops/safety/gate.py b/backend/contractor_ops/safety/gate.py
-index 801fda1..5087493 100644
---- a/backend/contractor_ops/safety/gate.py
-+++ b/backend/contractor_ops/safety/gate.py
-@@ -5,6 +5,7 @@ scan-log admin list, and the flagged WhatsApp auto-send. The PUBLIC status
- endpoint lives in gate_public.py (separate router, no auth import).
- """
- import io
-+import re
- import secrets
- 
- from pymongo.errors import DuplicateKeyError
-@@ -329,12 +330,47 @@ async def list_gate_scans(
-     project_id: str,
-     limit: int = Query(50, le=200),
-     offset: int = Query(0, ge=0),
-+    worker_id: str | None = Query(None),
-+    result: str | None = Query(None),
-+    date_from: str | None = Query(None),
-+    date_to: str | None = Query(None),
-     user: dict = Depends(require_roles(*SAFETY_WRITERS)),
- ):
--    """Newest-first scan log for the project. PM/MT/super_admin only."""
-+    """Newest-first scan log for the project. PM/MT/super_admin only.
-+
-+    qrg1-fix1 B3: optional filters (worker/result/date range) + a "summary"
-+    aggregation over the same filter. Existing keys stay byte-compatible.
-+    """
-     db = get_db()
-     await _check_project_access(user, project_id)
-     q = {"project_id": project_id}
-+    if worker_id:
-+        q["worker_id"] = worker_id
-+    if result is not None:
-+        if result not in ("green", "red", "invalid"):
-+            raise HTTPException(422, "תוצאה לא חוקית — יש לבחור מאושר, אין כניסה או לא תקף")
-+        q["result"] = result
-+    _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-+    ts_range = {}
-+    if date_from is not None:
-+        if not _DATE_RE.match(date_from):
-+            raise HTTPException(422, "תאריך התחלה לא תקין — פורמט נדרש YYYY-MM-DD")
-+        ts_range["$gte"] = f"{date_from}T00:00:00"
-+    if date_to is not None:
-+        if not _DATE_RE.match(date_to):
-+            raise HTTPException(422, "תאריך סיום לא תקין — פורמט נדרש YYYY-MM-DD")
-+        ts_range["$lte"] = f"{date_to}T23:59:59.999999"
-+    if ts_range:
-+        q["ts"] = ts_range
-+    # ONE aggregation over the SAME filtered q (not paginated) → counts per result.
-+    summary = {"green": 0, "red": 0, "invalid": 0, "total": 0}
-+    async for row in db.gate_scan_log.aggregate([
-+        {"$match": q},
-+        {"$group": {"_id": "$result", "n": {"$sum": 1}}},
-+    ]):
-+        if row["_id"] in summary:
-+            summary[row["_id"]] = row["n"]
-+        summary["total"] += row["n"]
-     total = await db.gate_scan_log.count_documents(q)
-     items = await db.gate_scan_log.find(q, {"_id": 0}).sort("ts", -1).skip(offset).limit(limit).to_list(length=limit)
-     # Resolve worker names for display (no PII beyond the name).
-@@ -348,4 +384,4 @@ async def list_gate_scans(
-             names[w["id"]] = w.get("full_name")
-     for it in items:
-         it["worker_name"] = names.get(it.get("worker_id"))
--    return {"items": items, "total": total, "limit": limit, "offset": offset}
-+    return {"items": items, "total": total, "limit": limit, "offset": offset, "summary": summary}
-diff --git a/backend/contractor_ops/safety/gate_public.py b/backend/contractor_ops/safety/gate_public.py
-index fdeebcd..d494269 100644
---- a/backend/contractor_ops/safety/gate_public.py
-+++ b/backend/contractor_ops/safety/gate_public.py
-@@ -83,7 +83,12 @@ _INVALID = {"state": "invalid"}
- async def gate_status(token: str, request: Request, response: Response):
-     """Live entry-gate status for a scanned worker QR. Public, no auth."""
-     response.headers["X-Robots-Tag"] = "noindex, nofollow"
--    ip = (request.client.host if request.client else "") or "unknown"
-+    # qrg1-fix1 B4: behind nginx/CF the raw client.host is the proxy — derive
-+    # the throttle key exactly like the global limiter (server.py).
-+    xff = request.headers.get("x-forwarded-for", "")
-+    if xff and "," in xff:
-+        xff = xff.split(",")[0].strip()
-+    ip = xff.strip() or (request.client.host if request.client else "") or "unknown"
-     _check_throttle(ip)
- 
-     db = get_db()
-diff --git a/backend/contractor_ops/safety/indexes.py b/backend/contractor_ops/safety/indexes.py
-index 4a83c0f..9249888 100644
---- a/backend/contractor_ops/safety/indexes.py
-+++ b/backend/contractor_ops/safety/indexes.py
-@@ -167,5 +167,10 @@ async def ensure_safety_indexes(db) -> None:
-         [("project_id", 1), ("ts", -1)],
-         background=True, name="idx_gsl_project_ts",
-     )
-+    # qrg1-fix1 B3c — per-worker filtered scan-log queries
-+    await db.gate_scan_log.create_index(
-+        [("project_id", 1), ("worker_id", 1), ("ts", -1)],
-+        background=True, name="idx_gsl_project_worker_ts",
-+    )
- 
--    logger.info("Safety indices ensured (34 total across 13 collections)")
-+    logger.info("Safety indices ensured (35 total across 13 collections)")
-diff --git a/frontend/src/App.js b/frontend/src/App.js
-index 2a203df..42111cf 100644
---- a/frontend/src/App.js
-+++ b/frontend/src/App.js
-@@ -639,6 +639,23 @@ const AppShell = () => {
-   );
- };
- 
-+// qrg1-fix1 B1b — the public gate page (/gate/:token) is a full-screen
-+// verdict card scanned at the site entrance; app chrome banners (offline/
-+// trial/paywall/complete-account) must never cover it. Tiny wrapper so the
-+// four banners stay mounted app-wide but skip gate routes.
-+const AppChromeBanners = () => {
-+  const location = useLocation();
-+  if (location.pathname.startsWith('/gate/')) return null;
-+  return (
-+    <>
-+      <OfflineBanner />
-+      <PaywallConnector />
-+      <TrialBanner />
-+      <CompleteAccountBanner />
-+    </>
-+  );
-+};
-+
- function App() {
-   useEffect(() => {
-     if (Capacitor.isNativePlatform()) {
-@@ -684,10 +701,7 @@ function App() {
-                 <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:right-2 focus:z-[9999] focus:bg-amber-500 focus:text-white focus:px-4 focus:py-2 focus:rounded-lg focus:text-sm focus:font-medium">
-                   דלג לתוכן הראשי
-                 </a>
--                <OfflineBanner />
--                <PaywallConnector />
--                <TrialBanner />
--                <CompleteAccountBanner />
-+                <AppChromeBanners />
-                 <main id="main-content" tabIndex={-1} style={{ outline: 'none' }}>
-                   <AppShell />
-                 </main>
-diff --git a/frontend/src/pages/ContractorDashboard.js b/frontend/src/pages/ContractorDashboard.js
-index 7645c21..399b369 100644
---- a/frontend/src/pages/ContractorDashboard.js
-+++ b/frontend/src/pages/ContractorDashboard.js
-@@ -7,9 +7,13 @@ import { toast } from 'sonner';
- import {
-   LogOut, Clock, CheckCircle2, AlertTriangle,
-   Camera, Eye, Settings, ChevronLeft, Flame,
--  User, Users
-+  User, Users, LayoutGrid
- } from 'lucide-react';
- import { Card } from '../components/ui/card';
-+import {
-+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-+} from '../components/ui/alert-dialog';
- import NotificationBell from '../components/NotificationBell';
- import CategoryPill from '../components/CategoryPill';
- 
-@@ -115,6 +119,12 @@ const ContractorDashboard = ({ initialProjectId } = {}) => {
-     return initialProjectId || localStorage.getItem('lastProjectId') || 'all';
-   });
-   const urgentRef = useRef(null);
-+  // qrg1-fix1 B2: /projects loops contractor-only users straight back here,
-+  // so the "כל הפרויקטים" header button uses the EXISTING in-dashboard
-+  // switcher instead — reset to 'all' and scroll to the project chips row.
-+  const projectChipsRef = useRef(null);
-+  // qrg1-fix1 B2b: logout goes through a confirm dialog.
-+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
- 
-   const [offset, setOffset] = useState(0);
-   const [totalTasks, setTotalTasks] = useState(null);
-@@ -244,6 +254,14 @@ const ContractorDashboard = ({ initialProjectId } = {}) => {
- 
-   const handleLogout = () => { logout(); navigate('/login'); };
- 
-+  const showAllProjects = () => {
-+    setSelectedProjectId('all');
-+    // Let the chips row render (it may appear only after the reset), then scroll.
-+    setTimeout(() => {
-+      projectChipsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-+    }, 50);
-+  };
-+
-   const membership = useMemo(() => {
-     const summaries = user?.project_memberships_summary;
-     if (!summaries || summaries.length === 0) return null;
-@@ -334,11 +352,16 @@ const ContractorDashboard = ({ initialProjectId } = {}) => {
-               </div>
-             </div>
-             <div className="flex items-center gap-1">
-+              {projects.length >= 2 && (
-+                <button onClick={showAllProjects} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label="כל הפרויקטים" title="כל הפרויקטים">
-+                  <LayoutGrid className="w-5 h-5" />
-+                </button>
-+              )}
-               <NotificationBell />
-               <button onClick={() => navigate('/settings/account')} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label={t('dashboard', 'settings_aria')}>
-                 <Settings className="w-5 h-5" />
-               </button>
--              <button onClick={handleLogout} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label={t('dashboard', 'logout_aria')}>
-+              <button onClick={() => setLogoutConfirmOpen(true)} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label={t('dashboard', 'logout_aria')}>
-                 <LogOut className="w-5 h-5" />
-               </button>
-             </div>
-@@ -367,7 +390,7 @@ const ContractorDashboard = ({ initialProjectId } = {}) => {
- 
-       <div className="max-w-lg mx-auto px-4 py-4 space-y-4">
-         {projects.length > 1 && (
--          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-+          <div ref={projectChipsRef} className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-             <button
-               onClick={() => setSelectedProjectId('all')}
-               aria-pressed={selectedProjectId === 'all'}
-@@ -571,6 +594,22 @@ const ContractorDashboard = ({ initialProjectId } = {}) => {
- 
-         <div className="h-8" />
-       </div>
-+
-+      {/* qrg1-fix1 B2b — logout confirmation */}
-+      <AlertDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen}>
-+        <AlertDialogContent dir="rtl">
-+          <AlertDialogHeader>
-+            <AlertDialogTitle>לצאת מהמשתמש?</AlertDialogTitle>
-+            <AlertDialogDescription>
-+              תתנתק מהחשבון ותחזור למסך ההתחברות.
-+            </AlertDialogDescription>
-+          </AlertDialogHeader>
-+          <AlertDialogFooter>
-+            <AlertDialogCancel>ביטול</AlertDialogCancel>
-+            <AlertDialogAction onClick={handleLogout}>אישור</AlertDialogAction>
-+          </AlertDialogFooter>
-+        </AlertDialogContent>
-+      </AlertDialog>
-     </div>
-   );
- };
-diff --git a/frontend/src/pages/GatePage.js b/frontend/src/pages/GatePage.js
-index e23dc37..b931855 100644
---- a/frontend/src/pages/GatePage.js
-+++ b/frontend/src/pages/GatePage.js
-@@ -1,6 +1,7 @@
- import React, { useEffect, useState } from 'react';
--import { useParams } from 'react-router-dom';
--import { CheckCircle2, XCircle, AlertTriangle, HelpCircle } from 'lucide-react';
-+import { useParams, useNavigate } from 'react-router-dom';
-+import { Capacitor } from '@capacitor/core';
-+import { CheckCircle2, XCircle, AlertTriangle, HelpCircle, ArrowRight } from 'lucide-react';
- import { safetyService } from '../services/api';
- 
- // Batch qrg1-entry-gate — PUBLIC live entry-gate status page (/gate/:token).
-@@ -29,6 +30,28 @@ function Avatar({ url, name }) {
-   );
- }
- 
-+// qrg1-fix1 B1a — in-app escape hatch. The page is normally opened by an
-+// external camera scan (browser back exists), but inside the native app the
-+// scanner navigates here in-place with NO system back UI → user is stuck.
-+// Native-only floating button, top-right (RTL "back"), rendered in ALL states.
-+function GateBackButton() {
-+  const navigate = useNavigate();
-+  if (!Capacitor.isNativePlatform?.()) return null;
-+  const goBack = () => {
-+    if (window.history.length > 1) navigate(-1);
-+    else navigate('/');
-+  };
-+  return (
-+    <button
-+      onClick={goBack}
-+      aria-label="חזרה"
-+      className="fixed top-4 right-4 z-50 p-2.5 rounded-full bg-black/25 text-white backdrop-blur-sm active:bg-black/40"
-+    >
-+      <ArrowRight className="w-6 h-6" />
-+    </button>
-+  );
-+}
-+
- export default function GatePage() {
-   const { token } = useParams();
-   const [state, setState] = useState({ loading: true, data: null, error: false });
-@@ -45,6 +68,7 @@ export default function GatePage() {
-   if (state.loading) {
-     return (
-       <div dir="rtl" className="min-h-screen bg-slate-100 flex items-center justify-center">
-+        <GateBackButton />
-         <p className="text-slate-500 text-lg">בודק סטטוס כניסה…</p>
-       </div>
-     );
-@@ -56,6 +80,7 @@ export default function GatePage() {
-   if (state.error || !d || d.state === 'invalid') {
-     return (
-       <div dir="rtl" className="min-h-screen bg-slate-200 flex flex-col items-center justify-center px-6 text-center">
-+        <GateBackButton />
-         <HelpCircle className="w-20 h-20 text-slate-400 mb-4" />
-         <h1 className="text-2xl font-bold text-slate-700">קוד לא תקף</h1>
-         <p className="text-slate-500 mt-2 text-lg">
-@@ -68,6 +93,7 @@ export default function GatePage() {
-   if (d.state === 'red') {
-     return (
-       <div dir="rtl" className="min-h-screen bg-red-600 flex flex-col items-center justify-center px-6 text-center text-white">
-+        <GateBackButton />
-         <XCircle className="w-24 h-24 mb-4" />
-         <h1 className="text-4xl font-extrabold">אין כניסה</h1>
-         {d.first_name && <p className="text-2xl mt-3 font-semibold">{d.first_name}</p>}
-@@ -87,6 +113,7 @@ export default function GatePage() {
-   // GREEN
-   return (
-     <div dir="rtl" className="min-h-screen bg-green-600 flex flex-col items-center justify-center px-6 text-center text-white">
-+      <GateBackButton />
-       <Avatar url={d.photo_display_url} name={d.first_name} />
-       <CheckCircle2 className="w-16 h-16 mt-4" />
-       <h1 className="text-4xl font-extrabold mt-2">מאושר לכניסה</h1>
-diff --git a/frontend/src/pages/SafetyHomePage.js b/frontend/src/pages/SafetyHomePage.js
-index ee621b2..4b31c3c 100644
---- a/frontend/src/pages/SafetyHomePage.js
-+++ b/frontend/src/pages/SafetyHomePage.js
-@@ -1657,23 +1657,119 @@ const SCAN_RESULT_HE = {
-   invalid: { label: 'קוד לא תקף', cls: 'bg-slate-200 text-slate-600' },
- };
- 
--function GateScansSection({ projectId }) {
--  const [scans, setScans] = useState({ items: [], total: 0, loading: true });
-+// qrg1-fix1 B3d — local-date helpers for the preset range chips.
-+const localDateStr = (d) => {
-+  const y = d.getFullYear();
-+  const m = String(d.getMonth() + 1).padStart(2, '0');
-+  const day = String(d.getDate()).padStart(2, '0');
-+  return `${y}-${m}-${day}`;
-+};
-+const SCAN_RANGE_PRESETS = [
-+  { key: 'today', label: 'היום' },
-+  { key: '7d', label: '7 ימים' },
-+  { key: 'month', label: 'החודש' },
-+  { key: 'all', label: 'הכל' },
-+];
-+const scanRangeToDates = (key) => {
-+  const now = new Date();
-+  if (key === 'today') { const d = localDateStr(now); return { date_from: d, date_to: d }; }
-+  if (key === '7d') {
-+    const from = new Date(now); from.setDate(from.getDate() - 6);
-+    return { date_from: localDateStr(from), date_to: localDateStr(now) };
-+  }
-+  if (key === 'month') {
-+    return { date_from: localDateStr(new Date(now.getFullYear(), now.getMonth(), 1)), date_to: localDateStr(now) };
-+  }
-+  return {};
-+};
- 
-+function GateScansSection({ projectId }) {
-+  const [scans, setScans] = useState({ items: [], total: 0, summary: null, loading: true });
-+  // Filters: worker select + result select + date-range preset chips.
-+  const [scanWorkers, setScanWorkers] = useState([]);
-+  const [workerFilter, setWorkerFilter] = useState('');
-+  const [resultFilter, setResultFilter] = useState('');
-+  const [rangeFilter, setRangeFilter] = useState('all');
-+
-+  // Worker options — fetched once, fail-soft.
-   useEffect(() => {
-     let cancelled = false;
--    safetyService.listGateScans(projectId, { limit: 50 })
--      .then((res) => { if (!cancelled) setScans({ items: res.items || [], total: res.total || 0, loading: false }); })
--      .catch(() => { if (!cancelled) setScans({ items: [], total: 0, loading: false }); });
-+    safetyService.listWorkers(projectId, { limit: 200 })
-+      .then((res) => { if (!cancelled) setScanWorkers(res?.items || []); })
-+      .catch(() => {});
-     return () => { cancelled = true; };
-   }, [projectId]);
- 
-+  useEffect(() => {
-+    let cancelled = false;
-+    setScans((prev) => ({ ...prev, loading: true }));
-+    const params = { limit: 50 };
-+    if (workerFilter) params.worker_id = workerFilter;
-+    if (resultFilter) params.result = resultFilter;
-+    Object.assign(params, scanRangeToDates(rangeFilter));
-+    safetyService.listGateScans(projectId, params)
-+      .then((res) => {
-+        if (!cancelled) setScans({ items: res.items || [], total: res.total || 0, summary: res.summary || null, loading: false });
-+      })
-+      .catch(() => { if (!cancelled) setScans({ items: [], total: 0, summary: null, loading: false }); });
-+    return () => { cancelled = true; };
-+  }, [projectId, workerFilter, resultFilter, rangeFilter]);
-+
-+  const summary = scans.summary;
-+
-   return (
-     <div className="border-t border-slate-200">
-       <div className="px-4 py-3 flex items-center gap-2 bg-slate-50">
-         <QrCode className="w-4 h-4 text-slate-500" />
-         <p className="text-sm font-semibold text-slate-700">סריקות כניסה ({scans.total})</p>
-       </div>
-+      {/* qrg1-fix1 B3d — compact RTL filter row + counts strip */}
-+      <div className="px-4 py-2 space-y-2 border-b border-slate-100">
-+        <div className="flex gap-2 flex-wrap">
-+          <select
-+            value={workerFilter}
-+            onChange={(e) => setWorkerFilter(e.target.value)}
-+            aria-label="סינון לפי עובד"
-+            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 max-w-[46%]"
-+          >
-+            <option value="">כל העובדים</option>
-+            {scanWorkers.map((w) => (
-+              <option key={w.id} value={w.id}>{w.full_name}</option>
-+            ))}
-+          </select>
-+          <select
-+            value={resultFilter}
-+            onChange={(e) => setResultFilter(e.target.value)}
-+            aria-label="סינון לפי תוצאה"
-+            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
-+          >
-+            <option value="">הכל</option>
-+            <option value="green">מאושר</option>
-+            <option value="red">אין כניסה</option>
-+            <option value="invalid">לא תקף</option>
-+          </select>
-+        </div>
-+        <div className="flex gap-1.5">
-+          {SCAN_RANGE_PRESETS.map((p) => (
-+            <button
-+              key={p.key}
-+              type="button"
-+              onClick={() => setRangeFilter(p.key)}
-+              aria-pressed={rangeFilter === p.key}
-+              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-+                rangeFilter === p.key ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600'
-+              }`}
-+            >
-+              {p.label}
-+            </button>
-+          ))}
-+        </div>
-+        {summary && (
-+          <p className="text-xs text-slate-500">
-+            סה"כ {summary.total} · מאושר {summary.green} · אין כניסה {summary.red} · לא תקף {summary.invalid}
-+          </p>
-+        )}
-+      </div>
-       {scans.loading ? (
-         <p className="px-4 py-4 text-sm text-slate-400">טוען…</p>
-       ) : !scans.items.length ? (
-
-================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

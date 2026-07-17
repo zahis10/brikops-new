@@ -173,4 +173,14 @@ async def ensure_safety_indexes(db) -> None:
         background=True, name="idx_gsl_project_worker_ts",
     )
 
-    logger.info("Safety indices ensured (35 total across 13 collections)")
+    # qrg-guest — 2 on guest_entry_passes.
+    await db.guest_entry_passes.create_index(
+        [("token", 1)],
+        background=True, unique=True, name="uidx_gep_token",
+    )
+    await db.guest_entry_passes.create_index(
+        [("project_id", 1), ("valid_on", -1)],
+        background=True, name="idx_gep_project_valid",
+    )
+
+    logger.info("Safety indices ensured (37 total across 14 collections)")
