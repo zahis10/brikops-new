@@ -303,9 +303,13 @@ const LoginPage = () => {
 
     if (Capacitor.isNativePlatform()) {
       try {
+        // auth-google-chooser: NEVER silently reuse a cached Google account.
+        // Pre-logout clears Android's CredentialManager cache (errors — e.g.
+        // no prior session — swallowed); forcePrompt forces the iOS chooser.
+        try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}
         const res = await SocialLogin.login({
           provider: 'google',
-          options: { scopes: ['email', 'profile'] },
+          options: { scopes: ['email', 'profile'], forcePrompt: true },
         });
         const idToken = res?.result?.idToken;
         if (!idToken) {

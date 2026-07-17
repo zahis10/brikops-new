@@ -1,136 +1,108 @@
 ================================================================================
-REVIEW — BATCH qrg-briefing-edit
-feat(safety): org-editable visitor briefing with signed-version integrity
-Branch: staging | Date: 2026-07-17
+REVIEW — BATCH auth-google-chooser
+fix(auth): native Google sign-in always shows the account chooser
+Branch: staging | Date: 2026-07-17 | Base: 4211bee | FE ONLY, OTA, no deps
 ================================================================================
 
-STEP 0 — FINDINGS (dependency mapping before any code)
+PROBLEM (Zahi field finding 2026-07-17)
 --------------------------------------------------------------------------------
-1. The visitor briefing lived as a HARD-CODED v1 Hebrew constant in
-   backend/contractor_ops/safety/guest.py (GUEST_BRIEFING_TEXT_HE /
-   GUEST_BRIEFING_VERSION = 1), read directly by two call sites in
-   gate_public.py: the public GET branch (_guest_status_payload) and the
-   public guest-sign POST (which stamps briefing_version + briefing_hash
-   into the signature evidence).
-2. EXACT induction-gate dependency reused for edit rights:
-   contractor_ops/safety/induction.py::_resolve_project_org_edit(user,
-   project_id) → (org_id, can_edit). can_edit = super_admin OR org owner
-   OR org_admin membership OR PM-of-project; management_team is read-only.
-   The guest-briefing GET/PUT/DELETE use it verbatim (lazy import, no copy).
-3. guest_entry_passes docs already carry org_id (set at pass creation),
-   which is what lets the PUBLIC endpoints resolve the org override without
-   an extra project lookup.
-4. Evidence integrity contract (unchanged): every signature stores
-   briefing_version + briefing_hash (sha256[:12]) of the text signed —
-   old signatures keep pointing at the wording actually signed.
+Tapping "Google" in the NATIVE app silently reused a previously-authorized
+Google account instead of showing the account chooser. On a multi-account
+device the auto-picked account may not match any BrikOps user, dropping an
+existing user into registration. Fix: force the account chooser on EVERY
+native Google sign-in tap. Backend /auth/social untouched (it was correct).
 
-WHAT WAS BUILT (E1–E4)
+STEP 0 — MECHANISM REPORT (installed @capgo/capacitor-social-login v7.20.0)
 --------------------------------------------------------------------------------
-E1  get_guest_briefing(db, org_id) — now async and THE ONLY access point.
-    Org override doc in NEW collection guest_briefing_texts (one per org,
-    unique index uidx_gbt_org — safety indexes now 38 across 15
-    collections); none/no org_id → v1 constant. Both gate_public.py call
-    sites await it with gp.org_id. House grep: no direct constant reads
-    outside guest.py.
-E2  Authed API — GET/PUT/DELETE /api/safety/{project_id}/guest-briefing.
-    GET: {text, version, is_custom, can_edit}; read audience = can_edit OR
-    SAFETY_WRITERS with project access; contractor → 403.
-    PUT (can_edit only): trim, 50..4000 chars else 422 Hebrew; ATOMIC
-    version bump via pipeline find_one_and_update ($ifNull(version,1)+1,
-    upsert) — first override = version 2, concurrent saves each get a
-    unique monotonic version (architect race finding FIXED + probed);
-    audit guest_briefing_updated. DELETE: removes override (404 if none),
-    back to v1; audit guest_briefing_reset.
-E3  Signed-version integrity — public guest-sign now requires form field
-    briefing_version == current version, checked AFTER all 422 input
-    validations and BEFORE any byte is stored; mismatch/missing → 409
-    "נוסח התדריך עודכן — יש לרענן ולקרוא שוב", NOTHING written. Frontend
-    GatePage sends the version it displayed; on stale 409 it shows an
-    amber banner and refetches the gate state (key remount → guest
-    re-reads and re-signs the new text).
-E4  Editor UI — SafetyHomePage overview → אורחים header: "ערוך תדריך"
-    pencil button rendered ONLY when the server says can_edit (MT and
-    contractors never see it). RTL dialog: textarea, live char counter
-    (min 50 / max 4,000, red out of range), scope note (org-wide; existing
-    signatures keep the signed wording), "אפס לברירת מחדל" behind an
-    AlertDialog confirm. api.js: getGuestBriefing / updateGuestBriefing /
-    resetGuestBriefing + signGuestPass now carries briefing_version.
+Inspected node_modules dist/esm/definitions.d.ts + Android source:
 
-DIFFS (git diff --stat, staging)
---------------------------------------------------------------------------------
- backend/contractor_ops/safety/gate_public.py |  13 ++-
- backend/contractor_ops/safety/guest.py       | 133 +++++++++++++++++++++--
- backend/contractor_ops/safety/indexes.py     |   8 +-
- backend/tests/probe_safety_qrg_guest.py      |   4 +-
- frontend/src/pages/GatePage.js               |  49 +++++++--
- frontend/src/pages/SafetyHomePage.js         | 152 +++++++++++++++++++++++++--
- frontend/src/services/api.js                 |  28 ++++-
- 7 files changed, 356 insertions(+), 31 deletions(-)
- (+ new file backend/tests/probe_safety_qrg_briefing.py)
+(a) Login option forcing the prompt:
+    - `GoogleLoginOptions.forcePrompt?: boolean` EXISTS (definitions.d.ts
+      lines 245-249): "forces the account selection prompt to appear on iOS"
+      — iOS ONLY.
+    - `prompt: 'select_account'` also exists (since 7.12.0) but the docs
+      state explicitly: "This parameter only affects web platform behavior."
+      → not usable for the native fix.
+    - Android has NO login option that forces the chooser (its
+      filterByAuthorizedAccounts / autoSelectEnabled apply only to the
+      'bottom' sheet style).
 
-V1 — NEW FUNCTIONAL PROBE (probe_safety_qrg_briefing.py) — 26/26 PASS
---------------------------------------------------------------------------------
-B1  PM GET default → v1 constant, is_custom=False, can_edit=True ... PASS
-    MT GET → 200 read-only (can_edit=False) ......................... PASS
-    contractor GET → 403 ............................................ PASS
-B2  PUT <50 chars → 422 / PUT >4000 chars → 422 ..................... PASS
-    MT PUT → 403 / MT DELETE → 403 .................................. PASS
-    DELETE with no override → 404 ................................... PASS
-B3  PUT valid → 200 version=2 is_custom=True ........................ PASS
-    override doc stored (org_id, version=2, updated_by) ............. PASS
-    second PUT → version=3 / audit guest_briefing_updated ×2 ........ PASS
-B3b 5 PARALLEL PUTs → 5 UNIQUE versions 4..8 (atomic bump) .......... PASS
-    stored doc at version 8 / re-save → version 9 ................... PASS
-B4  public GET → override text + CURRENT version=9 .................. PASS
-    sign with STALE version → 409 Hebrew ............................ PASS
-    sign with MISSING version → 409 ................................. PASS
-    after 409s: NOTHING written (still unsigned, no signature_ref) ... PASS
-    sign with CURRENT version → 200 green ........................... PASS
-    signature records version=9 + hash of SIGNED text ............... PASS
-B5  DELETE → 200 back to v1 default / audit reset ×1 ................ PASS
-    second DELETE → 404 ............................................. PASS
-    after reset: public GET → v1 / sign with v1 → 200 ............... PASS
+(b) Pre-logout:
+    - `SocialLogin.logout({provider:'google'})` on Android calls
+      CredentialManager.clearCredentialStateAsync (GoogleProvider.java
+      ~706-723), clearing the cached credential so the next login shows
+      the chooser.
 
-V2 — REGRESSIONS + BUILD
---------------------------------------------------------------------------------
-probe_safety_qrg_guest.py ......... 30/30 PASS (sign calls now send version)
-probe_safety_qrg_share_fix.py ..... 14/14 PASS
-probe_safety_qrg1.py .............. 42/42 PASS
-probe_safety_qrg1_fix1.py ......... 18/18 PASS
-py_compile (all changed backend) .. OK
-House grep (no direct constant use outside guest.py) .. CLEAN
-CI=true craco prod build .......... EXIT=0 (compiled successfully)
-Safety pytest: test_defect_safety_tag 5/6 — the 1 failure
-("Database not initialized", defects summary) is a PRE-EXISTING harness
-quirk untouched by this diff; script-style tests (test_object_storage_
-shapes, test_project_isolation) sys.exit under pytest as before.
+DECISION: use BOTH, belt-and-braces, in each native Google branch:
+  1. `try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}`
+     — awaited, errors swallowed (no prior session etc.); covers Android.
+  2. `forcePrompt: true` in the login options — covers iOS.
 
-SCREENSHOTS
+EDIT (A1 — one behavior, both call sites)
 --------------------------------------------------------------------------------
-- Updated public briefing: /gate/<token> rendered the ORG OVERRIDE text
-  ("תדריך בטיחות למבקרים — נוסח ארגוני מותאם", 3 clauses + declaration)
-  with name field + signature canvas + amber confirm button (captured in
-  workspace preview; demo data cleaned + ENABLE_SAFETY_MODULE flag removed
-  from backend/.env afterwards).
-- Editor dialog: RTL "עריכת תדריך בטיחות לאורחים" dialog — textarea, char
-  counter "X / 4,000 תווים (מינימום 50)", "אפס לברירת מחדל" link (custom
-  only), amber save button (verify on device in V3 — dialog requires an
-  authed manager session).
+Identical change in the native Google branches of
+frontend/src/pages/LoginPage.js::handleGoogleSignIn and
+frontend/src/pages/OnboardingPage.js::handleGoogleSignIn.
+NOT touched: backend auth, social link/register flows, index.js init,
+Apple sign-in, web GIS flow, ios/android native projects, dependencies.
+
+DIFF
+--------------------------------------------------------------------------------
+diff --git a/frontend/src/pages/LoginPage.js b/frontend/src/pages/LoginPage.js
+@@ -303,9 +303,13 @@ const LoginPage = () => {
+ 
+     if (Capacitor.isNativePlatform()) {
+       try {
++        // auth-google-chooser: NEVER silently reuse a cached Google account.
++        // Pre-logout clears Android's CredentialManager cache (errors — e.g.
++        // no prior session — swallowed); forcePrompt forces the iOS chooser.
++        try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}
+         const res = await SocialLogin.login({
+           provider: 'google',
+-          options: { scopes: ['email', 'profile'] },
++          options: { scopes: ['email', 'profile'], forcePrompt: true },
+         });
+         const idToken = res?.result?.idToken;
+         if (!idToken) {
+diff --git a/frontend/src/pages/OnboardingPage.js b/frontend/src/pages/OnboardingPage.js
+@@ -190,9 +190,13 @@ const OnboardingPage = () => {
+ 
+     if (Capacitor.isNativePlatform()) {
+       try {
++        // auth-google-chooser: NEVER silently reuse a cached Google account.
++        // Pre-logout clears Android's CredentialManager cache (errors — e.g.
++        // no prior session — swallowed); forcePrompt forces the iOS chooser.
++        try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}
+         const res = await SocialLogin.login({
+           provider: 'google',
+-          options: { scopes: ['email', 'profile'] },
++          options: { scopes: ['email', 'profile'], forcePrompt: true },
+         });
+         const idToken = res?.result?.idToken;
+         if (!idToken) {
+
+VERIFY (V1)
+--------------------------------------------------------------------------------
+House greps — only the two intended call sites touch SocialLogin.login/logout:
+  frontend/src/pages/LoginPage.js:309  try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}
+  frontend/src/pages/LoginPage.js:310  const res = await SocialLogin.login({
+  frontend/src/pages/OnboardingPage.js:196  try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}
+  frontend/src/pages/OnboardingPage.js:197  const res = await SocialLogin.login({
+
+Production build:
+  CI=true REACT_APP_BACKEND_URL=/ npx craco build → "Compiled successfully."
+  EXIT=0
+py_compile: n/a (FE only).
+
+V2 — DEVICE (Zahi, prod after deploy): login screen → tap Google → account
+chooser appears (all device accounts) → pick zahis10 → flow continues per
+backend (link/registration for unlinked account); tap Google again → chooser
+appears AGAIN. Web login unchanged.
 
 ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-Round 1: FAIL — read-then-write version bump in PUT could lose an
-increment under concurrent saves. FIXED with an atomic pipeline
-find_one_and_update (+ new B3b concurrency probe, 5 parallel PUTs →
-unique versions). All other areas passed: sign-integrity guard placement
-(after 422s, before save_bytes), public hardening intact (throttle, PNG
-magic/cap, sign-once DB lock, neutral 404s, no PII/signature URL leak),
-RBAC via the induction gate, evidence integrity preserved.
-
-V3 DEVICE (Zahi, prod after deploy approval)
---------------------------------------------------------------------------------
-סקירה → אורחים → ערוך תדריך (מופיע לך; לא ל-MT) → שנה משפט → שמור →
-הנפק קוד אורח חדש → פתח קישור → הנוסח החדש מוצג → חתום → ירוק;
-אורח שחתם קודם נשאר עם הנוסח הישן בתיעוד; אפס לברירת מחדל מחזיר מקור.
+Verdict: Pass. Both call sites updated identically; pre-logout awaited with
+swallowed errors; cancellation/toast handling preserved; no backend, Apple,
+web-GIS, init, or dependency changes; no security findings.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
