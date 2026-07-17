@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "Task #546 — BATCH visual-auth review (AWAITING ZAHI APPROVAL)"
+title = "Task #549 — FIX1 review appended (AWAITING ZAHI APPROVAL)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
@@ -858,3 +858,9 @@ id = "NOEJQa57iuctJ-XLN5RNh"
 uri = "file://screenshots/qrg_ux1_overview_guests.jpg"
 type = "image"
 title = "Safety overview tab (סקירה) after the change"
+
+[[outputs]]
+id = "0qfIZEmlMcYT88PglPb-_"
+uri = "file://screenshots/visual-auth-fix1-login-top-390.jpg"
+type = "image"
+title = "FIX1 — crane now visible (top-area crop, 390px)"

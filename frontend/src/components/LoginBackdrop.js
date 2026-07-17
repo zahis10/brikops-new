@@ -11,7 +11,7 @@ const LoginBackdrop = () => (
     className="absolute inset-0 overflow-hidden pointer-events-none select-none"
     style={{
       background:
-        'radial-gradient(420px 280px at 50% 26%, rgba(245,158,11,.13), transparent 65%), ' +
+        'radial-gradient(420px 280px at 50% 26%, rgba(245,158,11,.17), transparent 65%), ' +
         'linear-gradient(178deg, #17202b 0%, #1f2a37 60%, #26303c 100%)',
     }}
   >
@@ -22,25 +22,25 @@ const LoginBackdrop = () => (
       {/* crane jib entering from the top, cable + hook "holding" the card */}
       <svg
         className="absolute top-0 left-0 right-0 w-full"
-        style={{ height: 150, opacity: 0.7 }}
+        style={{ height: 150, opacity: 0.85 }}
         viewBox="0 0 340 150"
         preserveAspectRatio="xMidYMin slice"
       >
-        <g fill="#111a24">
+        <g fill="#3e5065">
           <rect x="128" y="20" width="220" height="5" />
           <rect x="150" y="36" width="198" height="3.5" />
           <rect x="178" y="39" width="15" height="6" rx="1" />
           <rect x="185" y="45" width="1.7" height="33" />
           <rect x="181" y="78" width="10" height="6" rx="1" />
         </g>
-        <g stroke="#111a24" strokeWidth="2.4" fill="none">
+        <g stroke="#3e5065" strokeWidth="2.4" fill="none">
           <path d="M340 36 L322 25 L304 36 L286 25 L268 36 L250 25 L232 36 L214 25 L196 36 L178 25 L160 36 L151 31" />
           <path d="M129 24 L151 37" />
         </g>
-        <path d="M186 84 v4 a5.2 5.2 0 1 1 -9.5 -1.8" stroke="#111a24" strokeWidth="2.6" fill="none" strokeLinecap="round" />
+        <path d="M186 84 v4 a5.2 5.2 0 1 1 -9.5 -1.8" stroke="#3e5065" strokeWidth="2.6" fill="none" strokeLinecap="round" />
         <circle cx="128" cy="22" r="7.5" fill="#f5a623" opacity=".15" />
         <circle cx="128" cy="22" r="3" fill="#f5a623" opacity=".9" />
-        <g stroke="#4a5a6d" strokeWidth="1.6" fill="none" opacity=".45" strokeLinecap="round">
+        <g stroke="#64788e" strokeWidth="1.6" fill="none" opacity=".45" strokeLinecap="round">
           <path d="M52 48 q4.5 -4.5 9 0 q4.5 -4.5 9 0" />
           <path d="M84 33 q3.5 -3.5 7 0 q3.5 -3.5 7 0" />
         </g>
