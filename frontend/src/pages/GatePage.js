@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { CheckCircle2, XCircle, AlertTriangle, HelpCircle } from 'lucide-react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
+import { CheckCircle2, XCircle, AlertTriangle, HelpCircle, ArrowRight } from 'lucide-react';
 import { safetyService } from '../services/api';
 
 // Batch qrg1-entry-gate — PUBLIC live entry-gate status page (/gate/:token).
@@ -29,6 +30,28 @@ function Avatar({ url, name }) {
   );
 }
 
+// qrg1-fix1 B1a — in-app escape hatch. The page is normally opened by an
+// external camera scan (browser back exists), but inside the native app the
+// scanner navigates here in-place with NO system back UI → user is stuck.
+// Native-only floating button, top-right (RTL "back"), rendered in ALL states.
+function GateBackButton() {
+  const navigate = useNavigate();
+  if (!Capacitor.isNativePlatform?.()) return null;
+  const goBack = () => {
+    if (window.history.length > 1) navigate(-1);
+    else navigate('/');
+  };
+  return (
+    <button
+      onClick={goBack}
+      aria-label="חזרה"
+      className="fixed top-4 right-4 z-50 p-2.5 rounded-full bg-black/25 text-white backdrop-blur-sm active:bg-black/40"
+    >
+      <ArrowRight className="w-6 h-6" />
+    </button>
+  );
+}
+
 export default function GatePage() {
   const { token } = useParams();
   const [state, setState] = useState({ loading: true, data: null, error: false });
@@ -45,6 +68,7 @@ export default function GatePage() {
   if (state.loading) {
     return (
       <div dir="rtl" className="min-h-screen bg-slate-100 flex items-center justify-center">
+        <GateBackButton />
         <p className="text-slate-500 text-lg">בודק סטטוס כניסה…</p>
       </div>
     );
@@ -56,6 +80,7 @@ export default function GatePage() {
   if (state.error || !d || d.state === 'invalid') {
     return (
       <div dir="rtl" className="min-h-screen bg-slate-200 flex flex-col items-center justify-center px-6 text-center">
+        <GateBackButton />
         <HelpCircle className="w-20 h-20 text-slate-400 mb-4" />
         <h1 className="text-2xl font-bold text-slate-700">קוד לא תקף</h1>
         <p className="text-slate-500 mt-2 text-lg">
@@ -68,6 +93,7 @@ export default function GatePage() {
   if (d.state === 'red') {
     return (
       <div dir="rtl" className="min-h-screen bg-red-600 flex flex-col items-center justify-center px-6 text-center text-white">
+        <GateBackButton />
         <XCircle className="w-24 h-24 mb-4" />
         <h1 className="text-4xl font-extrabold">אין כניסה</h1>
         {d.first_name && <p className="text-2xl mt-3 font-semibold">{d.first_name}</p>}
@@ -87,6 +113,7 @@ export default function GatePage() {
   // GREEN
   return (
     <div dir="rtl" className="min-h-screen bg-green-600 flex flex-col items-center justify-center px-6 text-center text-white">
+      <GateBackButton />
       <Avatar url={d.photo_display_url} name={d.first_name} />
       <CheckCircle2 className="w-16 h-16 mt-4" />
       <h1 className="text-4xl font-extrabold mt-2">מאושר לכניסה</h1>

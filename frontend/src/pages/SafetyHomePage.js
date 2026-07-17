@@ -1657,22 +1657,118 @@ const SCAN_RESULT_HE = {
   invalid: { label: 'קוד לא תקף', cls: 'bg-slate-200 text-slate-600' },
 };
 
+// qrg1-fix1 B3d — local-date helpers for the preset range chips.
+const localDateStr = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+const SCAN_RANGE_PRESETS = [
+  { key: 'today', label: 'היום' },
+  { key: '7d', label: '7 ימים' },
+  { key: 'month', label: 'החודש' },
+  { key: 'all', label: 'הכל' },
+];
+const scanRangeToDates = (key) => {
+  const now = new Date();
+  if (key === 'today') { const d = localDateStr(now); return { date_from: d, date_to: d }; }
+  if (key === '7d') {
+    const from = new Date(now); from.setDate(from.getDate() - 6);
+    return { date_from: localDateStr(from), date_to: localDateStr(now) };
+  }
+  if (key === 'month') {
+    return { date_from: localDateStr(new Date(now.getFullYear(), now.getMonth(), 1)), date_to: localDateStr(now) };
+  }
+  return {};
+};
+
 function GateScansSection({ projectId }) {
-  const [scans, setScans] = useState({ items: [], total: 0, loading: true });
+  const [scans, setScans] = useState({ items: [], total: 0, summary: null, loading: true });
+  // Filters: worker select + result select + date-range preset chips.
+  const [scanWorkers, setScanWorkers] = useState([]);
+  const [workerFilter, setWorkerFilter] = useState('');
+  const [resultFilter, setResultFilter] = useState('');
+  const [rangeFilter, setRangeFilter] = useState('all');
+
+  // Worker options — fetched once, fail-soft.
+  useEffect(() => {
+    let cancelled = false;
+    safetyService.listWorkers(projectId, { limit: 200 })
+      .then((res) => { if (!cancelled) setScanWorkers(res?.items || []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectId]);
 
   useEffect(() => {
     let cancelled = false;
-    safetyService.listGateScans(projectId, { limit: 50 })
-      .then((res) => { if (!cancelled) setScans({ items: res.items || [], total: res.total || 0, loading: false }); })
-      .catch(() => { if (!cancelled) setScans({ items: [], total: 0, loading: false }); });
+    setScans((prev) => ({ ...prev, loading: true }));
+    const params = { limit: 50 };
+    if (workerFilter) params.worker_id = workerFilter;
+    if (resultFilter) params.result = resultFilter;
+    Object.assign(params, scanRangeToDates(rangeFilter));
+    safetyService.listGateScans(projectId, params)
+      .then((res) => {
+        if (!cancelled) setScans({ items: res.items || [], total: res.total || 0, summary: res.summary || null, loading: false });
+      })
+      .catch(() => { if (!cancelled) setScans({ items: [], total: 0, summary: null, loading: false }); });
     return () => { cancelled = true; };
-  }, [projectId]);
+  }, [projectId, workerFilter, resultFilter, rangeFilter]);
+
+  const summary = scans.summary;
 
   return (
     <div className="border-t border-slate-200">
       <div className="px-4 py-3 flex items-center gap-2 bg-slate-50">
         <QrCode className="w-4 h-4 text-slate-500" />
         <p className="text-sm font-semibold text-slate-700">סריקות כניסה ({scans.total})</p>
+      </div>
+      {/* qrg1-fix1 B3d — compact RTL filter row + counts strip */}
+      <div className="px-4 py-2 space-y-2 border-b border-slate-100">
+        <div className="flex gap-2 flex-wrap">
+          <select
+            value={workerFilter}
+            onChange={(e) => setWorkerFilter(e.target.value)}
+            aria-label="סינון לפי עובד"
+            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 max-w-[46%]"
+          >
+            <option value="">כל העובדים</option>
+            {scanWorkers.map((w) => (
+              <option key={w.id} value={w.id}>{w.full_name}</option>
+            ))}
+          </select>
+          <select
+            value={resultFilter}
+            onChange={(e) => setResultFilter(e.target.value)}
+            aria-label="סינון לפי תוצאה"
+            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
+          >
+            <option value="">הכל</option>
+            <option value="green">מאושר</option>
+            <option value="red">אין כניסה</option>
+            <option value="invalid">לא תקף</option>
+          </select>
+        </div>
+        <div className="flex gap-1.5">
+          {SCAN_RANGE_PRESETS.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => setRangeFilter(p.key)}
+              aria-pressed={rangeFilter === p.key}
+              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                rangeFilter === p.key ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {summary && (
+          <p className="text-xs text-slate-500">
+            סה"כ {summary.total} · מאושר {summary.green} · אין כניסה {summary.red} · לא תקף {summary.invalid}
+          </p>
+        )}
       </div>
       {scans.loading ? (
         <p className="px-4 py-4 text-sm text-slate-400">טוען…</p>

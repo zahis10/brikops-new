@@ -7,9 +7,13 @@ import { toast } from 'sonner';
 import {
   LogOut, Clock, CheckCircle2, AlertTriangle,
   Camera, Eye, Settings, ChevronLeft, Flame,
-  User, Users
+  User, Users, LayoutGrid
 } from 'lucide-react';
 import { Card } from '../components/ui/card';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '../components/ui/alert-dialog';
 import NotificationBell from '../components/NotificationBell';
 import CategoryPill from '../components/CategoryPill';
 
@@ -115,6 +119,12 @@ const ContractorDashboard = ({ initialProjectId } = {}) => {
     return initialProjectId || localStorage.getItem('lastProjectId') || 'all';
   });
   const urgentRef = useRef(null);
+  // qrg1-fix1 B2: /projects loops contractor-only users straight back here,
+  // so the "כל הפרויקטים" header button uses the EXISTING in-dashboard
+  // switcher instead — reset to 'all' and scroll to the project chips row.
+  const projectChipsRef = useRef(null);
+  // qrg1-fix1 B2b: logout goes through a confirm dialog.
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
 
   const [offset, setOffset] = useState(0);
   const [totalTasks, setTotalTasks] = useState(null);
@@ -244,6 +254,14 @@ const ContractorDashboard = ({ initialProjectId } = {}) => {
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
+  const showAllProjects = () => {
+    setSelectedProjectId('all');
+    // Let the chips row render (it may appear only after the reset), then scroll.
+    setTimeout(() => {
+      projectChipsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  };
+
   const membership = useMemo(() => {
     const summaries = user?.project_memberships_summary;
     if (!summaries || summaries.length === 0) return null;
@@ -334,11 +352,16 @@ const ContractorDashboard = ({ initialProjectId } = {}) => {
               </div>
             </div>
             <div className="flex items-center gap-1">
+              {projects.length >= 2 && (
+                <button onClick={showAllProjects} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label="כל הפרויקטים" title="כל הפרויקטים">
+                  <LayoutGrid className="w-5 h-5" />
+                </button>
+              )}
               <NotificationBell />
               <button onClick={() => navigate('/settings/account')} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label={t('dashboard', 'settings_aria')}>
                 <Settings className="w-5 h-5" />
               </button>
-              <button onClick={handleLogout} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label={t('dashboard', 'logout_aria')}>
+              <button onClick={() => setLogoutConfirmOpen(true)} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label={t('dashboard', 'logout_aria')}>
                 <LogOut className="w-5 h-5" />
               </button>
             </div>
@@ -367,7 +390,7 @@ const ContractorDashboard = ({ initialProjectId } = {}) => {
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-4">
         {projects.length > 1 && (
-          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+          <div ref={projectChipsRef} className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
             <button
               onClick={() => setSelectedProjectId('all')}
               aria-pressed={selectedProjectId === 'all'}
@@ -571,6 +594,22 @@ const ContractorDashboard = ({ initialProjectId } = {}) => {
 
         <div className="h-8" />
       </div>
+
+      {/* qrg1-fix1 B2b — logout confirmation */}
+      <AlertDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>לצאת מהמשתמש?</AlertDialogTitle>
+            <AlertDialogDescription>
+              תתנתק מהחשבון ותחזור למסך ההתחברות.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ביטול</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLogout}>אישור</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

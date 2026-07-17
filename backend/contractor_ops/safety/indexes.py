@@ -167,5 +167,10 @@ async def ensure_safety_indexes(db) -> None:
         [("project_id", 1), ("ts", -1)],
         background=True, name="idx_gsl_project_ts",
     )
+    # qrg1-fix1 B3c — per-worker filtered scan-log queries
+    await db.gate_scan_log.create_index(
+        [("project_id", 1), ("worker_id", 1), ("ts", -1)],
+        background=True, name="idx_gsl_project_worker_ts",
+    )
 
-    logger.info("Safety indices ensured (34 total across 13 collections)")
+    logger.info("Safety indices ensured (35 total across 13 collections)")

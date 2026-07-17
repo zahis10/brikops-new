@@ -639,6 +639,23 @@ const AppShell = () => {
   );
 };
 
+// qrg1-fix1 B1b — the public gate page (/gate/:token) is a full-screen
+// verdict card scanned at the site entrance; app chrome banners (offline/
+// trial/paywall/complete-account) must never cover it. Tiny wrapper so the
+// four banners stay mounted app-wide but skip gate routes.
+const AppChromeBanners = () => {
+  const location = useLocation();
+  if (location.pathname.startsWith('/gate/')) return null;
+  return (
+    <>
+      <OfflineBanner />
+      <PaywallConnector />
+      <TrialBanner />
+      <CompleteAccountBanner />
+    </>
+  );
+};
+
 function App() {
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
@@ -684,10 +701,7 @@ function App() {
                 <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:right-2 focus:z-[9999] focus:bg-amber-500 focus:text-white focus:px-4 focus:py-2 focus:rounded-lg focus:text-sm focus:font-medium">
                   דלג לתוכן הראשי
                 </a>
-                <OfflineBanner />
-                <PaywallConnector />
-                <TrialBanner />
-                <CompleteAccountBanner />
+                <AppChromeBanners />
                 <main id="main-content" tabIndex={-1} style={{ outline: 'none' }}>
                   <AppShell />
                 </main>

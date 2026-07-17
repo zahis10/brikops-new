@@ -83,7 +83,12 @@ _INVALID = {"state": "invalid"}
 async def gate_status(token: str, request: Request, response: Response):
     """Live entry-gate status for a scanned worker QR. Public, no auth."""
     response.headers["X-Robots-Tag"] = "noindex, nofollow"
-    ip = (request.client.host if request.client else "") or "unknown"
+    # qrg1-fix1 B4: behind nginx/CF the raw client.host is the proxy — derive
+    # the throttle key exactly like the global limiter (server.py).
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff and "," in xff:
+        xff = xff.split(",")[0].strip()
+    ip = xff.strip() or (request.client.host if request.client else "") or "unknown"
     _check_throttle(ip)
 
     db = get_db()

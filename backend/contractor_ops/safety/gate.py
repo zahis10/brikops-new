@@ -5,6 +5,7 @@ scan-log admin list, and the flagged WhatsApp auto-send. The PUBLIC status
 endpoint lives in gate_public.py (separate router, no auth import).
 """
 import io
+import re
 import secrets
 
 from pymongo.errors import DuplicateKeyError
@@ -329,12 +330,47 @@ async def list_gate_scans(
     project_id: str,
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
+    worker_id: str | None = Query(None),
+    result: str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
     user: dict = Depends(require_roles(*SAFETY_WRITERS)),
 ):
-    """Newest-first scan log for the project. PM/MT/super_admin only."""
+    """Newest-first scan log for the project. PM/MT/super_admin only.
+
+    qrg1-fix1 B3: optional filters (worker/result/date range) + a "summary"
+    aggregation over the same filter. Existing keys stay byte-compatible.
+    """
     db = get_db()
     await _check_project_access(user, project_id)
     q = {"project_id": project_id}
+    if worker_id:
+        q["worker_id"] = worker_id
+    if result is not None:
+        if result not in ("green", "red", "invalid"):
+            raise HTTPException(422, "תוצאה לא חוקית — יש לבחור מאושר, אין כניסה או לא תקף")
+        q["result"] = result
+    _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    ts_range = {}
+    if date_from is not None:
+        if not _DATE_RE.match(date_from):
+            raise HTTPException(422, "תאריך התחלה לא תקין — פורמט נדרש YYYY-MM-DD")
+        ts_range["$gte"] = f"{date_from}T00:00:00"
+    if date_to is not None:
+        if not _DATE_RE.match(date_to):
+            raise HTTPException(422, "תאריך סיום לא תקין — פורמט נדרש YYYY-MM-DD")
+        ts_range["$lte"] = f"{date_to}T23:59:59.999999"
+    if ts_range:
+        q["ts"] = ts_range
+    # ONE aggregation over the SAME filtered q (not paginated) → counts per result.
+    summary = {"green": 0, "red": 0, "invalid": 0, "total": 0}
+    async for row in db.gate_scan_log.aggregate([
+        {"$match": q},
+        {"$group": {"_id": "$result", "n": {"$sum": 1}}},
+    ]):
+        if row["_id"] in summary:
+            summary[row["_id"]] = row["n"]
+        summary["total"] += row["n"]
     total = await db.gate_scan_log.count_documents(q)
     items = await db.gate_scan_log.find(q, {"_id": 0}).sort("ts", -1).skip(offset).limit(limit).to_list(length=limit)
     # Resolve worker names for display (no PII beyond the name).
@@ -348,4 +384,4 @@ async def list_gate_scans(
             names[w["id"]] = w.get("full_name")
     for it in items:
         it["worker_name"] = names.get(it.get("worker_id"))
-    return {"items": items, "total": total, "limit": limit, "offset": offset}
+    return {"items": items, "total": total, "limit": limit, "offset": offset, "summary": summary}
