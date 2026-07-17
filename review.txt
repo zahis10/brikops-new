@@ -1,96 +1,136 @@
-BATCH qrg-ux1 — REVIEW
-Task #543 — Move guest pass issuance to the safety overview tab (FE-only)
-Date: 2026-07-17 | Branch: staging
+================================================================================
+REVIEW — BATCH qrg-briefing-edit
+feat(safety): org-editable visitor briefing with signed-version integrity
+Branch: staging | Date: 2026-07-17
+================================================================================
 
-============================================================
-SCOPE
-============================================================
-Frontend-only UX change per spec (attached_assets/Pasted---1784292443605_1784292443605.txt):
-- The "הנפק קוד אורח" (issue guest code) button and the GuestPassSection
-  (issued passes list + issue dialog) move from the workers (עובדים) tab
-  to the bottom of the overview (סקירה) tab in the safety module.
-- Zero backend changes.
+STEP 0 — FINDINGS (dependency mapping before any code)
+--------------------------------------------------------------------------------
+1. The visitor briefing lived as a HARD-CODED v1 Hebrew constant in
+   backend/contractor_ops/safety/guest.py (GUEST_BRIEFING_TEXT_HE /
+   GUEST_BRIEFING_VERSION = 1), read directly by two call sites in
+   gate_public.py: the public GET branch (_guest_status_payload) and the
+   public guest-sign POST (which stamps briefing_version + briefing_hash
+   into the signature evidence).
+2. EXACT induction-gate dependency reused for edit rights:
+   contractor_ops/safety/induction.py::_resolve_project_org_edit(user,
+   project_id) → (org_id, can_edit). can_edit = super_admin OR org owner
+   OR org_admin membership OR PM-of-project; management_team is read-only.
+   The guest-briefing GET/PUT/DELETE use it verbatim (lazy import, no copy).
+3. guest_entry_passes docs already carry org_id (set at pass creation),
+   which is what lets the PUBLIC endpoints resolve the org override without
+   an extra project lookup.
+4. Evidence integrity contract (unchanged): every signature stores
+   briefing_version + briefing_hash (sha256[:12]) of the text signed —
+   old signatures keep pointing at the wording actually signed.
 
-Files changed:
-- frontend/src/pages/SafetyHomePage.js (1 file, +25 / -21)
+WHAT WAS BUILT (E1–E4)
+--------------------------------------------------------------------------------
+E1  get_guest_briefing(db, org_id) — now async and THE ONLY access point.
+    Org override doc in NEW collection guest_briefing_texts (one per org,
+    unique index uidx_gbt_org — safety indexes now 38 across 15
+    collections); none/no org_id → v1 constant. Both gate_public.py call
+    sites await it with gp.org_id. House grep: no direct constant reads
+    outside guest.py.
+E2  Authed API — GET/PUT/DELETE /api/safety/{project_id}/guest-briefing.
+    GET: {text, version, is_custom, can_edit}; read audience = can_edit OR
+    SAFETY_WRITERS with project access; contractor → 403.
+    PUT (can_edit only): trim, 50..4000 chars else 422 Hebrew; ATOMIC
+    version bump via pipeline find_one_and_update ($ifNull(version,1)+1,
+    upsert) — first override = version 2, concurrent saves each get a
+    unique monotonic version (architect race finding FIXED + probed);
+    audit guest_briefing_updated. DELETE: removes override (404 if none),
+    back to v1; audit guest_briefing_reset.
+E3  Signed-version integrity — public guest-sign now requires form field
+    briefing_version == current version, checked AFTER all 422 input
+    validations and BEFORE any byte is stored; mismatch/missing → 409
+    "נוסח התדריך עודכן — יש לרענן ולקרוא שוב", NOTHING written. Frontend
+    GatePage sends the version it displayed; on stale 409 it shows an
+    amber banner and refetches the gate state (key remount → guest
+    re-reads and re-signs the new text).
+E4  Editor UI — SafetyHomePage overview → אורחים header: "ערוך תדריך"
+    pencil button rendered ONLY when the server says can_edit (MT and
+    contractors never see it). RTL dialog: textarea, live char counter
+    (min 50 / max 4,000, red out of range), scope note (org-wide; existing
+    signatures keep the signed wording), "אפס לברירת מחדל" behind an
+    AlertDialog confirm. api.js: getGuestBriefing / updateGuestBriefing /
+    resetGuestBriefing + signGuestPass now carries briefing_version.
 
-============================================================
-DIFF (frontend/src/pages/SafetyHomePage.js)
-============================================================
-@@ -129,7 +129,7 @@
-   const [addChooserOpen, setAddChooserOpen] = useState(false);
--  // qrg-guest B-FE-2 — issue-dialog open state (button lives in the header)
-+  // qrg-guest B-FE-2 — issue-dialog open state (button lives in the overview tab guests section)
-   const [guestIssueOpen, setGuestIssueOpen] = useState(false);
+DIFFS (git diff --stat, staging)
+--------------------------------------------------------------------------------
+ backend/contractor_ops/safety/gate_public.py |  13 ++-
+ backend/contractor_ops/safety/guest.py       | 133 +++++++++++++++++++++--
+ backend/contractor_ops/safety/indexes.py     |   8 +-
+ backend/tests/probe_safety_qrg_guest.py      |   4 +-
+ frontend/src/pages/GatePage.js               |  49 +++++++--
+ frontend/src/pages/SafetyHomePage.js         | 152 +++++++++++++++++++++++++--
+ frontend/src/services/api.js                 |  28 ++++-
+ 7 files changed, 356 insertions(+), 31 deletions(-)
+ (+ new file backend/tests/probe_safety_qrg_briefing.py)
 
-@@ -662,18 +662,6 @@  (header action area)
--        {/* qrg-guest — one-day guest pass issuing (workers tab only) */}
--        {isWriter && activeTab === 'workers' && (
--          <button ... onClick={() => setGuestIssueOpen(true)} ...>
--            <QrCode className="w-4 h-4" />
--            הנפק קוד אורח
--          </button>
--        )}
+V1 — NEW FUNCTIONAL PROBE (probe_safety_qrg_briefing.py) — 26/26 PASS
+--------------------------------------------------------------------------------
+B1  PM GET default → v1 constant, is_custom=False, can_edit=True ... PASS
+    MT GET → 200 read-only (can_edit=False) ......................... PASS
+    contractor GET → 403 ............................................ PASS
+B2  PUT <50 chars → 422 / PUT >4000 chars → 422 ..................... PASS
+    MT PUT → 403 / MT DELETE → 403 .................................. PASS
+    DELETE with no override → 404 ................................... PASS
+B3  PUT valid → 200 version=2 is_custom=True ........................ PASS
+    override doc stored (org_id, version=2, updated_by) ............. PASS
+    second PUT → version=3 / audit guest_briefing_updated ×2 ........ PASS
+B3b 5 PARALLEL PUTs → 5 UNIQUE versions 4..8 (atomic bump) .......... PASS
+    stored doc at version 8 / re-save → version 9 ................... PASS
+B4  public GET → override text + CURRENT version=9 .................. PASS
+    sign with STALE version → 409 Hebrew ............................ PASS
+    sign with MISSING version → 409 ................................. PASS
+    after 409s: NOTHING written (still unsigned, no signature_ref) ... PASS
+    sign with CURRENT version → 200 green ........................... PASS
+    signature records version=9 + hash of SIGNED text ............... PASS
+B5  DELETE → 200 back to v1 default / audit reset ×1 ................ PASS
+    second DELETE → 404 ............................................. PASS
+    after reset: public GET → v1 / sign with v1 → 200 ............... PASS
 
-@@ -829,15 +817,6 @@  (workers TabsContent)
--              {/* qrg-guest — issued guest passes (writers only), self-fetching */}
--              {isWriter && activeTab === 'workers' && (
--                <GuestPassSection
--                  projectId={projectId}
--                  projectName={project?.name || ''}
--                  issueOpen={guestIssueOpen}
--                  onIssueOpenChange={setGuestIssueOpen}
--                />
--              )}
+V2 — REGRESSIONS + BUILD
+--------------------------------------------------------------------------------
+probe_safety_qrg_guest.py ......... 30/30 PASS (sign calls now send version)
+probe_safety_qrg_share_fix.py ..... 14/14 PASS
+probe_safety_qrg1.py .............. 42/42 PASS
+probe_safety_qrg1_fix1.py ......... 18/18 PASS
+py_compile (all changed backend) .. OK
+House grep (no direct constant use outside guest.py) .. CLEAN
+CI=true craco prod build .......... EXIT=0 (compiled successfully)
+Safety pytest: test_defect_safety_tag 5/6 — the 1 failure
+("Database not initialized", defects summary) is a PRE-EXISTING harness
+quirk untouched by this diff; script-style tests (test_object_storage_
+shapes, test_project_isolation) sys.exit under pytest as before.
 
-@@ -986,6 +965,31 @@  (overview TabsContent, after KPI grid)
-+            {/* qrg-ux1 — guest passes moved here from the workers tab:
-+                issuing/managing one-day guest codes belongs to the overview,
-+                not the workers list. Writers only; same issueOpen state. */}
-+            {isWriter && (
-+              <div className="space-y-3">
-+                <div className="flex items-center justify-between gap-3">
-+                  <h3 className="text-sm font-semibold text-slate-900">אורחים</h3>
-+                  <button type="button" onClick={() => setGuestIssueOpen(true)}
-+                    className="px-3 py-2 text-sm rounded-lg bg-amber-500 text-white hover:bg-amber-600 flex items-center gap-1 min-h-[44px]">
-+                    <QrCode className="w-4 h-4" />
-+                    הנפק קוד אורח
-+                  </button>
-+                </div>
-+                <GuestPassSection
-+                  projectId={projectId}
-+                  projectName={project?.name || ''}
-+                  issueOpen={guestIssueOpen}
-+                  onIssueOpenChange={setGuestIssueOpen}
-+                />
-+              </div>
-+            )}
+SCREENSHOTS
+--------------------------------------------------------------------------------
+- Updated public briefing: /gate/<token> rendered the ORG OVERRIDE text
+  ("תדריך בטיחות למבקרים — נוסח ארגוני מותאם", 3 clauses + declaration)
+  with name field + signature canvas + amber confirm button (captured in
+  workspace preview; demo data cleaned + ENABLE_SAFETY_MODULE flag removed
+  from backend/.env afterwards).
+- Editor dialog: RTL "עריכת תדריך בטיחות לאורחים" dialog — textarea, char
+  counter "X / 4,000 תווים (מינימום 50)", "אפס לברירת מחדל" link (custom
+  only), amber save button (verify on device in V3 — dialog requires an
+  authed manager session).
 
-============================================================
-VERIFICATION
-============================================================
-1. Grep checks — clean:
-   - No guest button / GuestPassSection left in header or workers tab.
-   - No remaining activeTab==='workers' guest gating.
-2. Production build (CI=true REACT_APP_BACKEND_URL=https://api.brikops.com
-   npx craco build): EXIT CODE 0.
-   Bundle frontend/build/static/js/main.6ad9bef8.js references api.brikops.com — OK.
-3. Visual check on dev bundle with seeded demo project:
-   Safety overview tab renders correctly (screenshots/qrg_ux1_overview_guests.jpg);
-   the "אורחים" section with the amber issue button sits at the bottom of the
-   overview tab, gated to writers only. Workers tab shows workers only.
-   Seed data fully cleaned up afterwards; ENABLE_SAFETY_MODULE removed from backend/.env.
-4. Architect code review: PASS — correct removal from workers tab/header,
-   correct placement, props and state wiring intact, no leftover references,
-   RTL/Hebrew consistent, no security concerns. Stale comment noted by the
-   review was fixed and the bundle rebuilt (EXIT 0).
+ARCHITECT REVIEW
+--------------------------------------------------------------------------------
+Round 1: FAIL — read-then-write version bump in PUT could lose an
+increment under concurrent saves. FIXED with an atomic pipeline
+find_one_and_update (+ new B3b concurrency probe, 5 parallel PUTs →
+unique versions). All other areas passed: sign-integrity guard placement
+(after 422s, before save_bytes), public hardening intact (throttle, PNG
+magic/cap, sign-once DB lock, neutral 404s, no PII/signature URL leak),
+RBAC via the induction gate, evidence integrity preserved.
 
-============================================================
-COMMIT MESSAGE (.local/.commit_message)
-============================================================
-fix(safety): guest pass issuance moves to the safety overview tab
-
-Issuing and managing one-day guest passes now lives in the safety overview
-tab, where it belongs — the workers tab returns to workers only.
+V3 DEVICE (Zahi, prod after deploy approval)
+--------------------------------------------------------------------------------
+סקירה → אורחים → ערוך תדריך (מופיע לך; לא ל-MT) → שנה משפט → שמור →
+הנפק קוד אורח חדש → פתח קישור → הנוסח החדש מוצג → חתום → ירוק;
+אורח שחתם קודם נשאר עם הנוסח הישן בתיעוד; אפס לברירת מחדל מחזיר מקור.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

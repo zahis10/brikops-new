@@ -269,7 +269,7 @@ async def _guest_status_payload(db, gp: dict, *, log: bool) -> dict:
 
     briefing = gp.get("briefing") or {}
     if not briefing.get("signed"):
-        text, version, _h = get_guest_briefing()
+        text, version, _h = await get_guest_briefing(db, gp.get("org_id"))
         if log:
             await _log_scan(
                 db, project_id=gp.get("project_id"), guest_pass_id=gp["id"],
@@ -360,7 +360,16 @@ async def guest_sign(token: str, request: Request, response: Response):
 
     from services.object_storage import save_bytes
     from contractor_ops.safety.guest import get_guest_briefing
-    _text, version, briefing_hash = get_guest_briefing()
+    _text, version, briefing_hash = await get_guest_briefing(db, gp.get("org_id"))
+    # qrg-briefing-edit E3 — signed-version integrity: the guest signs the
+    # text they READ. Mismatch (text updated between GET and sign, or the
+    # field missing) → 409, NOTHING written.
+    submitted_version = str(form.get("briefing_version") or "").strip()
+    if submitted_version != str(version):
+        raise HTTPException(
+            status_code=409,
+            detail="נוסח התדריך עודכן — יש לרענן ולקרוא שוב",
+        )
     s3_key = f"safety/{gp['project_id']}/guest-passes/{gp['id']}/sig.png"
     signature_ref = save_bytes(img_bytes, s3_key, "image/png")
 

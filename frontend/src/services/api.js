@@ -470,12 +470,38 @@ export const safetyService = {
     );
     return response.data;
   },
+  // qrg-briefing-edit — org-level visitor briefing text (managers edit).
+  async getGuestBriefing(projectId) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/guest-briefing`,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async updateGuestBriefing(projectId, text) {
+    const response = await axios.put(
+      `${API}/safety/${projectId}/guest-briefing`,
+      { text },
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async resetGuestBriefing(projectId) {
+    const response = await axios.delete(
+      `${API}/safety/${projectId}/guest-briefing`,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
   // PUBLIC — the guest signs the visitor briefing on their own phone.
   // NO auth header on purpose; token-gated multipart POST.
-  async signGuestPass(token, blob, signerName) {
+  // qrg-briefing-edit E3: briefingVersion binds the signature to the text
+  // the guest actually READ — server 409s on mismatch.
+  async signGuestPass(token, blob, signerName, briefingVersion) {
     const form = new FormData();
     form.append('signature_image', blob, 'sig.png');
     form.append('signer_name', signerName);
+    form.append('briefing_version', String(briefingVersion ?? ''));
     const response = await axios.post(`${API}/gate/${token}/guest-sign`, form);
     return response.data;
   },

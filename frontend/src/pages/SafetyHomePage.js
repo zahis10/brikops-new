@@ -973,14 +973,18 @@ export default function SafetyHomePage() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <h3 className="text-sm font-semibold text-slate-900">אורחים</h3>
-                  <button
-                    type="button"
-                    onClick={() => setGuestIssueOpen(true)}
-                    className="px-3 py-2 text-sm rounded-lg bg-amber-500 text-white hover:bg-amber-600 flex items-center gap-1 min-h-[44px]"
-                  >
-                    <QrCode className="w-4 h-4" />
-                    הנפק קוד אורח
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {/* qrg-briefing-edit E4 — org-level briefing editor */}
+                    <GuestBriefingEditButton projectId={projectId} />
+                    <button
+                      type="button"
+                      onClick={() => setGuestIssueOpen(true)}
+                      className="px-3 py-2 text-sm rounded-lg bg-amber-500 text-white hover:bg-amber-600 flex items-center gap-1 min-h-[44px]"
+                    >
+                      <QrCode className="w-4 h-4" />
+                      הנפק קוד אורח
+                    </button>
+                  </div>
                 </div>
                 <GuestPassSection
                   projectId={projectId}
@@ -1844,6 +1848,138 @@ const GUEST_STATUS_CHIP = (p) => {
 const guestEntryMessage = (guestName, projectName, validOn, link) =>
   `שלום ${guestName}, זהו קוד הכניסה שלך לאתר ${projectName} לתאריך ${validOn}. ` +
   `יש להיכנס לקישור, לקרוא את תדריך הבטיחות ולחתום לפני ההגעה לאתר: ${link}`;
+
+// qrg-briefing-edit E4 — org-level visitor-briefing editor. Self-contained:
+// fetches {text, version, is_custom, can_edit}; renders the pencil button
+// ONLY when the server says can_edit (owner/org_admin/PM-of-project).
+function GuestBriefingEditButton({ projectId }) {
+  const [info, setInfo] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    safetyService.getGuestBriefing(projectId)
+      .then((res) => { if (!cancelled) setInfo(res); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  if (!info?.can_edit) return null;
+
+  const openEditor = () => {
+    setText(info.text || '');
+    setOpen(true);
+  };
+
+  const save = async () => {
+    const trimmed = text.trim();
+    if (trimmed.length < 50) { toast.error('נוסח התדריך קצר מדי — נדרשים לפחות 50 תווים'); return; }
+    if (trimmed.length > 4000) { toast.error('נוסח התדריך ארוך מדי — עד 4,000 תווים'); return; }
+    setSaving(true);
+    try {
+      const res = await safetyService.updateGuestBriefing(projectId, trimmed);
+      setInfo((prev) => ({ ...prev, ...res }));
+      setOpen(false);
+      toast.success('תדריך האורחים עודכן — אורחים חדשים יראו את הנוסח החדש');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'עדכון התדריך נכשל');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetToDefault = async () => {
+    setSaving(true);
+    try {
+      const res = await safetyService.resetGuestBriefing(projectId);
+      setInfo((prev) => ({ ...prev, ...res }));
+      setResetOpen(false);
+      setOpen(false);
+      toast.success('התדריך אופס לנוסח ברירת המחדל');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'איפוס התדריך נכשל');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const count = text.trim().length;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={openEditor}
+        className="px-3 py-2 text-sm rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 flex items-center gap-1 min-h-[44px]"
+      >
+        <Pencil className="w-4 h-4" />
+        ערוך תדריך
+      </button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent dir="rtl" className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-right">עריכת תדריך בטיחות לאורחים</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <p className="text-xs text-slate-500 text-right">
+              הנוסח חל על כל הפרויקטים בארגון. אורחים שטרם חתמו יראו את הנוסח החדש;
+              חתימות קיימות שומרות את הנוסח שנחתם בפועל.
+            </p>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              dir="rtl"
+              rows={12}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm leading-relaxed bg-white
+                focus:outline-none focus:ring-2 focus:ring-amber-300 focus:border-amber-400"
+            />
+            <div className="flex items-center justify-between text-xs">
+              <span className={count < 50 || count > 4000 ? 'text-red-600 font-medium' : 'text-slate-400'}>
+                {count.toLocaleString()} / 4,000 תווים (מינימום 50)
+              </span>
+              {info.is_custom && (
+                <button
+                  type="button"
+                  onClick={() => setResetOpen(true)}
+                  className="text-slate-500 underline hover:text-slate-700"
+                >
+                  אפס לברירת מחדל
+                </button>
+              )}
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={saving}>ביטול</Button>
+            <Button onClick={save} disabled={saving} className="bg-amber-500 hover:bg-amber-600">
+              {saving ? 'שומר…' : 'שמור נוסח'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-right">לאפס את התדריך לברירת המחדל?</AlertDialogTitle>
+            <AlertDialogDescription className="text-right">
+              הנוסח המותאם יימחק ואורחים חדשים יראו את נוסח ברירת המחדל של BrikOps.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel disabled={saving}>ביטול</AlertDialogCancel>
+            <AlertDialogAction onClick={resetToDefault} disabled={saving} className="bg-red-600 hover:bg-red-700">
+              אפס לברירת מחדל
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
 
 function GuestPassSection({ projectId, projectName, issueOpen, onIssueOpenChange }) {
   const [passes, setPasses] = useState({ items: [], total: 0, loading: true });

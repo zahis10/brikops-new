@@ -76,7 +76,7 @@ function GateQrCard({ token }) {
 // qrg-guest B-FE-1 — full-screen briefing + INLINE signature canvas.
 // Canvas mechanics mirror SafetySignaturePad (draw/clear/toBlob) but rendered
 // inline: NO Radix Dialog, NO app-only imports — this is the public page.
-function GuestBriefingScreen({ token, data, onSigned }) {
+function GuestBriefingScreen({ token, data, onSigned, onStale }) {
   const [signerName, setSignerName] = useState(data.guest_name || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -163,12 +163,22 @@ function GuestBriefingScreen({ token, data, onSigned }) {
     try {
       const canvas = canvasRef.current;
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-      const res = await safetyService.signGuestPass(token, blob, signerName.trim());
+      const res = await safetyService.signGuestPass(
+        token, blob, signerName.trim(), data.briefing_version
+      );
       onSigned(res);
     } catch (err) {
       const status = err?.response?.status;
-      if (status === 409) setError('התדריך כבר נחתם');
-      else setError(err?.response?.data?.detail || 'שגיאה בשליחת החתימה — נסה שוב');
+      const detail = err?.response?.data?.detail || '';
+      // qrg-briefing-edit E3 — the text changed between read and sign:
+      // reload the CURRENT briefing so the guest re-reads and re-signs.
+      if (status === 409 && detail.includes('נוסח התדריך עודכן')) {
+        onStale?.(detail);
+      } else if (status === 409) {
+        setError('התדריך כבר נחתם');
+      } else {
+        setError(detail || 'שגיאה בשליחת החתימה — נסה שוב');
+      }
       setSaving(false);
     }
   };
@@ -252,6 +262,8 @@ function GuestBriefingScreen({ token, data, onSigned }) {
 export default function GatePage() {
   const { token } = useParams();
   const [state, setState] = useState({ loading: true, data: null, error: false });
+  // qrg-briefing-edit E3 — one-shot notice after a stale-version 409 reload.
+  const [staleNotice, setStaleNotice] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -290,11 +302,30 @@ export default function GatePage() {
   // qrg-guest — unsigned pass: full-screen briefing + inline signature.
   if (d.state === 'guest_briefing') {
     return (
-      <GuestBriefingScreen
-        token={token}
-        data={d}
-        onSigned={(res) => setState({ loading: false, data: res, error: false })}
-      />
+      <>
+        {staleNotice && (
+          <div dir="rtl" className="fixed top-0 inset-x-0 z-50 bg-amber-500 text-white text-sm font-semibold text-center px-4 py-2.5">
+            {staleNotice}
+          </div>
+        )}
+        <GuestBriefingScreen
+          key={`v${d.briefing_version}`}
+          token={token}
+          data={d}
+          onSigned={(res) => {
+            setStaleNotice('');
+            setState({ loading: false, data: res, error: false });
+          }}
+          onStale={(msg) => {
+            // Re-fetch the CURRENT briefing so the guest re-reads + re-signs.
+            setStaleNotice(msg || 'נוסח התדריך עודכן — יש לקרוא ולחתום שוב');
+            setState({ loading: true, data: null, error: false });
+            safetyService.getGateStatus(token)
+              .then((data) => setState({ loading: false, data, error: false }))
+              .catch(() => setState({ loading: false, data: null, error: true }));
+          }}
+        />
+      </>
     );
   }
 

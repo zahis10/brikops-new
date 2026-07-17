@@ -183,4 +183,10 @@ async def ensure_safety_indexes(db) -> None:
         background=True, name="idx_gep_project_valid",
     )
 
-    logger.info("Safety indices ensured (37 total across 14 collections)")
+    # qrg-briefing-edit — ONE org-level briefing override doc per org.
+    await db.guest_briefing_texts.create_index(
+        [("org_id", 1)],
+        background=True, unique=True, name="uidx_gbt_org",
+    )
+
+    logger.info("Safety indices ensured (38 total across 15 collections)")

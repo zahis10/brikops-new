@@ -156,7 +156,7 @@ async def main():
         png = make_png()
         r = await c.post(f"/api/gate/{token}/guest-sign",
                          files={"signature_image": ("sig.png", png, "image/png")},
-                         data={"signer_name": "אורח בדיקה"})
+                         data={"signer_name": "אורח בדיקה", "briefing_version": "1"})
         j = r.json()
         record("sign valid PNG → 200 green guest today",
                r.status_code == 200 and j.get("state") == "green"
@@ -191,7 +191,7 @@ async def main():
         tok2, id2 = j2["token"], j2["id"]
         await c.post(f"/api/gate/{tok2}/guest-sign",
                      files={"signature_image": ("sig.png", png, "image/png")},
-                     data={"signer_name": "אורח מחר"})
+                     data={"signer_name": "אורח מחר", "briefing_version": "1"})
         r = await c.get(f"/api/gate/{tok2}")
         j = r.json()
         record("signed but valid_on future → red guest_date",

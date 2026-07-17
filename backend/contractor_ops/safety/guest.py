@@ -23,6 +23,7 @@ from contractor_ops.safety._shared import (  # noqa: F401
     _new_id,
     _now,
     generate_url,
+    get_current_user,
     get_db,
     logger,
     require_roles,
@@ -37,9 +38,9 @@ from contractor_ops.utils.timezone import israel_today
 from fastapi.responses import StreamingResponse
 
 # =====================================================================
-# G1 — visitor safety briefing (LOCKED Hebrew constant, version 1).
-# Zahi ruling 2026-07-17: a coming batch adds org-level editing of this
-# text; the override will live inside get_guest_briefing(). Until then,
+# G1 — visitor safety briefing (v1 Hebrew constant — the DEFAULT).
+# qrg-briefing-edit: an org-level override (guest_briefing_texts) plugs
+# in through get_guest_briefing(db, org_id) — the ONLY access point.
 # NO call site may read the constant directly — helper only.
 # =====================================================================
 GUEST_BRIEFING_VERSION = 1
@@ -55,14 +56,25 @@ GUEST_BRIEFING_TEXT_HE = (
 )
 
 
-def get_guest_briefing() -> tuple[str, int, str]:
+def _briefing_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+async def get_guest_briefing(db, org_id: str | None) -> tuple[str, int, str]:
     """(text, version, hash[:12]) — the ONLY way to access the briefing.
 
-    The future org-level override (management-edited text) plugs in HERE.
+    qrg-briefing-edit E1: looks up the org override in guest_briefing_texts;
+    found → (doc.text, doc.version, sha256[:12]); none (or no org_id) → the
+    v1 constant tuple. Evidence integrity is unchanged — every signature
+    keeps recording the version+hash of the text that was signed.
     """
-    text = GUEST_BRIEFING_TEXT_HE
-    h = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
-    return text, GUEST_BRIEFING_VERSION, h
+    if org_id:
+        doc = await db.guest_briefing_texts.find_one(
+            {"org_id": org_id}, {"_id": 0, "text": 1, "version": 1}
+        )
+        if doc and doc.get("text"):
+            return doc["text"], int(doc.get("version") or 2), _briefing_hash(doc["text"])
+    return GUEST_BRIEFING_TEXT_HE, GUEST_BRIEFING_VERSION, _briefing_hash(GUEST_BRIEFING_TEXT_HE)
 
 
 # =====================================================================
@@ -233,3 +245,108 @@ async def get_guest_qr_png(
         io.BytesIO(png), media_type="image/png",
         headers={"Content-Disposition": 'attachment; filename="guest-qr.png"'},
     )
+
+
+# =====================================================================
+# qrg-briefing-edit E2 — org-level briefing text (project-scoped API).
+# Gate: EXACTLY the induction-template edit chain (_resolve_project_org_edit
+# — super_admin / org owner / org_admin / PM-of-project; MT read-only).
+# =====================================================================
+BRIEFING_MIN_CHARS = 50
+BRIEFING_MAX_CHARS = 4000
+
+
+class GuestBriefingSave(BaseModel):
+    text: str
+
+
+@router.get("/{project_id}/guest-briefing")
+async def get_project_guest_briefing(
+    project_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Same read audience as the induction-template content GET: managers
+    (can_edit) OR SAFETY_WRITERS with project access."""
+    from contractor_ops.safety.induction import _resolve_project_org_edit
+    org_id, can_edit = await _resolve_project_org_edit(user, project_id)
+    if not can_edit:
+        if user.get("role") not in SAFETY_WRITERS:
+            raise HTTPException(status_code=403, detail="אין הרשאה לצפייה בתדריך האורחים")
+        await _check_project_access(user, project_id)
+    if not org_id:
+        raise HTTPException(status_code=404, detail="הפרויקט לא נמצא")
+    db = get_db()
+    doc = await db.guest_briefing_texts.find_one({"org_id": org_id}, {"_id": 0})
+    text, version, _h = await get_guest_briefing(db, org_id)
+    return {
+        "text": text,
+        "version": version,
+        "is_custom": bool(doc),
+        "can_edit": can_edit,
+    }
+
+
+@router.put("/{project_id}/guest-briefing")
+async def save_project_guest_briefing(
+    project_id: str,
+    payload: GuestBriefingSave,
+    user: dict = Depends(get_current_user),
+):
+    from contractor_ops.safety.induction import _resolve_project_org_edit
+    org_id, can_edit = await _resolve_project_org_edit(user, project_id)
+    if not org_id:
+        raise HTTPException(status_code=404, detail="הפרויקט לא נמצא")
+    if not can_edit:
+        raise HTTPException(status_code=403, detail="רק הנהלת הארגון יכולה לערוך את תדריך האורחים")
+    text = (payload.text or "").strip()
+    if len(text) < BRIEFING_MIN_CHARS:
+        raise HTTPException(status_code=422, detail=f"נוסח התדריך קצר מדי — נדרשים לפחות {BRIEFING_MIN_CHARS} תווים")
+    if len(text) > BRIEFING_MAX_CHARS:
+        raise HTTPException(status_code=422, detail=f"נוסח התדריך ארוך מדי — עד {BRIEFING_MAX_CHARS} תווים")
+    db = get_db()
+    # ATOMIC version bump (pipeline update): v1 is the code constant, so on
+    # insert $ifNull seeds 1 and the +1 makes the FIRST override version 2;
+    # concurrent PUTs each get a UNIQUE monotonic increment (no read-then-
+    # write race, no lost update).
+    from pymongo import ReturnDocument
+    doc = await db.guest_briefing_texts.find_one_and_update(
+        {"org_id": org_id},
+        [{"$set": {
+            "org_id": org_id,
+            "text": text,
+            "version": {"$add": [{"$ifNull": ["$version", 1]}, 1]},
+            "updated_by": user["id"],
+            "updated_at": _now(),
+        }}],
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+        projection={"_id": 0, "version": 1},
+    )
+    new_version = int(doc["version"])
+    await _audit("guest_briefing_text", org_id, "guest_briefing_updated", user["id"], {
+        "org_id": org_id, "version": new_version,
+    })
+    return {"text": text, "version": new_version, "is_custom": True, "can_edit": True}
+
+
+@router.delete("/{project_id}/guest-briefing")
+async def reset_project_guest_briefing(
+    project_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Removes the org override — guests go back to the built-in v1 text."""
+    from contractor_ops.safety.induction import _resolve_project_org_edit
+    org_id, can_edit = await _resolve_project_org_edit(user, project_id)
+    if not org_id:
+        raise HTTPException(status_code=404, detail="הפרויקט לא נמצא")
+    if not can_edit:
+        raise HTTPException(status_code=403, detail="רק הנהלת הארגון יכולה לאפס את תדריך האורחים")
+    db = get_db()
+    res = await db.guest_briefing_texts.delete_one({"org_id": org_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="אין נוסח מותאם — התדריך כבר בברירת המחדל")
+    await _audit("guest_briefing_text", org_id, "guest_briefing_reset", user["id"], {
+        "org_id": org_id,
+    })
+    text, version, _h = await get_guest_briefing(db, org_id)
+    return {"text": text, "version": version, "is_custom": False, "can_edit": True}
