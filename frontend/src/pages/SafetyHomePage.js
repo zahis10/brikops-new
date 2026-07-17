@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
   Users, TrendingUp, ShieldAlert, Wrench, Filter, Plus, Pencil, Camera, FileText, ClipboardList,
-  ChevronLeft, Bell, BookOpen, Eye, Download, QrCode,
+  ChevronLeft, Bell, BookOpen, Eye, Download, QrCode, Send,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
@@ -19,7 +19,7 @@ import {
 import { Button } from '../components/ui/button';
 import { Switch } from '../components/ui/switch';
 import { safetyService, projectService, projectCompanyService, userService } from '../services/api';
-import { downloadBlob } from '../utils/fileDownload';
+import { downloadBlob, shareText } from '../utils/fileDownload';
 import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
 import SafetyKpiCard from '../components/safety/SafetyKpiCard';
 import SafetyFilterSheet, {
@@ -833,6 +833,7 @@ export default function SafetyHomePage() {
               {isWriter && activeTab === 'workers' && (
                 <GuestPassSection
                   projectId={projectId}
+                  projectName={project?.name || ''}
                   issueOpen={guestIssueOpen}
                   onIssueOpenChange={setGuestIssueOpen}
                 />
@@ -1170,6 +1171,7 @@ export default function SafetyHomePage() {
 
       <SafetyWorkerCard
         projectId={projectId}
+        projectName={project?.name || ''}
         worker={workerCard}
         open={!!workerCard}
         onClose={() => setWorkerCard(null)}
@@ -1833,7 +1835,13 @@ const GUEST_STATUS_CHIP = (p) => {
   return { label: 'ממתין לחתימה', cls: 'bg-amber-100 text-amber-800' };
 };
 
-function GuestPassSection({ projectId, issueOpen, onIssueOpenChange }) {
+// qrg-share-fix S2 — the Hebrew guest entry-code message. {link} is the
+// gate_url (spec wording — do not edit).
+const guestEntryMessage = (guestName, projectName, validOn, link) =>
+  `שלום ${guestName}, זהו קוד הכניסה שלך לאתר ${projectName} לתאריך ${validOn}. ` +
+  `יש להיכנס לקישור, לקרוא את תדריך הבטיחות ולחתום לפני ההגעה לאתר: ${link}`;
+
+function GuestPassSection({ projectId, projectName, issueOpen, onIssueOpenChange }) {
   const [passes, setPasses] = useState({ items: [], total: 0, loading: true });
   const [form, setForm] = useState({ name: '', company: '', date: '' });
   const [saving, setSaving] = useState(false);
@@ -1875,14 +1883,21 @@ function GuestPassSection({ projectId, issueOpen, onIssueOpenChange }) {
     }
   };
 
-  const shareQr = async (pass) => {
+  // qrg-share-fix S4b — primary share is a Hebrew MESSAGE with the gate
+  // link (issue response + list items both carry gate_url). Print keeps
+  // the QR image (unchanged below).
+  const sendCode = async (pass) => {
     if (qrBusy) return;
     setQrBusy(true);
     try {
-      const blob = await safetyService.getGuestQrPng(projectId, pass.id);
-      await downloadBlob(blob, `guest-qr-${pass.guest_name || pass.id}.png`, 'image/png');
+      if (!pass?.gate_url) throw new Error('missing gate_url');
+      const msg = guestEntryMessage(
+        pass.guest_name || '', projectName || '', pass.valid_on || '', pass.gate_url,
+      );
+      const out = await shareText(msg);
+      if (out?.copied) toast.success('ההודעה הועתקה — הדבק ושלח');
     } catch (e) {
-      toast.error('הורדת קוד האורח נכשלה');
+      toast.error('שליחת קוד האורח נכשלה');
     } finally {
       setQrBusy(false);
     }
@@ -1950,11 +1965,11 @@ function GuestPassSection({ projectId, issueOpen, onIssueOpenChange }) {
                   <>
                     <button
                       type="button"
-                      aria-label="שתף QR"
-                      onClick={() => shareQr(p)}
+                      aria-label="שלח קוד"
+                      onClick={() => sendCode(p)}
                       className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0"
                     >
-                      <Download className="w-4 h-4" />
+                      <Send className="w-4 h-4" />
                     </button>
                     <button
                       type="button"
@@ -1992,9 +2007,9 @@ function GuestPassSection({ projectId, issueOpen, onIssueOpenChange }) {
               </p>
               <p className="text-xs text-slate-500">מאושר ליום {issued.valid_on} — לאחר חתימת תדריך המבקרים</p>
               <div className="flex gap-2">
-                <Button className="flex-1" disabled={qrBusy} onClick={() => shareQr(issued)}>
-                  <Download className="w-4 h-4 ml-1" />
-                  שיתוף / הורדה
+                <Button className="flex-1" disabled={qrBusy} onClick={() => sendCode(issued)}>
+                  <Send className="w-4 h-4 ml-1" />
+                  שלח קוד
                 </Button>
                 <Button variant="outline" className="flex-1" disabled={qrBusy} onClick={() => printQr(issued)}>
                   הדפסה

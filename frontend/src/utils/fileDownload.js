@@ -48,6 +48,46 @@ export async function downloadBlob(blob, filename, mimeType) {
   return { success: true, filename, uri: result.uri };
 }
 
+/**
+ * qrg-share-fix S1 — share a plain-TEXT message (entry-code messages).
+ * Native → Share.share({text}) (cancel-tolerant like downloadBlob).
+ * Web → navigator.share({text}) when available, else copy to the clipboard
+ * and return {copied:true} so the caller can toast "הועתק".
+ * downloadBlob above stays byte-identical — other features depend on it.
+ *
+ * @param {string} message - The full message text (already localized)
+ * @returns {Promise<{success: boolean, copied?: boolean}>}
+ */
+export async function shareText(message) {
+  const isNative = Capacitor.isNativePlatform?.() || false;
+
+  if (isNative) {
+    try {
+      await Share.share({ text: message });
+    } catch (err) {
+      if (err?.message && !/cancel/i.test(err.message)) {
+        throw err;
+      }
+    }
+    return { success: true };
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.share) {
+    try {
+      await navigator.share({ text: message });
+      return { success: true };
+    } catch (err) {
+      // AbortError = user closed the sheet — not a failure, and NOT a
+      // reason to also copy (that would surprise the user).
+      if (err?.name === 'AbortError') return { success: true };
+      // Fall through to clipboard on any other web-share failure.
+    }
+  }
+
+  await navigator.clipboard.writeText(message);
+  return { success: true, copied: true };
+}
+
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

@@ -1,152 +1,115 @@
 ================================================================================
-REVIEW — BATCH qrg-guest: one-day guest entry passes
+BATCH qrg-share-fix — Task #542 — REVIEW
+Entry codes ship as a MESSAGE with a link; green pass page renders its own QR
 Branch: staging | Date: 2026-07-17
 ================================================================================
 
-STEP 0 FINDINGS (verified before coding)
+STEP 0 — FINDINGS
 --------------------------------------------------------------------------------
-(a) gate_status worker-branch end: in gate_public.py the worker lookup is
-    `tok = await db.worker_entry_tokens.find_one({"token": token, ...})`;
-    when tok is None the old code returned the neutral {"state":"invalid"}.
-    The guest branch slots in exactly there — inside `if not tok:` we first
-    try guest_entry_passes by token; only if THAT also misses (or the pass
-    is revoked) do we return the same neutral {"state":"invalid"}. The
-    worker green/red path below is untouched.
-(b) validate_upload WITHOUT a user — ANSWER: contractor_ops' validate_upload
-    keys its rate-limit/quota bookkeeping on the authenticated user id, so it
-    CANNOT be used on the public guest-sign endpoint (there is no user).
-    Per the spec's fallback, the public endpoint does INLINE validation
-    instead: hard 600KB byte cap via read(cap+1) length check, PNG magic
-    bytes (\x89PNG\r\n\x1a\n) AND content-type image/png → otherwise 422.
-    The per-IP _check_throttle (same helper the worker gate uses) runs first.
-(c) "הנפק קוד אורח" button home: SafetyHomePage's workers tab header renders
-    the "הוסף עובד" action for isWriter users; the amber guest button was
-    placed alongside it, and GuestPassSection renders inside the workers
-    TabsContent below GateScansSection.
+- Share flows before this batch downloaded/shared a naked QR PNG (fileDownload
+  helpers). Recipients received an image with no context and the guard-scan
+  flow depended on the saved image.
+- Project-name source for S3: SafetyHomePage already loads the project object;
+  both SafetyWorkerCard and GuestPassSection are rendered from SafetyHomePage,
+  which now passes projectName={project?.name || ''} to each. No new fetch.
+- Guest list API (_pass_list_item in guest.py) exposed qr_display_url but no
+  gate link; raw token was (correctly) never exposed — kept that way.
+- Public gate page (GatePage.js) showed GREEN state text only; no QR on
+  screen, so the link alone was not a complete "boarding pass".
+- server.py has a global /api/ middleware forcing Cache-Control
+  no-cache/no-store on every API response — it overrode the qr.png caching
+  headers and needed a scoped exemption (see S5a note below).
 
-WHAT CHANGED
+CHANGES (git diff --stat)
 --------------------------------------------------------------------------------
-G1  backend/contractor_ops/safety/guest.py (NEW): GUEST_BRIEFING constant
-    (spec text verbatim, Hebrew, locked) + get_guest_briefing() →
-    (text, version=1, sha256-hash[:12]).
-G3  guest.py authed router (SAFETY_WRITERS only, project-access checked):
-      POST /api/safety/{project_id}/guest-passes  → 201 (name 2+ chars,
-        company required, valid_on ISO date, default israel_today; token via
-        _new_token ≥32 chars; QR PNG stored at
-        safety/{pid}/guest-passes/{id}/qr.png via _qr_png_bytes/_gate_url)
-      GET  .../guest-passes            → paginated list, newest first
-      POST .../guest-passes/{id}/revoke → status=revoked + audit event
-        guest_pass_revoked
-      GET  .../guest-passes/{id}/qr.png → PNG passthrough (authed only)
-    Registered in safety/__init__.py after the gate router.
-G4  gate_public.py public GET /api/gate/{token} guest branch (worker miss
-    only): unsigned → state=guest_briefing (first name+company+briefing
-    text/version, NO PII); signed & valid_on==israel_today → green
-    reason=guest; signed & other day → red reason=guest_date; revoked or
-    unknown → neutral {"state":"invalid"}. Every guest scan logged to
-    gate_scan_log with guest_pass_id (worker rows unchanged — key absent).
-G5  gate_public.py public POST /api/gate/{token}/guest-sign: per-IP
-    throttle → neutral 404 on unknown/revoked/worker token → 409 Hebrew if
-    already signed → signer_name required (≤120 chars else 422) → inline
-    600KB cap + PNG magic + content-type checks (422) → signature stored at
-    safety/{pid}/guest-passes/{id}/sig.png → SIGN-ONCE enforced by
-    re-asserting {status:"active", briefing.signed:False} INSIDE the
-    update_one filter (modified_count==0 → 409, no double write). Public
-    response never contains signature_ref.
-IDX indexes.py: uidx_gep_token (unique token) + idx_gep_project_valid
-    (project_id, valid_on) — log line now "37 total across 14 collections".
-LST gate.py list_gate_scans: guest rows resolved via $in on
-    guest_entry_passes → guest_name/guest_company/is_guest added ONLY on
-    guest rows; worker rows byte-compatible; filters+summary intact.
-FE  api.js: createGuestPass/listGuestPasses/revokeGuestPass/getGuestQrPng
-    (authed) + signGuestPass (PUBLIC multipart — NO auth header).
-    GatePage.js: GuestBriefingScreen — briefing text, signer name, inline
-    signature canvas, sign → live green; green guest ("אורח מאושר לכניסה",
-    "מאושר ליום …") and red guest_date ("האישור תקף ליום … בלבד") states.
-    SafetyHomePage.js: amber "הנפק קוד אורח" header button (workers tab,
-    writers only) → issue dialog (name/company/date, default today) → QR
-    view with share/download + print; GuestPassSection list with chips
-    נחתם / ממתין לחתימה / בוטל + revoke; GateScansSection guest rows show
-    guest name + "אורח" badge.
+ backend/contractor_ops/safety/gate_public.py       | 46 ++++++++++++++++++++++
+ backend/contractor_ops/safety/guest.py             |  4 ++
+ backend/server.py                                  | 11 ++++--
+ frontend/src/components/safety/SafetyWorkerCard.js | 30 ++++++++++----
+ frontend/src/pages/GatePage.js                     | 25 +++++++++++-
+ frontend/src/pages/SafetyHomePage.js               | 41 +++++++++++++------
+ frontend/src/utils/fileDownload.js                 | 40 +++++++++++++++++++
+ 7 files changed, 172 insertions(+), 25 deletions(-)
+ (new file: backend/tests/probe_safety_qrg_share_fix.py)
 
-SECURITY (the new public WRITE surface — all server-side)
---------------------------------------------------------------------------------
-- Writes possible ONLY for a live, active, UNSIGNED pass found by token;
-  unknown/revoked/worker tokens → neutral 404, nothing written.
-- Sign-once lock is atomic (re-asserted in the update filter) — concurrent
-  double-sign cannot produce two writes; loser gets 409 "התדריך כבר נחתם".
-- 600KB hard cap read BEFORE full buffering (read cap+1), PNG magic bytes +
-  content-type both required, signer_name capped at 120 chars (architect
-  hardening suggestion, implemented).
-- Per-IP _check_throttle applied (same as worker gate).
-- No PII beyond first name+company on any public response; signature_ref
-  never leaves the server on public routes (probe asserts this).
-- gate_public.py still imports NO authenticated dependencies.
+S1 — shareText() (frontend/src/utils/fileDownload.js)
+  New helper: Capacitor native Share.share({text}) (user-cancel tolerated),
+  web navigator.share({text}) (AbortError treated as success), fallback
+  clipboard copy returning {copied:true}. downloadBlob untouched.
 
-V1 — NEW PROBE: backend/tests/probe_safety_qrg_guest.py → 30/30 PASS
---------------------------------------------------------------------------------
-issue 201 (token ≥32, valid_on=israel_today, QR stored) / contractor 403 /
-1-char name 422 / bad date 422 · GET unsigned → guest_briefing with
-name+company+briefing v1, NO phone/id/signature fields · sign valid PNG →
-200 green guest today; DB signed=true + version/hash · GET after sign →
-green guest · second sign → 409 "התדריך כבר נחתם" · valid_on future → red
-guest_date · revoke → 200; GET → neutral invalid; sign → 404 · unknown
-token → 404 · >600KB → 422 · non-PNG bytes → 422 · content-type jpeg → 422
-· empty signer 422 · signer_name >120 chars → 422 (failed attempts write
-nothing) · guest scans logged + tagged (guest_name/is_guest); worker rows
-byte-compatible; summary + filters intact · authed list 3 items with
-correct statuses; contractor 403; qr.png 200 PNG.
+S2/S3 — Worker share as message (SafetyWorkerCard.js + SafetyHomePage.js)
+  Button renamed "שלח קוד". Flow: getEntryToken → gate_url → shareText(msg).
+  Toast on clipboard fallback: "ההודעה הועתקה — הדבק ושלח".
+  Message sent (WA-style preview):
+    שלום {שם פרטי}, זהו קוד הכניסה האישי שלך לאתר {שם פרויקט}.
+    פתח/י את הקישור והצג/י את הקוד שמופיע בו לסורק בכניסה לאתר.
+    שמור/י על הודעה זו: https://app.brikops.com/gate/{token}
 
-V2 — REGRESSION
+S4 — Guest share as message (guest.py + SafetyHomePage.js GuestPassSection)
+  _pass_list_item adds gate_url (derived; raw token still NOT exposed).
+  Issue-success + list re-share buttons send the message ("שלח קוד", Send
+  icon). printQr flow unchanged (image-based).
+  Message sent:
+    שלום {שם אורח}, זהו קוד הכניסה שלך לאתר {שם פרויקט} לתאריך {תאריך}.
+    יש להיכנס לקישור, לקרוא את תדריך הבטיחות ולחתום לפני ההגעה לאתר: {קישור}
+
+S5a — Public QR endpoint (gate_public.py)
+  NEW GET /api/gate/{token}/qr.png (unauthenticated, like the gate page):
+  per-IP throttle (XFF-aware), 20-128 token length pre-check, active
+  worker_entry_tokens OR guest_entry_passes lookup (id-only projection),
+  neutral 404 "קוד לא תקף" on any miss, StreamingResponse of the QR PNG
+  encoding _gate_url(token) — ZERO information gain (the bytes encode only
+  the URL the caller already has). Headers: X-Robots-Tag "noindex, nofollow",
+  Cache-Control "private, max-age=3600".
+  server.py note: the global /api/ no-store middleware now skips responses
+  where the endpoint set an explicit Cache-Control. Only qr.png does; every
+  other API response keeps the no-store default (verified by regressions).
+
+S5b — QR on green pass page (GatePage.js)
+  GateQrCard (180px img from `${API}/gate/${token}/qr.png`, caption
+  "הצג לסורק בכניסה", hides itself on img error) rendered on worker GREEN
+  and guest GREEN only. Red/expired/invalid states unchanged.
+
+VERIFICATION
 --------------------------------------------------------------------------------
-- probe_safety_qrg1.py            42/42 PASS
-- probe_safety_qrg1_fix1.py       18/18 PASS
-- probe_safety_ind1.py            30/30 PASS
-- probe_safety_ind2.py            34/34 PASS
-- probe_safety_ind2_fix1.py       31/31 PASS
-- probe_safety_ind2_fix4.py       21/21 PASS
-- probe_safety_ind3.py            31/31 PASS
-- probe_safety_w1_alerts.py       4 date-dependent failures — today is
-  FRIDAY: reminder-day preferences skip Fri/Sat, known + expected, not a
-  regression (same note as previous batches).
-- pytest safety files: 18 passed, 1 failed — the long-standing pre-existing
-  test_defects_summary_includes_safety_open_count failure (unrelated).
-- py_compile: all changed backend files OK.
-- CI=true craco build (REACT_APP_BACKEND_URL=https://app.brikops.com):
-  SUCCESS — "The build folder is ready to be deployed" (only the usual
-  pre-existing capacitor source-map warnings). Final deployed bundle
-  re-verified: prod URL baked, no dev-domain remnants.
-- FE tests: none match safety/gate patterns (no test files) — n/a.
-- House greps: no console.log/debugger/TODO added; no signature_ref in any
-  public payload builder; gate_public.py has no get_current_user import.
+V1 — New probe backend/tests/probe_safety_qrg_share_fix.py: 14/14 PASS
+  - entry-token ensure returns token + gate_url
+  - worker/guest token → 200 image/png, PNG magic
+  - noindex + private cache headers survive middleware (xrt=noindex, nofollow;
+    cc=private, max-age=3600)
+  - body is bytes only, QR bytes == locally-encoded QR of _gate_url(token)
+    (zero info gain)
+  - unknown / short / revoked token → neutral 404
+  - gate _check_throttle → 429 past limit; HTTP burst → 429 within limit+2
+  - guest list item includes gate_url == _gate_url(token); NO raw token
+    field; existing keys unchanged (only gate_url added)
+
+V2 — Regressions:
+  - probe_safety_qrg_guest.py .......... 30/30 PASS
+  - probe_safety_qrg1.py ............... 42/42 PASS
+  - probe_safety_qrg1_fix1.py .......... 18/18 PASS
+  - safety pytest (test_safety_registration.py + test_defect_safety_tag.py):
+    18 passed + 1 pre-existing known failure
+    (test_defects_summary_includes_safety_open_count — unrelated, known)
+  - py_compile on ALL backend .py files: OK
+
+V3 — Build & visual:
+  - CI=true production frontend build: SUCCESS; final bundle rebuilt with
+    REACT_APP_BACKEND_URL=https://api.brikops.com and verified
+    (frontend/build/static/js/main.d55df1ce.js references api.brikops.com).
+  - Screenshot screenshots/qrg_share_fix_gate_green.jpg: green worker pass
+    page "מאושר לכניסה" with induction validity line AND the new QR card
+    ("הצג לסורק בכניסה") rendered from the live endpoint.
+  - Temporary ENABLE_SAFETY_MODULE flag + demo data used for the screenshot
+    were removed; backend/.env restored.
 
 ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-PASS — "implementation satisfies the qrg-guest objective end-to-end without
-blocking functional or security regressions … no serious security violation
-observed." Non-blocking suggestion (signer_name max length) was implemented
-(≤120 → 422); probe re-run 30/30 after the change. Orphan-signature cleanup
-on the rare storage-write/DB-race was noted as optional operational
-hardening — not done (out of batch scope).
+PASS — no blocking functional or security defects. Public QR endpoint leaks
+no PII (image bytes encode only the gate URL the caller already has);
+enumeration resistance via high-entropy tokens + neutral 404 + throttling.
+Cache middleware change correctly scoped. Optional (non-blocking) follow-ups:
+monitor /api/gate/* 429 rates after rollout; central XFF trust hardening.
 
-SCREENSHOTS (screenshots/, real end-to-end renders of the built bundle)
---------------------------------------------------------------------------------
-- qrg_guest_briefing.jpg — public guest briefing + signature pad (unsigned):
-  header "תדריך בטיחות למבקרים — אתר בנייה", guest "דוד לוי · אדריכל -
-  סטודיו לוי", 5-point briefing, signer-name field, signature canvas.
-- qrg_guest_green.jpg    — GREEN "אורח מאושר לכניסה", name/company,
-  "מאושר ליום 2026-07-17".
-- qrg_guest_red_date.jpg — RED "אין כניסה", "האישור תקף ליום 2026-07-19
-  בלבד", "יש לפנות למנהל העבודה".
-NOTE: the issue dialog + guest-pass list live behind login; they were
-verified by the probe (30/30) and are covered by the V3 device checklist.
-Demo passes used for the screenshots were deleted afterwards; the temporary
-safety-module env flag was removed and the prod bundle rebuilt/restored.
-
-V3 DEVICE CHECKS (Zahi, prod after deploy)
---------------------------------------------------------------------------------
-Issue pass today → QR to phone → briefing → sign → GREEN → rescan stays
-green → tomorrow-pass shows red today → revoke → "קוד לא תקף" → guest scans
-appear in סריקות כניסה tagged אורח.
-
+================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

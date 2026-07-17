@@ -90,6 +90,10 @@ def _pass_list_item(p: dict) -> dict:
         "signed": bool(briefing.get("signed")),
         "signed_at": briefing.get("signed_at"),
         "qr_display_url": generate_url(p["qr_ref"]) if p.get("qr_ref") else None,
+        # qrg-share-fix S4a: the shareable link for re-share from the list.
+        # Authed-only response (SAFETY_WRITERS) — same audience that can
+        # already fetch qr.png. The RAW token field is deliberately NOT added.
+        "gate_url": _gate_url(p["token"]) if p.get("token") else None,
         "created_at": p.get("created_at"),
     }
 

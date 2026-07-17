@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { CheckCircle2, XCircle, AlertTriangle, HelpCircle, ArrowRight, Eraser, Loader2 } from 'lucide-react';
-import { safetyService } from '../services/api';
+import { safetyService, API } from '../services/api';
 
 // Batch qrg1-entry-gate — PUBLIC live entry-gate status page (/gate/:token).
 // Scanned by the gate guard: mobile-first, RTL, no auth, one glance verdict.
@@ -49,6 +49,27 @@ function GateBackButton() {
     >
       <ArrowRight className="w-6 h-6" />
     </button>
+  );
+}
+
+// qrg-share-fix S5b — boarding-pass QR card, GREEN states ONLY (worker +
+// guest). The page renders its own QR (public /gate/{token}/qr.png — the QR
+// encodes the exact URL already shown, zero info gain) so the guard scans it
+// straight off the recipient's screen. Gracefully hides on image error.
+function GateQrCard({ token }) {
+  const [broken, setBroken] = useState(false);
+  if (broken) return null;
+  return (
+    <div className="mt-6 bg-white rounded-2xl p-4 shadow-lg">
+      <img
+        src={`${API}/gate/${token}/qr.png`}
+        alt="קוד QR לכניסה"
+        onError={() => setBroken(true)}
+        style={{ width: '180px', height: '180px' }}
+        className="mx-auto"
+      />
+      <p className="text-sm font-semibold text-slate-700 text-center mt-2">הצג לסורק בכניסה</p>
+    </div>
   );
 }
 
@@ -321,6 +342,7 @@ export default function GatePage() {
         <p className="text-2xl mt-3 font-semibold">{d.guest_name}</p>
         {d.guest_company && <p className="text-lg mt-1 opacity-90">{d.guest_company}</p>}
         <p className="text-lg mt-3 opacity-90">מאושר ליום {d.valid_on}</p>
+        <GateQrCard token={token} />
       </div>
     );
   }
@@ -350,6 +372,7 @@ export default function GatePage() {
         </div>
       )}
       {d.project_name && <p className="mt-6 text-sm opacity-75">{d.project_name}</p>}
+      <GateQrCard token={token} />
     </div>
   );
 }

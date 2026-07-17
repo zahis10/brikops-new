@@ -1484,9 +1484,14 @@ async def paywall_middleware(request: Request, call_next):
         )
     response = await call_next(request)
     if request.url.path.startswith("/api/"):
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
+        # qrg-share-fix: respect an EXPLICIT Cache-Control set by an endpoint
+        # (only the public gate qr.png sets one — "private, max-age=3600").
+        # Every other /api/ response has no Cache-Control here and keeps the
+        # no-store default below, unchanged.
+        if "cache-control" not in response.headers:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
     return response
 
 CANONICAL_DOMAIN = os.environ.get('PUBLIC_APP_URL', '').rstrip('/')

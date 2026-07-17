@@ -10,7 +10,7 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { INCIDENT_TYPE_HE, SEVERITY_HE } from './safetyLabels';
 import { safetyService } from '../../services/api';
-import { downloadBlob } from '../../utils/fileDownload';
+import { shareText } from '../../utils/fileDownload';
 import { toast } from 'sonner';
 
 // Read-only worker card. Mirrors SafetyDocumentDetail's chrome (Dialog
@@ -45,9 +45,16 @@ function Field({ label, children }) {
 // INDUCTION_TRAINING_TYPE (same constant as SafetyHomePage).
 const INDUCTION_TYPE = 'הדרכת אתר';
 
+// qrg-share-fix S2 — the Hebrew worker entry-code message. {link} is the
+// gate_url returned by the entry-token endpoint (spec wording — do not edit).
+const workerEntryMessage = (firstName, projectName, link) =>
+  `שלום ${firstName}, זהו קוד הכניסה האישי שלך לאתר ${projectName}. ` +
+  `פתח/י את הקישור והצג/י את הקוד שמופיע בו לסורק בכניסה לאתר. ` +
+  `שמור/י על הודעה זו: ${link}`;
+
 export default function SafetyWorkerCard({
   projectId, worker, open, onClose, isWriter, companies = [], onEditWorker, onAddTraining,
-  onOpenEvidence, onOpenTraining, onBlockChanged,
+  onOpenEvidence, onOpenTraining, onBlockChanged, projectName = '',
 }) {
   const [trainings, setTrainings] = useState([]);
   const [incidents, setIncidents] = useState([]);
@@ -64,14 +71,21 @@ export default function SafetyWorkerCard({
 
   const isBlocked = !!blocked?.is_blocked;
 
-  const downloadQr = async () => {
+  // qrg-share-fix S3 — "שלח קוד" shares a Hebrew MESSAGE with the gate link
+  // (not a naked QR image). getEntryToken is ensure-on-demand and already
+  // returns gate_url. Print below keeps the QR image.
+  const sendCode = async () => {
     if (qrBusy) return;
     setQrBusy(true);
     try {
-      const blob = await safetyService.getEntryQrPng(projectId, worker.id);
-      await downloadBlob(blob, `entry-qr-${worker.full_name || worker.id}.png`, 'image/png');
+      const res = await safetyService.getEntryToken(projectId, worker.id);
+      if (!res?.gate_url) throw new Error('missing gate_url');
+      const first = (worker.full_name || '').trim().split(/\s+/)[0] || '';
+      const msg = workerEntryMessage(first, projectName, res.gate_url);
+      const out = await shareText(msg);
+      if (out?.copied) toast.success('ההודעה הועתקה — הדבק ושלח');
     } catch (e) {
-      toast.error('הורדת קוד הכניסה נכשלה');
+      toast.error('שליחת קוד הכניסה נכשלה');
     } finally {
       setQrBusy(false);
     }
@@ -228,11 +242,11 @@ export default function SafetyWorkerCard({
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={downloadQr}
+                  onClick={sendCode}
                   disabled={qrBusy}
                   className="px-3 py-2 rounded-lg bg-blue-50 text-blue-700 border border-blue-100 hover:bg-blue-100 text-sm font-medium flex items-center gap-1.5 disabled:opacity-50"
                 >
-                  <QrCode className="w-4 h-4" /> הורד / שתף QR
+                  <QrCode className="w-4 h-4" /> שלח קוד
                 </button>
                 <button
                   type="button"

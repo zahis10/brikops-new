@@ -209,6 +209,52 @@ async def gate_status(token: str, request: Request, response: Response):
 
 
 # =====================================================================
+# qrg-share-fix S5a — public QR PNG for the pass page (boarding-pass).
+# SECURITY (binding): returns a QR encoding the EXACT URL the caller already
+# possesses — zero information gain. Token lookup ONLY (worker token OR guest
+# pass, active); never touches worker/guest documents, returns bytes only.
+# =====================================================================
+@router.get("/{token}/qr.png")
+async def gate_qr_png(token: str, request: Request):
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff and "," in xff:
+        xff = xff.split(",")[0].strip()
+    ip = xff.strip() or (request.client.host if request.client else "") or "unknown"
+    _check_throttle(ip)
+
+    db = get_db()
+    found = False
+    if token and 20 <= len(token) <= 128:
+        tok = await db.worker_entry_tokens.find_one(
+            {"token": token, "status": "active"}, {"_id": 0, "id": 1}
+        )
+        if tok:
+            found = True
+        else:
+            gp = await db.guest_entry_passes.find_one(
+                {"token": token, "status": "active"}, {"_id": 0, "id": 1}
+            )
+            if gp:
+                found = True
+    if not found:
+        # neutral 404 — no enumeration between unknown/revoked/worker/guest
+        raise HTTPException(status_code=404, detail="קוד לא תקף")
+
+    from fastapi.responses import StreamingResponse
+    from contractor_ops.safety.gate import _qr_png_bytes, _gate_url
+    import io
+    png = _qr_png_bytes(_gate_url(token))
+    return StreamingResponse(
+        io.BytesIO(png),
+        media_type="image/png",
+        headers={
+            "X-Robots-Tag": "noindex, nofollow",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
+# =====================================================================
 # qrg-guest — guest branch helpers + public sign endpoint (G4/G5)
 # =====================================================================
 GUEST_SIG_MAX_BYTES = 600 * 1024  # hard cap — public write, no user quota
