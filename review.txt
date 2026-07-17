@@ -1,108 +1,235 @@
 ================================================================================
-REVIEW — BATCH auth-google-chooser
-fix(auth): native Google sign-in always shows the account chooser
-Branch: staging | Date: 2026-07-17 | Base: 4211bee | FE ONLY, OTA, no deps
+TASK #546 — BATCH visual-auth: construction-skyline backdrop on ALL auth screens
+feat(ui): auth screens get the construction-skyline backdrop
+Branch: staging | Date: 2026-07-17 | FE ONLY, OTA, no deps
+Spec: attached_assets/Pasted---1784316073529_1784316073530.txt
 ================================================================================
 
-PROBLEM (Zahi field finding 2026-07-17)
+STEP 0 FINDINGS (verified on current tree before implementation)
 --------------------------------------------------------------------------------
-Tapping "Google" in the NATIVE app silently reused a previously-authorized
-Google account instead of showing the account chooser. On a multi-account
-device the auto-picked account may not match any BrikOps user, dropping an
-existing user into registration. Fix: force the account chooser on EVERY
-native Google sign-in tap. Backend /auth/social untouched (it was correct).
+- min-h-screen grep: LoginPage.js:555 (1), OnboardingPage.js:754 + :1747 (2),
+  ForgotPasswordPage.js:43 (1), ResetPasswordPage.js:60 + :87 (2) — exactly as
+  spec; all quoted classes/gradients matched byte-for-byte.
+- LoginPage/Onboarding main returns: everything (incl. gitSha stamp at
+  LoginPage:1037-1039) is inside the Card; Onboarding :754 loading shell
+  contains only the Loader2 spinner (no Card, no p-4). Confirmed.
+- Forgot/Reset: only outside-panel elements are the logo img + "איפוס סיסמה"
+  subtitle (Reset :60 no-token shell has logo only, no subtitle). White panels
+  are plain divs "bg-white rounded-2xl shadow-lg border border-slate-200/60
+  p-6 sm:p-8". Confirmed.
+- No LoginBackdrop* file existed anywhere; frontend/src/components is flat.
+→ No mismatches. Proceeded per spec E1-E6 with zero deviations.
 
-STEP 0 — MECHANISM REPORT (installed @capgo/capacitor-social-login v7.20.0)
+WHAT CHANGED (spec E1-E6, frontend-only, pure CSS + inline SVG, no new deps)
 --------------------------------------------------------------------------------
-Inspected node_modules dist/esm/definitions.d.ts + Android source:
+E1  NEW frontend/src/components/LoginBackdrop.js — pasted EXACTLY as given in
+    the spec: aria-hidden, pointer-events-none decorative layer; outer deep-navy
+    gradient + radial amber glow; inner maxWidth-560 masked layer; crane-jib SVG
+    lowering its hook from the top; glowing orange horizon line; building/crane
+    skyline SVG at the bottom. No images, no logic.
+E2  All five shells: old background removed (inline slate gradient /
+    bg-gradient-to-br classes), replaced with relative + background:#17202b,
+    p-4 → p-4 pb-10 where present (NOT on Onboarding loading shell),
+    <LoginBackdrop /> inserted as first child, import added.
+E3  LoginPage Card: shadow-2xl dropped, approved boxShadow applied,
+    relative z-10 kept. Card contents untouched.
+E4  OnboardingPage: loading spinner got relative z-10; main Card same swap
+    as E3.
+E5  ForgotPasswordPage: wrapper +relative z-10; subtitle text-slate-500 →
+    text-slate-300; panel → "bg-white rounded-2xl p-6 sm:p-8" + approved
+    boxShadow. Contents untouched.
+E6  ResetPasswordPage both shells (no-token + main): exact E5 treatment
+    (subtitle recolor only where present).
 
-(a) Login option forcing the prompt:
-    - `GoogleLoginOptions.forcePrompt?: boolean` EXISTS (definitions.d.ts
-      lines 245-249): "forces the account selection prompt to appear on iOS"
-      — iOS ONLY.
-    - `prompt: 'select_account'` also exists (since 7.12.0) but the docs
-      state explicitly: "This parameter only affects web platform behavior."
-      → not usable for the native fix.
-    - Android has NO login option that forces the chooser (its
-      filterByAuthorizedAccounts / autoSelectEnabled apply only to the
-      'bottom' sheet style).
+Approved Card/panel boxShadow used everywhere (exact value):
+  0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08),
+  0 0 60px rgba(245,158,11,.10)
 
-(b) Pre-logout:
-    - `SocialLogin.logout({provider:'google'})` on Android calls
-      CredentialManager.clearCredentialStateAsync (GoogleProvider.java
-      ~706-723), clearing the cached credential so the next login shows
-      the chooser.
+DO NOT TOUCH list — respected: App.js, components/splash/**, all card/panel
+contents (forms, OTP, social buttons, demo buttons, version stamp, links),
+auth logic/handlers, routes, GatePage/app chrome, backend, deps, native.
+git diff confirms only the 4 pages + the new component changed.
 
-DECISION: use BOTH, belt-and-braces, in each native Google branch:
-  1. `try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}`
-     — awaited, errors swallowed (no prior session etc.); covers Android.
-  2. `forcePrompt: true` in the login options — covers iOS.
-
-EDIT (A1 — one behavior, both call sites)
+FULL DIFF
 --------------------------------------------------------------------------------
-Identical change in the native Google branches of
-frontend/src/pages/LoginPage.js::handleGoogleSignIn and
-frontend/src/pages/OnboardingPage.js::handleGoogleSignIn.
-NOT touched: backend auth, social link/register flows, index.js init,
-Apple sign-in, web GIS flow, ios/android native projects, dependencies.
-
-DIFF
---------------------------------------------------------------------------------
+diff --git a/frontend/src/pages/ForgotPasswordPage.js b/frontend/src/pages/ForgotPasswordPage.js
+index 7e3bcc0..2b4804d 100644
+--- a/frontend/src/pages/ForgotPasswordPage.js
++++ b/frontend/src/pages/ForgotPasswordPage.js
+@@ -1,3 +1,4 @@
++import LoginBackdrop from '../components/LoginBackdrop';
+ import React, { useState } from 'react';
+ import { Link } from 'react-router-dom';
+ import { Mail, Loader2, ArrowRight, CheckCircle, AlertCircle } from 'lucide-react';
+@@ -40,14 +41,15 @@ const ForgotPasswordPage = () => {
+   };
+ 
+   return (
+-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-amber-50/30 flex items-center justify-center p-4" dir="rtl">
+-      <div className="w-full max-w-md">
++    <div className="min-h-screen flex items-center justify-center p-4 pb-10 relative" style={{ background: '#17202b' }} dir="rtl">
++      <LoginBackdrop />
++      <div className="w-full max-w-md relative z-10">
+         <div className="flex flex-col items-center mb-8">
+           <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
+-          <p className="text-slate-500 text-sm">איפוס סיסמה</p>
++          <p className="text-slate-300 text-sm">איפוס סיסמה</p>
+         </div>
+ 
+-        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6 sm:p-8">
++        <div className="bg-white rounded-2xl p-6 sm:p-8" style={{ boxShadow: '0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px rgba(245,158,11,.10)' }}>
+           {sent ? (
+             <div className="text-center space-y-4">
+               <div className="flex justify-center">
 diff --git a/frontend/src/pages/LoginPage.js b/frontend/src/pages/LoginPage.js
-@@ -303,9 +303,13 @@ const LoginPage = () => {
+index 6db7625..b60b9d8 100644
+--- a/frontend/src/pages/LoginPage.js
++++ b/frontend/src/pages/LoginPage.js
+@@ -1,3 +1,4 @@
++import LoginBackdrop from '../components/LoginBackdrop';
+ import React, { useState, useCallback, useEffect, useRef } from 'react';
+ import { useNavigate } from 'react-router-dom';
+ import { useAuth } from '../contexts/AuthContext';
+@@ -552,8 +553,10 @@ const LoginPage = () => {
+   }, []);
  
-     if (Capacitor.isNativePlatform()) {
-       try {
-+        // auth-google-chooser: NEVER silently reuse a cached Google account.
-+        // Pre-logout clears Android's CredentialManager cache (errors — e.g.
-+        // no prior session — swallowed); forcePrompt forces the iOS chooser.
-+        try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}
-         const res = await SocialLogin.login({
-           provider: 'google',
--          options: { scopes: ['email', 'profile'] },
-+          options: { scopes: ['email', 'profile'], forcePrompt: true },
-         });
-         const idToken = res?.result?.idToken;
-         if (!idToken) {
+   return (
+-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
+-      <Card className="w-full max-w-md p-8 bg-white shadow-2xl rounded-2xl relative z-10">
++    <div className="min-h-screen flex items-center justify-center p-4 pb-10 relative" style={{ background: '#17202b' }}>
++      <LoginBackdrop />
++      <Card className="w-full max-w-md p-8 bg-white rounded-2xl relative z-10"
++            style={{ boxShadow: '0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px rgba(245,158,11,.10)' }}>
+         <div className="flex flex-col items-center mb-8">
+           <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 12 }} />
+           <p className="text-slate-500 text-sm mt-1">ניהול משימות קבלן</p>
 diff --git a/frontend/src/pages/OnboardingPage.js b/frontend/src/pages/OnboardingPage.js
-@@ -190,9 +190,13 @@ const OnboardingPage = () => {
+index 0d79015..aa028d5 100644
+--- a/frontend/src/pages/OnboardingPage.js
++++ b/frontend/src/pages/OnboardingPage.js
+@@ -1,3 +1,4 @@
++import LoginBackdrop from '../components/LoginBackdrop';
+ import React, { useState, useCallback, useEffect, useRef } from 'react';
+ import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
+ import { useAuth } from '../contexts/AuthContext';
+@@ -751,8 +752,9 @@ const OnboardingPage = () => {
  
-     if (Capacitor.isNativePlatform()) {
-       try {
-+        // auth-google-chooser: NEVER silently reuse a cached Google account.
-+        // Pre-logout clears Android's CredentialManager cache (errors — e.g.
-+        // no prior session — swallowed); forcePrompt forces the iOS chooser.
-+        try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}
-         const res = await SocialLogin.login({
-           provider: 'google',
--          options: { scopes: ['email', 'profile'] },
-+          options: { scopes: ['email', 'profile'], forcePrompt: true },
-         });
-         const idToken = res?.result?.idToken;
-         if (!idToken) {
+   if (onboardingEnabled === null) {
+     return (
+-      <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
+-        <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
++      <div className="min-h-screen flex items-center justify-center relative" style={{ background: '#17202b' }}>
++        <LoginBackdrop />
++        <Loader2 className="w-8 h-8 text-amber-400 animate-spin relative z-10" />
+       </div>
+     );
+   }
+@@ -1744,8 +1746,10 @@ const OnboardingPage = () => {
+   };
+ 
+   return (
+-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
+-      <Card className="w-full max-w-md p-8 bg-white shadow-2xl rounded-2xl relative z-10">
++    <div className="min-h-screen flex items-center justify-center p-4 pb-10 relative" style={{ background: '#17202b' }}>
++      <LoginBackdrop />
++      <Card className="w-full max-w-md p-8 bg-white rounded-2xl relative z-10"
++            style={{ boxShadow: '0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px rgba(245,158,11,.10)' }}>
+         {renderHeader()}
+         {renderCurrentStep()}
+       </Card>
+diff --git a/frontend/src/pages/ResetPasswordPage.js b/frontend/src/pages/ResetPasswordPage.js
+index 8c69db0..9850961 100644
+--- a/frontend/src/pages/ResetPasswordPage.js
++++ b/frontend/src/pages/ResetPasswordPage.js
+@@ -1,3 +1,4 @@
++import LoginBackdrop from '../components/LoginBackdrop';
+ import React, { useState } from 'react';
+ import { Link, useSearchParams } from 'react-router-dom';
+ import { Eye, EyeOff, Loader2, ArrowRight, CheckCircle, AlertCircle, XCircle } from 'lucide-react';
+@@ -57,12 +58,13 @@ const ResetPasswordPage = () => {
+ 
+   if (!token) {
+     return (
+-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-amber-50/30 flex items-center justify-center p-4" dir="rtl">
+-        <div className="w-full max-w-md">
++      <div className="min-h-screen flex items-center justify-center p-4 pb-10 relative" style={{ background: '#17202b' }} dir="rtl">
++        <LoginBackdrop />
++        <div className="w-full max-w-md relative z-10">
+           <div className="flex flex-col items-center mb-8">
+             <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
+           </div>
+-          <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6 sm:p-8 text-center space-y-4">
++          <div className="bg-white rounded-2xl p-6 sm:p-8 text-center space-y-4" style={{ boxShadow: '0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px rgba(245,158,11,.10)' }}>
+             <div className="flex justify-center">
+               <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center">
+                 <XCircle className="w-8 h-8 text-red-500" />
+@@ -84,14 +86,15 @@ const ResetPasswordPage = () => {
+   }
+ 
+   return (
+-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-amber-50/30 flex items-center justify-center p-4" dir="rtl">
+-      <div className="w-full max-w-md">
++    <div className="min-h-screen flex items-center justify-center p-4 pb-10 relative" style={{ background: '#17202b' }} dir="rtl">
++      <LoginBackdrop />
++      <div className="w-full max-w-md relative z-10">
+         <div className="flex flex-col items-center mb-8">
+           <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
+-          <p className="text-slate-500 text-sm">איפוס סיסמה</p>
++          <p className="text-slate-300 text-sm">איפוס סיסמה</p>
+         </div>
+ 
+-        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6 sm:p-8">
++        <div className="bg-white rounded-2xl p-6 sm:p-8" style={{ boxShadow: '0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px rgba(245,158,11,.10)' }}>
+           {success ? (
+             <div className="text-center space-y-4">
+               <div className="flex justify-center">
 
-VERIFY (V1)
+NEW FILE: frontend/src/components/LoginBackdrop.js — the spec E1 component,
+pasted verbatim from attached_assets/Pasted---1784316073529_1784316073530.txt
+(aria-hidden decorative layer; pointer-events-none; crane-jib SVG top; orange
+horizon glow; skyline SVG bottom; radial vignette). Full source in the file.
+
+V1 — BUILD
 --------------------------------------------------------------------------------
-House greps — only the two intended call sites touch SocialLogin.login/logout:
-  frontend/src/pages/LoginPage.js:309  try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}
-  frontend/src/pages/LoginPage.js:310  const res = await SocialLogin.login({
-  frontend/src/pages/OnboardingPage.js:196  try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}
-  frontend/src/pages/OnboardingPage.js:197  const res = await SocialLogin.login({
+CI=true craco build → EXIT CODE 0 (compiled successfully; no new warnings
+introduced by this batch). frontend/build refreshed and served by the Start
+application workflow on port 5000.
+House greps confirm: LoginBackdrop imported + rendered as first child in all
+5 shells; approved boxShadow present in all 5 Card/panel positions; no
+remaining old gradients on auth shells; App.js and components/splash/**
+untouched (git diff shows zero changes there).
 
-Production build:
-  CI=true REACT_APP_BACKEND_URL=/ npx craco build → "Compiled successfully."
-  EXIT=0
-py_compile: n/a (FE only).
-
-V2 — DEVICE (Zahi, prod after deploy): login screen → tap Google → account
-chooser appears (all device accounts) → pick zahis10 → flow continues per
-backend (link/registration for unlinked account); tap Google again → chooser
-appears AGAIN. Web login unchanged.
+V2 — VISUAL EVIDENCE (screenshots committed under screenshots/)
+--------------------------------------------------------------------------------
+Captured against the running app (headless Chromium, splash fully cleared):
+- screenshots/visual-auth-login-390.jpg      /login @390px — navy backdrop,
+  crane hook top, skyline + orange horizon bottom, white card floating with
+  approved glow shadow. Card contents identical to before.
+- screenshots/visual-auth-login-1280.jpg     /login @1280px — centered
+  vignette, backdrop scales cleanly on desktop.
+- screenshots/visual-auth-onboarding-390.jpg /onboarding?mode=register @390px —
+  registration step on the same backdrop.
+- screenshots/visual-auth-forgot-390.jpg     /forgot-password @390px — subtitle
+  "איפוס סיסמה" readable (text-slate-300) on the dark backdrop.
+- screenshots/visual-auth-reset-notoken-390.jpg /reset-password (no token)
+  @390px — "קישור לא תקף" box on the same backdrop.
+Additionally verified by automated Playwright test runs (mobile 400px +
+desktop 1280px): all four routes render backdrop + floating card; no console
+errors introduced (pre-existing CSP font/script warnings only).
 
 ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-Verdict: Pass. Both call sites updated identically; pre-logout awaited with
-swallowed errors; cancellation/toast handling preserved; no backend, Apple,
-web-GIS, init, or dependency changes; no security findings.
+Verdict: PASS. Backdrop is a pure decorative layer (aria-hidden,
+pointer-events-none); stacking correct (relative parent + z-10 content) in all
+shells; approved shadow applied consistently; presentation-only changes, no
+auth/routing regressions; DO NOT TOUCH list respected. One out-of-scope item
+flagged (a chromium entry added to replit.nix by my screenshot tooling) — it
+has been reverted; the final diff contains only the 4 pages + the new
+component (+ screenshot evidence files).
+
+SCOPE GUARANTEES
+--------------------------------------------------------------------------------
+Frontend-only, OTA-safe. No new npm deps, no image assets (inline SVG only),
+no backend, no native, no route or logic changes.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

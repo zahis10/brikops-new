@@ -1,3 +1,4 @@
+import LoginBackdrop from '../components/LoginBackdrop';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -552,8 +553,10 @@ const LoginPage = () => {
   }, []);
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
-      <Card className="w-full max-w-md p-8 bg-white shadow-2xl rounded-2xl relative z-10">
+    <div className="min-h-screen flex items-center justify-center p-4 pb-10 relative" style={{ background: '#17202b' }}>
+      <LoginBackdrop />
+      <Card className="w-full max-w-md p-8 bg-white rounded-2xl relative z-10"
+            style={{ boxShadow: '0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px rgba(245,158,11,.10)' }}>
         <div className="flex flex-col items-center mb-8">
           <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 12 }} />
           <p className="text-slate-500 text-sm mt-1">ניהול משימות קבלן</p>

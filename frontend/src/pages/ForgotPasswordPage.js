@@ -1,3 +1,4 @@
+import LoginBackdrop from '../components/LoginBackdrop';
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Mail, Loader2, ArrowRight, CheckCircle, AlertCircle } from 'lucide-react';
@@ -40,14 +41,15 @@ const ForgotPasswordPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-amber-50/30 flex items-center justify-center p-4" dir="rtl">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center p-4 pb-10 relative" style={{ background: '#17202b' }} dir="rtl">
+      <LoginBackdrop />
+      <div className="w-full max-w-md relative z-10">
         <div className="flex flex-col items-center mb-8">
           <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
-          <p className="text-slate-500 text-sm">איפוס סיסמה</p>
+          <p className="text-slate-300 text-sm">איפוס סיסמה</p>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6 sm:p-8">
+        <div className="bg-white rounded-2xl p-6 sm:p-8" style={{ boxShadow: '0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px rgba(245,158,11,.10)' }}>
           {sent ? (
             <div className="text-center space-y-4">
               <div className="flex justify-center">
