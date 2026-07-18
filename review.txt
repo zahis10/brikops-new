@@ -1,218 +1,61 @@
 ================================================================================
-BATCH visual-user-panel — Task #551 — 2026-07-18 — branch staging, base 7ff7533
-Identity panel + profile photo in the side menu (stage 3 of the VISUAL REFRESH
-arc, Zahi-approved mockup option ב' "סצנה + אווטאר צף"). FE + small backend.
-No new dependencies (Pillow already present via qrcode==8.2). No native.
+FIX1 — Task #551 (visual-user-panel) — 2026-07-18 — pre-deploy, branch staging
+iPhone PHOTO ORIENTATION — uploaded iPhone photos rendered UPSIDE-DOWN/rotated.
+Backend-only fix. No FE change. No new dependencies.
 ================================================================================
 
-STEP 0 FINDINGS (verified on 7ff7533 before coding)
+ROOT CAUSE
 --------------------------------------------------------------------------------
-- object_storage.py: save_bytes(data, key, content_type) -> stored_ref (:61),
-  generate_url(stored_ref) -> per-GET URL (:95). Confirmed both backends.
-- Path note (only spec discrepancy, non-blocking): the worker-photo
-  _photo_display pattern lives at contractor_ops/safety/workers.py:73-80
-  (spec said contractor_ops/workers.py:72-79). Identical fail-soft pattern —
-  reused verbatim.
-- Guard helper import paths (as used from auth_router, same package level):
-    from contractor_ops.upload_rate_limit import check_upload_rate_limit (:40),
-        check_upload_bytes (:64)   [check_content_length (:90) NOT reused —
-        its Hebrew detail hardcodes "50MB"; the 5MB pre-check is done inline
-        with the spec's exact 413 message]
-    from contractor_ops.upload_safety import validate_upload (:36)
-- GET /auth/me: auth_router.py:419 (pre-batch), response_model=UserResponse
-  (schemas.py:251), dependency get_current_user_allow_pending_deletion.
-- users collection: NO photo field existed (zero profile_photo/avatar hits).
-- HamburgerMenu.js: 90 lines, plain "תפריט" header + X at :58-63, nav :65-84,
-  slim filter :32-36, red logout :76. No useAuth import.
-- FE refresh fn (STEP 0 §2): **refreshUser** — AuthContext.js:282-290
-  (useCallback, GET /auth/me → setUser), exported in the context value (:312).
-  The upload/remove flows call it.
-- from PIL import Image works in the backend venv: Pillow 12.1.1.
-- useAuth() consumable in HamburgerMenu: App.js wraps everything in
-  <AuthProvider> (:695-715); both usages (MyProjectsPage slim + project
-  dashboard full) render inside it.
-- MyProjectsPage HardHat square at :237-239 (shift from merged stage-2 batch).
+The profile-photo re-encode (binding security step) stripped ALL EXIF metadata
+WITHOUT first applying the EXIF Orientation tag to the pixels. iPhones store
+photos in sensor orientation + an Orientation tag; once the tag was stripped,
+viewers had no way to rotate — the image displayed as raw sensor pixels
+(upside-down / sideways).
 
-BACKEND CHANGES (auth_router.py + schemas.py only)
+THE FIX (backend/contractor_ops/auth_router.py::upload_my_profile_photo)
 --------------------------------------------------------------------------------
-B1 schemas.py UserResponse: + profile_photo_display_url: Optional[str] = None.
-B2 users doc: new optional profile_photo_ref (stored key, NEVER in any API
-   response). get_me now sets profile_photo_display_url via a local
-   _profile_photo_display(ref) helper — safety/workers.py fail-soft pattern
-   (generate_url in try/except → None) PLUS a hard secrecy guard added after
-   architect review: generate_url() falls back to the raw stored ref when S3
-   presigning fails, so the helper rejects any "s3://…" result → None. The
-   upload response goes through the same helper (never calls generate_url
-   directly).
-   UserResponse builders LEFT AS None (per spec — /auth/me is the source of
-   truth): register (:278), login (:357), dev-login (:409),
-   onboarding_router.py:650. (models.py:91 UserResponse is an unrelated class.)
-B3 NEW POST /api/auth/me/photo (dependency style of get_me —
-   get_current_user_allow_pending_deletion; user_id from the token only):
-   - check_upload_rate_limit(user_id); inline Content-Length pre-check
-     (cap 5MB → 413 "התמונה גדולה מדי (מקסימום 5MB)"); file: UploadFile=File(...)
-     (house pattern from safety/uploads.py);
-   - validate_upload IMAGES ONLY: {.jpg,.jpeg,.png,.webp} /
-     {image/jpeg,image/png,image/webp};
-   - read(cap+1) guard → 413 if over; check_upload_bytes(user_id, len);
-   - RE-ENCODE (binding security step): PIL open+load → else 422
-     "פורמט תמונה לא נתמך"; convert RGB; downscale max side ≤512 (LANCZOS);
-     save JPEG quality 85 to bytes. ORIGINAL BYTES NEVER STORED — EXIF/
-     metadata/embedded payloads stripped;
-   - save_bytes(jpeg, key=f"users/{user_id}/profile-{uuid4().hex}.jpg",
-     "image/jpeg") → users.profile_photo_ref; audit user_profile_photo_change
-     {user_id, action:"set"};
-   - Response: {"photo_display_url": generate_url(ref)}.
-B4 NEW DELETE /api/auth/me/photo: no ref → 404 "אין תמונת פרופיל"; else $unset
-   the field + audit action:"clear" → 204. NOTE (per spec): the stored object
-   may remain — orphan cleanup rides the existing backlog.
-B5 SECURITY: raw stored ref never in responses or logs (grep-verified: no
-   logger/print touches profile_photo_ref); endpoints self-scoped (token-only
-   user_id); display URLs regenerated per GET.
+Immediately after img.load(), BEFORE any conversion:
 
-FRONTEND CHANGES
---------------------------------------------------------------------------------
-F1 api.js authService: + uploadProfilePhoto(file) (multipart POST
-   /auth/me/photo), + removeProfilePhoto() (DELETE /auth/me/photo).
-F2 HamburgerMenu.js — drawer header → identity panel (nav list below is
-   byte-identical: same MENU_ITEMS, slim filtering, red logout):
-   - useAuth() → { user, refreshUser }.
-   - Scene band: height 118, radial amber glow + navy 178deg gradient,
-     blurred amber horizon line at bottom:40, EXACT spec skyline svg
-     (300x70, #111a24 buildings + crane, #f5a623 window dots .3, opacity .55,
-     xMidYMax slice). SheetClose X ON the band (absolute top-2 left-2,
-     text-slate-300 hover:text-white).
-   - Identity block: text-center -mt-[34px] relative z-10 pb-3 border-b;
-     avatar 68px round border-[3px] border-white,
-     boxShadow '0 8px 20px rgba(10,16,26,.25)'; photo <img object-cover> or
-     amber #f59e0b circle with first char of user.name (white bold text-2xl);
-     22px white camera badge (border slate-200, lucide Camera 12px) bottom-left
-     → hidden <input type="file" accept="image/jpeg,image/png,image/webp">;
-     upload → toast "התמונה עודכנה" + refreshUser(); failure → toast the
-     server's Hebrew detail; spinner overlay + disabled input while uploading;
-     name (bold), email-or-phone (small slate-500), role chip amber-50/
-     amber-700: super_admin→"Super Admin", PM→"מנהל פרויקט", MT→"צוות ניהול",
-     contractor→"קבלן", viewer→"צופה", fallback raw role;
-     "הסר תמונה" (text-[11px] text-slate-400 hover:text-red-600, no confirm)
-     when a photo exists → removeProfilePhoto → refreshUser + toast.
-   - Identity panel renders in BOTH slim and full modes; only nav items differ.
-F3 MyProjectsPage header: if user.profile_photo_display_url → 36px round img
-   (w-9 h-9 rounded-full object-cover flex-shrink-0) in place of the amber
-   HardHat square; else the existing square EXACTLY as before. Nothing else
-   in the header changed.
+    from PIL import ImageOps
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass  # corrupt orientation data → keep as-is, never 500
 
-DO-NOT-TOUCH COMPLIANCE
---------------------------------------------------------------------------------
-Worker photos + safety uploads untouched; all existing auth/login/social/OTP
-endpoints untouched (only ADDED endpoints + get_me's new field); deletion/
-reminder routers untouched; nav items/handlers/slim logic untouched;
-LoginBackdrop.js / ProjectsSceneBand.js / ProjectsLightSkyline.js / App.js /
-components/splash/** untouched; no route changes; no new deps; no native.
+The existing pipeline continues UNCHANGED: convert('RGB') → downscale max side
+≤512 (LANCZOS) → JPEG quality 85. EXIF/metadata is still fully stripped from
+the stored bytes — but now the pixels themselves carry the correct
+orientation, so the stripped output displays correctly everywhere.
 
-DIFF SUMMARY (git diff --stat)
---------------------------------------------------------------------------------
- backend/contractor_ops/auth_router.py    | 105 +++++++++++++++++++-
- backend/contractor_ops/schemas.py        |   4 +
- frontend/src/components/HamburgerMenu.js | 165 +++++++++++++++++++++++++++--
- frontend/src/pages/MyProjectsPage.js     |  14 ++-
- frontend/src/services/api.js             |  11 +++
- + NEW backend/tests/probe_user_profile_photo.py (V1 probe)
- + NEW screenshots/visual-user-panel-*.jpg (V3 evidence)
+Fail-soft by design: corrupt/garbage orientation data can never 500 the
+upload — the image is simply kept as decoded.
 
-V1 — FUNCTIONAL HTTP PROBE (backend/tests/probe_user_profile_photo.py)
+SCOPE / DO-NOT-TOUCH
 --------------------------------------------------------------------------------
-Real ASGI app in-process, real local Mongo, FILES_STORAGE_BACKEND=local,
-WA blanked, TRANSLATE_MOCK=1. RESULT: **23/23 PASS** (after FIX1):
-  [PASS] upload valid jpg 2000x1500 → 200 + photo_display_url
-  [PASS] stored ref persisted in users doc
-  [PASS] no "s3://" ref shape in upload response
-  [PASS] /auth/me → profile_photo_display_url present
-  [PASS] no "s3://" ref shape in /auth/me JSON
-  [PASS] stored bytes JPEG + max side ≤512 (decoded — re-encode PROVEN:
-         2000x1500 input stored as 512x384 JPEG)
-  [PASS] upload png → 200
-  [PASS] upload webp → 200
-  [PASS] re-upload replaces ref (different key)
-  [PASS] oversized >5MB → 413 "התמונה גדולה מדי (מקסימום 5MB)"
-  [PASS] .txt upload → 422
-  [PASS] wrong content-type → 422
-  [PASS] corrupt bytes (image/jpeg type) → 422 "פורמט תמונה לא נתמך"
-  [PASS] unauthenticated upload → 401
-  [PASS] unauthenticated delete → 401
-  [PASS] DELETE photo → 204
-  [PASS] /auth/me after delete → field null
-  [PASS] DELETE again → 404 "אין תמונת פרופיל"
-  [PASS] EXIF Orientation=6 applied → stored portrait, no tag (FIX1)
-  [PASS] audit events written (set x4 + clear = 5)
-  [PASS] presign-failure fallback (s3:// ref) → helper returns None
-  [PASS] upload under presign-failure → photo_display_url null (not raw ref)
-  [PASS] /auth/me under presign-failure → field null (not raw ref)
-Raw-ref secrecy note: in LOCAL mode the stored ref IS the public serving path
-(/api/uploads/…) by design — identical to worker photos; the probe asserts the
-S3-shape ref ("s3://…") never leaks. In S3 mode only presigned URLs go out
-(verified manually on the dev server, which runs S3 mode: upload returned a
-presigned amazonaws URL, never the key).
+- ONLY upload_my_profile_photo touched (one guarded transpose call).
+- DELETE endpoint, /auth/me, schemas, secrecy guard (s3:// fallback → None),
+  rate limits, validation, 5MB cap, audit — all UNCHANGED.
+- Worker photos / safety uploads / frontend — untouched.
 
-V2 — REGRESSION
+VERIFICATION
 --------------------------------------------------------------------------------
-- pytest tests/test_safety_registration.py tests/test_evidence_upload.py →
-  13 passed, 9 skipped (skips pre-existing).
-- tests/test_object_storage_shapes.py → Total: 7 | PASS: 7 | FAIL: 0.
-- Worker-photo probe tests/probe_safety_ind1.py → 29/30; the single FAIL
-  (V5d "snapshot unique index exists, 0 docs" — docs=3) is pre-existing
-  environmental leftover data in the local dev DB, unrelated to this batch.
-- py_compile auth_router.py, schemas.py, probe → OK.
-- CI=true REACT_APP_BACKEND_URL=https://api-staging.brikops.com npx craco
-  build → EXIT=0 (only pre-existing capacitor sourcemap warnings).
-- House greps: no console.log added; no logger/print of profile_photo_ref.
-
-ARCHITECT REVIEW
---------------------------------------------------------------------------------
-Round 1 flagged one real security gap: services/object_storage.generate_url()
-returns the RAW stored ref (s3://…) if S3 presigning throws, so a presign
-failure could have leaked the key via /auth/me or the upload response.
-FIXED: hard guard in _profile_photo_display rejects s3://-shaped results
-(→ None fail-soft); upload response routed through the same helper; 3 new
-probe checks force the fallback path and assert no leak (probe 22/22).
-generate_url() itself was NOT changed — it is shared with worker photos and
-task attachments; hardening it globally is out of batch scope (candidate
-follow-up).
-
-V3 — SCREENSHOTS (authenticated PM session, headless Chromium, 390px)
---------------------------------------------------------------------------------
-- screenshots/visual-user-panel-drawer-initials-390.jpg — drawer (slim mode):
-  scene band with crane + amber glow, X on the band, amber initials avatar
-  ("מ") with white ring + camera badge floating over the band edge, name +
-  email + role chip "מנהל פרויקט", nav list unchanged below.
-- screenshots/visual-user-panel-drawer-photo-390.jpg — same drawer with an
-  UPLOADED photo in the avatar + the "הסר תמונה" button visible.
-- screenshots/visual-user-panel-header-photo-390.jpg — projects-list header
-  showing the round 36px photo in place of the HardHat square.
-Screenshot note: the local single-process CSP (img-src 'self') blocks S3
-presigned URLs, so the photo-state shots use a local /api/uploads ref — the
-prod frontend (Cloudflare Pages) is not subject to this backend CSP header
-and already displays S3 worker photos the same way.
+- New probe case (backend/tests/probe_user_profile_photo.py): builds an
+  800x600 JPEG in-memory with EXIF Orientation=6 (Image.Exif(), tag 0x0112 —
+  Pillow only, no new deps) → uploads → decodes the STORED bytes → asserts:
+    * dimensions are PORTRAIT (rotated by the server): stored 384x512
+    * no Orientation tag remains in the stored bytes (orientation_tag=None)
+  [PASS] EXIF Orientation=6 applied → stored portrait, no tag —
+         size=384x512 orientation_tag=None
+- Full probe re-run: **23/23 PASS** (all Task #551 checks still green —
+  upload/replace/delete, Hebrew errors, 401/404/413/422, re-encode ≤512,
+  raw-ref secrecy incl. presign-failure guard, audit set x4 + clear = 5).
+- py_compile auth_router.py + probe → OK.
+- Dev server restarted with the fix.
 
 V4 — DEVICE (Zahi, prod after deploy)
 --------------------------------------------------------------------------------
-תפריט → פאנל הזהות עם הסצנה; לחיצה על המצלמה → גלריה/מצלמה → התמונה עולה
-ומופיעה גם בכותרת של רשימת הפרויקטים; סגירה ופתיחה של האפליקציה — נשמר;
-הסר תמונה → חוזר לראשי תיבות; כל פריטי התפריט עובדים כרגיל (גם בתוך פרויקט
-וגם ברשימה); web זהה.
-
-FIX1 (2026-07-18, same task, pre-deploy) — iPhone PHOTO ORIENTATION
---------------------------------------------------------------------------------
-Bug: uploaded iPhone photos rendered UPSIDE-DOWN/rotated. Root cause: the
-re-encode stripped EXIF without APPLYING the Orientation tag to the pixels
-first.
-Fix (backend-only, auth_router.py::upload_my_profile_photo): immediately
-after img.load(), ImageOps.exif_transpose(img) in try/except (corrupt
-orientation data → keep as-is, never 500). The existing convert('RGB') →
-downscale ≤512 → JPEG q85 pipeline continues UNCHANGED — EXIF is still fully
-stripped from the stored bytes, now with correct pixel orientation.
-Probe: new case builds an 800x600 JPEG in-memory with EXIF Orientation=6
-(Image.Exif(), tag 0x0112, no new deps) → upload → decodes the STORED bytes →
-asserts PORTRAIT dimensions (384x512) and no Orientation tag remains.
-Full probe re-run: 23/23 PASS. py_compile OK. No FE change.
+העלאת תמונה מהאייפון (מצלמה וגם גלריה) → התמונה מופיעה ישרה בתפריט ובכותרת
+רשימת הפרויקטים; תמונה שצולמה לרוחב → מוצגת נכון; שאר הזרימה (החלפה, הסרה,
+ראשי תיבות) ללא שינוי.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
