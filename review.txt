@@ -2462,3 +2462,39 @@ index 0000000..c91d63b
 +export default GateStationPage;
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+================================================================================
+FIX1 ADDENDUM (2026-07-18) — BUILD-INFRA ONLY: yarn.lock jsqr resolved URL
+================================================================================
+Cloudflare Pages build failed: yarn install → getaddrinfo ENOTFOUND
+package-firewall.replit.local. Cause: jsqr@1.4.0 lockfile entry was resolved
+through Replit's internal package proxy, which does not exist outside Replit.
+Fix: ONE line in frontend/yarn.lock — resolved URL rewritten to the public
+registry. Integrity hash unchanged (standard public tarball hash). No source
+file touched.
+
+DIFF:
+diff --git a/frontend/yarn.lock b/frontend/yarn.lock
+index aff3508..21799d9 100644
+--- a/frontend/yarn.lock
++++ b/frontend/yarn.lock
+@@ -7790,7 +7790,7 @@ jspdf@^4.2.1:
+ 
+ jsqr@1.4.0:
+   version "1.4.0"
+-  resolved "http://package-firewall.replit.local/npm/jsqr/-/jsqr-1.4.0.tgz#8efb8d0a7cc6863cb6d95116b9069123ce9eb2d1"
++  resolved "https://registry.npmjs.org/jsqr/-/jsqr-1.4.0.tgz#8efb8d0a7cc6863cb6d95116b9069123ce9eb2d1"
+   integrity sha512-dxLob7q65Xg2DvstYkRpkYtmKm2sPJ9oFhrhmudT1dZvNFFTlroai3AWSpLey/w5vMcLBXRgOJsbXpdN9HzU/A==
+ 
+ "jsx-ast-utils@^2.4.1 || ^3.0.0", jsx-ast-utils@^3.3.5:
+
+PROOF:
+- grep -c "replit.local" frontend/yarn.lock → 0
+- cd frontend && yarn install → EXIT 0 (Done in 30.15s)
+- CI=true REACT_APP_BACKEND_URL=https://api.brikops.com yarn build (craco) →
+  EXIT 0 (Done in 64.52s)
+
+PERMANENT RULE (this repo): any future dependency added inside Replit — grep
+yarn.lock for "replit.local" and rewrite to the public registry BEFORE review.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
