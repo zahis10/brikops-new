@@ -2162,6 +2162,17 @@ export const authService = {
     const response = await axios.put(`${API}/auth/me/whatsapp-notifications`, { enabled }, { headers: getAuthHeader() });
     return response.data;
   },
+  // BATCH visual-user-panel (2026-07-18) — profile photo
+  async uploadProfilePhoto(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await axios.post(`${API}/auth/me/photo`, formData, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async removeProfilePhoto() {
+    const response = await axios.delete(`${API}/auth/me/photo`, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const deletionService = {

@@ -234,9 +234,17 @@ const MyProjectsPage = () => {
     <div className="min-h-screen bg-slate-50" style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #eef2f8 60%, #e9eef6 100%)' }} dir="rtl">
       <header className="bg-[#1c2735] text-white shadow-lg sticky top-0 z-50">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
-          <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center flex-shrink-0">
-            <HardHat className="w-5 h-5 text-white" />
-          </div>
+          {user?.profile_photo_display_url ? (
+            <img
+              src={user.profile_photo_display_url}
+              alt=""
+              className="w-9 h-9 rounded-full object-cover flex-shrink-0"
+            />
+          ) : (
+            <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center flex-shrink-0">
+              <HardHat className="w-5 h-5 text-white" />
+            </div>
+          )}
           <div className="flex-1 min-w-0">
             <h1 className="text-lg font-bold leading-tight">{t('myProjects', 'title')}</h1>
             {user && (

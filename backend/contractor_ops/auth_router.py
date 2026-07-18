@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks, UploadFile, File
 from contractor_ops.router import (
     get_db, get_current_user, get_current_user_allow_pending_deletion,
     _hash_password, _verify_password, _create_token,
@@ -416,6 +416,25 @@ if _APP_MODE_AUTH == 'dev':
         return {'token': token, 'user': user_resp.dict(), 'platform_role': platform_role}
 
 
+# BATCH visual-user-panel (2026-07-18) — profile photo display URL.
+# Same fail-soft pattern as safety/workers.py:_photo_display: regenerate a
+# per-GET URL from the stored key; any failure → None. Raw ref never exposed.
+def _profile_photo_display(ref):
+    if not ref:
+        return None
+    try:
+        from services.object_storage import generate_url
+        url = generate_url(ref)
+        # Hard secrecy guard: generate_url() falls back to the raw stored
+        # ref if S3 presigning fails — never let an s3:// key reach a
+        # response. Fail-soft to None instead.
+        if url and url.startswith('s3://'):
+            return None
+        return url
+    except Exception:
+        return None
+
+
 @router.get("/auth/me", response_model=UserResponse)
 async def get_me(user: dict = Depends(get_current_user_allow_pending_deletion)):
     db = get_db()
@@ -487,4 +506,94 @@ async def get_me(user: dict = Depends(get_current_user_allow_pending_deletion)):
         whatsapp_notifications_enabled=user.get('whatsapp_notifications_enabled', True),
         organization=org_summary,
         project_memberships_summary=proj_summaries,
+        profile_photo_display_url=_profile_photo_display(user.get('profile_photo_ref')),
     )
+
+
+# =====================================================================
+# BATCH visual-user-panel (2026-07-18) — self-scoped profile photo.
+# Same at-rest security as worker photos: stored key in
+# users.profile_photo_ref (never in any response/log), per-GET display
+# URLs via generate_url. Uploads are RE-ENCODED server-side (Pillow):
+# decode → RGB → downscale ≤512 → JPEG q85. Original bytes never stored
+# (strips EXIF/metadata/embedded payloads).
+# =====================================================================
+MAX_PROFILE_PHOTO_SIZE = 5 * 1024 * 1024  # 5MB
+PROFILE_PHOTO_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
+PROFILE_PHOTO_CONTENT_TYPES = {'image/jpeg', 'image/png', 'image/webp'}
+
+
+@router.post("/auth/me/photo")
+async def upload_my_profile_photo(
+    request: Request,
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user_allow_pending_deletion),
+):
+    from contractor_ops.upload_rate_limit import (
+        check_upload_rate_limit, check_upload_bytes,
+    )
+    from contractor_ops.upload_safety import validate_upload
+
+    db = get_db()
+    user_id = user['id']
+
+    check_upload_rate_limit(user_id)
+    cl = request.headers.get('content-length')
+    if cl:
+        try:
+            if int(cl) > MAX_PROFILE_PHOTO_SIZE:
+                raise HTTPException(status_code=413, detail="התמונה גדולה מדי (מקסימום 5MB)")
+        except (TypeError, ValueError):
+            pass
+
+    validate_upload(file, PROFILE_PHOTO_EXTENSIONS, PROFILE_PHOTO_CONTENT_TYPES)
+
+    content = await file.read(MAX_PROFILE_PHOTO_SIZE + 1)
+    if len(content) > MAX_PROFILE_PHOTO_SIZE:
+        raise HTTPException(status_code=413, detail="התמונה גדולה מדי (מקסימום 5MB)")
+    check_upload_bytes(user_id, len(content))
+
+    # Binding security step — re-encode server-side. Original bytes are
+    # never stored; EXIF/metadata and any embedded payloads are stripped.
+    import io as _io
+    from PIL import Image as _PILImage
+    try:
+        img = _PILImage.open(_io.BytesIO(content))
+        img.load()
+    except Exception:
+        raise HTTPException(status_code=422, detail="פורמט תמונה לא נתמך")
+    img = img.convert('RGB')
+    max_side = max(img.width, img.height)
+    if max_side > 512:
+        scale = 512 / max_side
+        img = img.resize(
+            (max(1, round(img.width * scale)), max(1, round(img.height * scale))),
+            _PILImage.LANCZOS,
+        )
+    out = _io.BytesIO()
+    img.save(out, format='JPEG', quality=85)
+    jpeg_bytes = out.getvalue()
+
+    from services.object_storage import save_bytes
+    key = f"users/{user_id}/profile-{uuid.uuid4().hex}.jpg"
+    stored_ref = save_bytes(jpeg_bytes, key, content_type="image/jpeg")
+    await db.users.update_one({'id': user_id}, {'$set': {'profile_photo_ref': stored_ref}})
+    await _audit('user', user_id, 'user_profile_photo_change', user_id, {
+        'user_id': user_id, 'action': 'set',
+    })
+    return {'photo_display_url': _profile_photo_display(stored_ref)}
+
+
+@router.delete("/auth/me/photo", status_code=204)
+async def delete_my_profile_photo(user: dict = Depends(get_current_user_allow_pending_deletion)):
+    db = get_db()
+    user_id = user['id']
+    doc = await db.users.find_one({'id': user_id}, {'_id': 0, 'profile_photo_ref': 1})
+    if not doc or not doc.get('profile_photo_ref'):
+        raise HTTPException(status_code=404, detail='אין תמונת פרופיל')
+    # The stored object may remain (orphan cleanup rides the existing backlog).
+    await db.users.update_one({'id': user_id}, {'$unset': {'profile_photo_ref': ''}})
+    await _audit('user', user_id, 'user_profile_photo_change', user_id, {
+        'user_id': user_id, 'action': 'clear',
+    })
+    return None

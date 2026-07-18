@@ -264,6 +264,10 @@ class UserResponse(BaseModel):
     whatsapp_notifications_enabled: Optional[bool] = True
     organization: Optional[OrgSummary] = None
     project_memberships_summary: Optional[List[ProjectMembershipSummary]] = None
+    # BATCH visual-user-panel (2026-07-18) — per-GET display URL for the
+    # user's profile photo. The raw stored ref (users.profile_photo_ref)
+    # is NEVER exposed; /auth/me regenerates this URL on every call.
+    profile_photo_display_url: Optional[str] = None
 
 
 class UserLogin(BaseModel):
