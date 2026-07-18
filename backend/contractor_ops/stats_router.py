@@ -338,6 +338,93 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
             'rework': stats['rework'],
         })
     contractor_quality.sort(key=lambda x: x['open'], reverse=True)
+    _t_enrich = _t.perf_counter()
+
+    # BATCH visual-dashboard B1: role-gated, fail-soft safety block.
+    # ANY safety query failure → safety=None + one warning; the dashboard
+    # itself must never break because of safety.
+    safety = None
+    if role in ('project_manager', 'owner', 'management_team'):
+        try:
+            from contractor_ops.utils.timezone import israel_today, israel_day_start_utc
+            from contractor_ops.safety_expiry_service import _days_left
+
+            today = israel_today()
+
+            open_incidents = await db.safety_incidents.count_documents({
+                'project_id': project_id,
+                'status': {'$ne': 'closed'},
+                'deletedAt': None,
+            })
+
+            # Trainings: newest per (worker, training_type) — same grouping as
+            # safety_expiry_service.collect_expiry_alerts; soft-deleted workers
+            # excluded; past-expiry (days_left < 0) never counted (house rule).
+            deleted_worker_ids = set()
+            async for w in db.safety_workers.find(
+                {'project_id': project_id,
+                 'deletedAt': {'$exists': True, '$nin': [None]}},
+                {'_id': 0, 'id': 1},
+            ):
+                deleted_worker_ids.add(w['id'])
+            pipeline = [
+                {'$match': {'project_id': project_id, 'deletedAt': None,
+                            'expires_at': {'$ne': None}}},
+                {'$sort': {'trained_at': -1, 'created_at': -1}},
+                {'$group': {
+                    '_id': {'w': '$worker_id', 't': '$training_type'},
+                    'doc': {'$first': '$$ROOT'},
+                }},
+            ]
+            expiring_certs_7 = 0
+            expiring_certs_30 = 0
+            async for row in db.safety_trainings.aggregate(pipeline):
+                doc = row['doc']
+                if doc.get('worker_id') in deleted_worker_ids:
+                    continue
+                dl = _days_left(doc.get('expires_at') or '', today)
+                if dl is None:
+                    continue
+                if 0 <= dl <= 7:
+                    expiring_certs_7 += 1
+                elif 8 <= dl <= 30:
+                    expiring_certs_30 += 1
+
+            gate_entries_today = await db.gate_scan_log.count_documents({
+                'project_id': project_id,
+                'result': 'green',
+                'ts': {'$gte': israel_day_start_utc(today)},
+            })
+
+            last_tour_days = None
+            last_tour = await db.safety_tours.find_one(
+                {'project_id': project_id, 'deletedAt': None,
+                 'status': {'$in': ['pending_signature', 'signed']},
+                 'submitted_at': {'$ne': None}},
+                {'_id': 0, 'submitted_at': 1},
+                sort=[('submitted_at', -1)],
+            )
+            if last_tour and last_tour.get('submitted_at'):
+                try:
+                    sub = datetime.fromisoformat(
+                        str(last_tour['submitted_at']).replace('Z', '+00:00')
+                    )
+                    sub_naive = sub.replace(tzinfo=None)
+                    last_tour_days = max(0, (now - sub_naive).days)
+                except (ValueError, TypeError):
+                    last_tour_days = None
+
+            safety = {
+                'open_incidents': int(open_incidents or 0),
+                'expiring_certs_7': int(expiring_certs_7),
+                'expiring_certs_30': int(expiring_certs_30),
+                'gate_entries_today': int(gate_entries_today or 0),
+                'last_tour_days': last_tour_days,
+            }
+        except Exception as e:
+            logger.warning(f"[DASHBOARD] safety block failed (fail-soft → None): {e}")
+            safety = None
+    _t_safety = _t.perf_counter()
 
     result = {
         'kpis': {
@@ -362,13 +449,15 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
         'total_tasks': int(len(tasks) or 0),
         'by_status': by_status or {},
         'by_category': by_category or {},
+        'safety': safety,
     }
     _t_end = _t.perf_counter()
     logger.info(
         f"[DASHBOARD-PERF] project={project_id[:8]} total={round((_t_end-_t0)*1000)}ms "
         f"auth={round((_t_auth-_t0)*1000)}ms tasks_query={round((_t_tasks-_t_auth)*1000)}ms "
         f"loop={round((_t_loop-_t_tasks)*1000)}ms sla={round((_t_sla-_t_loop)*1000)}ms "
-        f"enrichment={round((_t_end-_t_sla)*1000)}ms task_count={len(tasks)}"
+        f"enrichment={round((_t_enrich-_t_sla)*1000)}ms safety={round((_t_safety-_t_enrich)*1000)}ms "
+        f"task_count={len(tasks)}"
     )
     return result
 

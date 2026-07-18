@@ -6,6 +6,8 @@ import { useAuth } from '../contexts/AuthContext';
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import NotificationBell from '../components/NotificationBell';
 import HamburgerMenu from '../components/HamburgerMenu';
+import DashboardFoldSection from '../components/DashboardFoldSection';
+import ProjectsLightSkyline from '../components/ProjectsLightSkyline';
 import { tRole } from '../i18n';
 import { toast } from 'sonner';
 import {
@@ -131,7 +133,18 @@ export default function ProjectDashboardPage() {
   const [sendingDigest, setSendingDigest] = useState(false);
   const [sendingReminder, setSendingReminder] = useState({});
   const stageRefs = useRef({});
+  const [foldForce, setFoldForce] = useState({});
+  const foldRefs = useRef({});
+  const handoverRef = useRef(null);
   const online = useOnlineStatus();
+
+  const openAndScroll = (id) => {
+    setFoldForce(prev => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
+    setTimeout(() => {
+      const el = foldRefs.current[id];
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  };
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true); else setLoading(true);
@@ -247,10 +260,21 @@ export default function ProjectDashboardPage() {
   const isPmOrOwner = role === 'project_manager' || role === 'owner' || role === 'management_team';
   const showPendingApprovals = isPmOrOwner && pending_approvals.length > 0;
   const qcProgress = qcSummary && qcSummary.total > 0 ? Math.round((qcSummary.submitted / qcSummary.total) * 100) : 0;
+  const safety = data.safety || null;
+  const totalStuck = stuck_contractors.reduce((sum, c) => sum + c.stuck_count, 0);
+  const openHandoverDefects = (handoverSummary && handoverSummary.total_units > 0 && handoverSummary.open_handover_defects) || 0;
+  const expiringCertsTotal = safety ? (safety.expiring_certs_7 || 0) + (safety.expiring_certs_30 || 0) : 0;
+  const hasSla = [kpis.sla_response_7d, kpis.sla_close_7d, kpis.sla_response_30d, kpis.sla_close_30d].some(v => v && v > 0);
+  const showFocus = (safety && safety.open_incidents > 0)
+    || showPendingApprovals
+    || totalStuck > 0
+    || openHandoverDefects > 0
+    || expiringCertsTotal > 0;
 
   return (
-    <div className="min-h-0 bg-slate-50 pb-24" dir="rtl">
-      <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
+    <div className="min-h-screen pb-24" dir="rtl" style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #eef2f8 60%, #e9eef6 100%)' }}>
+      <ProjectsLightSkyline />
+      <header className="text-white sticky top-0 z-50" style={{ background: '#1c2735', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
           <button onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)} className="p-3 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה">
             <ArrowRight className="w-5 h-5" />
@@ -287,7 +311,7 @@ export default function ProjectDashboardPage() {
         </div>
       </header>
 
-      <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-4">
+      <div className="relative z-10 max-w-[1100px] mx-auto px-4 pt-4 space-y-4">
         <div className="grid grid-cols-3 md:grid-cols-5 gap-2.5">
           <KpiCard
             icon={AlertTriangle}
@@ -342,13 +366,292 @@ export default function ProjectDashboardPage() {
           />
         </div>
 
-        {isPmOrOwner && (
-          <React.Suspense fallback={null}>
-            <TeamActivitySection projectId={projectId} />
-          </React.Suspense>
+        {showFocus && (
+          <div className="bg-white rounded-xl border shadow-sm p-4 border-r-4" style={{ borderRightColor: '#f59e0b' }}>
+            <h3 className="text-sm font-bold text-slate-700 mb-2">🎯 איפה להתמקד עכשיו</h3>
+            <div className="space-y-1.5">
+              {safety && safety.open_incidents > 0 && (
+                <button
+                  onClick={() => navigate(`/projects/${projectId}/safety?tab=incidents`)}
+                  className="w-full flex items-center gap-2.5 p-2.5 rounded-lg border text-right transition-all hover:opacity-90"
+                  style={{ background: '#fef2f2', borderColor: '#fecaca' }}
+                >
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700 shrink-0">{safety.open_incidents}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-red-700">אירוע בטיחות פתוח</p>
+                    <p className="text-xs text-red-400">דורש טיפול מיידי</p>
+                  </div>
+                  <ChevronLeft className="w-4 h-4 text-red-300 shrink-0" />
+                </button>
+              )}
+              {showPendingApprovals && (
+                <button
+                  onClick={() => openAndScroll('pending')}
+                  className="w-full flex items-center gap-2.5 p-2.5 rounded-lg border border-slate-100 text-right hover:bg-amber-50 hover:border-amber-200 transition-all"
+                >
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 shrink-0">{kpis.pending_approval}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-slate-700">ממתין לאישור שלך</p>
+                    {pending_approvals[0]?.title && <p className="text-xs text-slate-400 truncate">{pending_approvals[0].title}</p>}
+                  </div>
+                  <ChevronLeft className="w-4 h-4 text-slate-300 shrink-0" />
+                </button>
+              )}
+              {totalStuck > 0 && (
+                <button
+                  onClick={() => openAndScroll('stuck')}
+                  className="w-full flex items-center gap-2.5 p-2.5 rounded-lg border border-slate-100 text-right hover:bg-orange-50 hover:border-orange-200 transition-all"
+                >
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 shrink-0">{totalStuck}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-slate-700">תקוע אצל קבלנים</p>
+                    <p className="text-xs text-slate-400 truncate">
+                      {`${stuck_contractors[0]?.contractor_name || 'קבלן'} עם ${stuck_contractors[0]?.stuck_count || 0} תקועות${stuck_contractors.length > 1 ? ` + עוד ${stuck_contractors.length - 1} קבלנים` : ''}`}
+                    </p>
+                  </div>
+                  <ChevronLeft className="w-4 h-4 text-slate-300 shrink-0" />
+                </button>
+              )}
+              {openHandoverDefects > 0 && (
+                <button
+                  onClick={() => { if (handoverRef.current) handoverRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                  className="w-full flex items-center gap-2.5 p-2.5 rounded-lg border border-slate-100 text-right hover:bg-amber-50 hover:border-amber-200 transition-all"
+                >
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600 shrink-0">{openHandoverDefects}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-slate-700">ליקויי מסירה פתוחים</p>
+                    <p className="text-xs text-slate-400">ממתינים לטיפול במסירות</p>
+                  </div>
+                  <ChevronLeft className="w-4 h-4 text-slate-300 shrink-0" />
+                </button>
+              )}
+              {expiringCertsTotal > 0 && (
+                <button
+                  onClick={() => navigate(`/projects/${projectId}/safety?tab=trainings`)}
+                  className="w-full flex items-center gap-2.5 p-2.5 rounded-lg border border-slate-100 text-right hover:bg-amber-50 hover:border-amber-200 transition-all"
+                >
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 shrink-0">{expiringCertsTotal}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-slate-700">הסמכות בטיחות פגות בקרוב</p>
+                    <p className="text-xs text-slate-400">{`${safety.expiring_certs_7} תוך 7 ימים · ${safety.expiring_certs_30} תוך 30 יום`}</p>
+                  </div>
+                  <ChevronLeft className="w-4 h-4 text-slate-300 shrink-0" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div ref={handoverRef}>
+        {handoverSummary && handoverSummary.total_units > 0 && (() => {
+          const hs = handoverSummary;
+          const initialTotal = (hs.initial_draft || 0) + (hs.initial_in_progress || 0) + (hs.initial_partially_signed || 0) + (hs.initial_signed || 0);
+          const finalTotal = (hs.final_draft || 0) + (hs.final_in_progress || 0) + (hs.final_partially_signed || 0) + (hs.final_signed || 0);
+          const initialSigned = hs.initial_signed || 0;
+          const finalSigned = hs.final_signed || 0;
+          const initialPct = initialTotal > 0 ? Math.round((initialSigned / initialTotal) * 100) : 0;
+          const finalPct = finalTotal > 0 ? Math.round((finalSigned / finalTotal) * 100) : 0;
+          const hasAny = initialTotal > 0 || finalTotal > 0;
+          if (!hasAny) return null;
+          return (
+            <div className="bg-white rounded-xl border shadow-sm p-4">
+              <div className="flex items-center justify-between mb-3">
+                <SectionHeader icon={FileSignature} title="מסירות" count={initialTotal + finalTotal} color="text-amber-500" />
+                <button
+                  onClick={() => navigate(`/projects/${projectId}/handover`)}
+                  className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1"
+                >
+                  צפה <ChevronLeft className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {initialTotal > 0 && (
+                  <div className="bg-slate-50 rounded-xl p-3">
+                    <p className="text-xs text-slate-500 mb-1">מסירה ראשונית</p>
+                    <div className="flex items-end gap-1 mb-2">
+                      <span className="text-2xl font-black text-slate-800">{initialSigned}</span>
+                      <span className="text-sm text-slate-400 mb-0.5">/ {initialTotal}</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-1.5 mb-1">
+                      <div className="h-1.5 rounded-full transition-all" style={{
+                        width: `${initialPct}%`,
+                        background: initialPct === 100 ? '#22c55e' : '#f59e0b'
+                      }} />
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {(hs.initial_in_progress || 0) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">בתהליך {hs.initial_in_progress}</span>}
+                      {(hs.initial_partially_signed || 0) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">חתום חלקית {hs.initial_partially_signed}</span>}
+                      {initialSigned > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">חתום {initialSigned}</span>}
+                    </div>
+                  </div>
+                )}
+                {finalTotal > 0 && (
+                  <div className="bg-slate-50 rounded-xl p-3">
+                    <p className="text-xs text-slate-500 mb-1">מסירה סופית</p>
+                    <div className="flex items-end gap-1 mb-2">
+                      <span className="text-2xl font-black text-slate-800">{finalSigned}</span>
+                      <span className="text-sm text-slate-400 mb-0.5">/ {finalTotal}</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-1.5 mb-1">
+                      <div className="h-1.5 rounded-full transition-all" style={{
+                        width: `${finalPct}%`,
+                        background: finalPct === 100 ? '#22c55e' : '#f59e0b'
+                      }} />
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {(hs.final_in_progress || 0) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">בתהליך {hs.final_in_progress}</span>}
+                      {(hs.final_partially_signed || 0) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">חתום חלקית {hs.final_partially_signed}</span>}
+                      {finalSigned > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">חתום {finalSigned}</span>}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {(hs.open_handover_defects || 0) > 0 && (
+                <div className="mt-3 pt-3 border-t border-slate-100 flex items-center gap-2 text-red-600 text-sm">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>{hs.open_handover_defects} ליקויי מסירה פתוחים</span>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        </div>
+
+        {safety && (
+          <button
+            onClick={() => navigate(`/projects/${projectId}/safety`)}
+            className="w-full bg-white rounded-xl border shadow-sm p-3.5 flex items-center gap-2 text-right hover:bg-slate-50 transition-colors"
+          >
+            <span className="text-base">🦺</span>
+            <span className="text-sm font-bold text-slate-700">בטיחות</span>
+            <span className="text-xs text-slate-400 truncate flex-1 text-right">
+              {[
+                safety.gate_entries_today != null ? `${safety.gate_entries_today} כניסות בשער היום` : null,
+                safety.last_tour_days != null ? `סיור אחרון לפני ${safety.last_tour_days} ימים` : null,
+              ].filter(Boolean).join(' · ')}
+            </span>
+            <ChevronLeft className="w-4 h-4 text-slate-300 shrink-0" />
+          </button>
+        )}
+
+        {showPendingApprovals && (
+        <div ref={el => { foldRefs.current['pending'] = el; }}>
+          <DashboardFoldSection
+            id="pending"
+            projectId={projectId}
+            icon={Clock}
+            iconColor="text-amber-500"
+            title="ממתין לאישור שלי"
+            summary={`${pending_approvals.length} ממתינות`}
+            forceOpen={foldForce['pending'] || 0}
+          >
+            <div className="bg-white rounded-xl border shadow-sm p-4">
+              <SectionHeader icon={Clock} title="ממתין לאישור שלי" count={pending_approvals.length} color="text-amber-500" />
+              <div className="space-y-1.5">
+                {pending_approvals.slice(0, 10).map(task => (
+                  <button
+                    key={task.id}
+                    onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/dashboard` } })}
+                    className="w-full flex items-center gap-2 p-2.5 rounded-lg hover:bg-amber-50 border border-transparent hover:border-amber-200 transition-all text-right border-r-[3px] border-r-amber-400"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{task.title}</p>
+                      <p className="text-xs text-slate-400">{task.updated_at ? new Date(task.updated_at).toLocaleDateString('he-IL') : ''}</p>
+                    </div>
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap font-medium ${statusColors[task.status] || 'bg-slate-100 text-slate-600'}`}>
+                      {statusLabels[task.status] || task.status}
+                    </span>
+                    <ChevronLeft className="w-4 h-4 text-slate-300 shrink-0" />
+                  </button>
+                ))}
+                {pending_approvals.length > 10 && (
+                  <button
+                    onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval&from=dashboard`)}
+                    className="w-full text-center text-xs text-amber-600 hover:text-amber-700 py-2 font-medium"
+                  >
+                    הצג את כל {pending_approvals.length} המשימות →
+                  </button>
+                )}
+              </div>
+            </div>
+          </DashboardFoldSection>
+        </div>
+        )}
+
+        {stuck_contractors.length > 0 && (
+        <div ref={el => { foldRefs.current['stuck'] = el; }}>
+          <DashboardFoldSection
+            id="stuck"
+            projectId={projectId}
+            icon={AlertCircle}
+            iconColor="text-orange-500"
+            title="תקוע אצל קבלנים"
+            summary={`${totalStuck} תקועות אצל ${stuck_contractors.length} קבלנים`}
+            forceOpen={foldForce['stuck'] || 0}
+          >
+            <div className="bg-white rounded-xl border shadow-sm p-4">
+              <SectionHeader icon={AlertCircle} title="תקוע אצל קבלנים" count={stuck_contractors.reduce((sum, c) => sum + c.stuck_count, 0)} color="text-orange-500" />
+              <div className="space-y-2">
+                {stuck_contractors.map(contractor => (
+                  <div
+                    key={contractor.contractor_id}
+                    className={`rounded-lg p-2.5 bg-white border border-slate-100 border-r-[3px] ${
+                      contractor.stuck_count > 5 ? 'border-r-red-400' : 'border-r-orange-400'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <HardHat className="w-4 h-4 text-orange-500" />
+                        <span className="text-sm font-bold text-slate-700">{contractor.contractor_name || 'קבלן'}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleSendReminder(contractor.company_id || contractor.contractor_id, contractor.contractor_name || 'קבלן'); }}
+                          disabled={sendingReminder[contractor.company_id || contractor.contractor_id]}
+                          className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors flex items-center gap-0.5"
+                          title="שלח תזכורת"
+                        >
+                          {sendingReminder[contractor.company_id || contractor.contractor_id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                          תזכורת
+                        </button>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                          contractor.stuck_count > 5 ? 'text-red-600 bg-red-100' : 'text-orange-600 bg-orange-100'
+                        }`}>
+                          {contractor.stuck_count} תקועות
+                        </span>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      {contractor.tasks.slice(0, 3).map(task => (
+                        <button
+                          key={task.id}
+                          onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/dashboard` } })}
+                          className="w-full flex items-center gap-2 text-right text-xs text-slate-600 hover:text-amber-700 py-0.5"
+                        >
+                          <span className="truncate flex-1">• {task.title}</span>
+                          <ChevronLeft className="w-3 h-3 text-slate-300 shrink-0" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </DashboardFoldSection>
+        </div>
         )}
 
         {execSummary && execSummary.stages && execSummary.stages.length > 0 && (
+        <div ref={el => { foldRefs.current['exec'] = el; }}>
+          <DashboardFoldSection
+            id="exec"
+            projectId={projectId}
+            icon={ClipboardCheck}
+            iconColor="text-indigo-500"
+            title="סטטוס ביצוע"
+            summary={`${execSummary.overall.completion_pct}% · ${execSummary.overall.completed}/${execSummary.overall.total} שלבים`}
+            forceOpen={foldForce['exec'] || 0}
+          >
           <div className="bg-white rounded-xl border shadow-sm p-4">
             <div className="flex items-center justify-between mb-4">
               <SectionHeader icon={ClipboardCheck} title="סטטוס ביצוע" count={null} color="text-indigo-500" />
@@ -501,112 +804,21 @@ export default function ProjectDashboardPage() {
               })}
             </div>
           </div>
+          </DashboardFoldSection>
+        </div>
         )}
 
-        {handoverSummary && handoverSummary.total_units > 0 && (() => {
-          const hs = handoverSummary;
-          const initialTotal = (hs.initial_draft || 0) + (hs.initial_in_progress || 0) + (hs.initial_partially_signed || 0) + (hs.initial_signed || 0);
-          const finalTotal = (hs.final_draft || 0) + (hs.final_in_progress || 0) + (hs.final_partially_signed || 0) + (hs.final_signed || 0);
-          const initialSigned = hs.initial_signed || 0;
-          const finalSigned = hs.final_signed || 0;
-          const initialPct = initialTotal > 0 ? Math.round((initialSigned / initialTotal) * 100) : 0;
-          const finalPct = finalTotal > 0 ? Math.round((finalSigned / finalTotal) * 100) : 0;
-          const hasAny = initialTotal > 0 || finalTotal > 0;
-          if (!hasAny) return null;
-          return (
-            <div className="bg-white rounded-xl border shadow-sm p-4">
-              <div className="flex items-center justify-between mb-3">
-                <SectionHeader icon={FileSignature} title="מסירות" count={initialTotal + finalTotal} color="text-amber-500" />
-                <button
-                  onClick={() => navigate(`/projects/${projectId}/handover`)}
-                  className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1"
-                >
-                  צפה <ChevronLeft className="w-3 h-3" />
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                {initialTotal > 0 && (
-                  <div className="bg-slate-50 rounded-xl p-3">
-                    <p className="text-xs text-slate-500 mb-1">מסירה ראשונית</p>
-                    <div className="flex items-end gap-1 mb-2">
-                      <span className="text-2xl font-black text-slate-800">{initialSigned}</span>
-                      <span className="text-sm text-slate-400 mb-0.5">/ {initialTotal}</span>
-                    </div>
-                    <div className="w-full bg-slate-200 rounded-full h-1.5 mb-1">
-                      <div className="h-1.5 rounded-full transition-all" style={{
-                        width: `${initialPct}%`,
-                        background: initialPct === 100 ? '#22c55e' : '#f59e0b'
-                      }} />
-                    </div>
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {(hs.initial_in_progress || 0) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">בתהליך {hs.initial_in_progress}</span>}
-                      {(hs.initial_partially_signed || 0) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">חתום חלקית {hs.initial_partially_signed}</span>}
-                      {initialSigned > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">חתום {initialSigned}</span>}
-                    </div>
-                  </div>
-                )}
-                {finalTotal > 0 && (
-                  <div className="bg-slate-50 rounded-xl p-3">
-                    <p className="text-xs text-slate-500 mb-1">מסירה סופית</p>
-                    <div className="flex items-end gap-1 mb-2">
-                      <span className="text-2xl font-black text-slate-800">{finalSigned}</span>
-                      <span className="text-sm text-slate-400 mb-0.5">/ {finalTotal}</span>
-                    </div>
-                    <div className="w-full bg-slate-200 rounded-full h-1.5 mb-1">
-                      <div className="h-1.5 rounded-full transition-all" style={{
-                        width: `${finalPct}%`,
-                        background: finalPct === 100 ? '#22c55e' : '#f59e0b'
-                      }} />
-                    </div>
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {(hs.final_in_progress || 0) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">בתהליך {hs.final_in_progress}</span>}
-                      {(hs.final_partially_signed || 0) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">חתום חלקית {hs.final_partially_signed}</span>}
-                      {finalSigned > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">חתום {finalSigned}</span>}
-                    </div>
-                  </div>
-                )}
-              </div>
-              {(hs.open_handover_defects || 0) > 0 && (
-                <div className="mt-3 pt-3 border-t border-slate-100 flex items-center gap-2 text-red-600 text-sm">
-                  <AlertTriangle className="w-4 h-4" />
-                  <span>{hs.open_handover_defects} ליקויי מסירה פתוחים</span>
-                </div>
-              )}
-            </div>
-          );
-        })()}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-xl border shadow-sm p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Timer className="w-4 h-4 text-indigo-500" />
-              <h3 className="text-sm font-bold text-slate-700">לוחות זמנים</h3>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className={`text-center p-3 rounded-lg ${getSlaBoxBg(kpis.sla_response_7d)}`}>
-                <p className="text-xs text-slate-500 mb-1">זמן תגובה ממוצע</p>
-                <p className="text-2xl font-extrabold text-slate-800">{formatHours(kpis.sla_response_7d)}</p>
-                <p className="text-[10px] text-slate-400">7 ימים</p>
-              </div>
-              <div className={`text-center p-3 rounded-lg ${getSlaBoxBg(kpis.sla_close_7d)}`}>
-                <p className="text-xs text-slate-500 mb-1">זמן סגירה ממוצע</p>
-                <p className="text-2xl font-extrabold text-slate-800">{formatHours(kpis.sla_close_7d)}</p>
-                <p className="text-[10px] text-slate-400">7 ימים</p>
-              </div>
-              <div className={`text-center p-3 rounded-lg ${getSlaBoxBg(kpis.sla_response_30d)}`}>
-                <p className="text-xs text-slate-500 mb-1">זמן תגובה ממוצע</p>
-                <p className="text-2xl font-extrabold text-slate-800">{formatHours(kpis.sla_response_30d)}</p>
-                <p className="text-[10px] text-slate-400">30 ימים</p>
-              </div>
-              <div className={`text-center p-3 rounded-lg ${getSlaBoxBg(kpis.sla_close_30d)}`}>
-                <p className="text-xs text-slate-500 mb-1">זמן סגירה ממוצע</p>
-                <p className="text-2xl font-extrabold text-slate-800">{formatHours(kpis.sla_close_30d)}</p>
-                <p className="text-[10px] text-slate-400">30 ימים</p>
-              </div>
-            </div>
-          </div>
-
-          {qcSummary && qcSummary.total > 0 && (
+        {qcSummary && qcSummary.total > 0 && (
+        <div ref={el => { foldRefs.current['qc'] = el; }}>
+          <DashboardFoldSection
+            id="qc"
+            projectId={projectId}
+            icon={ClipboardCheck}
+            iconColor="text-emerald-500"
+            title="בקרת ביצוע"
+            summary={`${qcProgress}% התקדמות`}
+            forceOpen={foldForce['qc'] || 0}
+          >
             <div className="bg-white rounded-xl border shadow-sm p-4">
               <div className="flex items-center justify-between mb-3">
                 <SectionHeader icon={ClipboardCheck} title="בקרת ביצוע" count={null} color="text-emerald-500" />
@@ -646,96 +858,39 @@ export default function ProjectDashboardPage() {
                 </div>
               </div>
             </div>
-          )}
+          </DashboardFoldSection>
         </div>
+        )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {showPendingApprovals && (
-            <div className="bg-white rounded-xl border shadow-sm p-4">
-              <SectionHeader icon={Clock} title="ממתין לאישור שלי" count={pending_approvals.length} color="text-amber-500" />
-              <div className="space-y-1.5">
-                {pending_approvals.slice(0, 10).map(task => (
-                  <button
-                    key={task.id}
-                    onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/dashboard` } })}
-                    className="w-full flex items-center gap-2 p-2.5 rounded-lg hover:bg-amber-50 border border-transparent hover:border-amber-200 transition-all text-right border-r-[3px] border-r-amber-400"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-slate-700 truncate">{task.title}</p>
-                      <p className="text-xs text-slate-400">{task.updated_at ? new Date(task.updated_at).toLocaleDateString('he-IL') : ''}</p>
-                    </div>
-                    <span className={`text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap font-medium ${statusColors[task.status] || 'bg-slate-100 text-slate-600'}`}>
-                      {statusLabels[task.status] || task.status}
-                    </span>
-                    <ChevronLeft className="w-4 h-4 text-slate-300 shrink-0" />
-                  </button>
-                ))}
-                {pending_approvals.length > 10 && (
-                  <button
-                    onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval&from=dashboard`)}
-                    className="w-full text-center text-xs text-amber-600 hover:text-amber-700 py-2 font-medium"
-                  >
-                    הצג את כל {pending_approvals.length} המשימות →
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {stuck_contractors.length > 0 && (
-            <div className="bg-white rounded-xl border shadow-sm p-4">
-              <SectionHeader icon={AlertCircle} title="תקוע אצל קבלנים" count={stuck_contractors.reduce((sum, c) => sum + c.stuck_count, 0)} color="text-orange-500" />
-              <div className="space-y-2">
-                {stuck_contractors.map(contractor => (
-                  <div
-                    key={contractor.contractor_id}
-                    className={`rounded-lg p-2.5 bg-white border border-slate-100 border-r-[3px] ${
-                      contractor.stuck_count > 5 ? 'border-r-red-400' : 'border-r-orange-400'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <HardHat className="w-4 h-4 text-orange-500" />
-                        <span className="text-sm font-bold text-slate-700">{contractor.contractor_name || 'קבלן'}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleSendReminder(contractor.company_id || contractor.contractor_id, contractor.contractor_name || 'קבלן'); }}
-                          disabled={sendingReminder[contractor.company_id || contractor.contractor_id]}
-                          className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors flex items-center gap-0.5"
-                          title="שלח תזכורת"
-                        >
-                          {sendingReminder[contractor.company_id || contractor.contractor_id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-                          תזכורת
-                        </button>
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                          contractor.stuck_count > 5 ? 'text-red-600 bg-red-100' : 'text-orange-600 bg-orange-100'
-                        }`}>
-                          {contractor.stuck_count} תקועות
-                        </span>
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      {contractor.tasks.slice(0, 3).map(task => (
-                        <button
-                          key={task.id}
-                          onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/dashboard` } })}
-                          className="w-full flex items-center gap-2 text-right text-xs text-slate-600 hover:text-amber-700 py-0.5"
-                        >
-                          <span className="truncate flex-1">• {task.title}</span>
-                          <ChevronLeft className="w-3 h-3 text-slate-300 shrink-0" />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+        {isPmOrOwner && (
+        <div ref={el => { foldRefs.current['team'] = el; }}>
+          <DashboardFoldSection
+            id="team"
+            projectId={projectId}
+            icon={Users}
+            iconColor="text-purple-500"
+            title="פעילות צוות"
+            summary={`${kpis.team_count} חברי צוות`}
+            forceOpen={foldForce['team'] || 0}
+          >
+          <React.Suspense fallback={null}>
+            <TeamActivitySection projectId={projectId} />
+          </React.Suspense>
+          </DashboardFoldSection>
         </div>
+        )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {load_by_building.length > 0 && (
+        {load_by_building.length > 0 && (
+        <div ref={el => { foldRefs.current['load'] = el; }}>
+          <DashboardFoldSection
+            id="load"
+            projectId={projectId}
+            icon={Building2}
+            iconColor="text-blue-500"
+            title="עומס לפי מבנה"
+            summary={load_by_building[0] ? `${load_by_building[0].building_name || 'מבנה'} — ${load_by_building[0].open_count} פתוחות` : ''}
+            forceOpen={foldForce['load'] || 0}
+          >
             <div className="bg-white rounded-xl border shadow-sm p-4">
               <SectionHeader icon={Building2} title="עומס לפי מבנה" count={null} color="text-blue-500" />
               <div className="space-y-2.5">
@@ -759,8 +914,20 @@ export default function ProjectDashboardPage() {
                 })}
               </div>
             </div>
-          )}
+          </DashboardFoldSection>
+        </div>
+        )}
 
+        <div ref={el => { foldRefs.current['quality'] = el; }}>
+          <DashboardFoldSection
+            id="quality"
+            projectId={projectId}
+            icon={BarChart3}
+            iconColor="text-purple-500"
+            title="קבלנים — איכות"
+            summary={`${contractor_quality.length} קבלנים`}
+            forceOpen={foldForce['quality'] || 0}
+          >
           <div className="bg-white rounded-xl border shadow-sm p-4">
             <SectionHeader icon={BarChart3} title="קבלנים — איכות" count={contractor_quality.length} color="text-purple-500" />
             {contractor_quality.length === 0 ? (
@@ -812,7 +979,45 @@ export default function ProjectDashboardPage() {
               </div>
             )}
           </div>
+          </DashboardFoldSection>
         </div>
+
+        {hasSla ? (
+          <div className="bg-white rounded-xl border shadow-sm p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Timer className="w-4 h-4 text-indigo-500" />
+              <h3 className="text-sm font-bold text-slate-700">לוחות זמנים</h3>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className={`text-center p-3 rounded-lg ${getSlaBoxBg(kpis.sla_response_7d)}`}>
+                <p className="text-xs text-slate-500 mb-1">זמן תגובה ממוצע</p>
+                <p className="text-2xl font-extrabold text-slate-800">{formatHours(kpis.sla_response_7d)}</p>
+                <p className="text-[10px] text-slate-400">7 ימים</p>
+              </div>
+              <div className={`text-center p-3 rounded-lg ${getSlaBoxBg(kpis.sla_close_7d)}`}>
+                <p className="text-xs text-slate-500 mb-1">זמן סגירה ממוצע</p>
+                <p className="text-2xl font-extrabold text-slate-800">{formatHours(kpis.sla_close_7d)}</p>
+                <p className="text-[10px] text-slate-400">7 ימים</p>
+              </div>
+              <div className={`text-center p-3 rounded-lg ${getSlaBoxBg(kpis.sla_response_30d)}`}>
+                <p className="text-xs text-slate-500 mb-1">זמן תגובה ממוצע</p>
+                <p className="text-2xl font-extrabold text-slate-800">{formatHours(kpis.sla_response_30d)}</p>
+                <p className="text-[10px] text-slate-400">30 ימים</p>
+              </div>
+              <div className={`text-center p-3 rounded-lg ${getSlaBoxBg(kpis.sla_close_30d)}`}>
+                <p className="text-xs text-slate-500 mb-1">זמן סגירה ממוצע</p>
+                <p className="text-2xl font-extrabold text-slate-800">{formatHours(kpis.sla_close_30d)}</p>
+                <p className="text-[10px] text-slate-400">30 ימים</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border shadow-sm p-3.5 opacity-55 flex items-center gap-2">
+            <Timer className="w-4 h-4 text-slate-400" />
+            <span className="text-sm font-bold text-slate-500">לוחות זמנים</span>
+            <span className="text-xs text-slate-400">אין עדיין נתונים</span>
+          </div>
+        )}
 
         {kpis.open_total === 0 && kpis.closed_total === 0 && (
           <div className="bg-white rounded-xl border shadow-sm p-8 text-center">
