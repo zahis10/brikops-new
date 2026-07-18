@@ -137,4 +137,48 @@ Frontend-only, OTA-safe. No new npm deps, no image assets (inline SVG only),
 no backend, no native, no route or logic changes. Loading shell (:224) and
 page background (bg-slate-50) unchanged.
 
+================================================================================
+FIX1 (same task #550, pre-deploy) — light skyline fills the empty white body
+================================================================================
+Zahi feedback: the light body below the cards is a flat empty white page (most
+users have ≤3 projects). Added the approved light backdrop (mockup option א'
+bottom art) UNDER the shipped band — page stays light, does not interfere with
+content.
+
+FIX1 CHANGES (spec-exact, FE only, no deps)
+--------------------------------------------------------------------------------
+1. NEW frontend/src/components/ProjectsLightSkyline.js — pasted EXACTLY from
+   the FIX1 spec: fixed inset-x-0 bottom-0, height 150, zIndex 0, aria-hidden +
+   pointer-events-none; maxWidth-560 masked column; soft amber horizon line at
+   bottom:96 (rgba(245,158,11,.28)); light skyline + crane SVG (#d7dfea,
+   opacity .75) with amber window dots (.35). Decorative only, zero logic.
+2. MyProjectsPage main div (:232): className unchanged; ADDED
+   style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #eef2f8 60%, #e9eef6 100%)' }}.
+3. <ProjectsLightSkyline /> rendered immediately AFTER <ProjectsSceneBand />
+   + import added.
+NOTHING else changed — band, header, cards, content column (z-10 stays above
+the zIndex-0 skyline), loading shell all untouched.
+
+FIX1 DIFF (incremental over the batch diff above)
+--------------------------------------------------------------------------------
++import ProjectsLightSkyline from '../components/ProjectsLightSkyline';
+-    <div className="min-h-screen bg-slate-50" dir="rtl">
++    <div className="min-h-screen bg-slate-50" style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #eef2f8 60%, #e9eef6 100%)' }} dir="rtl">
++      <ProjectsLightSkyline />
+NEW FILE: frontend/src/components/ProjectsLightSkyline.js (spec source verbatim).
+
+FIX1 VERIFY
+--------------------------------------------------------------------------------
+- CI=true REACT_APP_BACKEND_URL=https://api-staging.brikops.com npx craco build
+  → EXIT CODE 0 (only pre-existing capacitor sourcemap warnings).
+- Fresh screenshots (headless Chromium, authenticated PM session, 390px):
+  - screenshots/visual-projects-fix1-390.jpg — full page: dark band under the
+    header at top, cards floating, and the light skyline + crane now filling
+    the bottom of the previously empty light area; subtle gradient page bg.
+  - screenshots/visual-projects-fix1-scrolled-390.jpg — scrolled (scrollY=82,
+    short viewport): cards pass OVER the fixed bottom skyline; sticky header
+    solid; skyline stays pinned to the viewport bottom behind content
+    (zIndex 0 vs content z-10).
+- Content interaction unaffected: skyline is aria-hidden + pointer-events-none.
+
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

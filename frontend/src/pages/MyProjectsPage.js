@@ -17,6 +17,7 @@ import OfflineState from '../components/OfflineState';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { navigateToProject } from '../utils/navigation';
 import ProjectsSceneBand from '../components/ProjectsSceneBand';
+import ProjectsLightSkyline from '../components/ProjectsLightSkyline';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 const LAST_PROJECT_KEY = 'lastProjectId';
@@ -230,7 +231,7 @@ const MyProjectsPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50" dir="rtl">
+    <div className="min-h-screen bg-slate-50" style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #eef2f8 60%, #e9eef6 100%)' }} dir="rtl">
       <header className="bg-[#1c2735] text-white shadow-lg sticky top-0 z-50">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
           <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -267,6 +268,7 @@ const MyProjectsPage = () => {
         </div>
       </header>
       <ProjectsSceneBand />
+      <ProjectsLightSkyline />
 
       <div className="max-w-4xl mx-auto px-4 py-4 space-y-4 relative z-10 -mt-16">
         {isSuperAdmin && (
