@@ -402,3 +402,189 @@ async def list_gate_scans(
                 it["guest_company"] = g.get("guest_company")
                 it["is_guest"] = True
     return {"items": items, "total": total, "limit": limit, "offset": offset, "summary": summary}
+
+
+# =====================================================================
+# qrg2-station B1 — per-project GUARD STATION tokens (authed management).
+# ONE active station per project (partial unique idx uidx_gst_active),
+# race-safe via the same DuplicateKeyError pattern as worker tokens.
+# The PUBLIC consumption side lives in gate_station.py (no auth).
+# =====================================================================
+def _station_url(token: str) -> str:
+    from contractor_ops.router import get_public_base_url
+    base = get_public_base_url()
+    return f"{base}/station/{token}" if base else f"/station/{token}"
+
+
+def _station_public(doc: dict) -> dict:
+    return {
+        "exists": True,
+        "station_url": _station_url(doc["token"]),
+        "created_at": doc["created_at"],
+    }
+
+
+async def ensure_station_token(db, project_id: str, user_id: str) -> dict:
+    """Return the project's ACTIVE station token, creating one if missing."""
+    tok = await db.gate_station_tokens.find_one(
+        {"project_id": project_id, "status": "active"}, {"_id": 0}
+    )
+    if tok:
+        return tok
+    proj = await db.projects.find_one({"id": project_id}, {"_id": 0, "org_id": 1})
+    doc = {
+        "id": _new_id(),
+        "token": _new_token(),
+        "org_id": (proj or {}).get("org_id"),
+        "project_id": project_id,
+        "status": "active",
+        "created_by": user_id,
+        "created_at": _now(),
+        "revoked_at": None,
+        "revoked_by": None,
+    }
+    try:
+        await db.gate_station_tokens.insert_one(doc)
+    except DuplicateKeyError:
+        # concurrent ensure won the race — return the existing active station
+        tok = await db.gate_station_tokens.find_one(
+            {"project_id": project_id, "status": "active"}, {"_id": 0}
+        )
+        if tok:
+            return tok
+        raise
+    doc.pop("_id", None)
+    return doc
+
+
+async def rotate_station_token(db, project_id: str, user_id: str) -> dict:
+    """Revoke any active station token and issue a fresh one."""
+    now = _now()
+    await db.gate_station_tokens.update_many(
+        {"project_id": project_id, "status": "active"},
+        {"$set": {"status": "revoked", "revoked_at": now, "revoked_by": user_id}},
+    )
+    proj = await db.projects.find_one({"id": project_id}, {"_id": 0, "org_id": 1})
+    doc = {
+        "id": _new_id(),
+        "token": _new_token(),
+        "org_id": (proj or {}).get("org_id"),
+        "project_id": project_id,
+        "status": "active",
+        "created_by": user_id,
+        "created_at": now,
+        "revoked_at": None,
+        "revoked_by": None,
+    }
+    for _ in range(3):
+        try:
+            await db.gate_station_tokens.insert_one(doc)
+            doc.pop("_id", None)
+            return doc
+        except DuplicateKeyError:
+            # concurrent rotate/ensure claimed the active slot — revoke and retry
+            doc.pop("_id", None)
+            await db.gate_station_tokens.update_many(
+                {"project_id": project_id, "status": "active"},
+                {"$set": {"status": "revoked", "revoked_at": _now(), "revoked_by": user_id}},
+            )
+    # heavy contention: converge on whichever concurrent call won the slot
+    while True:
+        tok = await db.gate_station_tokens.find_one(
+            {"project_id": project_id, "status": "active"}, {"_id": 0}
+        )
+        if tok:
+            return tok
+        try:
+            await db.gate_station_tokens.insert_one(doc)
+            doc.pop("_id", None)
+            return doc
+        except DuplicateKeyError:
+            doc.pop("_id", None)
+            continue
+
+
+@router.get("/{project_id}/gate-station")
+async def get_gate_station(
+    project_id: str,
+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+):
+    """Current station status — {exists:false} or the active station link."""
+    db = get_db()
+    await _check_project_access(user, project_id)
+    tok = await db.gate_station_tokens.find_one(
+        {"project_id": project_id, "status": "active"}, {"_id": 0}
+    )
+    if not tok:
+        return {"exists": False}
+    return _station_public(tok)
+
+
+@router.post("/{project_id}/gate-station/ensure")
+async def ensure_gate_station(
+    project_id: str,
+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+):
+    db = get_db()
+    await _check_project_access(user, project_id)
+    tok = await ensure_station_token(db, project_id, user["id"])
+    await _audit("gate_station_token", tok["id"], "gate_station_change", user["id"], {
+        "project_id": project_id, "action": "ensure",
+    })
+    return _station_public(tok)
+
+
+@router.post("/{project_id}/gate-station/rotate")
+async def rotate_gate_station(
+    project_id: str,
+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+):
+    db = get_db()
+    await _check_project_access(user, project_id)
+    tok = await rotate_station_token(db, project_id, user["id"])
+    await _audit("gate_station_token", tok["id"], "gate_station_change", user["id"], {
+        "project_id": project_id, "action": "rotate",
+    })
+    return _station_public(tok)
+
+
+@router.post("/{project_id}/gate-station/revoke")
+async def revoke_gate_station(
+    project_id: str,
+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+):
+    db = get_db()
+    await _check_project_access(user, project_id)
+    tok = await db.gate_station_tokens.find_one(
+        {"project_id": project_id, "status": "active"}, {"_id": 0, "id": 1}
+    )
+    if not tok:
+        raise HTTPException(status_code=404, detail="אין עמדת שער פעילה")
+    await db.gate_station_tokens.update_many(
+        {"project_id": project_id, "status": "active"},
+        {"$set": {"status": "revoked", "revoked_at": _now(), "revoked_by": user["id"]}},
+    )
+    await _audit("gate_station_token", tok["id"], "gate_station_change", user["id"], {
+        "project_id": project_id, "action": "revoke",
+    })
+    return {"exists": False}
+
+
+@router.get("/{project_id}/gate-station/qr.png")
+async def get_gate_station_qr_png(
+    project_id: str,
+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+):
+    """QR of the station URL (authed) — PM scans it with the guard's phone."""
+    db = get_db()
+    await _check_project_access(user, project_id)
+    tok = await db.gate_station_tokens.find_one(
+        {"project_id": project_id, "status": "active"}, {"_id": 0, "token": 1}
+    )
+    if not tok:
+        raise HTTPException(status_code=404, detail="אין עמדת שער פעילה")
+    png = _qr_png_bytes(_station_url(tok["token"]))
+    return StreamingResponse(
+        io.BytesIO(png), media_type="image/png",
+        headers={"Cache-Control": "private, max-age=300"},
+    )

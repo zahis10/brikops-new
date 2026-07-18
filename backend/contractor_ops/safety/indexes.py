@@ -189,4 +189,16 @@ async def ensure_safety_indexes(db) -> None:
         background=True, unique=True, name="uidx_gbt_org",
     )
 
-    logger.info("Safety indices ensured (38 total across 15 collections)")
+    # qrg2-station — 2 on gate_station_tokens.
+    await db.gate_station_tokens.create_index(
+        [("token", 1)],
+        background=True, unique=True, name="uidx_gst_token",
+    )
+    # single ACTIVE station per project — DB-level race guard (worker-token pattern)
+    await db.gate_station_tokens.create_index(
+        [("project_id", 1)],
+        background=True, unique=True, name="uidx_gst_active",
+        partialFilterExpression={"status": "active"},
+    )
+
+    logger.info("Safety indices ensured (40 total across 16 collections)")

@@ -439,6 +439,71 @@ export const safetyService = {
     const response = await axios.get(`${API}/gate/${token}`);
     return response.data;
   },
+  // qrg2-station — authed station-link management (SAFETY_WRITERS)
+  async getGateStation(projectId) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/gate-station`,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async ensureGateStation(projectId) {
+    const response = await axios.post(
+      `${API}/safety/${projectId}/gate-station/ensure`,
+      {},
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async rotateGateStation(projectId) {
+    const response = await axios.post(
+      `${API}/safety/${projectId}/gate-station/rotate`,
+      {},
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async revokeGateStation(projectId) {
+    const response = await axios.post(
+      `${API}/safety/${projectId}/gate-station/revoke`,
+      {},
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async getGateStationQrPng(projectId) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/gate-station/qr.png`,
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    return response.data;
+  },
+  // qrg2-station — PUBLIC station endpoints (guard's phone, no account).
+  async getStationMeta(stationToken) {
+    const response = await axios.get(`${API}/station/${stationToken}/meta`);
+    return response.data;
+  },
+  async stationCheck(stationToken, code) {
+    const response = await axios.get(
+      `${API}/station/${stationToken}/check`,
+      { params: { code } }
+    );
+    return response.data;
+  },
+  async stationSearch(stationToken, q) {
+    const response = await axios.get(
+      `${API}/station/${stationToken}/search`,
+      { params: { q } }
+    );
+    return response.data;
+  },
+  async stationCheckWorker(stationToken, workerId) {
+    const response = await axios.get(
+      `${API}/station/${stationToken}/check-worker`,
+      { params: { worker_id: workerId } }
+    );
+    return response.data;
+  },
   // qrg-guest — authed guest-pass CRUD (SAFETY_WRITERS)
   async createGuestPass(projectId, body) {
     const response = await axios.post(

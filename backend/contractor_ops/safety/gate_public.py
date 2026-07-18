@@ -62,7 +62,8 @@ def _photo_display(ref):
 
 
 async def _log_scan(db, *, project_id=None, worker_id=None, token_id=None,
-                    result, reasons, guest_pass_id=None):
+                    result, reasons, guest_pass_id=None,
+                    scanned_via=None, station_token_id=None):
     try:
         doc = {
             "id": str(uuid.uuid4()),
@@ -77,6 +78,12 @@ async def _log_scan(db, *, project_id=None, worker_id=None, token_id=None,
         # byte-compatible with the qrg1/fix1 contract.
         if guest_pass_id is not None:
             doc["guest_pass_id"] = guest_pass_id
+        # qrg2-station: additive keys ONLY on station rows — every existing
+        # call site passes neither, so their rows stay byte-identical.
+        if scanned_via is not None:
+            doc["scanned_via"] = scanned_via
+        if station_token_id is not None:
+            doc["station_token_id"] = station_token_id
         await db.gate_scan_log.insert_one(doc)
     except Exception as e:  # scan logging must never break the gate page
         logger.error(f"[GATE] scan log insert failed: {e}")
@@ -128,20 +135,63 @@ async def gate_status(token: str, request: Request, response: Response):
         )
         return _INVALID
 
+    # qrg2-station B2 — the eligibility decision moved verbatim into
+    # _worker_gate_result (shared with the station); the public payloads
+    # built here are BYTE-IDENTICAL to the pre-refactor responses.
+    res = await _worker_gate_result(db, tok, worker)
+    await _log_scan(
+        db, project_id=tok["project_id"], worker_id=worker["id"], token_id=tok["id"],
+        result=res["state"], reasons=res["log_reasons"],
+    )
+    if res["state"] == "red" and res["reason"] == "blocked":
+        return {
+            "state": "red",
+            "reason": "blocked",
+            "first_name": _first_name(worker.get("full_name")),
+            "project_name": res["project_name"],
+        }
+    if res["state"] == "red":
+        payload = {
+            "state": "red",
+            "reason": "induction",
+            "first_name": _first_name(worker.get("full_name")),
+            "project_name": res["project_name"],
+        }
+        if res.get("expired_at"):
+            payload["expired_at"] = res["expired_at"]
+        return payload
+    return {
+        "state": "green",
+        "first_name": _first_name(worker.get("full_name")),
+        "photo_display_url": _photo_display(worker.get("photo_ref")),
+        "project_name": res["project_name"],
+        "induction_valid_until": res["induction_valid_until"],
+        "warnings": res["warnings"],
+    }
+
+
+# =====================================================================
+# qrg2-station B2 — worker eligibility computation, extracted verbatim from
+# gate_status so the station (gate_station.py) consumes the SAME decision.
+# Pure computation: does NOT log and does NOT build public payloads —
+# callers map the internal result to their own response shapes.
+# =====================================================================
+async def _worker_gate_result(db, tok: dict, worker: dict) -> dict:
+    """Internal gate decision for an active worker token + live worker doc.
+
+    Returns {state, reason, log_reasons, project_name} plus expired_at (red
+    induction with a past date) or induction_valid_until/warnings (green).
+    """
     project_id = tok["project_id"]
     proj = await db.projects.find_one({"id": project_id}, {"_id": 0, "name": 1})
     project_name = (proj or {}).get("name") or ""
 
     blocked = (worker.get("blocked") or {})
     if blocked.get("is_blocked"):
-        await _log_scan(
-            db, project_id=project_id, worker_id=worker["id"], token_id=tok["id"],
-            result="red", reasons=["blocked"],
-        )
         return {
             "state": "red",
             "reason": "blocked",
-            "first_name": _first_name(worker.get("full_name")),
+            "log_reasons": ["blocked"],
             "project_name": project_name,
         }
 
@@ -162,20 +212,15 @@ async def gate_status(token: str, request: Request, response: Response):
     induction_valid_until = agg[0].get("max_expires") if agg else None
 
     if not induction_valid_until or str(induction_valid_until)[:10] < today:
-        payload = {
+        out = {
             "state": "red",
             "reason": "induction",
-            "first_name": _first_name(worker.get("full_name")),
+            "log_reasons": ["induction_expired" if induction_valid_until else "induction_missing"],
             "project_name": project_name,
         }
-        reasons = ["induction_expired" if induction_valid_until else "induction_missing"]
         if induction_valid_until:
-            payload["expired_at"] = str(induction_valid_until)[:10]
-        await _log_scan(
-            db, project_id=project_id, worker_id=worker["id"], token_id=tok["id"],
-            result="red", reasons=reasons,
-        )
-        return payload
+            out["expired_at"] = str(induction_valid_until)[:10]
+        return out
 
     # Yellow warnings — OTHER training types whose latest expiry has passed.
     warnings = []
@@ -194,14 +239,10 @@ async def gate_status(token: str, request: Request, response: Response):
         if exp and exp < today:
             warnings.append({"type": row["_id"], "expired_at": exp})
 
-    await _log_scan(
-        db, project_id=project_id, worker_id=worker["id"], token_id=tok["id"],
-        result="green", reasons=(["warnings"] if warnings else []),
-    )
     return {
         "state": "green",
-        "first_name": _first_name(worker.get("full_name")),
-        "photo_display_url": _photo_display(worker.get("photo_ref")),
+        "reason": None,
+        "log_reasons": (["warnings"] if warnings else []),
         "project_name": project_name,
         "induction_valid_until": str(induction_valid_until)[:10],
         "warnings": warnings,

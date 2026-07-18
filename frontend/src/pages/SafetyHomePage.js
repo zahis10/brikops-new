@@ -992,6 +992,9 @@ export default function SafetyHomePage() {
                   issueOpen={guestIssueOpen}
                   onIssueOpenChange={setGuestIssueOpen}
                 />
+
+                {/* qrg2-station F3 — guard-station link management (writers only) */}
+                <GateStationSection projectId={projectId} />
               </div>
             )}
           </TabsContent>
@@ -1848,6 +1851,171 @@ const GUEST_STATUS_CHIP = (p) => {
 const guestEntryMessage = (guestName, projectName, validOn, link) =>
   `שלום ${guestName}, זהו קוד הכניסה שלך לאתר ${projectName} לתאריך ${validOn}. ` +
   `יש להיכנס לקישור, לקרוא את תדריך הבטיחות ולחתום לפני ההגעה לאתר: ${link}`;
+
+// qrg2-station F3 — compact guard-station card (overview, writers only).
+// No station: create button. Active: readonly link + copy / QR dialog /
+// rotate (confirm) / revoke (confirm) + helper text.
+function GateStationSection({ projectId }) {
+  const [station, setStation] = useState(null); // {exists, station_url?, created_at?}
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrUrl, setQrUrl] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(null); // 'rotate' | 'revoke'
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await safetyService.getGateStation(projectId);
+        if (alive) setStation(res);
+      } catch {
+        if (alive) setStation({ exists: false });
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [projectId]);
+
+  useEffect(() => () => { if (qrUrl) URL.revokeObjectURL(qrUrl); }, [qrUrl]);
+
+  const ensure = async () => {
+    setBusy(true);
+    try {
+      const res = await safetyService.ensureGateStation(projectId);
+      setStation(res);
+      toast.success('קישור עמדת השער נוצר');
+    } catch {
+      toast.error('יצירת קישור העמדה נכשלה');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(station.station_url);
+      toast.success('הקישור הועתק');
+    } catch {
+      toast.error('העתקה נכשלה');
+    }
+  };
+
+  const openQr = async () => {
+    try {
+      const blob = await safetyService.getGateStationQrPng(projectId);
+      setQrUrl(URL.createObjectURL(blob));
+      setQrOpen(true);
+    } catch {
+      toast.error('טעינת ה-QR נכשלה');
+    }
+  };
+
+  const doConfirmed = async () => {
+    const action = confirmAction;
+    setConfirmAction(null);
+    setBusy(true);
+    try {
+      if (action === 'rotate') {
+        const res = await safetyService.rotateGateStation(projectId);
+        setStation(res);
+        toast.success('נוצר קישור חדש — הקישור הישן הפסיק לעבוד');
+      } else if (action === 'revoke') {
+        await safetyService.revokeGateStation(projectId);
+        setStation({ exists: false });
+        toast.success('עמדת השער בוטלה');
+      }
+    } catch {
+      toast.error('הפעולה נכשלה');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 pt-2">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-slate-900">🛂 עמדת שער</h3>
+        {!loading && !station?.exists && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={ensure}
+            className="px-3 py-2 text-sm rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 flex items-center gap-1 min-h-[44px]"
+          >
+            <QrCode className="w-4 h-4" />
+            צור קישור עמדה
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="h-12 bg-slate-100 rounded-xl animate-pulse" />
+      ) : station?.exists ? (
+        <Card className="p-3 space-y-3">
+          <input
+            readOnly
+            dir="ltr"
+            value={station.station_url}
+            onFocus={(e) => e.target.select()}
+            className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-slate-700"
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={copyLink}>העתק</Button>
+            <Button size="sm" variant="outline" onClick={openQr}>QR לפתיחה</Button>
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => setConfirmAction('rotate')}>
+              חדש קישור
+            </Button>
+            <Button size="sm" variant="outline" disabled={busy} className="text-red-600 border-red-200 hover:bg-red-50" onClick={() => setConfirmAction('revoke')}>
+              בטל עמדה
+            </Button>
+          </div>
+          <p className="text-xs text-slate-500">
+            פתח את הקישור בדפדפן בטלפון של השומר והוסף למסך הבית.
+          </p>
+        </Card>
+      ) : (
+        <p className="text-xs text-slate-500">
+          עמדת שער הופכת את הטלפון של השומר לסורק קודי כניסה — צור קישור ופתח אותו בטלפון של השומר.
+        </p>
+      )}
+
+      <Dialog open={qrOpen} onOpenChange={(o) => { setQrOpen(o); if (!o && qrUrl) { URL.revokeObjectURL(qrUrl); setQrUrl(null); } }}>
+        <DialogContent className="max-w-xs" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>QR לפתיחת העמדה</DialogTitle>
+          </DialogHeader>
+          {qrUrl && <img src={qrUrl} alt="QR עמדת שער" className="w-full rounded-lg" />}
+          <p className="text-xs text-slate-500 text-center">
+            סרוק עם הטלפון של השומר כדי לפתוח את העמדה בדפדפן.
+          </p>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!confirmAction} onOpenChange={(o) => { if (!o) setConfirmAction(null); }}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmAction === 'rotate' ? 'לחדש את קישור העמדה?' : 'לבטל את עמדת השער?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmAction === 'rotate'
+                ? 'הקישור הישן יפסיק לעבוד — יש לפתוח את הקישור החדש בטלפון של השומר.'
+                : 'הקישור הקיים יפסיק לעבוד מיד ולא ניתן יהיה לסרוק בעמדה.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ביטול</AlertDialogCancel>
+            <AlertDialogAction onClick={doConfirmed}>
+              {confirmAction === 'rotate' ? 'חדש קישור' : 'בטל עמדה'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
 
 // qrg-briefing-edit E4 — org-level visitor-briefing editor. Self-contained:
 // fetches {text, version, is_custom, can_edit}; renders the pencil button

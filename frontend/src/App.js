@@ -57,6 +57,7 @@ const OwnershipTransferPage = React.lazy(() => import('./pages/OwnershipTransfer
 const ProjectDashboardPage = React.lazy(() => import('./pages/ProjectDashboardPage'));
 // qrg1 — public entry-gate status page (no auth; scanned by gate guards).
 const GatePage = React.lazy(() => import('./pages/GatePage'));
+const GateStationPage = React.lazy(() => import('./pages/GateStationPage'));
 const FloorDetailPage = React.lazy(() => import('./pages/FloorDetailPage'));
 const StageDetailPage = React.lazy(() => import('./pages/StageDetailPage'));
 const QCFloorSelectionPage = React.lazy(() => import('./pages/QCFloorSelectionPage'));
@@ -271,6 +272,7 @@ const AppRoutes = () => {
         <Route path="/phone-login" element={<Navigate to="/login" replace />} />
         <Route path="/safety/:projectId" element={<SafetyShortRedirect />} />
         <Route path="/gate/:token" element={<GatePage />} />
+        <Route path="/station/:token" element={<GateStationPage />} />
         <Route path="/auth/wa" element={<WaLoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/register-management" element={<RegisterManagementPage />} />
@@ -645,7 +647,7 @@ const AppShell = () => {
 // four banners stay mounted app-wide but skip gate routes.
 const AppChromeBanners = () => {
   const location = useLocation();
-  if (location.pathname.startsWith('/gate/')) return null;
+  if (location.pathname.startsWith('/gate/') || location.pathname.startsWith('/station/')) return null;
   return (
     <>
       <OfflineBanner />

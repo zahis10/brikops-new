@@ -142,7 +142,11 @@ async def _check_rate_limit_global(rate_db, kind: str, key: str, max_requests: i
 @app.middleware("http")
 async def global_rate_limit_middleware(request: Request, call_next):
     path = request.url.path
-    if path in ('/health', '/ready') or not path.startswith('/api/'):
+    # qrg2-station B4: /api/station/* is exempt from the global unauthenticated
+    # 30/min IP limit — the station carries its own token (300/min) + IP
+    # (120/min) throttles in gate_station.py; a busy morning rush would
+    # otherwise starve the guard's scanner.
+    if path in ('/health', '/ready') or not path.startswith('/api/') or path.startswith('/api/station/'):
         return await call_next(request)
 
     client_ip = request.headers.get('x-forwarded-for', request.client.host if request.client else '127.0.0.1')
@@ -465,6 +469,10 @@ if ENABLE_SAFETY_MODULE:
     # local throttle + noindex). Gated by the same flag: disabled == 404.
     from contractor_ops.safety.gate_public import router as gate_public_router
     app.include_router(gate_public_router)
+    # qrg2-station — PUBLIC guard-station router (no auth; own token+IP
+    # throttles + noindex). Same flag gate: disabled == 404.
+    from contractor_ops.safety.gate_station import router as gate_station_router
+    app.include_router(gate_station_router)
     logger.info("Safety module ENABLED — router registered at /api/safety")
 else:
     logger.info("Safety module disabled (ENABLE_SAFETY_MODULE=false)")

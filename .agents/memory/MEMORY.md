@@ -5,3 +5,4 @@
 - [PDF multi-language fonts](pdf-multilang-fonts.md) — reshaped Arabic needs presentation-form glyphs (Amiri, probe 0xFECB); PIL RGBA→RGB turns alpha black; gate fonts before render.
 - [CI=true builds](ci-true-builds.md) — Zahi standing rule: all frontend verification builds must run with CI=true (deploy pipeline treats warnings as errors; CI=false hides eslint blockers).
 - [Day-dependent probe failures](probe-day-dependent-failures.md) — reminder-day prefs exclude Friday; alert-send probes fail Fri/Sat with day_N_not_in_user_days, not a regression.
+- [Dev preview for safety UI](dev-preview-safety.md) — safety routers off by default (ENABLE_SAFETY_MODULE in backend/.env); build bakes API URL; UI login blocks short seed passwords — inject token instead.
