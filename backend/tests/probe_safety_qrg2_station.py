@@ -416,6 +416,74 @@ async def main():
         record("S8c 429 body is Hebrew throttle message",
                "יותר מדי" in rr.text, rr.text[:100])
 
+        # ============ S9 — forced presign-failure (gate-photo-s3guard) ============
+        print("S9 — s3:// leak guard under forced presign failure")
+        # Monkeypatch the gate_public symbol so that for an s3:// ref it
+        # returns the RAW "s3://<key>" string (exactly what
+        # object_storage.generate_url does when presigning fails), while
+        # local refs keep the real behavior.
+        from contractor_ops.safety import gate_public as _gp
+        _orig_gen = _gp.generate_url
+
+        def _presign_fail(ref):
+            if ref and ref.startswith("s3://"):
+                return ref  # raw passthrough — the leak being guarded
+            return _orig_gen(ref)
+
+        _gp.generate_url = _presign_fail
+        try:
+            # seed a GREEN worker WITH an s3:// photo_ref (API + induction)
+            s9_ref = f"s3://safety/{proj}/s9-{tag}.jpg"
+            r = await c.post(WORKERS, json={
+                "full_name": f"עובד ענן ירוק {tag}", "photo_ref": s9_ref,
+            }, headers=pm_h)
+            assert r.status_code == 201, r.text[:300]
+            w_s9 = r.json()["id"]
+            r = await c.post(CONDUCT, data={
+                "worker_id": w_s9, "language_choice": "he", "expires_at": exp_far,
+                "signer_name": "ענן", "signature_type": "typed", "typed_name": "ענן",
+            }, headers=pm_h)
+            assert r.status_code == 201, r.text[:300]
+            wet_s9 = await db.worker_entry_tokens.find_one(
+                {"project_id": proj, "worker_id": w_s9, "status": "active"}, {"_id": 0})
+
+            # a. public gate green
+            rg = await c.get(f"/api/gate/{wet_s9['token']}")
+            jg = rg.json()
+            record("S9a gate green -> photo_display_url None, no s3:// anywhere",
+                   rg.status_code == 200 and jg.get("state") == "green"
+                   and jg.get("photo_display_url") is None and "s3://" not in rg.text,
+                   f"state={jg.get('state')}")
+            # b. station /check
+            rs9 = await st_check(wet_s9["token"], n=9)
+            j9 = rs9.json()
+            record("S9b station /check -> green, photo None, no s3://",
+                   j9.get("result") == "green"
+                   and j9.get("photo_display_url") is None and "s3://" not in rs9.text,
+                   str(j9)[:120])
+            # c. station /search
+            r = await c.get(f"/api/station/{st_tok}/search",
+                            params={"q": f"עובד ענן ירוק {tag}"}, headers=ip(9))
+            item = (r.json().get("items") or [{}])[0]
+            record("S9c station /search item -> photo None, no s3://",
+                   item.get("worker_id") == w_s9
+                   and item.get("photo_display_url") is None and "s3://" not in r.text,
+                   str(item)[:120])
+            # d. station /check-worker
+            r = await c.get(f"/api/station/{st_tok}/check-worker",
+                            params={"worker_id": w_s9}, headers=ip(9))
+            record("S9d station /check-worker -> photo None, no s3://",
+                   r.json().get("photo_display_url") is None and "s3://" not in r.text,
+                   str(r.json().get("photo_display_url")))
+            # e. SANITY — local ref untouched by the guard
+            r = await c.get(f"/api/station/{st_tok}/check-worker",
+                            params={"worker_id": w_green}, headers=ip(9))
+            record("S9e local /api/uploads-style ref still passes through unchanged",
+                   r.json().get("photo_display_url") == raw_ref,
+                   str(r.json().get("photo_display_url"))[:80])
+        finally:
+            _gp.generate_url = _orig_gen
+
     # cleanup
     for coll, q in [
         ("organizations", {"id": org}), ("subscriptions", {"org_id": org}),

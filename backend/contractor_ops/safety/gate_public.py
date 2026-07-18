@@ -56,7 +56,14 @@ def _photo_display(ref):
     if not ref:
         return None
     try:
-        return generate_url(ref)
+        url = generate_url(ref)
+        # Hard secrecy guard: generate_url() falls back to the raw
+        # s3:// ref on presign failure — never let a raw storage key
+        # reach a PUBLIC gate/station payload. Fail-soft to None (the FE
+        # shows an initials circle when the photo URL is null).
+        if url and url.startswith('s3://'):
+            return None
+        return url
     except Exception:
         return None
 
