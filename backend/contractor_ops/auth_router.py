@@ -562,6 +562,13 @@ async def upload_my_profile_photo(
         img.load()
     except Exception:
         raise HTTPException(status_code=422, detail="פורמט תמונה לא נתמך")
+    # FIX1: apply the EXIF Orientation tag to the pixels BEFORE stripping
+    # metadata, otherwise iPhone photos render rotated/upside-down.
+    from PIL import ImageOps as _PILImageOps
+    try:
+        img = _PILImageOps.exif_transpose(img)
+    except Exception:
+        pass  # corrupt orientation data → keep as-is, never 500
     img = img.convert('RGB')
     max_side = max(img.width, img.height)
     if max_side > 512:

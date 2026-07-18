@@ -122,7 +122,7 @@ DIFF SUMMARY (git diff --stat)
 V1 — FUNCTIONAL HTTP PROBE (backend/tests/probe_user_profile_photo.py)
 --------------------------------------------------------------------------------
 Real ASGI app in-process, real local Mongo, FILES_STORAGE_BACKEND=local,
-WA blanked, TRANSLATE_MOCK=1. RESULT: **22/22 PASS**:
+WA blanked, TRANSLATE_MOCK=1. RESULT: **23/23 PASS** (after FIX1):
   [PASS] upload valid jpg 2000x1500 → 200 + photo_display_url
   [PASS] stored ref persisted in users doc
   [PASS] no "s3://" ref shape in upload response
@@ -142,7 +142,8 @@ WA blanked, TRANSLATE_MOCK=1. RESULT: **22/22 PASS**:
   [PASS] DELETE photo → 204
   [PASS] /auth/me after delete → field null
   [PASS] DELETE again → 404 "אין תמונת פרופיל"
-  [PASS] audit events written (set x3 + clear = 4)
+  [PASS] EXIF Orientation=6 applied → stored portrait, no tag (FIX1)
+  [PASS] audit events written (set x4 + clear = 5)
   [PASS] presign-failure fallback (s3:// ref) → helper returns None
   [PASS] upload under presign-failure → photo_display_url null (not raw ref)
   [PASS] /auth/me under presign-failure → field null (not raw ref)
@@ -198,5 +199,20 @@ V4 — DEVICE (Zahi, prod after deploy)
 ומופיעה גם בכותרת של רשימת הפרויקטים; סגירה ופתיחה של האפליקציה — נשמר;
 הסר תמונה → חוזר לראשי תיבות; כל פריטי התפריט עובדים כרגיל (גם בתוך פרויקט
 וגם ברשימה); web זהה.
+
+FIX1 (2026-07-18, same task, pre-deploy) — iPhone PHOTO ORIENTATION
+--------------------------------------------------------------------------------
+Bug: uploaded iPhone photos rendered UPSIDE-DOWN/rotated. Root cause: the
+re-encode stripped EXIF without APPLYING the Orientation tag to the pixels
+first.
+Fix (backend-only, auth_router.py::upload_my_profile_photo): immediately
+after img.load(), ImageOps.exif_transpose(img) in try/except (corrupt
+orientation data → keep as-is, never 500). The existing convert('RGB') →
+downscale ≤512 → JPEG q85 pipeline continues UNCHANGED — EXIF is still fully
+stripped from the stored bytes, now with correct pixel orientation.
+Probe: new case builds an 800x600 JPEG in-memory with EXIF Orientation=6
+(Image.Exif(), tag 0x0112, no new deps) → upload → decodes the STORED bytes →
+asserts PORTRAIT dimensions (384x512) and no Orientation tag remains.
+Full probe re-run: 23/23 PASS. py_compile OK. No FE change.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

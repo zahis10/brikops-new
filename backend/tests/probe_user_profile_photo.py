@@ -126,6 +126,31 @@ async def main():
         except Exception as e:
             record("stored bytes JPEG + max side ≤512 (decoded)", False, str(e))
 
+        # FIX1: EXIF Orientation=6 (iPhone-style) must be APPLIED to the
+        # pixels before stripping — stored image comes out portrait.
+        buf = io.BytesIO()
+        oimg = Image.new("RGB", (800, 600), (30, 120, 200))
+        ex = Image.Exif()
+        ex[0x0112] = 6
+        oimg.save(buf, format="JPEG", exif=ex)
+        r = await c.post("/api/auth/me/photo",
+                         files={"file": ("rot.jpg", buf.getvalue(), "image/jpeg")}, headers=h)
+        okrot = False
+        detail = f"status={r.status_code}"
+        if r.status_code == 200:
+            doc = await db.users.find_one({"id": uid}, {"_id": 0, "profile_photo_ref": 1})
+            rkey = (doc or {}).get("profile_photo_ref", "").replace("/api/uploads/", "", 1)
+            from services.object_storage import _LOCAL_UPLOADS_ROOT as _ROOT
+            try:
+                simg2 = Image.open(_ROOT / rkey)
+                simg2.load()
+                orient = simg2.getexif().get(0x0112)
+                okrot = (simg2.height > simg2.width) and orient in (None, 1)
+                detail = f"size={simg2.width}x{simg2.height} orientation_tag={orient}"
+            except Exception as e:
+                detail = str(e)
+        record("EXIF Orientation=6 applied → stored portrait, no tag", okrot, detail)
+
         # 2. png + webp → 200
         png = make_image_bytes("PNG", size=(800, 600))
         r = await c.post("/api/auth/me/photo",
@@ -189,7 +214,7 @@ async def main():
         # audit events written
         n = await db.audit_events.count_documents(
             {"action": "user_profile_photo_change", "entity_id": uid})
-        record("audit events written (set x3 + clear)", n == 4, f"count={n}")
+        record("audit events written (set x4 + clear)", n == 5, f"count={n}")
 
         # SECRECY HARD GUARD: if generate_url() falls back to the raw
         # s3:// ref (presign failure path), the helper must return None —
