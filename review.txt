@@ -1,308 +1,140 @@
 ================================================================================
-TASK #546 — BATCH visual-auth: construction-skyline backdrop on ALL auth screens
-feat(ui): auth screens get the construction-skyline backdrop
-Branch: staging | Date: 2026-07-17 | FE ONLY, OTA, no deps
-Spec: attached_assets/Pasted---1784316073529_1784316073530.txt
+TASK #550 — BATCH visual-projects: construction scene band on the projects list
+feat(ui): projects list gets the construction scene band
+Branch: staging | Date: 2026-07-18 | FE ONLY, OTA, no deps | Base: 8e28754
+Spec: attached_assets/Pasted---1784356403429_1784356403430.txt
 ================================================================================
 
-STEP 0 FINDINGS (verified on current tree before implementation)
+STEP 0 FINDINGS (verified on 8e28754 before implementation)
 --------------------------------------------------------------------------------
-- min-h-screen grep: LoginPage.js:555 (1), OnboardingPage.js:754 + :1747 (2),
-  ForgotPasswordPage.js:43 (1), ResetPasswordPage.js:60 + :87 (2) — exactly as
-  spec; all quoted classes/gradients matched byte-for-byte.
-- LoginPage/Onboarding main returns: everything (incl. gitSha stamp at
-  LoginPage:1037-1039) is inside the Card; Onboarding :754 loading shell
-  contains only the Loader2 spinner (no Card, no p-4). Confirmed.
-- Forgot/Reset: only outside-panel elements are the logo img + "איפוס סיסמה"
-  subtitle (Reset :60 no-token shell has logo only, no subtitle). White panels
-  are plain divs "bg-white rounded-2xl shadow-lg border border-slate-200/60
-  p-6 sm:p-8". Confirmed.
-- No LoginBackdrop* file existed anywhere; frontend/src/components is flat.
-→ No mismatches. Proceeded per spec E1-E6 with zero deviations.
+- :232 <div className="min-h-screen bg-slate-50" dir="rtl"> — byte-for-byte match.
+- :233 <header className="bg-slate-800 text-white shadow-lg sticky top-0 z-50">
+  — byte-for-byte match.
+- :269 <div className="max-w-4xl mx-auto px-4 py-4 space-y-4"> — byte-for-byte
+  match.
+- No file named ProjectsSceneBand* existed anywhere in frontend/src.
+- lastProject amber Card ("חזרה לפרויקט האחרון") located at LINE 287:
+  <Card className="p-4 bg-amber-50 border-amber-200"> (inside {lastProject && (
+  at :286).
+- Loading shell at :224 (bg-slate-50 + spinner) confirmed — NOT touched.
+→ No mismatches. Implemented per spec E1-E2 with zero deviations.
 
-WHAT CHANGED (spec E1-E6, frontend-only, pure CSS + inline SVG, no new deps)
+WHAT CHANGED (spec E1 + E2, frontend-only, pure CSS + inline SVG, no new deps)
 --------------------------------------------------------------------------------
-E1  NEW frontend/src/components/LoginBackdrop.js — pasted EXACTLY as given in
-    the spec: aria-hidden, pointer-events-none decorative layer; outer deep-navy
-    gradient + radial amber glow; inner maxWidth-560 masked layer; crane-jib SVG
-    lowering its hook from the top; glowing orange horizon line; building/crane
-    skyline SVG at the bottom. No images, no logic.
-E2  All five shells: old background removed (inline slate gradient /
-    bg-gradient-to-br classes), replaced with relative + background:#17202b,
-    p-4 → p-4 pb-10 where present (NOT on Onboarding loading shell),
-    <LoginBackdrop /> inserted as first child, import added.
-E3  LoginPage Card: shadow-2xl dropped, approved boxShadow applied,
-    relative z-10 kept. Card contents untouched.
-E4  OnboardingPage: loading spinner got relative z-10; main Card same swap
-    as E3.
-E5  ForgotPasswordPage: wrapper +relative z-10; subtitle text-slate-500 →
-    text-slate-300; panel → "bg-white rounded-2xl p-6 sm:p-8" + approved
-    boxShadow. Contents untouched.
-E6  ResetPasswordPage both shells (no-token + main): exact E5 treatment
-    (subtitle recolor only where present).
+E1  NEW frontend/src/components/ProjectsSceneBand.js — pasted EXACTLY as given
+    in the spec: aria-hidden, pointer-events-none decorative band; height 118
+    in normal flow (scrolls away under the sticky header); radial amber glow +
+    navy gradient (#17202b → #212d3b); maxWidth-560 masked column (soft fade
+    edges); glowing orange horizon line at bottom:58; skyline + crane SVG
+    (height 96, opacity .55) with amber window dots. Zero logic, no images.
+E2a Header (:233): bg-slate-800 → bg-[#1c2735] — className only; header
+    contents byte-identical.
+E2b <ProjectsSceneBand /> inserted immediately after </header>; import added
+    with the other imports.
+E2c Content column (:269): className →
+    "max-w-4xl mx-auto px-4 py-4 space-y-4 relative z-10 -mt-16"
+    — the cards float over the band's lower edge.
+E2d lastProject amber Card (line 287): added
+    style={{ boxShadow: '0 14px 30px rgba(10,16,26,.28)' }} (className
+    unchanged) — the floating first card gets the approved deeper shadow.
 
-Approved Card/panel boxShadow used everywhere (exact value):
-  0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08),
-  0 0 60px rgba(245,158,11,.10)
-
-DO NOT TOUCH list — respected: App.js, components/splash/**, all card/panel
-contents (forms, OTP, social buttons, demo buttons, version stamp, links),
-auth logic/handlers, routes, GatePage/app chrome, backend, deps, native.
-git diff confirms only the 4 pages + the new component changed.
+DO NOT TOUCH list — respected: header contents; all Cards' internals (admin
+row, search/filters, project cards, empty state, create dialog); all logic/
+handlers/navigation; LoginBackdrop.js (frozen); App.js; components/splash/**;
+routes; backend; deps; native. git diff shows ONLY MyProjectsPage.js (+ the
+new component + screenshot evidence files).
 
 FULL DIFF
 --------------------------------------------------------------------------------
-diff --git a/frontend/src/pages/ForgotPasswordPage.js b/frontend/src/pages/ForgotPasswordPage.js
-index 7e3bcc0..2b4804d 100644
---- a/frontend/src/pages/ForgotPasswordPage.js
-+++ b/frontend/src/pages/ForgotPasswordPage.js
-@@ -1,3 +1,4 @@
-+import LoginBackdrop from '../components/LoginBackdrop';
- import React, { useState } from 'react';
- import { Link } from 'react-router-dom';
- import { Mail, Loader2, ArrowRight, CheckCircle, AlertCircle } from 'lucide-react';
-@@ -40,14 +41,15 @@ const ForgotPasswordPage = () => {
-   };
+diff --git a/frontend/src/pages/MyProjectsPage.js b/frontend/src/pages/MyProjectsPage.js
+index 083b1d3..d9ac9ed 100644
+--- a/frontend/src/pages/MyProjectsPage.js
++++ b/frontend/src/pages/MyProjectsPage.js
+@@ -16,6 +16,7 @@ import NotificationBell from '../components/NotificationBell';
+ import OfflineState from '../components/OfflineState';
+ import { useOnlineStatus } from '../hooks/useOnlineStatus';
+ import { navigateToProject } from '../utils/navigation';
++import ProjectsSceneBand from '../components/ProjectsSceneBand';
+ import * as DialogPrimitive from '@radix-ui/react-dialog';
+ 
+ const LAST_PROJECT_KEY = 'lastProjectId';
+@@ -230,7 +231,7 @@ const MyProjectsPage = () => {
  
    return (
--    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-amber-50/30 flex items-center justify-center p-4" dir="rtl">
--      <div className="w-full max-w-md">
-+    <div className="min-h-screen flex items-center justify-center p-4 pb-10 relative" style={{ background: '#17202b' }} dir="rtl">
-+      <LoginBackdrop />
-+      <div className="w-full max-w-md relative z-10">
-         <div className="flex flex-col items-center mb-8">
-           <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
--          <p className="text-slate-500 text-sm">איפוס סיסמה</p>
-+          <p className="text-slate-300 text-sm">איפוס סיסמה</p>
-         </div>
- 
--        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6 sm:p-8">
-+        <div className="bg-white rounded-2xl p-6 sm:p-8" style={{ boxShadow: '0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px rgba(245,158,11,.10)' }}>
-           {sent ? (
-             <div className="text-center space-y-4">
-               <div className="flex justify-center">
-diff --git a/frontend/src/pages/LoginPage.js b/frontend/src/pages/LoginPage.js
-index 6db7625..b60b9d8 100644
---- a/frontend/src/pages/LoginPage.js
-+++ b/frontend/src/pages/LoginPage.js
-@@ -1,3 +1,4 @@
-+import LoginBackdrop from '../components/LoginBackdrop';
- import React, { useState, useCallback, useEffect, useRef } from 'react';
- import { useNavigate } from 'react-router-dom';
- import { useAuth } from '../contexts/AuthContext';
-@@ -552,8 +553,10 @@ const LoginPage = () => {
-   }, []);
- 
-   return (
--    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
--      <Card className="w-full max-w-md p-8 bg-white shadow-2xl rounded-2xl relative z-10">
-+    <div className="min-h-screen flex items-center justify-center p-4 pb-10 relative" style={{ background: '#17202b' }}>
-+      <LoginBackdrop />
-+      <Card className="w-full max-w-md p-8 bg-white rounded-2xl relative z-10"
-+            style={{ boxShadow: '0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px rgba(245,158,11,.10)' }}>
-         <div className="flex flex-col items-center mb-8">
-           <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 12 }} />
-           <p className="text-slate-500 text-sm mt-1">ניהול משימות קבלן</p>
-diff --git a/frontend/src/pages/OnboardingPage.js b/frontend/src/pages/OnboardingPage.js
-index 0d79015..aa028d5 100644
---- a/frontend/src/pages/OnboardingPage.js
-+++ b/frontend/src/pages/OnboardingPage.js
-@@ -1,3 +1,4 @@
-+import LoginBackdrop from '../components/LoginBackdrop';
- import React, { useState, useCallback, useEffect, useRef } from 'react';
- import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
- import { useAuth } from '../contexts/AuthContext';
-@@ -751,8 +752,9 @@ const OnboardingPage = () => {
- 
-   if (onboardingEnabled === null) {
-     return (
--      <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
--        <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
-+      <div className="min-h-screen flex items-center justify-center relative" style={{ background: '#17202b' }}>
-+        <LoginBackdrop />
-+        <Loader2 className="w-8 h-8 text-amber-400 animate-spin relative z-10" />
-       </div>
-     );
-   }
-@@ -1744,8 +1746,10 @@ const OnboardingPage = () => {
-   };
- 
-   return (
--    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
--      <Card className="w-full max-w-md p-8 bg-white shadow-2xl rounded-2xl relative z-10">
-+    <div className="min-h-screen flex items-center justify-center p-4 pb-10 relative" style={{ background: '#17202b' }}>
-+      <LoginBackdrop />
-+      <Card className="w-full max-w-md p-8 bg-white rounded-2xl relative z-10"
-+            style={{ boxShadow: '0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px rgba(245,158,11,.10)' }}>
-         {renderHeader()}
-         {renderCurrentStep()}
-       </Card>
-diff --git a/frontend/src/pages/ResetPasswordPage.js b/frontend/src/pages/ResetPasswordPage.js
-index 8c69db0..9850961 100644
---- a/frontend/src/pages/ResetPasswordPage.js
-+++ b/frontend/src/pages/ResetPasswordPage.js
-@@ -1,3 +1,4 @@
-+import LoginBackdrop from '../components/LoginBackdrop';
- import React, { useState } from 'react';
- import { Link, useSearchParams } from 'react-router-dom';
- import { Eye, EyeOff, Loader2, ArrowRight, CheckCircle, AlertCircle, XCircle } from 'lucide-react';
-@@ -57,12 +58,13 @@ const ResetPasswordPage = () => {
- 
-   if (!token) {
-     return (
--      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-amber-50/30 flex items-center justify-center p-4" dir="rtl">
--        <div className="w-full max-w-md">
-+      <div className="min-h-screen flex items-center justify-center p-4 pb-10 relative" style={{ background: '#17202b' }} dir="rtl">
-+        <LoginBackdrop />
-+        <div className="w-full max-w-md relative z-10">
-           <div className="flex flex-col items-center mb-8">
-             <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
+     <div className="min-h-screen bg-slate-50" dir="rtl">
+-      <header className="bg-slate-800 text-white shadow-lg sticky top-0 z-50">
++      <header className="bg-[#1c2735] text-white shadow-lg sticky top-0 z-50">
+         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
+           <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center flex-shrink-0">
+             <HardHat className="w-5 h-5 text-white" />
+@@ -265,8 +266,9 @@ const MyProjectsPage = () => {
            </div>
--          <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6 sm:p-8 text-center space-y-4">
-+          <div className="bg-white rounded-2xl p-6 sm:p-8 text-center space-y-4" style={{ boxShadow: '0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px rgba(245,158,11,.10)' }}>
-             <div className="flex justify-center">
-               <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center">
-                 <XCircle className="w-8 h-8 text-red-500" />
-@@ -84,14 +86,15 @@ const ResetPasswordPage = () => {
-   }
- 
-   return (
--    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-amber-50/30 flex items-center justify-center p-4" dir="rtl">
--      <div className="w-full max-w-md">
-+    <div className="min-h-screen flex items-center justify-center p-4 pb-10 relative" style={{ background: '#17202b' }} dir="rtl">
-+      <LoginBackdrop />
-+      <div className="w-full max-w-md relative z-10">
-         <div className="flex flex-col items-center mb-8">
-           <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
--          <p className="text-slate-500 text-sm">איפוס סיסמה</p>
-+          <p className="text-slate-300 text-sm">איפוס סיסמה</p>
          </div>
+       </header>
++      <ProjectsSceneBand />
  
--        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6 sm:p-8">
-+        <div className="bg-white rounded-2xl p-6 sm:p-8" style={{ boxShadow: '0 24px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px rgba(245,158,11,.10)' }}>
-           {success ? (
-             <div className="text-center space-y-4">
-               <div className="flex justify-center">
+-      <div className="max-w-4xl mx-auto px-4 py-4 space-y-4">
++      <div className="max-w-4xl mx-auto px-4 py-4 space-y-4 relative z-10 -mt-16">
+         {isSuperAdmin && (
+           <button
+             onClick={() => navigate('/admin')}
+@@ -284,7 +286,7 @@ const MyProjectsPage = () => {
+         )}
+ 
+         {lastProject && (
+-              <Card className="p-4 bg-amber-50 border-amber-200">
++              <Card className="p-4 bg-amber-50 border-amber-200" style={{ boxShadow: '0 14px 30px rgba(10,16,26,.28)' }}>
+                 <div className="flex items-center justify-between gap-3">
+                   <div className="flex items-center gap-3 min-w-0">
+                     <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
 
-NEW FILE: frontend/src/components/LoginBackdrop.js — the spec E1 component,
-pasted verbatim from attached_assets/Pasted---1784316073529_1784316073530.txt
-(aria-hidden decorative layer; pointer-events-none; crane-jib SVG top; orange
-horizon glow; skyline SVG bottom; radial vignette). Full source in the file.
+NEW FILE: frontend/src/components/ProjectsSceneBand.js — the spec E1 component,
+pasted verbatim from attached_assets/Pasted---1784356403429_1784356403430.txt.
+Full source in the file.
 
 V1 — BUILD
 --------------------------------------------------------------------------------
-CI=true craco build → EXIT CODE 0 (compiled successfully; no new warnings
-introduced by this batch). frontend/build refreshed and served by the Start
-application workflow on port 5000.
-House greps confirm: LoginBackdrop imported + rendered as first child in all
-5 shells; approved boxShadow present in all 5 Card/panel positions; no
-remaining old gradients on auth shells; App.js and components/splash/**
-untouched (git diff shows zero changes there).
+CI=true REACT_APP_BACKEND_URL=https://api-staging.brikops.com npx craco build
+→ EXIT CODE 0 (compiled successfully; only pre-existing sourcemap warnings
+from @capacitor-community/apple-sign-in; no new warnings from this batch).
+House greps confirm: ProjectsSceneBand imported (:19) + rendered after
+</header> (:269); header bg-[#1c2735] (:234); content column has
+relative z-10 -mt-16 (:271); lastProject Card has the approved boxShadow
+(:289). git diff --stat: only MyProjectsPage.js modified (5+/3-) + new
+component file. LoginBackdrop.js / App.js / splash / backend: zero changes.
 
 V2 — VISUAL EVIDENCE (screenshots committed under screenshots/)
 --------------------------------------------------------------------------------
-Captured against the running app (headless Chromium, splash fully cleared):
-- screenshots/visual-auth-login-390.jpg      /login @390px — navy backdrop,
-  crane hook top, skyline + orange horizon bottom, white card floating with
-  approved glow shadow. Card contents identical to before.
-- screenshots/visual-auth-login-1280.jpg     /login @1280px — centered
-  vignette, backdrop scales cleanly on desktop.
-- screenshots/visual-auth-onboarding-390.jpg /onboarding?mode=register @390px —
-  registration step on the same backdrop.
-- screenshots/visual-auth-forgot-390.jpg     /forgot-password @390px — subtitle
-  "איפוס סיסמה" readable (text-slate-300) on the dark backdrop.
-- screenshots/visual-auth-reset-notoken-390.jpg /reset-password (no token)
-  @390px — "קישור לא תקף" box on the same backdrop.
-Additionally verified by automated Playwright test runs (mobile 400px +
-desktop 1280px): all four routes render backdrop + floating card; no console
-errors introduced (pre-existing CSP font/script warnings only).
+Captured against the running app (headless Chromium, authenticated PM session,
+splash cleared; screenshots taken from a localhost-pointed verification build
+so the API is same-origin — the staging-URL build above is the V1 EXIT=0 build):
+- screenshots/visual-projects-390.jpg      /projects @390px — night band under
+  the dark header, amber "חזרה לפרויקט האחרון" card floating over the band's
+  lower edge with the deep shadow, search + project card fully readable on the
+  light page below.
+- screenshots/visual-projects-1280.jpg     /projects @1280px — band spans full
+  width, skyline motifs in the centered maxWidth-560 vignette with soft fade
+  edges; cards float over the band edge.
+- screenshots/visual-projects-scrolled-390.jpg — page scrolled (scrollY=82 in a
+  short viewport): the band has scrolled away under the sticky header, which
+  stays solid #1c2735; content unaffected.
+All screens: header contents, cards, search, create button unchanged and fully
+functional (band is aria-hidden + pointer-events-none — pure decoration).
 
 ARCHITECT REVIEW
 --------------------------------------------------------------------------------
-Verdict: PASS. Backdrop is a pure decorative layer (aria-hidden,
-pointer-events-none); stacking correct (relative parent + z-10 content) in all
-shells; approved shadow applied consistently; presentation-only changes, no
-auth/routing regressions; DO NOT TOUCH list respected. One out-of-scope item
-flagged (a chromium entry added to replit.nix by my screenshot tooling) — it
-has been reverted; the final diff contains only the 4 pages + the new
-component (+ screenshot evidence files).
+Verdict: PASS. Component is implementation-aligned with spec (pure
+presentational markup, CSS + inline SVG only, aria-hidden, pointer-events-none,
+fixed height 118); band placement in normal flow correct (scrolls away
+naturally); header color exact; float-over-band layering correct (z-50 header /
+z-10 content / non-interactive band); approved shadow applied; no route,
+handler, API, state, or business-logic edits; LoginBackdrop.js untouched; no
+security concerns. No issues to fix.
 
 SCOPE GUARANTEES
 --------------------------------------------------------------------------------
 Frontend-only, OTA-safe. No new npm deps, no image assets (inline SVG only),
-no backend, no native, no route or logic changes.
-
-================================================================================
-FIX1 (same batch, pre-deploy) — top crane brighter, visible on phones
-================================================================================
-Zahi feedback: top crane-jib too dark (#111a24), invisible on phones.
-Changes — frontend/src/components/LoginBackdrop.js ONLY, first (crane-top) svg
-+ outer glow; bottom skyline, horizon, gradient and all cards UNTOUCHED:
-1. All 3 #111a24 inside the crane-top svg (jib rects group, lattice strokes
-   group, hook path) → #3e5065.
-2. Crane-top svg opacity 0.7 → 0.85.
-3. Birds stroke #4a5a6d → #64788e (opacity stays .45).
-4. Beacon circles — unchanged.
-5. Outer background glow rgba(245,158,11,.13) → rgba(245,158,11,.17).
-
-FIX1 DIFF
---------------------------------------------------------------------------------
-diff --git a/frontend/src/components/LoginBackdrop.js b/frontend/src/components/LoginBackdrop.js
-index 0f8d73e..5f6bf0c 100644
---- a/frontend/src/components/LoginBackdrop.js
-+++ b/frontend/src/components/LoginBackdrop.js
-@@ -11,7 +11,7 @@ const LoginBackdrop = () => (
-     className="absolute inset-0 overflow-hidden pointer-events-none select-none"
-     style={{
-       background:
--        'radial-gradient(420px 280px at 50% 26%, rgba(245,158,11,.13), transparent 65%), ' +
-+        'radial-gradient(420px 280px at 50% 26%, rgba(245,158,11,.17), transparent 65%), ' +
-         'linear-gradient(178deg, #17202b 0%, #1f2a37 60%, #26303c 100%)',
-     }}
-   >
-@@ -22,25 +22,25 @@ const LoginBackdrop = () => (
-       {/* crane jib entering from the top, cable + hook "holding" the card */}
-       <svg
-         className="absolute top-0 left-0 right-0 w-full"
--        style={{ height: 150, opacity: 0.7 }}
-+        style={{ height: 150, opacity: 0.85 }}
-         viewBox="0 0 340 150"
-         preserveAspectRatio="xMidYMin slice"
-       >
--        <g fill="#111a24">
-+        <g fill="#3e5065">
-           <rect x="128" y="20" width="220" height="5" />
-           <rect x="150" y="36" width="198" height="3.5" />
-           <rect x="178" y="39" width="15" height="6" rx="1" />
-           <rect x="185" y="45" width="1.7" height="33" />
-           <rect x="181" y="78" width="10" height="6" rx="1" />
-         </g>
--        <g stroke="#111a24" strokeWidth="2.4" fill="none">
-+        <g stroke="#3e5065" strokeWidth="2.4" fill="none">
-           <path d="M340 36 L322 25 L304 36 L286 25 L268 36 L250 25 L232 36 L214 25 L196 36 L178 25 L160 36 L151 31" />
-           <path d="M129 24 L151 37" />
-         </g>
--        <path d="M186 84 v4 a5.2 5.2 0 1 1 -9.5 -1.8" stroke="#111a24" strokeWidth="2.6" fill="none" strokeLinecap="round" />
-+        <path d="M186 84 v4 a5.2 5.2 0 1 1 -9.5 -1.8" stroke="#3e5065" strokeWidth="2.6" fill="none" strokeLinecap="round" />
-         <circle cx="128" cy="22" r="7.5" fill="#f5a623" opacity=".15" />
-         <circle cx="128" cy="22" r="3" fill="#f5a623" opacity=".9" />
--        <g stroke="#4a5a6d" strokeWidth="1.6" fill="none" opacity=".45" strokeLinecap="round">
-+        <g stroke="#64788e" strokeWidth="1.6" fill="none" opacity=".45" strokeLinecap="round">
-           <path d="M52 48 q4.5 -4.5 9 0 q4.5 -4.5 9 0" />
-           <path d="M84 33 q3.5 -3.5 7 0 q3.5 -3.5 7 0" />
-         </g>
-
-FIX1 VERIFY
---------------------------------------------------------------------------------
-- CI=true craco build → EXIT CODE 0 (only pre-existing sourcemap warnings from
-  @capacitor-community/apple-sign-in; main bundle +9 B). Build served on :5000.
-- Grep confirms: #111a24 now appears ONLY in the bottom skyline svg (line 67);
-  crane-top svg fully switched to #3e5065; birds #64788e; opacity 0.85;
-  glow .17.
-- Fresh screenshots (headless Chromium, 390px, splash cleared):
-  - screenshots/visual-auth-fix1-login-390.jpg — full login page.
-  - screenshots/visual-auth-fix1-login-top-390.jpg — top-area crop: crane jib,
-    lattice, cable + hook now clearly visible against the navy sky; amber
-    beacon and brighter glow intact.
+no backend, no native, no route or logic changes. Loading shell (:224) and
+page background (bg-slate-50) unchanged.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

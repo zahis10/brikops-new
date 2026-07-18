@@ -16,6 +16,7 @@ import NotificationBell from '../components/NotificationBell';
 import OfflineState from '../components/OfflineState';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { navigateToProject } from '../utils/navigation';
+import ProjectsSceneBand from '../components/ProjectsSceneBand';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 const LAST_PROJECT_KEY = 'lastProjectId';
@@ -230,7 +231,7 @@ const MyProjectsPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
-      <header className="bg-slate-800 text-white shadow-lg sticky top-0 z-50">
+      <header className="bg-[#1c2735] text-white shadow-lg sticky top-0 z-50">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
           <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center flex-shrink-0">
             <HardHat className="w-5 h-5 text-white" />
@@ -265,8 +266,9 @@ const MyProjectsPage = () => {
           </div>
         </div>
       </header>
+      <ProjectsSceneBand />
 
-      <div className="max-w-4xl mx-auto px-4 py-4 space-y-4">
+      <div className="max-w-4xl mx-auto px-4 py-4 space-y-4 relative z-10 -mt-16">
         {isSuperAdmin && (
           <button
             onClick={() => navigate('/admin')}
@@ -284,7 +286,7 @@ const MyProjectsPage = () => {
         )}
 
         {lastProject && (
-              <Card className="p-4 bg-amber-50 border-amber-200">
+              <Card className="p-4 bg-amber-50 border-amber-200" style={{ boxShadow: '0 14px 30px rgba(10,16,26,.28)' }}>
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
