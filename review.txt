@@ -1,242 +1,94 @@
 ================================================================================
-BATCH induction-365-enforce — REVIEW
-Date: 2026-07-19 · Branch: staging · Base: 82c3f9b
-Scope: enforce the annual (365-day) validity cap on safety inductions —
-FUTURE + ≤ today+365, 422 hard-reject (no clamp), conduct is the sole write
-path (B3 closes the generic PATCH bypass), FE picker bounded.
+BATCH induction-pencil-polish — REVIEW
+Date: 2026-07-19 · Branch: staging · Base: 2f3025a · FRONTEND ONLY (CF Pages)
+Scope: hide the generic edit pencil for הדרכת אתר rows in the safety
+trainings list — ONE render-gate condition, matching the row's existing
+!isInduction convention. No backend change.
 ================================================================================
 
 --------------------------------------------------------------------------------
-STEP 0 — FINDINGS (verified on 82c3f9b)
+STEP 0 — FINDINGS (verified on 2f3025a)
 --------------------------------------------------------------------------------
-1. CURRENT expires_at block — backend/contractor_ops/safety/induction.py:444-453,
-   exactly as the spec quotes:
-       # expires_at: ruling ה-5 — editable at capture; default today+DRAFT days.
-       if expires_at is not None and str(expires_at).strip():
-           exp = str(expires_at).strip()
-           try:
-               date.fromisoformat(exp[:10])
-           except ValueError:
-               raise HTTPException(status_code=422, detail="תאריך תפוגה לא תקין")
-           expires_val = exp[:10]
-       else:
-           expires_val = (date.today() + timedelta(days=DEFAULT_INDUCTION_VALIDITY_DAYS)).isoformat()
-   Constant at :66-67: INDUCTION_TRAINING_TYPE = "הדרכת אתר";
-   DEFAULT_INDUCTION_VALIDITY_DAYS = 365  # DRAFT — pending regulatory verification (Zahi).
-   Template response returns "default_validity_days" (:356 area); stored at :521.
+1. Edit-pencil block — frontend/src/pages/SafetyHomePage.js:2683-2692
+   (pre-edit), exactly as the spec quotes:
+       {isWriter && (
+         <button type="button" aria-label="ערוך הדרכה"
+           onClick={(e) => { e.stopPropagation(); onEdit(tr); }}
+           className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0">
+           <Pencil className="w-4 h-4" />
+         </button>
+       )}
+   `isInduction` IS in scope at that point — defined at :2581 in the same
+   row-render function:
+       const isInduction = (tr.training_type || '').trim() === INDUCTION_TYPE;
 
-2. Conduct is the SOLE induction-expiry write path:
-   - trainings.py:71-73 create guard: training_type == "הדרכת אתר" → 422
-     "הדרכת אתר נוצרת רק דרך תהליך ההדרכה" (ind2-fix4 E5a).
-   - trainings.py:194-199 (pre-batch numbering) blocks type renames TO/FROM the
-     induction type (E5d); :258-260 blocks blind-sign of induction rows.
-   - Repo grep found NO PATCH/PUT that sets a worker induction's expires_at
-     besides the generic update_training. equipment.py:155/418 are equipment
-     certificates — out of scope.
-   - REPORTED BYPASS (why B3 is mandatory): SafetyTrainingUpdate includes
-     expires_at (trainings.py:50-58), and update_training applied it to ANY
-     training row — including inductions. FE FINDING: the generic edit pencil
-     in SafetyHomePage.js ~:2683-2692 (aria-label="ערוך הדרכה") is gated only
-     on isWriter with NO !isInduction guard, so it opens SafetyTrainingForm for
-     הדרכת אתר rows, and that form loads expires_at into an editable field
-     (SafetyTrainingForm.js:65). חידוש/החתמה buttons ARE induction-blocked; the
-     pencil is not. B3's 422 closes the hole server-side; hiding/limiting the
-     pencil for induction rows is a separate UX decision (NOT in this batch —
-     reported for Zahi).
+2. Induction rows retain a COMPLETE action set without the pencil:
+   - Certificate download: `isInduction && tr.worker_signature` → button
+     "הורדת תעודת הדרכת אתר" via onDownloadCertificate (:2615-2625).
+   - Evidence: signed induction → "צפייה" via onViewEvidence (:2627-2635)
+     (non-induction opens the signature URL instead).
+   - Sign button: `isWriter && !isInduction` → onSign (:2652-2661) — the
+     EXISTING pattern the pencil now copies.
+   - Action button: `isInduction ? onReconduct("העבר מחדש") : onRenew("חידוש")`
+     (:2663-2681).
 
-3. FE expires_at input (E2 contract) — SafetyInductionConduct.js:
-   - Native <input type="date"> at :284-289 bound to expiresAt state; NO
-     min/max pre-batch.
-   - Default set in the content-load effect (:60-66):
-     days = data?.default_validity_days || 365; d = new Date();
-     d.setDate(d.getDate()+days); setExpiresAt(d.toISOString().slice(0,10))
-     — used toISOString() (UTC) → timezone-drift risk; F1 rebuilt this from
-     LOCAL date parts.
-   - Appended at :118: if (expiresAt) fd.append('expires_at', expiresAt).
-   - Reads default_validity_days from GET /induction/content.
+3. No OTHER entry point opens the generic edit form for an induction row:
+   within TrainingsList (:2526-2696) the ONLY `onEdit(tr)` call is the pencil
+   (:2687). The trainings-tab onEdit prop is wired at :827 to open
+   SafetyTrainingForm; all other onEdit usages in the file belong to other
+   lists (defects :1610/:1676, tasks :2409, workers :2513, incidents :2752).
 
-4. `from datetime import date, timedelta` present in induction.py:27. ✓
-
-5. No mismatch — spec plan applied as-is after Zahi's "תתחיל".
+4. No mismatch — spec plan applied as-is.
 
 --------------------------------------------------------------------------------
-EDITS — B1 + B2 + B3 + F1 (full diff)
+EDIT — E1 (the one-gate diff, full)
 --------------------------------------------------------------------------------
-diff --git a/backend/contractor_ops/safety/induction.py b/backend/contractor_ops/safety/induction.py
---- a/backend/contractor_ops/safety/induction.py
-+++ b/backend/contractor_ops/safety/induction.py
-@@ -64,7 +64,7 @@
- # --- IND-2 (batch safety-ind2, 2026-07-14) ---
- INDUCTION_TRAINING_TYPE = "הדרכת אתר"
--DEFAULT_INDUCTION_VALIDITY_DAYS = 365  # DRAFT — pending regulatory verification (Zahi)
-+DEFAULT_INDUCTION_VALIDITY_DAYS = 365  # annual cap (regulatory, enforced at conduct — max validity 1 year; Zahi-confirmed 2026-07-19)
- INDUCTION_LEGAL_TEXT_HE = "עברתי הדרכה פרונטלית בשפה המובנת לי"
-@@ -441,16 +441,25 @@ async def conduct_induction(
-     sections = tmpl["languages"][displayed_language]["sections"]
-     base_legal = INDUCTION_LEGAL_TEXT_HE  # v1: he is the only content language
+diff --git a/frontend/src/pages/SafetyHomePage.js b/frontend/src/pages/SafetyHomePage.js
+@@ -2680,7 +2680,11 @@ function TrainingsList({ items, workers, isWriter, highlightId, onEdit, onRenew,
+               </Button>
+             )
+           )}
+-          {isWriter && (
++          {/* induction-pencil-polish E1: induction rows are managed only via
++              conduct/re-conduct + evidence — the generic edit form does not
++              apply (server 422s induction expiry/type edits). Same pattern as
++              the sign button above. */}
++          {isWriter && !isInduction && (
+             <button
+               type="button"
+               aria-label="ערוך הדרכה"
 
--    # expires_at: ruling ה-5 — editable at capture; default today+DRAFT days.
-+    today = date.today()
-+    max_exp = today + timedelta(days=DEFAULT_INDUCTION_VALIDITY_DAYS)
-+    # Regulatory annual cap (Zahi 2026-07-19): induction validity must be
-+    # FUTURE and at most one year from the conduct date. PM may choose a
-+    # shorter validity; the server rejects anything out of bounds.
-     if expires_at is not None and str(expires_at).strip():
--        exp = str(expires_at).strip()
-+        exp = str(expires_at).strip()[:10]
-         try:
--            date.fromisoformat(exp[:10])
-+            exp_d = date.fromisoformat(exp)
-         except ValueError:
-             raise HTTPException(status_code=422, detail="תאריך תפוגה לא תקין")
--        expires_val = exp[:10]
-+        if exp_d <= today:
-+            raise HTTPException(status_code=422, detail="תאריך התפוגה חייב להיות עתידי")
-+        if exp_d > max_exp:
-+            raise HTTPException(status_code=422,
-+                detail=f"תוקף הדרכת בטיחות מוגבל לשנה — עד {max_exp.isoformat()}")
-+        expires_val = exp
-     else:
--        expires_val = (date.today() + timedelta(days=DEFAULT_INDUCTION_VALIDITY_DAYS)).isoformat()
-+        expires_val = max_exp.isoformat()
-
-diff --git a/backend/contractor_ops/safety/trainings.py b/backend/contractor_ops/safety/trainings.py
---- a/backend/contractor_ops/safety/trainings.py
-+++ b/backend/contractor_ops/safety/trainings.py
-@@ -189,6 +189,16 @@ async def update_training(
-
-     updates = payload.model_dump(exclude_unset=True)
-
-+    # induction-365-enforce B3 (Zahi 2026-07-19): induction expiry is set ONLY
-+    # at conduct (which enforces the annual cap) — the generic PATCH must not
-+    # edit it, or the cap would be meaningless. exclude_unset=True means the
-+    # guard fires only when the client actually sent expires_at.
-+    from contractor_ops.safety.induction import INDUCTION_TRAINING_TYPE
-+    if str(before.get("training_type") or "").strip() == INDUCTION_TRAINING_TYPE \
-+            and "expires_at" in updates:
-+        raise HTTPException(status_code=422,
-+            detail="תוקף הדרכת אתר נקבע רק בתהליך ההדרכה (כפתור 🎓 אצל העובד)")
-+
-     # ind2-fix4 E5d: no sideways renames around the born-signed guard —
-     # training_type may not change TO or FROM the induction type.
-     if "training_type" in updates and updates["training_type"] is not None:
-
-diff --git a/frontend/src/components/safety/SafetyInductionConduct.js b/frontend/src/components/safety/SafetyInductionConduct.js
---- a/frontend/src/components/safety/SafetyInductionConduct.js
-+++ b/frontend/src/components/safety/SafetyInductionConduct.js
-@@ -16,6 +16,17 @@
-+// induction-365-enforce F1 — local YYYY-MM-DD from local date parts (no
-+// toISOString/UTC drift). Used for the picker default and its min/max bounds.
-+function localDatePlusDays(days) {
-+  const d = new Date();
-+  d.setDate(d.getDate() + days);
-+  const y = d.getFullYear();
-+  const m = String(d.getMonth() + 1).padStart(2, '0');
-+  const dd = String(d.getDate()).padStart(2, '0');
-+  return `${y}-${m}-${dd}`;
-+}
-@@ -61,9 +72,8 @@
-         const days = data?.default_validity_days || 365;
--        const d = new Date();
--        d.setDate(d.getDate() + days);
--        setExpiresAt(d.toISOString().slice(0, 10));
-+        // Local YYYY-MM-DD (no toISOString — avoids UTC timezone drift).
-+        setExpiresAt(localDatePlusDays(days));
-@@ -284,11 +294,13 @@
-                 <input
-                   type="date"
-                   value={expiresAt}
-+                  min={localDatePlusDays(1)}
-+                  max={localDatePlusDays(content.default_validity_days || 365)}
-                   onChange={(e) => setExpiresAt(e.target.value)}
-                   ...
-                 <p className="text-[11px] text-slate-500 mt-1">
--                  ברירת מחדל: {content.default_validity_days} ימים. ניתן לעריכה.
-+                  ברירת מחדל: {content.default_validity_days} ימים. ניתן לעריכה — עד שנה מהיום.
-                 </p>
-
-Notes:
-- Cap single-sourced from DEFAULT_INDUCTION_VALIDITY_DAYS (365 value unchanged).
-- No silent clamp anywhere — out-of-bounds is 422, nothing stored.
-- Grandfathering: NO migration of existing over-cap inductions; they expire per
-  their stored date. Enforcement applies to NEW conducts only.
-- No change to gate/workers/alerts reads, born-signed ceremony, template
-  endpoints, response shapes, or other training types.
+V3 — git diff --stat: 1 file changed, 5 insertions(+), 1 deletion(-) —
+frontend/src/pages/SafetyHomePage.js only; the single deleted line is the old
+gate, the insertions are the new gate + explanatory comment. No other diff in
+the repo. onEdit / SafetyTrainingForm / onViewEvidence / onReconduct / onRenew
+/ onSign logic untouched; pencil unchanged for non-induction rows.
 
 --------------------------------------------------------------------------------
-V1 — PROBE (NEW backend/tests/probe_safety_induction365.py) — 18/18 PASS
+V1 — BUILD
 --------------------------------------------------------------------------------
-Full-middleware in-process ASGI probe (house env, local Mongo), seeded org/
-project/PM/workers + template. Transcript summary:
-
-  a. conduct expires_at=today+400  → 422, detail contains "מוגבל לשנה — עד <cap>";
-     verified NOTHING stored (no training row for that worker).          PASS
-  b. conduct expires_at=today       → 422 "תאריך התפוגה חייב להיות עתידי";
-     conduct expires_at=yesterday   → 422 "עתידי"; nothing stored.        PASS
-  c. conduct expires_at=today+300  → 201; stored expires_at == today+300. PASS
-  d. conduct expires_at=today+365  → 201 (boundary); stored == today+365. PASS
-  e. conduct with NO expires_at    → 201; stored == today+365
-     (default == cap).                                                    PASS
-  f. conduct expires_at="2026-13-40" → 422 "תאריך תפוגה לא תקין".         PASS
-
-  B3 (PATCH bypass closed):
-  - PATCH induction row {expires_at: today+400} → 422
-    "תוקף הדרכת אתר נקבע רק בתהליך ההדרכה (כפתור 🎓 אצל העובד)".          PASS
-  - PATCH induction row {expires_at: today+200} → 422 (expiry not editable
-    via the generic path AT ALL, even in-bounds).                         PASS
-  - PATCH other fields (location) on an induction → 200, still works.     PASS
-  - PATCH expires_at on a NON-induction training → 200, unchanged.        PASS
-
-  Regression in the same probe:
-  - Generic POST /trainings with training_type="הדרכת אתר" → still 422
-    ("הדרכת אתר נוצרת רק דרך תהליך ההדרכה").                              PASS
-  - Green-worker gate check works for a freshly-conducted in-bounds
-    induction; gate/workers show valid_until == today+365 (== cap).       PASS
-
-  TOTAL: 18/18 PASS.
-
-Probe adjustment: probe_safety_ind2_fix4.py exp_farther changed 400d→350d —
-the old 400-day value is now CORRECTLY rejected (422) by design; the case's
-MAX-over-signed-inductions semantics are preserved at 350d. 21/21 PASS.
+CI=true REACT_APP_BACKEND_URL=https://api.brikops.com npx craco build →
+EXIT 0 (warnings-as-errors clean, per the standing CI=true rule); production
+bundle verified to reference api.brikops.com.
 
 --------------------------------------------------------------------------------
-V2 — REGRESSION — ALL GREEN
+V2 — UI VERIFICATION @390px (mobile)
 --------------------------------------------------------------------------------
-- probe_safety_ind2.py          34/34 PASS
-- probe_safety_ind2_fix1.py     31/31 PASS
-- probe_safety_ind2_fix4.py     21/21 PASS (with the 350d adjustment above)
-- probe_safety_ind3.py          31/31 PASS
-- probe_safety_qrg1.py          42/42 PASS
-- probe_safety_qrg2_station.py  49/49 PASS
-- safety pytest suite: 18 pass + the known PRE-EXISTING harness fail
-  test_defects_summary_includes_safety_open_count ("Database not
-  initialized") — fails IDENTICALLY to base 82c3f9b (not a regression).
-- python -m compileall backend/contractor_ops — OK.
-
---------------------------------------------------------------------------------
-V3 — FRONTEND BUILD + 390px VERIFICATION
---------------------------------------------------------------------------------
-- CI=true REACT_APP_BACKEND_URL=https://api.brikops.com npx craco build →
-  EXIT 0, zero warnings-as-errors (per the standing CI=true rule).
-- Live 390×844 (mobile) browser run of the conduct modal (Playwright agent
-  against a local build with a seeded PM/worker, cleaned up afterwards):
-  · Reached step 3 (signature) of "הדרכת אתר" for the test worker.
-  · Date field "בתוקף עד": default value == today+365 (2027-07-19) —
-    one year out. ✓
-  · min attribute == tomorrow (2026-07-20); max == today+365 (2027-07-19). ✓
-  · Hint text shows "ברירת מחדל: 365 ימים. ניתן לעריכה — עד שנה מהיום." ✓
-  · Setting today+400 (2027-08-23) → input.validity.rangeOverflow === true —
-    the picker rejects dates beyond one year. ✓
+Live 390×844 browser run of the safety trainings list (Playwright agent
+against a local build with a seeded PM + worker + two training rows; seed data
+cleaned up afterwards):
+  a. Induction row "הדרכת אתר" (signed):
+     · NO edit pencil (aria-label "ערוך הדרכה" absent). ✓
+     · Still shows: תעודה (certificate download) + צפייה (evidence via
+       onViewEvidence) + העבר מחדש (re-conduct). ✓
+  b. Non-induction row "עבודה בגובה":
+     · Edit pencil STILL present. ✓
+     · Clicking it opens the "עריכת הדרכה" edit form with the training
+       fields as before; closed cleanly. ✓
+(Screenshots captured by the test harness as part of the run states.)
+Minor note (pre-existing, unrelated): browser warning about a missing
+aria-describedby on the dialog content — cosmetic, not introduced here.
 
 V4 (DEVICE, staging web) — Zahi's step, after approval. NOT performed here.
-
---------------------------------------------------------------------------------
-OPEN ITEM FOR ZAHI (reported, out of batch scope)
---------------------------------------------------------------------------------
-The generic edit pencil (SafetyHomePage.js ~:2683) still OPENS the edit form
-for induction rows with an editable expires_at field — the server now 422s any
-such save (B3), so there is no bypass, but the UX (an editable field that
-always rejects) may warrant hiding/limiting the pencil for הדרכת אתר rows.
-Separate UX decision.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

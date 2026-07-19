@@ -2680,7 +2680,11 @@ function TrainingsList({ items, workers, isWriter, highlightId, onEdit, onRenew,
               </Button>
             )
           )}
-          {isWriter && (
+          {/* induction-pencil-polish E1: induction rows are managed only via
+              conduct/re-conduct + evidence — the generic edit form does not
+              apply (server 422s induction expiry/type edits). Same pattern as
+              the sign button above. */}
+          {isWriter && !isInduction && (
             <button
               type="button"
               aria-label="ערוך הדרכה"
