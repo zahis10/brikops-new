@@ -1,124 +1,73 @@
 ================================================================================
-BATCH defect-photo-first (שלב 1) — REVIEW
-Date: 2026-07-19 · Branch: staging · Base: 69dbd82 · FRONTEND ONLY (CF Pages)
-Scope: opt-in "תמונה קודם" layer for the new-defect form behind
-FEATURES.DEFECT_PHOTO_FIRST (ships DORMANT=false → byte-identical to today),
-per-user toggle (localStorage), photos block moves to the top in photo-first,
-and images survive the in-app "הוסף קבלן" round-trip via an in-memory stash.
-No backend, no new deps, no routes. No AI (phase 2 separate).
+BATCH photo-first-ON — REVIEW
+Date: 2026-07-19 · Branch: staging · Base: 988cbfc · FRONTEND ONLY (CF Pages)
+Scope: flip FEATURES.DEFECT_PHOTO_FIRST → true. The photo-first layer shipped
+in the previous batch (dormant) becomes available as a per-user opt-in toggle
+in the new-defect modal. Default stays classic. ONE-LINE change; no logic
+touched, no backend, no other flag.
 ================================================================================
 
 --------------------------------------------------------------------------------
-STEP 0 — FINDINGS (verified on 69dbd82; all anchors matched the spec)
+STEP 0 — FINDINGS (verified on 988cbfc, before any edit)
 --------------------------------------------------------------------------------
-1. features.js — dormant-flag pattern confirmed:
+1. Full FEATURES object quoted from frontend/src/config/features.js:
        export const FEATURES = {
          DEFECT_DRAFT_PRESERVATION: true,
          TRADE_SORT_IN_TEAM_FORM: true,
+         // Offline mode — BATCH 1 (read-cache + banner). Default OFF.
+         // When false, api.js + OfflineBanner behave exactly as before.
          OFFLINE_MODE: true,
+         // Offline DEFECT CREATE — BATCH 5. Ships DORMANT (default false) so the whole
+         // batch (backend client-id support + frontend offline-create code) can deploy
+         // in ONE ./deploy.sh while the feature stays INERT. After the backend is
+         // confirmed live on prod, flip this to true + redeploy to activate. Gates ONLY
+         // the enqueue (NewDefectModal) + the pending hydrate/badge (ApartmentDashboard).
+         // The outbox store + sync drain ship live but are no-ops while nothing is queued.
          OFFLINE_DEFECT_CREATE: true,
+         // Photo-first defect entry (opt-in). Off = classic order, identical to today.
+         DEFECT_PHOTO_FIRST: false,
        };
-2. Photos section = NewDefectModal.js:1044-1109 (pre-edit).
-   Open :1044 `<div className="space-y-2" dir="rtl">`; label "תמונות * (לפחות 1)"
-   :1045-1047; the two hidden inputs :1048-1049; previews grid :1050-1076;
-   buttons row (צלם תמונה / בחר מגלריה / DocumentScannerButton) :1077-1107;
-   `{errors.images && …}` :1108; close `</div>` :1109 — immediately before the
-   body container close :1110 and the uploadError banner :1112. This whole
-   66-line block is what E3 extracted.
-3. Insertion point confirmed: location block closes `)}` at :861; category
-   section opens `<div className="space-y-3">` at :863. Body container
-   `<div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">` at :772.
-4. Draft-restore effect :177-201, ending:
-       clearDefectDraft();
-       toast.info('הטיוטה שוחזרה. יש לצרף תמונות מחדש.');   // :199-200
-5. "+ הוסף קבלן" onClick :1001-1031 — saveDefectDraft({projectId, buildingId,
-   floorId, unitId, category, title, description, priority, is_safety,
-   companyId, assigneeId, prefillData, returnUrl}) :1008-1022, then onClose()
-   and the in-app navigate(...?tab=team&openInvite=1&returnToDefect=1...).
-6. categoryMatchedCompanies :310-316 / filteredCompanies :318 — confirmed and
-   NOT touched.
-7. MINOR anchor adjustment (reported in the approved plan): the ONLINE submit
-   success path has no clearDefectDraft() call (only the offline path :691 and
-   the restore effect :199 call it). The online success path resets state at
-   :586-595. E3e's cleanup therefore went: at the online reset (:586 area),
-   next to the offline clearDefectDraft(), and in handleClose. Same intent.
+   Last entry matched the spec exactly (comment + `DEFECT_PHOTO_FIRST: false,`).
+2. NewDefectModal.js references FEATURES.DEFECT_PHOTO_FIRST (read-only check):
+   :105 initial-state guard, :112 `effectivePhotoFirst = FEATURES.DEFECT_PHOTO_FIRST
+   && photoFirst`, :870 toggle render gate. No edit made there.
+No mismatches — plan approved, then executed.
 
 --------------------------------------------------------------------------------
-EDITS
+EDIT — THE ONE-LINE DIFF (features.js only)
 --------------------------------------------------------------------------------
-E1  frontend/src/config/features.js — ONE dormant flag added:
-      // Photo-first defect entry (opt-in). Off = classic order, identical to today.
-      DEFECT_PHOTO_FIRST: false,
-E2  NEW frontend/src/utils/defectDraftImages.js — in-memory image stash,
-    exactly per spec (stashDraftImages / takeDraftImages one-shot /
-    clearDraftImages; never serialized; fail-soft on hard reload).
-E3  frontend/src/components/NewDefectModal.js — additive, gated:
-    (a) import of the stash module after the defectDraft import.
-    (b) photoFirst state + applyPhotoFirst (localStorage key
-        brikops_defect_photo_first_v1) + effectivePhotoFirst =
-        FEATURES.DEFECT_PHOTO_FIRST && photoFirst — next to the images state.
-    (c) photos section extracted VERBATIM into `const photosBlock = (…)`
-        declared just before `return (<>`; rendered in exactly ONE place:
-        `{!effectivePhotoFirst && photosBlock}` at the original bottom spot,
-        `{effectivePhotoFirst && photosBlock}` after the location block close /
-        before the category section.
-    (d) "מצב מילוי" segmented toggle (קלאסי / 📸 תמונה קודם, amber selected)
-        at the very top of the body container, rendered ONLY when the flag is
-        true — flag off renders nothing.
-    (e) `if (effectivePhotoFirst) stashDraftImages(images);` immediately before
-        the existing saveDefectDraft(...) in "+ הוסף קבלן"; restore in the
-        draft-restore effect via takeDraftImages() with the conditional toast
-        ("הטיוטה והתמונות שוחזרו." vs the exact original toast); and
-        clearDraftImages() at terminal outcomes — online submit-success reset,
-        offline submit success (next to clearDefectDraft), and handleClose.
-    Nothing else touched: submit/upload/assign logic, payload, offline outbox,
-    locked-location banner/prefillData, selects, validation, annotation flow,
-    category↔contractor filtering, utils/defectDraft.js — all unchanged.
+    -  // Photo-first defect entry (opt-in). Off = classic order, identical to today.
+    -  DEFECT_PHOTO_FIRST: false,
+    +  // Photo-first defect entry (opt-in). On = per-user toggle in the
+    +  // new-defect modal; default stays classic.
+    +  DEFECT_PHOTO_FIRST: true,
 
 --------------------------------------------------------------------------------
 V1 — BUILD
 --------------------------------------------------------------------------------
-Final shipped state (flag=false): CI=true REACT_APP_BACKEND_URL=
-https://api.brikops.com npx craco build → EXIT 0 (warnings-as-errors clean);
-production bundle verified to reference api.brikops.com. (The intermediate
-flag=true verification build also compiled EXIT 0.)
+CI=true REACT_APP_BACKEND_URL=https://api.brikops.com npx craco build →
+EXIT 0 (warnings-as-errors clean); production bundle verified to reference
+api.brikops.com.
 
 --------------------------------------------------------------------------------
-V2 — THREE STATES @390px (live browser runs against a local build)
+V2 — SCREENSHOTS @390px (live browser, fresh session — verified that
+localStorage key brikops_defect_photo_first_v1 was ABSENT before the test)
 --------------------------------------------------------------------------------
-a. flag=false (shipped): modal verified identical to today — NO "מצב מילוי"
-   toggle anywhere; order location → קטגוריה → פירוט → קבלן → תמונות at the
-   BOTTOM before "צור ליקוי". ✓ (screenshots captured in the run)
-b. flag=true, toggle=קלאסי (default): identical layout to (a) PLUS the visible
-   toggle row at the top; קלאסי highlighted amber by default. ✓
-c. flag=true, toggle=📸 תמונה קודם: photos section at the TOP (above קטגוריה),
-   gone from the bottom; footer unchanged. ✓
+a. New-defect modal opened: "מצב מילוי" toggle row visible at the top,
+   קלאסי selected (amber) by default, photos section ("תמונות * (לפחות 1)")
+   at the BOTTOM after the קבלן section — classic layout unchanged. ✓
+   (screenshot captured in the run)
+b. After tapping "📸 תמונה קודם": photos section at the TOP, above קטגוריה,
+   gone from the bottom. ✓ (screenshot captured in the run)
+(Test data seeded locally for the run and fully cleaned up afterwards.)
 
 --------------------------------------------------------------------------------
-V3 — BEHAVIOR (flag=true, live 390px browser transcript)
+V3 — DIFF SCOPE
 --------------------------------------------------------------------------------
-a. Photo-first round-trip: attached photo → "הוסף קבלן" (in-app navigation to
-   control?tab=team) → returned in-app → photo thumbnail RESTORED + text fields
-   restored + toast "הטיוטה והתמונות שוחזרו.". ✓
-b. Classic round-trip: attached photo → "הוסף קבלן" → returned → photo NOT
-   restored, original toast "הטיוטה שוחזרה. יש לצרף תמונות מחדש.", text
-   restored — unchanged from today. ✓
-c. Category→company filter works in BOTH modes: קטגוריה=אינסטלציה offers the
-   plumbing company; switching to חשמל removes it. Same picker, same submit
-   path (photosBlock is the same JSX/state — only its position differs). ✓
-d. Toggle persistence: closed + reopened the modal — 📸 תמונה קודם stayed
-   selected (localStorage); default on first use is קלאסי (opt-in, never
-   forced). ✓
-(Test data seeded locally and fully cleaned up afterwards.)
-
---------------------------------------------------------------------------------
-V4 — DIFF SCOPE
---------------------------------------------------------------------------------
-git status/diff: EXACTLY features.js (+2) + NewDefectModal.js modified, plus
-the NEW utils/defectDraftImages.js. No other file. photosBlock JSX verified
-CHARACTER-IDENTICAL to the removed bottom section (extracted block diffed
-against `git show HEAD` lines 1044-1109 → zero differences; only wrapped in a
-const and rendered conditionally).
+git diff: EXACTLY frontend/src/config/features.js — one flag line flipped
+false→true plus the updated comment. No other file, no other flag value
+changed. NewDefectModal.js, utils/defectDraftImages.js, utils/defectDraft.js
+untouched.
 
 V5 (DEVICE, staging web) — Zahi's step, after approval. NOT performed here.
 
