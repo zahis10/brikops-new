@@ -11,4 +11,6 @@ export const FEATURES = {
   // the enqueue (NewDefectModal) + the pending hydrate/badge (ApartmentDashboard).
   // The outbox store + sync drain ship live but are no-ops while nothing is queued.
   OFFLINE_DEFECT_CREATE: true,
+  // Photo-first defect entry (opt-in). Off = classic order, identical to today.
+  DEFECT_PHOTO_FIRST: false,
 };

@@ -19,6 +19,7 @@ import QuickAddCompanyModal from './QuickAddCompanyModal';
 import DocumentScannerButton from './DocumentScannerButton';
 import { FEATURES } from '../config/features';
 import { saveDefectDraft, loadDefectDraft, clearDefectDraft } from '../utils/defectDraft';
+import { stashDraftImages, takeDraftImages, clearDraftImages } from '../utils/defectDraftImages';
 import { enqueueDefectCreate } from '../services/offlineOutbox';
 
 // A load failure that is EXPECTED while offline (so we must NOT toast a red
@@ -98,6 +99,17 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const [assigneeId, setAssigneeId] = useState('');
 
   const [images, setImages] = useState([]);
+  // BATCH defect-photo-first E3b: per-user opt-in layout preference. Only
+  // meaningful while FEATURES.DEFECT_PHOTO_FIRST is on; default = classic.
+  const [photoFirst, setPhotoFirst] = useState(() => {
+    if (!FEATURES.DEFECT_PHOTO_FIRST) return false;
+    try { return window.localStorage.getItem('brikops_defect_photo_first_v1') === '1'; } catch { return false; }
+  });
+  const applyPhotoFirst = (on) => {
+    setPhotoFirst(on);
+    try { window.localStorage.setItem('brikops_defect_photo_first_v1', on ? '1' : '0'); } catch {}
+  };
+  const effectivePhotoFirst = FEATURES.DEFECT_PHOTO_FIRST && photoFirst;
   const [annotatingIndex, setAnnotatingIndex] = useState(null);
   const [pendingFile, setPendingFile] = useState(null);
   const [createdTaskId, setCreatedTaskId] = useState(null);
@@ -197,7 +209,15 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     if (draft.companyId) setCompanyId(draft.companyId);
     if (draft.assigneeId) setAssigneeId(draft.assigneeId);
     clearDefectDraft();
-    toast.info('הטיוטה שוחזרה. יש לצרף תמונות מחדש.');
+    // BATCH defect-photo-first E3e: restore stashed images (photo-first round-trip).
+    // Classic mode / hard reload → nothing stashed → the exact original toast fires.
+    const restoredImgs = takeDraftImages();
+    if (restoredImgs && restoredImgs.length) {
+      setImages(restoredImgs);
+      toast.info('הטיוטה והתמונות שוחזרו.');
+    } else {
+      toast.info('הטיוטה שוחזרה. יש לצרף תמונות מחדש.');
+    }
   }, [isOpen, hasPrefill, prefillData]);
 
   const loadBuildings = useCallback((pid) => {
@@ -583,6 +603,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       }
     }
 
+    clearDraftImages(); // BATCH defect-photo-first E3e: terminal outcome — drop any stale stash
     images.forEach(img => URL.revokeObjectURL(img.preview));
     setProjectId('');
     setBuildingId('');
@@ -689,6 +710,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           unitId,
         });
         clearDefectDraft();
+        clearDraftImages(); // BATCH defect-photo-first E3e: terminal outcome — drop any stale stash
         toast.success('הליקוי נשמר במכשיר — יישלח כשתחזור הרשת');
         images.forEach(img => { try { URL.revokeObjectURL(img.preview); } catch (_) {} });
         onSuccess?.(clientId);
@@ -740,10 +762,83 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     if (createdTaskId && uploadError) {
       toast.info('הליקוי נשמר כטיוטה — ניתן להשלים מדף הליקוי');
     }
+    clearDraftImages(); // BATCH defect-photo-first E3e: modal close/cancel — drop any stale stash
     onClose();
   };
 
   if (!isOpen) return null;
+
+  // BATCH defect-photo-first E3c: the photos section, extracted VERBATIM from its
+  // original bottom position. Rendered in exactly ONE place depending on mode:
+  // classic → bottom (as today), photo-first → top (after location, before category).
+  const photosBlock = (
+          <div className="space-y-2" dir="rtl">
+            <label className="block text-sm font-medium text-slate-700">
+              תמונות * <span className="text-xs text-slate-400">(לפחות 1)</span>
+            </label>
+            <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handleImageAdd} className="hidden" />
+            <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageAdd} className="hidden" />
+            {images.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {images.map((img, i) => (
+                  <div key={i} className="relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200 group">
+                    <img src={img.preview} alt="" className="w-full h-full object-cover" />
+                    <button
+                      onClick={() => removeImage(i)}
+                      className="absolute top-0.5 right-0.5 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => setAnnotatingIndex(i)}
+                      className={`absolute bottom-0.5 right-0.5 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs transition-opacity ${img.isAnnotated ? 'bg-green-500' : 'bg-amber-500 hover:bg-amber-600'}`}
+                      title={img.isAnnotated ? 'ערוך סימון' : 'סמן על התמונה'}
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    {img.isAnnotated && (
+                      <div className="absolute top-0.5 left-0.5 bg-green-500 text-white rounded-full w-4 h-4 flex items-center justify-center">
+                        <Check className="w-2.5 h-2.5" />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
+                className={`flex-1 flex flex-col items-center justify-center gap-1 py-3 rounded-lg border-2 border-dashed transition-colors cursor-pointer hover:bg-amber-50 active:bg-amber-100 ${errors.images ? 'border-red-400' : 'border-amber-300'}`}
+              >
+                <Camera className="w-6 h-6 text-amber-500" />
+                <span className="text-xs font-medium text-amber-700">צלם תמונה</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => galleryInputRef.current?.click()}
+                className={`flex-1 flex flex-col items-center justify-center gap-1 py-3 rounded-lg border-2 border-dashed transition-colors cursor-pointer hover:bg-slate-50 active:bg-slate-100 ${errors.images ? 'border-red-400' : 'border-slate-300'}`}
+              >
+                <ImagePlus className="w-6 h-6 text-slate-400" />
+                <span className="text-xs font-medium text-slate-600">בחר מגלריה</span>
+              </button>
+              {/* BATCH H.2a (2026-05-13) — native document scanner. Hidden on web. */}
+              <DocumentScannerButton
+                onScan={(files) => {
+                  const newImages = files.map(f => ({
+                    file: f,
+                    preview: URL.createObjectURL(f),
+                    name: f.name,
+                    originalFile: f,
+                  }));
+                  setImages(prev => [...prev, ...newImages]);
+                }}
+                className={`flex-1 flex flex-col items-center justify-center gap-1 py-3 rounded-lg border-2 border-dashed transition-colors cursor-pointer hover:bg-emerald-50 active:bg-emerald-100 ${errors.images ? 'border-red-400' : 'border-emerald-300'}`}
+              />
+            </div>
+            {errors.images && <p className="text-xs text-red-500">{errors.images}</p>}
+          </div>
+  );
 
   return (<>
     <DialogPrimitive.Root modal={false} open={true} onOpenChange={(open) => {
@@ -770,6 +865,19 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         </div>
 
         <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+          {/* BATCH defect-photo-first E3d: opt-in mode toggle. Renders ONLY when the
+              flag is on — flag off = zero visual change from today. */}
+          {FEATURES.DEFECT_PHOTO_FIRST && (
+            <div className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
+              <span className="text-xs text-slate-500">מצב מילוי</span>
+              <div className="inline-flex bg-slate-100 rounded-lg p-0.5">
+                <button type="button" onClick={() => applyPhotoFirst(false)}
+                  className={`px-3 py-1 text-xs rounded-md ${!photoFirst ? 'bg-amber-500 text-white font-semibold' : 'text-slate-500'}`}>קלאסי</button>
+                <button type="button" onClick={() => applyPhotoFirst(true)}
+                  className={`px-3 py-1 text-xs rounded-md ${photoFirst ? 'bg-amber-500 text-white font-semibold' : 'text-slate-500'}`}>📸 תמונה קודם</button>
+              </div>
+            </div>
+          )}
           {hasPrefill ? (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-2">
               <h3 className="text-sm font-semibold text-amber-800 flex items-center gap-2 justify-end">
@@ -859,6 +967,9 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
             </div>
           </div>
           )}
+
+          {/* BATCH defect-photo-first E3c: photo-first slot — same block, top position. */}
+          {effectivePhotoFirst && photosBlock}
 
           <div className="space-y-3">
             <SelectField
@@ -1005,6 +1116,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                             return;
                           }
                           if (!projectId) { onClose(); return; }
+                          if (effectivePhotoFirst) stashDraftImages(images);
                           saveDefectDraft({
                             projectId,
                             buildingId,
@@ -1041,72 +1153,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
             )}
           </div>
 
-          <div className="space-y-2" dir="rtl">
-            <label className="block text-sm font-medium text-slate-700">
-              תמונות * <span className="text-xs text-slate-400">(לפחות 1)</span>
-            </label>
-            <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handleImageAdd} className="hidden" />
-            <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageAdd} className="hidden" />
-            {images.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-2">
-                {images.map((img, i) => (
-                  <div key={i} className="relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200 group">
-                    <img src={img.preview} alt="" className="w-full h-full object-cover" />
-                    <button
-                      onClick={() => removeImage(i)}
-                      className="absolute top-0.5 right-0.5 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                    <button
-                      onClick={() => setAnnotatingIndex(i)}
-                      className={`absolute bottom-0.5 right-0.5 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs transition-opacity ${img.isAnnotated ? 'bg-green-500' : 'bg-amber-500 hover:bg-amber-600'}`}
-                      title={img.isAnnotated ? 'ערוך סימון' : 'סמן על התמונה'}
-                    >
-                      <Pencil className="w-3 h-3" />
-                    </button>
-                    {img.isAnnotated && (
-                      <div className="absolute top-0.5 left-0.5 bg-green-500 text-white rounded-full w-4 h-4 flex items-center justify-center">
-                        <Check className="w-2.5 h-2.5" />
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => cameraInputRef.current?.click()}
-                className={`flex-1 flex flex-col items-center justify-center gap-1 py-3 rounded-lg border-2 border-dashed transition-colors cursor-pointer hover:bg-amber-50 active:bg-amber-100 ${errors.images ? 'border-red-400' : 'border-amber-300'}`}
-              >
-                <Camera className="w-6 h-6 text-amber-500" />
-                <span className="text-xs font-medium text-amber-700">צלם תמונה</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => galleryInputRef.current?.click()}
-                className={`flex-1 flex flex-col items-center justify-center gap-1 py-3 rounded-lg border-2 border-dashed transition-colors cursor-pointer hover:bg-slate-50 active:bg-slate-100 ${errors.images ? 'border-red-400' : 'border-slate-300'}`}
-              >
-                <ImagePlus className="w-6 h-6 text-slate-400" />
-                <span className="text-xs font-medium text-slate-600">בחר מגלריה</span>
-              </button>
-              {/* BATCH H.2a (2026-05-13) — native document scanner. Hidden on web. */}
-              <DocumentScannerButton
-                onScan={(files) => {
-                  const newImages = files.map(f => ({
-                    file: f,
-                    preview: URL.createObjectURL(f),
-                    name: f.name,
-                    originalFile: f,
-                  }));
-                  setImages(prev => [...prev, ...newImages]);
-                }}
-                className={`flex-1 flex flex-col items-center justify-center gap-1 py-3 rounded-lg border-2 border-dashed transition-colors cursor-pointer hover:bg-emerald-50 active:bg-emerald-100 ${errors.images ? 'border-red-400' : 'border-emerald-300'}`}
-              />
-            </div>
-            {errors.images && <p className="text-xs text-red-500">{errors.images}</p>}
-          </div>
+          {!effectivePhotoFirst && photosBlock}
         </div>
 
         {uploadError && (

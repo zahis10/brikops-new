@@ -1,94 +1,125 @@
 ================================================================================
-BATCH induction-pencil-polish — REVIEW
-Date: 2026-07-19 · Branch: staging · Base: 2f3025a · FRONTEND ONLY (CF Pages)
-Scope: hide the generic edit pencil for הדרכת אתר rows in the safety
-trainings list — ONE render-gate condition, matching the row's existing
-!isInduction convention. No backend change.
+BATCH defect-photo-first (שלב 1) — REVIEW
+Date: 2026-07-19 · Branch: staging · Base: 69dbd82 · FRONTEND ONLY (CF Pages)
+Scope: opt-in "תמונה קודם" layer for the new-defect form behind
+FEATURES.DEFECT_PHOTO_FIRST (ships DORMANT=false → byte-identical to today),
+per-user toggle (localStorage), photos block moves to the top in photo-first,
+and images survive the in-app "הוסף קבלן" round-trip via an in-memory stash.
+No backend, no new deps, no routes. No AI (phase 2 separate).
 ================================================================================
 
 --------------------------------------------------------------------------------
-STEP 0 — FINDINGS (verified on 2f3025a)
+STEP 0 — FINDINGS (verified on 69dbd82; all anchors matched the spec)
 --------------------------------------------------------------------------------
-1. Edit-pencil block — frontend/src/pages/SafetyHomePage.js:2683-2692
-   (pre-edit), exactly as the spec quotes:
-       {isWriter && (
-         <button type="button" aria-label="ערוך הדרכה"
-           onClick={(e) => { e.stopPropagation(); onEdit(tr); }}
-           className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 shrink-0">
-           <Pencil className="w-4 h-4" />
-         </button>
-       )}
-   `isInduction` IS in scope at that point — defined at :2581 in the same
-   row-render function:
-       const isInduction = (tr.training_type || '').trim() === INDUCTION_TYPE;
-
-2. Induction rows retain a COMPLETE action set without the pencil:
-   - Certificate download: `isInduction && tr.worker_signature` → button
-     "הורדת תעודת הדרכת אתר" via onDownloadCertificate (:2615-2625).
-   - Evidence: signed induction → "צפייה" via onViewEvidence (:2627-2635)
-     (non-induction opens the signature URL instead).
-   - Sign button: `isWriter && !isInduction` → onSign (:2652-2661) — the
-     EXISTING pattern the pencil now copies.
-   - Action button: `isInduction ? onReconduct("העבר מחדש") : onRenew("חידוש")`
-     (:2663-2681).
-
-3. No OTHER entry point opens the generic edit form for an induction row:
-   within TrainingsList (:2526-2696) the ONLY `onEdit(tr)` call is the pencil
-   (:2687). The trainings-tab onEdit prop is wired at :827 to open
-   SafetyTrainingForm; all other onEdit usages in the file belong to other
-   lists (defects :1610/:1676, tasks :2409, workers :2513, incidents :2752).
-
-4. No mismatch — spec plan applied as-is.
+1. features.js — dormant-flag pattern confirmed:
+       export const FEATURES = {
+         DEFECT_DRAFT_PRESERVATION: true,
+         TRADE_SORT_IN_TEAM_FORM: true,
+         OFFLINE_MODE: true,
+         OFFLINE_DEFECT_CREATE: true,
+       };
+2. Photos section = NewDefectModal.js:1044-1109 (pre-edit).
+   Open :1044 `<div className="space-y-2" dir="rtl">`; label "תמונות * (לפחות 1)"
+   :1045-1047; the two hidden inputs :1048-1049; previews grid :1050-1076;
+   buttons row (צלם תמונה / בחר מגלריה / DocumentScannerButton) :1077-1107;
+   `{errors.images && …}` :1108; close `</div>` :1109 — immediately before the
+   body container close :1110 and the uploadError banner :1112. This whole
+   66-line block is what E3 extracted.
+3. Insertion point confirmed: location block closes `)}` at :861; category
+   section opens `<div className="space-y-3">` at :863. Body container
+   `<div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">` at :772.
+4. Draft-restore effect :177-201, ending:
+       clearDefectDraft();
+       toast.info('הטיוטה שוחזרה. יש לצרף תמונות מחדש.');   // :199-200
+5. "+ הוסף קבלן" onClick :1001-1031 — saveDefectDraft({projectId, buildingId,
+   floorId, unitId, category, title, description, priority, is_safety,
+   companyId, assigneeId, prefillData, returnUrl}) :1008-1022, then onClose()
+   and the in-app navigate(...?tab=team&openInvite=1&returnToDefect=1...).
+6. categoryMatchedCompanies :310-316 / filteredCompanies :318 — confirmed and
+   NOT touched.
+7. MINOR anchor adjustment (reported in the approved plan): the ONLINE submit
+   success path has no clearDefectDraft() call (only the offline path :691 and
+   the restore effect :199 call it). The online success path resets state at
+   :586-595. E3e's cleanup therefore went: at the online reset (:586 area),
+   next to the offline clearDefectDraft(), and in handleClose. Same intent.
 
 --------------------------------------------------------------------------------
-EDIT — E1 (the one-gate diff, full)
+EDITS
 --------------------------------------------------------------------------------
-diff --git a/frontend/src/pages/SafetyHomePage.js b/frontend/src/pages/SafetyHomePage.js
-@@ -2680,7 +2680,11 @@ function TrainingsList({ items, workers, isWriter, highlightId, onEdit, onRenew,
-               </Button>
-             )
-           )}
--          {isWriter && (
-+          {/* induction-pencil-polish E1: induction rows are managed only via
-+              conduct/re-conduct + evidence — the generic edit form does not
-+              apply (server 422s induction expiry/type edits). Same pattern as
-+              the sign button above. */}
-+          {isWriter && !isInduction && (
-             <button
-               type="button"
-               aria-label="ערוך הדרכה"
-
-V3 — git diff --stat: 1 file changed, 5 insertions(+), 1 deletion(-) —
-frontend/src/pages/SafetyHomePage.js only; the single deleted line is the old
-gate, the insertions are the new gate + explanatory comment. No other diff in
-the repo. onEdit / SafetyTrainingForm / onViewEvidence / onReconduct / onRenew
-/ onSign logic untouched; pencil unchanged for non-induction rows.
+E1  frontend/src/config/features.js — ONE dormant flag added:
+      // Photo-first defect entry (opt-in). Off = classic order, identical to today.
+      DEFECT_PHOTO_FIRST: false,
+E2  NEW frontend/src/utils/defectDraftImages.js — in-memory image stash,
+    exactly per spec (stashDraftImages / takeDraftImages one-shot /
+    clearDraftImages; never serialized; fail-soft on hard reload).
+E3  frontend/src/components/NewDefectModal.js — additive, gated:
+    (a) import of the stash module after the defectDraft import.
+    (b) photoFirst state + applyPhotoFirst (localStorage key
+        brikops_defect_photo_first_v1) + effectivePhotoFirst =
+        FEATURES.DEFECT_PHOTO_FIRST && photoFirst — next to the images state.
+    (c) photos section extracted VERBATIM into `const photosBlock = (…)`
+        declared just before `return (<>`; rendered in exactly ONE place:
+        `{!effectivePhotoFirst && photosBlock}` at the original bottom spot,
+        `{effectivePhotoFirst && photosBlock}` after the location block close /
+        before the category section.
+    (d) "מצב מילוי" segmented toggle (קלאסי / 📸 תמונה קודם, amber selected)
+        at the very top of the body container, rendered ONLY when the flag is
+        true — flag off renders nothing.
+    (e) `if (effectivePhotoFirst) stashDraftImages(images);` immediately before
+        the existing saveDefectDraft(...) in "+ הוסף קבלן"; restore in the
+        draft-restore effect via takeDraftImages() with the conditional toast
+        ("הטיוטה והתמונות שוחזרו." vs the exact original toast); and
+        clearDraftImages() at terminal outcomes — online submit-success reset,
+        offline submit success (next to clearDefectDraft), and handleClose.
+    Nothing else touched: submit/upload/assign logic, payload, offline outbox,
+    locked-location banner/prefillData, selects, validation, annotation flow,
+    category↔contractor filtering, utils/defectDraft.js — all unchanged.
 
 --------------------------------------------------------------------------------
 V1 — BUILD
 --------------------------------------------------------------------------------
-CI=true REACT_APP_BACKEND_URL=https://api.brikops.com npx craco build →
-EXIT 0 (warnings-as-errors clean, per the standing CI=true rule); production
-bundle verified to reference api.brikops.com.
+Final shipped state (flag=false): CI=true REACT_APP_BACKEND_URL=
+https://api.brikops.com npx craco build → EXIT 0 (warnings-as-errors clean);
+production bundle verified to reference api.brikops.com. (The intermediate
+flag=true verification build also compiled EXIT 0.)
 
 --------------------------------------------------------------------------------
-V2 — UI VERIFICATION @390px (mobile)
+V2 — THREE STATES @390px (live browser runs against a local build)
 --------------------------------------------------------------------------------
-Live 390×844 browser run of the safety trainings list (Playwright agent
-against a local build with a seeded PM + worker + two training rows; seed data
-cleaned up afterwards):
-  a. Induction row "הדרכת אתר" (signed):
-     · NO edit pencil (aria-label "ערוך הדרכה" absent). ✓
-     · Still shows: תעודה (certificate download) + צפייה (evidence via
-       onViewEvidence) + העבר מחדש (re-conduct). ✓
-  b. Non-induction row "עבודה בגובה":
-     · Edit pencil STILL present. ✓
-     · Clicking it opens the "עריכת הדרכה" edit form with the training
-       fields as before; closed cleanly. ✓
-(Screenshots captured by the test harness as part of the run states.)
-Minor note (pre-existing, unrelated): browser warning about a missing
-aria-describedby on the dialog content — cosmetic, not introduced here.
+a. flag=false (shipped): modal verified identical to today — NO "מצב מילוי"
+   toggle anywhere; order location → קטגוריה → פירוט → קבלן → תמונות at the
+   BOTTOM before "צור ליקוי". ✓ (screenshots captured in the run)
+b. flag=true, toggle=קלאסי (default): identical layout to (a) PLUS the visible
+   toggle row at the top; קלאסי highlighted amber by default. ✓
+c. flag=true, toggle=📸 תמונה קודם: photos section at the TOP (above קטגוריה),
+   gone from the bottom; footer unchanged. ✓
 
-V4 (DEVICE, staging web) — Zahi's step, after approval. NOT performed here.
+--------------------------------------------------------------------------------
+V3 — BEHAVIOR (flag=true, live 390px browser transcript)
+--------------------------------------------------------------------------------
+a. Photo-first round-trip: attached photo → "הוסף קבלן" (in-app navigation to
+   control?tab=team) → returned in-app → photo thumbnail RESTORED + text fields
+   restored + toast "הטיוטה והתמונות שוחזרו.". ✓
+b. Classic round-trip: attached photo → "הוסף קבלן" → returned → photo NOT
+   restored, original toast "הטיוטה שוחזרה. יש לצרף תמונות מחדש.", text
+   restored — unchanged from today. ✓
+c. Category→company filter works in BOTH modes: קטגוריה=אינסטלציה offers the
+   plumbing company; switching to חשמל removes it. Same picker, same submit
+   path (photosBlock is the same JSX/state — only its position differs). ✓
+d. Toggle persistence: closed + reopened the modal — 📸 תמונה קודם stayed
+   selected (localStorage); default on first use is קלאסי (opt-in, never
+   forced). ✓
+(Test data seeded locally and fully cleaned up afterwards.)
+
+--------------------------------------------------------------------------------
+V4 — DIFF SCOPE
+--------------------------------------------------------------------------------
+git status/diff: EXACTLY features.js (+2) + NewDefectModal.js modified, plus
+the NEW utils/defectDraftImages.js. No other file. photosBlock JSX verified
+CHARACTER-IDENTICAL to the removed bottom section (extracted block diffed
+against `git show HEAD` lines 1044-1109 → zero differences; only wrapped in a
+const and rendered conditionally).
+
+V5 (DEVICE, staging web) — Zahi's step, after approval. NOT performed here.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
