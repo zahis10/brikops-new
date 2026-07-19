@@ -1,171 +1,170 @@
 ================================================================================
-BATCH gate-photo-s3guard — review.txt
-Date: 2026-07-18 · Branch: staging · Base: e00944d · BACKEND ONLY
+BATCH s3guard-global — chokepoint fix for the s3:// raw-ref leak family
+Base: d777308 | Date: 2026-07-19
 ================================================================================
 
-STEP 0 FINDINGS (verified on current tree)
+STEP 0 FINDINGS
 --------------------------------------------------------------------------------
-1. CURRENT _photo_display (backend/contractor_ops/safety/gate_public.py, lines
-   55-61 pre-edit):
+1. Except branch (pre-fix) at services/object_storage.py:125-127 returned the
+   raw stored_ref on presign failure — the leak.
+2. Caller classification (repo-wide grep of generate_url / resolve_url /
+   resolve_urls_in_doc):
+   (B) needs guard — ONLY export_router.py 154/162/170: `resolved` enters a
+       seen-set + links list; on None a null would be appended. Fixed by E2.
+   (A) None-tolerant display-field assigners — safety workers._photo_display
+       (docstring already "fail-soft → None"), incidents 154/171, tours 73/82,
+       trainings 143-169/317, induction 544/584/828, equipment 156/438/473,
+       documents 164/190, gate 194/239/264 + guest 104/175 (qr_display_url,
+       already `if ... else None`), uploads 73, work_diary_router 259/268
+       (try/except → None), handover_router 1140/1148/1223/1231 + 1940/2819,
+       data_export_router 118/173, qc_router 863-864, billing 1076-1078/1893,
+       tasks_router resolve_url / resolve_urls_in_doc (response fields).
+   (A) guarded consumers (quoted):
+       services/handover_pdf_service.py:187-189
+           _fetch_image_as_base64(url): `if not url: return None`
+       services/safety_pdf.py:144-146 (_load_client_logo) and :171-173
+           (_load_signature_image): `if not url: return None`, then
+           `str(url).startswith("http")` inside try/except fail-soft.
+       contractor_ops/notification_service.py:25-29 (_make_absolute_url):
+           `if resolved and resolved.startswith("https://"): return resolved`
+           else logs + returns "".
+3. No test asserted raw-ref-on-failure. test_storage_migration.py:197 had a
+   comment about the raw-ref fallback but its record() asserted `True`; its
+   detail string sliced file_url[:60] and would crash on None — replaced with
+   the None-safe assertion of the NEW contract (step 4b).
+   full_s3_audit.py:172 asserts NO "s3://" in responses — strengthened by fix.
+4. Fallback-image note: notification_service._resolve_fallback_image can now
+   return None; its only consumer (line 202-207) checks
+   `elif fallback_image and fallback_image.startswith('https://')` → falls to
+   effective_image = None; WA send proceeds without header image. No crash.
+5. E3: NOT needed — no other (B)-class caller exists.
 
-      def _photo_display(ref):
-          if not ref:
-              return None
-          try:
-              return generate_url(ref)
-          except Exception:
-              return None
-
-2. SINGLE HELPER behind all four public exits (repo-wide grep):
-   - gate_public.py:166  — gate_status() green payload -> photo_display_url
-     (GET /api/gate/{token})
-   - gate_station.py:24  — imports _photo_display from gate_public
-   - gate_station.py:113 — _worker_check_payload() -> /api/station/{t}/check
-     and /check-worker
-   - gate_station.py:248 — station_search() -> /api/station/{t}/search
-   No other gate/station call sites. (workers.py:73 and auth_router.py:422 are
-   separate authed helpers — out of scope per spec.)
-
-3. LEAK SOURCE — backend/services/object_storage.py::generate_url, presign
-   exception branch (lines 125-127), left AS-IS per spec:
-
-      except Exception as e:
-          logger.error(f"[STORAGE:S3:PRESIGN_ERROR] key={key} error={e}")
-          return stored_ref
-
-4. PATTERN MIRRORED — backend/contractor_ops/auth_router.py
-   ::_profile_photo_display (lines 422-435), existing guard:
-
-      url = generate_url(ref)
-      # Hard secrecy guard: generate_url() falls back to the raw stored
-      # ref if S3 presigning fails — never let an s3:// key reach a
-      # response. Fail-soft to None instead.
-      if url and url.startswith('s3://'):
-          return None
-      return url
-
-ONE-FUNCTION DIFF (the ONLY code change)
+EDITS (E1 + E2) — git diff
 --------------------------------------------------------------------------------
-diff --git a/backend/contractor_ops/safety/gate_public.py b/backend/contractor_ops/safety/gate_public.py
-index 0144cc5..5ea0d0e 100644
---- a/backend/contractor_ops/safety/gate_public.py
-+++ b/backend/contractor_ops/safety/gate_public.py
-@@ -56,7 +56,14 @@ def _photo_display(ref):
-     if not ref:
-         return None
-     try:
--        return generate_url(ref)
-+        url = generate_url(ref)
-+        # Hard secrecy guard: generate_url() falls back to the raw
-+        # s3:// ref on presign failure — never let a raw storage key
-+        # reach a PUBLIC gate/station payload. Fail-soft to None (the FE
-+        # shows an initials circle when the photo URL is null).
-+        if url and url.startswith('s3://'):
+diff --git a/backend/contractor_ops/export_router.py b/backend/contractor_ops/export_router.py
+index 36d74cc..d6723fe 100644
+--- a/backend/contractor_ops/export_router.py
++++ b/backend/contractor_ops/export_router.py
+@@ -152,7 +152,7 @@ async def _resolve_image_links(db, task):
+                 if not _is_image_ref(url, ct):
+                     continue
+                 resolved = generate_url(url) if url.startswith('s3://') else url
+-                if resolved not in seen:
++                if resolved and resolved not in seen:
+                     seen.add(resolved)
+                     links.append(resolved)
+ 
+@@ -160,7 +160,7 @@ async def _resolve_image_links(db, task):
+             url = att.get('file_url') or att.get('url') or ''
+             if url and _is_image_ref(url):
+                 resolved = generate_url(url) if url.startswith('s3://') else url
+-                if resolved not in seen:
++                if resolved and resolved not in seen:
+                     seen.add(resolved)
+                     links.append(resolved)
+ 
+@@ -168,7 +168,7 @@ async def _resolve_image_links(db, task):
+         for url in proof_urls:
+             if isinstance(url, str) and url and _is_image_ref(url):
+                 resolved = generate_url(url) if url.startswith('s3://') else url
+-                if resolved not in seen:
++                if resolved and resolved not in seen:
+                     seen.add(resolved)
+                     links.append(resolved)
+     except Exception as e:
+diff --git a/backend/services/object_storage.py b/backend/services/object_storage.py
+index 1fcfaad..7ff2998 100644
+--- a/backend/services/object_storage.py
++++ b/backend/services/object_storage.py
+@@ -98,6 +98,7 @@ def generate_url(stored_ref: str) -> str:
+     - Old local paths ("/api/uploads/..."): returned as-is.
+     - S3 references ("s3://..."): generate a presigned GET URL.
+     - Plain keys (legacy compat): treated as local.
++    - On S3 presign failure: returns None (never the raw s3:// ref).
+     """
+     if not stored_ref:
+         return stored_ref
+@@ -124,7 +125,12 @@ def generate_url(stored_ref: str) -> str:
+             return url
+         except Exception as e:
+             logger.error(f"[STORAGE:S3:PRESIGN_ERROR] key={key} error={e}")
+-            return stored_ref
++            # Secrecy: on presign failure NEVER return the raw "s3://<key>" —
++            # a raw storage ref is not a usable URL for display, fetch or PDF,
++            # and leaking it exposes internal key structure. Fail-soft to None;
++            # every caller is None-tolerant (display → no image; PDF loaders →
++            # `if not url: return None`; notifications → "" unless https).
 +            return None
-+        return url
-     except Exception:
-         return None
+ 
+     return stored_ref
  
 
-V1 — PROBE TRANSCRIPT (backend/tests/probe_safety_qrg2_station.py, house env
-FILES_STORAGE_BACKEND=local; S9 forces the presign-failure path by
-monkeypatching the gate_public generate_url symbol to return the RAW
-s3://<key> for s3 refs; green worker seeded WITH an s3:// photo_ref via the
-API + real induction + active station)
+V1 UNIT — test_object_storage_shapes.py (raising FakeS3 added)
 --------------------------------------------------------------------------------
-S1 — lifecycle
-  [PASS] S1a ensure -> 200 + /station/ url — 200
-  [PASS] S1b ensure idempotent (same url back)
-  [PASS] S1c station token >=32 chars — len=32
-  [PASS] S1d meta -> 200 + project_name (no auth) — {"project_name":"פרויקט e473ea91"}
-  [PASS] S1e meta has noindex header
-  [PASS] S1f GET status -> exists true
-  [PASS] S1g rotate -> 200 + NEW token
-  [PASS] S1h old token meta+check -> neutral 404
-  [PASS] S1i new token meta -> 200
-  [PASS] S1j single active station per project — n=1
-  [PASS] S1k revoke -> revoked; meta 404; status exists=false
-  [PASS] S1l re-ensure after revoke -> fresh working token
-  [PASS] S1m station qr.png -> real PNG
-S2 — worker parity (public gate vs station)
-  [PASS] S2 green: gate=green station=green — parity — gate=green/None st=green
-  [PASS] S2 green: station payload keys minimal + kind=worker — ['kind', 'name', 'photo_display_url', 'result']
-  [PASS] S2 blocked: gate=red station=red — parity — gate=red/blocked st=red
-  [PASS] S2 blocked: station payload keys minimal + kind=worker — ['kind', 'name', 'photo_display_url', 'reasons', 'result']
-  [PASS] S2 expired: gate=red station=red — parity — gate=red/induction st=red
-  [PASS] S2 expired: station payload keys minimal + kind=worker — ['kind', 'name', 'photo_display_url', 'reasons', 'result']
-  [PASS] S2d full gate URL scanned -> same green
-  [PASS] S2e blocked reasons Hebrew — ['העובד חסום — אין כניסה']
-  [PASS] S2f expired reason carries the date — ['תדריך הבטיחות פג תוקף (2026-07-13)']
-S3 — guest passes
-  [PASS] S3a unsigned guest -> red + briefing reason — {'result': 'red', 'kind': 'guest', 'name': 'אורח e473ea91', 'photo_display_url': None, 'reasons': ['האורח לא חתם על התדריך']}
-  [PASS] S3b signed today -> GREEN + guest name — {'result': 'green', 'kind': 'guest', 'name': 'אורח e473ea91', 'photo_display_url': None}
-  [PASS] S3c wrong-day -> red date reason — {'result': 'red', 'kind': 'guest', 'name': 'אורח מחר', 'photo_display_url': None, 'reasons': ['הקוד לא בתוקף להיום']}
-S4 — cross-project neutrality
-  [PASS] S4a foreign worker token -> SAME neutral invalid — {"result":"invalid","reasons":["קוד לא תקף"]}
-  [PASS] S4b foreign worker_id via check-worker -> neutral invalid — {"result":"invalid","reasons":["קוד לא תקף"]}
-  [PASS] S4c search never returns other-project workers
-  [PASS] S4d unknown token -> byte-identical neutral invalid
-S5 — manual search
-  [PASS] S5a 1-char query -> []
-  [PASS] S5b regex metachars safe (200, no crash) — {"items":[]}
-  [PASS] S5c <=8 items cap — n=8
-  [PASS] S5d items carry ONLY worker_id/name/photo_display_url — ['name', 'photo_display_url', 'worker_id']
-  [PASS] S5e finds the green worker by name
-  [PASS] S5f check-worker(green) -> green, same shape — {'result': 'green', 'kind': 'worker', 'name': 'עובד ירוק e473ea91', 'photo_display_url': 'safety/probe-st-p1-e473ea91/photo-e473ea91.jpg'}
-S6 — photo privacy
-  [PASS] S6a green worker WITH photo -> photo_display_url present — safety/probe-st-p1-e473ea91/photo-e473ea91.jpg
-  [PASS] S6b raw ref appears ONLY as the photo_display_url value
-  [PASS] S6c s3 ref NEVER leaked raw (fail-soft, no presign creds) — https://brikops-prod-files.s3.eu-central-1.amazonaws.com/safety/probe-st-p1-e473
-S7 — scan log rows
-  [PASS] S7a station rows written with scanned_via + station_token_id — n=15
-  [PASS] S7b manual checks logged as station-manual
-  [PASS] S7c public gate rows unchanged (no station keys) — ['id', 'project_id', 'reasons', 'result', 'token_id', 'ts', 'worker_id']
-S8 — throttles
-  [PASS] S8a 35 rapid station hits -> all 200 (global limiter exempt, B4) — codes=[200]
-  [PASS] S8b bad-token spray -> 404s then 429 (IP backstop) — first429@120
-  [PASS] S8c 429 body is Hebrew throttle message — {"detail":"יותר מדי בקשות — נסה שוב בעוד רגע"}
-S9 — s3:// leak guard under forced presign failure
-  [PASS] S9a gate green -> photo_display_url None, no s3:// anywhere — state=green
-  [PASS] S9b station /check -> green, photo None, no s3:// — {'result': 'green', 'kind': 'worker', 'name': 'עובד ענן ירוק e473ea91', 'photo_display_url': None}
-  [PASS] S9c station /search item -> photo None, no s3:// — {'worker_id': '702ff560-8ad8-4802-89fe-8090f442b6e4', 'name': 'עובד ענן ירוק e473ea91', 'photo_display_url': None}
-  [PASS] S9d station /check-worker -> photo None, no s3:// — None
-  [PASS] S9e local /api/uploads-style ref still passes through unchanged — safety/probe-st-p1-e473ea91/photo-e473ea91.jpg
-=== qrg2-station probe: 49/49 passed ===
+  [PASS] local save_bytes shape
+  [PASS] local file actually written
+  [PASS] generate_url local passthrough
+  [PASS] generate_url empty passthrough
+  [PASS] s3 save_bytes shape
+  [PASS] s3 upload routed to mock (no real bucket)
+  [PASS] generate_url s3 -> presigned — success path byte-identical
+  [PASS] presign failure -> None (not raw ref) — got=None
+  [PASS] no 's3://' in failure result
+  [PASS] local ref passthrough unchanged
+  [PASS] empty string passthrough unchanged
+  [PASS] None passthrough unchanged
+  [PASS] arbitrary non-s3 string unchanged
+  Total: 13 | PASS: 13 | FAIL: 0
 
-
-Forced-presign-fail assertions a-e = S9a-S9e above:
-  a. GET /api/gate/{token} green  -> photo_display_url None, no "s3://"  PASS
-  b. /api/station/{t}/check       -> photo_display_url None, no "s3://"  PASS
-  c. /api/station/{t}/search      -> item photo_display_url None, no s3  PASS
-  d. /api/station/{t}/check-worker-> photo_display_url None, no "s3://"  PASS
-  e. SANITY: local-path ref still passes through UNCHANGED (guard strips
-     ONLY s3://)                                                          PASS
-
-V2 — REGRESSION SUMMARY (all green)
+V2 DISPLAY-PATH FAIL-SOFT (generate_url monkeypatched to RAISE)
 --------------------------------------------------------------------------------
-- probe_safety_qrg2_station.py : 49/49 PASS (44 existing + 5 new S9 cases).
-  Existing S6c happy-path case (presign succeeds, local backend) passes
-  UNCHANGED.
-- probe_safety_qrg1.py         : 42/42 PASS ("ALL GREEN")
-- probe_safety_qrg_guest.py    : 30/30 PASS
-- safety pytest files (test_safety_registration.py, test_defect_safety_tag.py):
-  18 passed, 1 failed — test_defects_summary_includes_safety_open_count fails
-  with "RuntimeError: Database not initialized" (contractor_ops/router.py:130).
-  PRE-EXISTING harness issue, unrelated to this batch (fails identically on
-  base e00944d).
-- py_compile across backend    : OK (compileall clean)
+  [PASS] workers._photo_display(s3 ref) -> None under forced raise — got=None
+  [PASS] item builder: photo_display_url is None
+  [PASS] no 's3://' in serialized item payload
+        {"id": "w1", "full_name": "עובד", "photo_display_url": null}
+  [PASS] real generate_url presign-failure branch -> None (E1) — got=None
+  [PASS] handover_pdf _fetch_image_as_base64(None) is None
+  [PASS] safety_pdf._load_signature_image(None) is None
+  TOTAL 6 PASS 6 FAIL 0
 
-V3 — no frontend file touched (git diff: gate_public.py +
-probe_safety_qrg2_station.py only) -> no build required.
+  Gate S9 cases (probe_safety_qrg2_station) re-run after E1:
+  [PASS] S9a gate green -> photo_display_url None, no s3:// anywhere
+  [PASS] S9b station /check -> green, photo None, no s3://
+  [PASS] S9c station /search item -> photo None, no s3://
+  [PASS] S9d station /check-worker -> photo None, no s3://
+  [PASS] S9e local /api/uploads-style ref still passes through unchanged
 
-SCOPE COMPLIANCE
+V3 WIDE REGRESSION — ALL GREEN
 --------------------------------------------------------------------------------
-- generate_url / object_storage.py: NOT modified.
-- _profile_photo_display, export_router, notification_service, qc_router:
-  NOT touched.
-- No payload shape/key change, no gate/station decision-logic change,
-  _log_scan contract untouched, worker-branch result byte-identical.
-- No new deps, no schema/index change, no new endpoints, no FE.
+  Storage:
+    test_object_storage_shapes.py ......... 13/13 PASS
+    test_storage_migration.py ............. 36/36 PASS (incl. new None-safe
+                                            "resolve_urls_in_doc → None on
+                                            presign failure" assertion)
+    test_s3_mode.py (REAL AWS creds) ...... 25/25 PASS — success presign path
+                                            unchanged end-to-end against S3
+  Safety probes (in-process, real app + Mongo):
+    probe_safety_qrg1.py .................. 42/42 PASS
+    probe_safety_qrg2_station.py .......... 49/49 PASS (incl. S9 a-e)
+    probe_safety_qrg_guest.py ............. 30/30 PASS
+  Safety pytest:
+    test_safety_registration.py + test_defect_safety_tag.py — 18 passed,
+    1 failed: test_defects_summary_includes_safety_open_count
+    ("Database not initialized") — KNOWN pre-existing harness failure,
+    fails IDENTICALLY to base d777308 (unrelated to this change).
+  PDF loaders: _fetch_image_as_base64(None) → None;
+    _load_signature_image(None) → None (see V2).
+  compileall backend (contractor_ops, services, server.py): clean.
+  App health after restart: {"status":"ok","database":"connected"}
+
+V4 SCOPE
+--------------------------------------------------------------------------------
+  git diff is backend-only:
+    backend/services/object_storage.py          (E1: except branch + docstring)
+    backend/contractor_ops/export_router.py     (E2: 3 guard conditions)
+    backend/tests/test_object_storage_shapes.py (V1 case)
+    backend/tests/test_storage_migration.py     (4b None-safe assertion)
+  No frontend, no success-path, no gate_public/auth_router guard, no
+  save_bytes/delete/cache/TTL/_get_s3 changes.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

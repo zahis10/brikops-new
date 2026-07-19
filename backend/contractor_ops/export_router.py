@@ -152,7 +152,7 @@ async def _resolve_image_links(db, task):
                 if not _is_image_ref(url, ct):
                     continue
                 resolved = generate_url(url) if url.startswith('s3://') else url
-                if resolved not in seen:
+                if resolved and resolved not in seen:
                     seen.add(resolved)
                     links.append(resolved)
 
@@ -160,7 +160,7 @@ async def _resolve_image_links(db, task):
             url = att.get('file_url') or att.get('url') or ''
             if url and _is_image_ref(url):
                 resolved = generate_url(url) if url.startswith('s3://') else url
-                if resolved not in seen:
+                if resolved and resolved not in seen:
                     seen.add(resolved)
                     links.append(resolved)
 
@@ -168,7 +168,7 @@ async def _resolve_image_links(db, task):
         for url in proof_urls:
             if isinstance(url, str) and url and _is_image_ref(url):
                 resolved = generate_url(url) if url.startswith('s3://') else url
-                if resolved not in seen:
+                if resolved and resolved not in seen:
                     seen.add(resolved)
                     links.append(resolved)
     except Exception as e:

@@ -116,6 +116,39 @@ finally:
     st._url_cache.clear()
 
 # ---------------------------------------------------------------------------
+section("S3 PRESIGN FAILURE — generate_url fails soft to None (never raw ref)")
+
+
+class _RaisingS3:
+    """Stand-in S3 client whose presign always raises."""
+
+    def generate_presigned_url(self, op, Params=None, ExpiresIn=None):  # noqa: N803
+        raise RuntimeError("simulated presign failure")
+
+
+st._BACKEND_MODE = "s3"
+st._S3_BUCKET = "unit-test-bucket"
+st._get_s3 = lambda: _RaisingS3()
+st._url_cache.clear()
+
+try:
+    failed = st.generate_url("s3://bucket/key")
+    record("presign failure -> None (not raw ref)", failed is None, f"got={failed}")
+    record("no 's3://' in failure result", "s3://" not in str(failed or ""))
+    # unchanged contracts still hold alongside the failure branch
+    record("local ref passthrough unchanged",
+           st.generate_url("/api/uploads/x.jpg") == "/api/uploads/x.jpg")
+    record("empty string passthrough unchanged", st.generate_url("") == "")
+    record("None passthrough unchanged", st.generate_url(None) is None)
+    record("arbitrary non-s3 string unchanged",
+           st.generate_url("https://example.com/a.png") == "https://example.com/a.png")
+finally:
+    st._get_s3 = _orig_get_s3
+    st._S3_BUCKET = _orig_bucket
+    st._BACKEND_MODE = _orig_mode
+    st._url_cache.clear()
+
+# ---------------------------------------------------------------------------
 section("SUMMARY")
 passed = sum(1 for r in RESULTS if r["status"] == "PASS")
 failed = sum(1 for r in RESULTS if r["status"] == "FAIL")

@@ -194,11 +194,12 @@ record("resolve_urls_in_doc leaves local paths unchanged",
 
 # resolve_urls_in_doc with s3:// refs (can't presign without real S3, but test the branching)
 doc_s3 = {"file_url": "s3://some/key.pdf", "thumbnail_url": "/api/uploads/t.jpg", "proof_urls": ["s3://proof/1.jpg", "/api/uploads/p2.jpg"]}
-# In local mode with no S3 creds, this will fail gracefully and return the s3:// ref
+# In local mode with no S3 creds, presigning fails -> generate_url fails soft
+# to None (never the raw s3:// ref).
 obj_mod.resolve_urls_in_doc(doc_s3)
-record("resolve_urls_in_doc attempts S3 resolution for s3:// refs",
-       True,
-       f"file_url after resolve={doc_s3['file_url'][:60]}...")
+record("resolve_urls_in_doc → None on presign failure",
+       doc_s3["file_url"] is None and doc_s3["proof_urls"][0] is None,
+       f"file_url={doc_s3['file_url']}, proof[0]={doc_s3['proof_urls'][0]}")
 
 record("resolve_urls_in_doc leaves mixed local paths alone",
        doc_s3["thumbnail_url"] == "/api/uploads/t.jpg")

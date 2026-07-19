@@ -98,6 +98,7 @@ def generate_url(stored_ref: str) -> str:
     - Old local paths ("/api/uploads/..."): returned as-is.
     - S3 references ("s3://..."): generate a presigned GET URL.
     - Plain keys (legacy compat): treated as local.
+    - On S3 presign failure: returns None (never the raw s3:// ref).
     """
     if not stored_ref:
         return stored_ref
@@ -124,7 +125,12 @@ def generate_url(stored_ref: str) -> str:
             return url
         except Exception as e:
             logger.error(f"[STORAGE:S3:PRESIGN_ERROR] key={key} error={e}")
-            return stored_ref
+            # Secrecy: on presign failure NEVER return the raw "s3://<key>" —
+            # a raw storage ref is not a usable URL for display, fetch or PDF,
+            # and leaking it exposes internal key structure. Fail-soft to None;
+            # every caller is None-tolerant (display → no image; PDF loaders →
+            # `if not url: return None`; notifications → "" unless https).
+            return None
 
     return stored_ref
 
