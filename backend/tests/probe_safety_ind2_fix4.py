@@ -147,7 +147,9 @@ async def main():
         record("V1d PII posture unchanged — no id_number_hash in list rows",
                all("id_number_hash" not in it for it in items.values()))
         # max semantics: second, later conduct wins
-        exp_farther = (date.today() + timedelta(days=400)).isoformat()
+        # induction-365-enforce: 400d would now (correctly) 422 — MAX semantics
+        # only needs a LATER in-bounds date than exp_far (300d).
+        exp_farther = (date.today() + timedelta(days=350)).isoformat()
         r = await c.post(CONDUCT, data={
             "worker_id": w1, "language_choice": "he", "expires_at": exp_farther,
             "signer_name": "עובד 1", "signature_type": "typed", "typed_name": "עובד 1",

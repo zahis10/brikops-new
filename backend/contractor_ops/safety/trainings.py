@@ -189,6 +189,16 @@ async def update_training(
 
     updates = payload.model_dump(exclude_unset=True)
 
+    # induction-365-enforce B3 (Zahi 2026-07-19): induction expiry is set ONLY
+    # at conduct (which enforces the annual cap) — the generic PATCH must not
+    # edit it, or the cap would be meaningless. exclude_unset=True means the
+    # guard fires only when the client actually sent expires_at.
+    from contractor_ops.safety.induction import INDUCTION_TRAINING_TYPE
+    if str(before.get("training_type") or "").strip() == INDUCTION_TRAINING_TYPE \
+            and "expires_at" in updates:
+        raise HTTPException(status_code=422,
+            detail="תוקף הדרכת אתר נקבע רק בתהליך ההדרכה (כפתור 🎓 אצל העובד)")
+
     # ind2-fix4 E5d: no sideways renames around the born-signed guard —
     # training_type may not change TO or FROM the induction type.
     if "training_type" in updates and updates["training_type"] is not None:

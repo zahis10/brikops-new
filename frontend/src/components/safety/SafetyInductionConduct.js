@@ -16,6 +16,17 @@ import { safetyService } from '../../services/api';
  * No template → empty-state inside the dialog.
  */
 
+// induction-365-enforce F1 — local YYYY-MM-DD from local date parts (no
+// toISOString/UTC drift). Used for the picker default and its min/max bounds.
+function localDatePlusDays(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
 function workerInitials(name) {
   return (name || '')
     .split(/\s+/).filter(Boolean).slice(0, 2)
@@ -61,9 +72,8 @@ const SafetyInductionConduct = ({ projectId, worker, open, onClose, onConducted 
       .then((data) => {
         setContent(data);
         const days = data?.default_validity_days || 365;
-        const d = new Date();
-        d.setDate(d.getDate() + days);
-        setExpiresAt(d.toISOString().slice(0, 10));
+        // Local YYYY-MM-DD (no toISOString — avoids UTC timezone drift).
+        setExpiresAt(localDatePlusDays(days));
       })
       .catch((e) => {
         if (e?.response?.status === 404) setNoTemplate(true);
@@ -284,11 +294,13 @@ const SafetyInductionConduct = ({ projectId, worker, open, onClose, onConducted 
                 <input
                   type="date"
                   value={expiresAt}
+                  min={localDatePlusDays(1)}
+                  max={localDatePlusDays(content.default_validity_days || 365)}
                   onChange={(e) => setExpiresAt(e.target.value)}
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
                 />
                 <p className="text-[11px] text-slate-500 mt-1">
-                  ברירת מחדל: {content.default_validity_days} ימים. ניתן לעריכה.
+                  ברירת מחדל: {content.default_validity_days} ימים. ניתן לעריכה — עד שנה מהיום.
                 </p>
               </div>
               <button

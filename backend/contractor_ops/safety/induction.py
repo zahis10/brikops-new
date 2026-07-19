@@ -64,7 +64,7 @@ _PDF_LANG_NAMES = {
 
 # --- IND-2 (batch safety-ind2, 2026-07-14) ---
 INDUCTION_TRAINING_TYPE = "הדרכת אתר"
-DEFAULT_INDUCTION_VALIDITY_DAYS = 365  # DRAFT — pending regulatory verification (Zahi)
+DEFAULT_INDUCTION_VALIDITY_DAYS = 365  # annual cap (regulatory, enforced at conduct — max validity 1 year; Zahi-confirmed 2026-07-19)
 INDUCTION_LEGAL_TEXT_HE = "עברתי הדרכה פרונטלית בשפה המובנת לי"
 INDUCTION_LEGAL_TEXT_INTERPRETER_HE = (
     "ההדרכה הועברה לי בעל-פה בשפה המובנת לי ({worker_language}) "
@@ -441,16 +441,25 @@ async def conduct_induction(
     sections = tmpl["languages"][displayed_language]["sections"]
     base_legal = INDUCTION_LEGAL_TEXT_HE  # v1: he is the only content language
 
-    # expires_at: ruling ה-5 — editable at capture; default today+DRAFT days.
+    today = date.today()
+    max_exp = today + timedelta(days=DEFAULT_INDUCTION_VALIDITY_DAYS)
+    # Regulatory annual cap (Zahi 2026-07-19): induction validity must be
+    # FUTURE and at most one year from the conduct date. PM may choose a
+    # shorter validity; the server rejects anything out of bounds.
     if expires_at is not None and str(expires_at).strip():
-        exp = str(expires_at).strip()
+        exp = str(expires_at).strip()[:10]
         try:
-            date.fromisoformat(exp[:10])
+            exp_d = date.fromisoformat(exp)
         except ValueError:
             raise HTTPException(status_code=422, detail="תאריך תפוגה לא תקין")
-        expires_val = exp[:10]
+        if exp_d <= today:
+            raise HTTPException(status_code=422, detail="תאריך התפוגה חייב להיות עתידי")
+        if exp_d > max_exp:
+            raise HTTPException(status_code=422,
+                detail=f"תוקף הדרכת בטיחות מוגבל לשנה — עד {max_exp.isoformat()}")
+        expires_val = exp
     else:
-        expires_val = (date.today() + timedelta(days=DEFAULT_INDUCTION_VALIDITY_DAYS)).isoformat()
+        expires_val = max_exp.isoformat()
 
     name = (signer_name or "").strip()
     if not name:

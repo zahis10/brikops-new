@@ -1,170 +1,242 @@
 ================================================================================
-BATCH s3guard-global — chokepoint fix for the s3:// raw-ref leak family
-Base: d777308 | Date: 2026-07-19
+BATCH induction-365-enforce — REVIEW
+Date: 2026-07-19 · Branch: staging · Base: 82c3f9b
+Scope: enforce the annual (365-day) validity cap on safety inductions —
+FUTURE + ≤ today+365, 422 hard-reject (no clamp), conduct is the sole write
+path (B3 closes the generic PATCH bypass), FE picker bounded.
 ================================================================================
 
-STEP 0 FINDINGS
 --------------------------------------------------------------------------------
-1. Except branch (pre-fix) at services/object_storage.py:125-127 returned the
-   raw stored_ref on presign failure — the leak.
-2. Caller classification (repo-wide grep of generate_url / resolve_url /
-   resolve_urls_in_doc):
-   (B) needs guard — ONLY export_router.py 154/162/170: `resolved` enters a
-       seen-set + links list; on None a null would be appended. Fixed by E2.
-   (A) None-tolerant display-field assigners — safety workers._photo_display
-       (docstring already "fail-soft → None"), incidents 154/171, tours 73/82,
-       trainings 143-169/317, induction 544/584/828, equipment 156/438/473,
-       documents 164/190, gate 194/239/264 + guest 104/175 (qr_display_url,
-       already `if ... else None`), uploads 73, work_diary_router 259/268
-       (try/except → None), handover_router 1140/1148/1223/1231 + 1940/2819,
-       data_export_router 118/173, qc_router 863-864, billing 1076-1078/1893,
-       tasks_router resolve_url / resolve_urls_in_doc (response fields).
-   (A) guarded consumers (quoted):
-       services/handover_pdf_service.py:187-189
-           _fetch_image_as_base64(url): `if not url: return None`
-       services/safety_pdf.py:144-146 (_load_client_logo) and :171-173
-           (_load_signature_image): `if not url: return None`, then
-           `str(url).startswith("http")` inside try/except fail-soft.
-       contractor_ops/notification_service.py:25-29 (_make_absolute_url):
-           `if resolved and resolved.startswith("https://"): return resolved`
-           else logs + returns "".
-3. No test asserted raw-ref-on-failure. test_storage_migration.py:197 had a
-   comment about the raw-ref fallback but its record() asserted `True`; its
-   detail string sliced file_url[:60] and would crash on None — replaced with
-   the None-safe assertion of the NEW contract (step 4b).
-   full_s3_audit.py:172 asserts NO "s3://" in responses — strengthened by fix.
-4. Fallback-image note: notification_service._resolve_fallback_image can now
-   return None; its only consumer (line 202-207) checks
-   `elif fallback_image and fallback_image.startswith('https://')` → falls to
-   effective_image = None; WA send proceeds without header image. No crash.
-5. E3: NOT needed — no other (B)-class caller exists.
-
-EDITS (E1 + E2) — git diff
+STEP 0 — FINDINGS (verified on 82c3f9b)
 --------------------------------------------------------------------------------
-diff --git a/backend/contractor_ops/export_router.py b/backend/contractor_ops/export_router.py
-index 36d74cc..d6723fe 100644
---- a/backend/contractor_ops/export_router.py
-+++ b/backend/contractor_ops/export_router.py
-@@ -152,7 +152,7 @@ async def _resolve_image_links(db, task):
-                 if not _is_image_ref(url, ct):
-                     continue
-                 resolved = generate_url(url) if url.startswith('s3://') else url
--                if resolved not in seen:
-+                if resolved and resolved not in seen:
-                     seen.add(resolved)
-                     links.append(resolved)
- 
-@@ -160,7 +160,7 @@ async def _resolve_image_links(db, task):
-             url = att.get('file_url') or att.get('url') or ''
-             if url and _is_image_ref(url):
-                 resolved = generate_url(url) if url.startswith('s3://') else url
--                if resolved not in seen:
-+                if resolved and resolved not in seen:
-                     seen.add(resolved)
-                     links.append(resolved)
- 
-@@ -168,7 +168,7 @@ async def _resolve_image_links(db, task):
-         for url in proof_urls:
-             if isinstance(url, str) and url and _is_image_ref(url):
-                 resolved = generate_url(url) if url.startswith('s3://') else url
--                if resolved not in seen:
-+                if resolved and resolved not in seen:
-                     seen.add(resolved)
-                     links.append(resolved)
-     except Exception as e:
-diff --git a/backend/services/object_storage.py b/backend/services/object_storage.py
-index 1fcfaad..7ff2998 100644
---- a/backend/services/object_storage.py
-+++ b/backend/services/object_storage.py
-@@ -98,6 +98,7 @@ def generate_url(stored_ref: str) -> str:
-     - Old local paths ("/api/uploads/..."): returned as-is.
-     - S3 references ("s3://..."): generate a presigned GET URL.
-     - Plain keys (legacy compat): treated as local.
-+    - On S3 presign failure: returns None (never the raw s3:// ref).
-     """
-     if not stored_ref:
-         return stored_ref
-@@ -124,7 +125,12 @@ def generate_url(stored_ref: str) -> str:
-             return url
-         except Exception as e:
-             logger.error(f"[STORAGE:S3:PRESIGN_ERROR] key={key} error={e}")
--            return stored_ref
-+            # Secrecy: on presign failure NEVER return the raw "s3://<key>" —
-+            # a raw storage ref is not a usable URL for display, fetch or PDF,
-+            # and leaking it exposes internal key structure. Fail-soft to None;
-+            # every caller is None-tolerant (display → no image; PDF loaders →
-+            # `if not url: return None`; notifications → "" unless https).
-+            return None
- 
-     return stored_ref
- 
+1. CURRENT expires_at block — backend/contractor_ops/safety/induction.py:444-453,
+   exactly as the spec quotes:
+       # expires_at: ruling ה-5 — editable at capture; default today+DRAFT days.
+       if expires_at is not None and str(expires_at).strip():
+           exp = str(expires_at).strip()
+           try:
+               date.fromisoformat(exp[:10])
+           except ValueError:
+               raise HTTPException(status_code=422, detail="תאריך תפוגה לא תקין")
+           expires_val = exp[:10]
+       else:
+           expires_val = (date.today() + timedelta(days=DEFAULT_INDUCTION_VALIDITY_DAYS)).isoformat()
+   Constant at :66-67: INDUCTION_TRAINING_TYPE = "הדרכת אתר";
+   DEFAULT_INDUCTION_VALIDITY_DAYS = 365  # DRAFT — pending regulatory verification (Zahi).
+   Template response returns "default_validity_days" (:356 area); stored at :521.
 
-V1 UNIT — test_object_storage_shapes.py (raising FakeS3 added)
+2. Conduct is the SOLE induction-expiry write path:
+   - trainings.py:71-73 create guard: training_type == "הדרכת אתר" → 422
+     "הדרכת אתר נוצרת רק דרך תהליך ההדרכה" (ind2-fix4 E5a).
+   - trainings.py:194-199 (pre-batch numbering) blocks type renames TO/FROM the
+     induction type (E5d); :258-260 blocks blind-sign of induction rows.
+   - Repo grep found NO PATCH/PUT that sets a worker induction's expires_at
+     besides the generic update_training. equipment.py:155/418 are equipment
+     certificates — out of scope.
+   - REPORTED BYPASS (why B3 is mandatory): SafetyTrainingUpdate includes
+     expires_at (trainings.py:50-58), and update_training applied it to ANY
+     training row — including inductions. FE FINDING: the generic edit pencil
+     in SafetyHomePage.js ~:2683-2692 (aria-label="ערוך הדרכה") is gated only
+     on isWriter with NO !isInduction guard, so it opens SafetyTrainingForm for
+     הדרכת אתר rows, and that form loads expires_at into an editable field
+     (SafetyTrainingForm.js:65). חידוש/החתמה buttons ARE induction-blocked; the
+     pencil is not. B3's 422 closes the hole server-side; hiding/limiting the
+     pencil for induction rows is a separate UX decision (NOT in this batch —
+     reported for Zahi).
+
+3. FE expires_at input (E2 contract) — SafetyInductionConduct.js:
+   - Native <input type="date"> at :284-289 bound to expiresAt state; NO
+     min/max pre-batch.
+   - Default set in the content-load effect (:60-66):
+     days = data?.default_validity_days || 365; d = new Date();
+     d.setDate(d.getDate()+days); setExpiresAt(d.toISOString().slice(0,10))
+     — used toISOString() (UTC) → timezone-drift risk; F1 rebuilt this from
+     LOCAL date parts.
+   - Appended at :118: if (expiresAt) fd.append('expires_at', expiresAt).
+   - Reads default_validity_days from GET /induction/content.
+
+4. `from datetime import date, timedelta` present in induction.py:27. ✓
+
+5. No mismatch — spec plan applied as-is after Zahi's "תתחיל".
+
 --------------------------------------------------------------------------------
-  [PASS] local save_bytes shape
-  [PASS] local file actually written
-  [PASS] generate_url local passthrough
-  [PASS] generate_url empty passthrough
-  [PASS] s3 save_bytes shape
-  [PASS] s3 upload routed to mock (no real bucket)
-  [PASS] generate_url s3 -> presigned — success path byte-identical
-  [PASS] presign failure -> None (not raw ref) — got=None
-  [PASS] no 's3://' in failure result
-  [PASS] local ref passthrough unchanged
-  [PASS] empty string passthrough unchanged
-  [PASS] None passthrough unchanged
-  [PASS] arbitrary non-s3 string unchanged
-  Total: 13 | PASS: 13 | FAIL: 0
-
-V2 DISPLAY-PATH FAIL-SOFT (generate_url monkeypatched to RAISE)
+EDITS — B1 + B2 + B3 + F1 (full diff)
 --------------------------------------------------------------------------------
-  [PASS] workers._photo_display(s3 ref) -> None under forced raise — got=None
-  [PASS] item builder: photo_display_url is None
-  [PASS] no 's3://' in serialized item payload
-        {"id": "w1", "full_name": "עובד", "photo_display_url": null}
-  [PASS] real generate_url presign-failure branch -> None (E1) — got=None
-  [PASS] handover_pdf _fetch_image_as_base64(None) is None
-  [PASS] safety_pdf._load_signature_image(None) is None
-  TOTAL 6 PASS 6 FAIL 0
+diff --git a/backend/contractor_ops/safety/induction.py b/backend/contractor_ops/safety/induction.py
+--- a/backend/contractor_ops/safety/induction.py
++++ b/backend/contractor_ops/safety/induction.py
+@@ -64,7 +64,7 @@
+ # --- IND-2 (batch safety-ind2, 2026-07-14) ---
+ INDUCTION_TRAINING_TYPE = "הדרכת אתר"
+-DEFAULT_INDUCTION_VALIDITY_DAYS = 365  # DRAFT — pending regulatory verification (Zahi)
++DEFAULT_INDUCTION_VALIDITY_DAYS = 365  # annual cap (regulatory, enforced at conduct — max validity 1 year; Zahi-confirmed 2026-07-19)
+ INDUCTION_LEGAL_TEXT_HE = "עברתי הדרכה פרונטלית בשפה המובנת לי"
+@@ -441,16 +441,25 @@ async def conduct_induction(
+     sections = tmpl["languages"][displayed_language]["sections"]
+     base_legal = INDUCTION_LEGAL_TEXT_HE  # v1: he is the only content language
 
-  Gate S9 cases (probe_safety_qrg2_station) re-run after E1:
-  [PASS] S9a gate green -> photo_display_url None, no s3:// anywhere
-  [PASS] S9b station /check -> green, photo None, no s3://
-  [PASS] S9c station /search item -> photo None, no s3://
-  [PASS] S9d station /check-worker -> photo None, no s3://
-  [PASS] S9e local /api/uploads-style ref still passes through unchanged
+-    # expires_at: ruling ה-5 — editable at capture; default today+DRAFT days.
++    today = date.today()
++    max_exp = today + timedelta(days=DEFAULT_INDUCTION_VALIDITY_DAYS)
++    # Regulatory annual cap (Zahi 2026-07-19): induction validity must be
++    # FUTURE and at most one year from the conduct date. PM may choose a
++    # shorter validity; the server rejects anything out of bounds.
+     if expires_at is not None and str(expires_at).strip():
+-        exp = str(expires_at).strip()
++        exp = str(expires_at).strip()[:10]
+         try:
+-            date.fromisoformat(exp[:10])
++            exp_d = date.fromisoformat(exp)
+         except ValueError:
+             raise HTTPException(status_code=422, detail="תאריך תפוגה לא תקין")
+-        expires_val = exp[:10]
++        if exp_d <= today:
++            raise HTTPException(status_code=422, detail="תאריך התפוגה חייב להיות עתידי")
++        if exp_d > max_exp:
++            raise HTTPException(status_code=422,
++                detail=f"תוקף הדרכת בטיחות מוגבל לשנה — עד {max_exp.isoformat()}")
++        expires_val = exp
+     else:
+-        expires_val = (date.today() + timedelta(days=DEFAULT_INDUCTION_VALIDITY_DAYS)).isoformat()
++        expires_val = max_exp.isoformat()
 
-V3 WIDE REGRESSION — ALL GREEN
+diff --git a/backend/contractor_ops/safety/trainings.py b/backend/contractor_ops/safety/trainings.py
+--- a/backend/contractor_ops/safety/trainings.py
++++ b/backend/contractor_ops/safety/trainings.py
+@@ -189,6 +189,16 @@ async def update_training(
+
+     updates = payload.model_dump(exclude_unset=True)
+
++    # induction-365-enforce B3 (Zahi 2026-07-19): induction expiry is set ONLY
++    # at conduct (which enforces the annual cap) — the generic PATCH must not
++    # edit it, or the cap would be meaningless. exclude_unset=True means the
++    # guard fires only when the client actually sent expires_at.
++    from contractor_ops.safety.induction import INDUCTION_TRAINING_TYPE
++    if str(before.get("training_type") or "").strip() == INDUCTION_TRAINING_TYPE \
++            and "expires_at" in updates:
++        raise HTTPException(status_code=422,
++            detail="תוקף הדרכת אתר נקבע רק בתהליך ההדרכה (כפתור 🎓 אצל העובד)")
++
+     # ind2-fix4 E5d: no sideways renames around the born-signed guard —
+     # training_type may not change TO or FROM the induction type.
+     if "training_type" in updates and updates["training_type"] is not None:
+
+diff --git a/frontend/src/components/safety/SafetyInductionConduct.js b/frontend/src/components/safety/SafetyInductionConduct.js
+--- a/frontend/src/components/safety/SafetyInductionConduct.js
++++ b/frontend/src/components/safety/SafetyInductionConduct.js
+@@ -16,6 +16,17 @@
++// induction-365-enforce F1 — local YYYY-MM-DD from local date parts (no
++// toISOString/UTC drift). Used for the picker default and its min/max bounds.
++function localDatePlusDays(days) {
++  const d = new Date();
++  d.setDate(d.getDate() + days);
++  const y = d.getFullYear();
++  const m = String(d.getMonth() + 1).padStart(2, '0');
++  const dd = String(d.getDate()).padStart(2, '0');
++  return `${y}-${m}-${dd}`;
++}
+@@ -61,9 +72,8 @@
+         const days = data?.default_validity_days || 365;
+-        const d = new Date();
+-        d.setDate(d.getDate() + days);
+-        setExpiresAt(d.toISOString().slice(0, 10));
++        // Local YYYY-MM-DD (no toISOString — avoids UTC timezone drift).
++        setExpiresAt(localDatePlusDays(days));
+@@ -284,11 +294,13 @@
+                 <input
+                   type="date"
+                   value={expiresAt}
++                  min={localDatePlusDays(1)}
++                  max={localDatePlusDays(content.default_validity_days || 365)}
+                   onChange={(e) => setExpiresAt(e.target.value)}
+                   ...
+                 <p className="text-[11px] text-slate-500 mt-1">
+-                  ברירת מחדל: {content.default_validity_days} ימים. ניתן לעריכה.
++                  ברירת מחדל: {content.default_validity_days} ימים. ניתן לעריכה — עד שנה מהיום.
+                 </p>
+
+Notes:
+- Cap single-sourced from DEFAULT_INDUCTION_VALIDITY_DAYS (365 value unchanged).
+- No silent clamp anywhere — out-of-bounds is 422, nothing stored.
+- Grandfathering: NO migration of existing over-cap inductions; they expire per
+  their stored date. Enforcement applies to NEW conducts only.
+- No change to gate/workers/alerts reads, born-signed ceremony, template
+  endpoints, response shapes, or other training types.
+
 --------------------------------------------------------------------------------
-  Storage:
-    test_object_storage_shapes.py ......... 13/13 PASS
-    test_storage_migration.py ............. 36/36 PASS (incl. new None-safe
-                                            "resolve_urls_in_doc → None on
-                                            presign failure" assertion)
-    test_s3_mode.py (REAL AWS creds) ...... 25/25 PASS — success presign path
-                                            unchanged end-to-end against S3
-  Safety probes (in-process, real app + Mongo):
-    probe_safety_qrg1.py .................. 42/42 PASS
-    probe_safety_qrg2_station.py .......... 49/49 PASS (incl. S9 a-e)
-    probe_safety_qrg_guest.py ............. 30/30 PASS
-  Safety pytest:
-    test_safety_registration.py + test_defect_safety_tag.py — 18 passed,
-    1 failed: test_defects_summary_includes_safety_open_count
-    ("Database not initialized") — KNOWN pre-existing harness failure,
-    fails IDENTICALLY to base d777308 (unrelated to this change).
-  PDF loaders: _fetch_image_as_base64(None) → None;
-    _load_signature_image(None) → None (see V2).
-  compileall backend (contractor_ops, services, server.py): clean.
-  App health after restart: {"status":"ok","database":"connected"}
-
-V4 SCOPE
+V1 — PROBE (NEW backend/tests/probe_safety_induction365.py) — 18/18 PASS
 --------------------------------------------------------------------------------
-  git diff is backend-only:
-    backend/services/object_storage.py          (E1: except branch + docstring)
-    backend/contractor_ops/export_router.py     (E2: 3 guard conditions)
-    backend/tests/test_object_storage_shapes.py (V1 case)
-    backend/tests/test_storage_migration.py     (4b None-safe assertion)
-  No frontend, no success-path, no gate_public/auth_router guard, no
-  save_bytes/delete/cache/TTL/_get_s3 changes.
+Full-middleware in-process ASGI probe (house env, local Mongo), seeded org/
+project/PM/workers + template. Transcript summary:
+
+  a. conduct expires_at=today+400  → 422, detail contains "מוגבל לשנה — עד <cap>";
+     verified NOTHING stored (no training row for that worker).          PASS
+  b. conduct expires_at=today       → 422 "תאריך התפוגה חייב להיות עתידי";
+     conduct expires_at=yesterday   → 422 "עתידי"; nothing stored.        PASS
+  c. conduct expires_at=today+300  → 201; stored expires_at == today+300. PASS
+  d. conduct expires_at=today+365  → 201 (boundary); stored == today+365. PASS
+  e. conduct with NO expires_at    → 201; stored == today+365
+     (default == cap).                                                    PASS
+  f. conduct expires_at="2026-13-40" → 422 "תאריך תפוגה לא תקין".         PASS
+
+  B3 (PATCH bypass closed):
+  - PATCH induction row {expires_at: today+400} → 422
+    "תוקף הדרכת אתר נקבע רק בתהליך ההדרכה (כפתור 🎓 אצל העובד)".          PASS
+  - PATCH induction row {expires_at: today+200} → 422 (expiry not editable
+    via the generic path AT ALL, even in-bounds).                         PASS
+  - PATCH other fields (location) on an induction → 200, still works.     PASS
+  - PATCH expires_at on a NON-induction training → 200, unchanged.        PASS
+
+  Regression in the same probe:
+  - Generic POST /trainings with training_type="הדרכת אתר" → still 422
+    ("הדרכת אתר נוצרת רק דרך תהליך ההדרכה").                              PASS
+  - Green-worker gate check works for a freshly-conducted in-bounds
+    induction; gate/workers show valid_until == today+365 (== cap).       PASS
+
+  TOTAL: 18/18 PASS.
+
+Probe adjustment: probe_safety_ind2_fix4.py exp_farther changed 400d→350d —
+the old 400-day value is now CORRECTLY rejected (422) by design; the case's
+MAX-over-signed-inductions semantics are preserved at 350d. 21/21 PASS.
+
+--------------------------------------------------------------------------------
+V2 — REGRESSION — ALL GREEN
+--------------------------------------------------------------------------------
+- probe_safety_ind2.py          34/34 PASS
+- probe_safety_ind2_fix1.py     31/31 PASS
+- probe_safety_ind2_fix4.py     21/21 PASS (with the 350d adjustment above)
+- probe_safety_ind3.py          31/31 PASS
+- probe_safety_qrg1.py          42/42 PASS
+- probe_safety_qrg2_station.py  49/49 PASS
+- safety pytest suite: 18 pass + the known PRE-EXISTING harness fail
+  test_defects_summary_includes_safety_open_count ("Database not
+  initialized") — fails IDENTICALLY to base 82c3f9b (not a regression).
+- python -m compileall backend/contractor_ops — OK.
+
+--------------------------------------------------------------------------------
+V3 — FRONTEND BUILD + 390px VERIFICATION
+--------------------------------------------------------------------------------
+- CI=true REACT_APP_BACKEND_URL=https://api.brikops.com npx craco build →
+  EXIT 0, zero warnings-as-errors (per the standing CI=true rule).
+- Live 390×844 (mobile) browser run of the conduct modal (Playwright agent
+  against a local build with a seeded PM/worker, cleaned up afterwards):
+  · Reached step 3 (signature) of "הדרכת אתר" for the test worker.
+  · Date field "בתוקף עד": default value == today+365 (2027-07-19) —
+    one year out. ✓
+  · min attribute == tomorrow (2026-07-20); max == today+365 (2027-07-19). ✓
+  · Hint text shows "ברירת מחדל: 365 ימים. ניתן לעריכה — עד שנה מהיום." ✓
+  · Setting today+400 (2027-08-23) → input.validity.rangeOverflow === true —
+    the picker rejects dates beyond one year. ✓
+
+V4 (DEVICE, staging web) — Zahi's step, after approval. NOT performed here.
+
+--------------------------------------------------------------------------------
+OPEN ITEM FOR ZAHI (reported, out of batch scope)
+--------------------------------------------------------------------------------
+The generic edit pencil (SafetyHomePage.js ~:2683) still OPENS the edit form
+for induction rows with an editable expires_at field — the server now 422s any
+such save (B3), so there is no bypass, but the UX (an editable field that
+always rejects) may warrant hiding/limiting the pencil for הדרכת אתר rows.
+Separate UX decision.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
