@@ -1,120 +1,137 @@
 ================================================================================
-BATCH #569 — AI Phase 2a: /classify-defect-photo — REVIEW
-Date: 2026-07-20 · Branch: staging · Base: 7041d52 · BACKEND ONLY (EB)
-Scope: serve the repo-shipped ONNX defect-photo classifier behind ONE new
-authenticated endpoint returning top-1 + top-2 category suggestions with
-confidences. No FE changes, no DB schema, no new env vars.
+BATCH #570 — AI Phase 2b: map model classes → app CATEGORIES — REVIEW
+Date: 2026-07-20 · Branch: staging · Base: de98b94 · BACKEND ONLY (EB)
+Scope: extend /classify-defect-photo ADDITIVELY so it returns app-native
+category suggestions (suggested_category, alternatives, needs_surface_choice)
+via a single source-of-truth mapping module. No FE changes (FE consumer =
+batch #571). No model/threshold/auth/rate-limit/error-handling changes.
 ================================================================================
 
 --------------------------------------------------------------------------------
 STEP 0 — FINDINGS (verified before any edit; plan approved with "תתחיל")
 --------------------------------------------------------------------------------
-1. Model files present at backend/models_ai/:
-     defect_classifier_v1.onnx        8,904,134 bytes
-     defect_classifier_v1.meta.json   version "v1", 7 classes (order matches spec)
-   sha256(onnx) = 5ce23eb561dd04d838e39abff531ec9fa53b0ac29c7391fdfd4ad1368804f95d ✓ (matches spec)
-2. Auth dependency (router.py:184):
-     async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-   HTTPBearer JWT (iss/exp/iat required, secret_version + session_version checks,
-   Hebrew pending_deletion block). Reused verbatim via Depends(get_current_user).
-3. Photo-upload size/rate-limit mechanism = contractor_ops/upload_rate_limit.py:
-     check_upload_rate_limit(user_id)  — 30/min per user → 429 Hebrew
-     check_content_length(header, max) — pre-read fast 413 (message hardcodes 50MB)
-     check_upload_bytes(user_id, n)    — 500MB/min rolling byte budget → 429
-   Same mechanism applied to the new endpoint (see deviation note under EDITS —
-   the pre-read 413 is mirrored locally so the message is the spec's 10MB one).
-4. Router registration: server.py include_router block; house convention
-   APIRouter(prefix="/api"). New router registered there (after admin_router).
-5. onnxruntime latest installable: 1.27.0 (CPU) — pinned.
+1. Response-building block quoted from ai_classify_router.py (pre-edit):
+       order = np.argsort(probs)[::-1]
+       top1_raw = float(probs[order[0]])
+       top = [
+           {"category": CLASSES[i], "confidence": round(float(probs[i]), 3)}
+           for i in order[:2]
+       ]
+       low_confidence = top1_raw < LOW_CONFIDENCE_THRESHOLD   # 0.55
+       ...
+       return {
+           "model_version": MODEL_VERSION,
+           "category": top[0]["category"],
+           "confidence": top[0]["confidence"],
+           "top2": top,
+           "low_confidence": low_confidence,
+       }
+   Extension is purely additive; alternatives computed from order[:3] without
+   touching the top2 construction.
+2. 7 model classes quoted from defect_classifier_v1.meta.json (exact strings,
+   mapping keys match byte-for-byte):
+   'אינסטלציה', 'אריחים', 'דלתות', 'חלונות ואלומיניום', 'חשמל ותקשורת',
+   'צבע וטיח', 'ציפוי קירות חוץ'
+3. App CATEGORIES confirmed at NewDefectModal.js:42-47 — all 17 values:
+   electrical, plumbing, hvac, painting, flooring, carpentry, masonry, windows,
+   doors, general, bathroom_cabinets, finishes, structural, aluminum, metalwork,
+   glazing, carpentry_kitchen. Every mapping target (electrical, plumbing,
+   doors, painting, aluminum, masonry, flooring) + fallback general is a REAL
+   enum value. No mismatch.
 
 --------------------------------------------------------------------------------
 EDITS
 --------------------------------------------------------------------------------
-E1  backend/requirements.txt — ONE line added: onnxruntime==1.27.0
+E1  NEW backend/contractor_ops/defect_category_map.py — single source of truth,
+    dependency-free (no app imports), exactly per spec:
+       MODEL_TO_APP_CATEGORY = {
+           "חשמל ותקשורת": "electrical",
+           "אינסטלציה": "plumbing",
+           "דלתות": "doors",
+           "צבע וטיח": "painting",
+           "חלונות ואלומיניום": "aluminum",   # unified — no split to windows
+           "ציפוי קירות חוץ": "masonry",       # exterior stone/coating
+           "אריחים": "flooring",               # default; wall→masonry via surface choice
+       }
+       SURFACE_CHOICE_CLASSES = {"אריחים"}
+       APP_GENERAL = "general"
+       to_app_category(model_class) -> MODEL_TO_APP_CATEGORY.get(..., APP_GENERAL)
+       needs_surface_choice(model_class) -> model_class in SURFACE_CHOICE_CLASSES
 
-E2  NEW backend/contractor_ops/ai_classify_router.py:
-    - APIRouter(prefix="/api"), POST /classify-defect-photo, multipart field
-      "photo", Depends(get_current_user).
-    - meta.json loaded at module import (plain json, NO fallback values) →
-      MODEL_VERSION="v1", CLASSES (7, Hebrew, model-native — no app-CATEGORIES
-      mapping, per spec).
-    - Lazy singleton _get_session(): onnxruntime InferenceSession loads on the
-      FIRST classify call only, CPUExecutionProvider.
-    - Limits: check_upload_rate_limit (same 30/min budget as photo upload);
-      pre-read Content-Length 413 + post-read real-size 413, both with Hebrew
-      "התמונה גדולה מדי (מקסימום 10MB)"; check_upload_bytes on the real size.
-      DEVIATION (minor): the shared check_content_length() hardcodes the Hebrew
-      "50MB" message, so the pre-read check is mirrored inline (same pattern,
-      spec's 10MB wording). Real enforcement stays the post-read check.
-    - Pillow open→convert("RGB")→resize((224,224)), imagenet normalize
-      (mean .485/.456/.406, std .229/.224/.225), float32 [1,3,224,224], numpy
-      only (no torch). session.run(["logits"], {"image": ...}) → numpy softmax.
-    - Response 200: {model_version, category, confidence (3dp), top2[2],
-      low_confidence: top1 < 0.55}. low_confidence is computed from the RAW
-      top-1 probability (rounding is display-only), so an edge value like
-      0.5496 is correctly flagged true even though it displays as 0.550.
-    - Corrupt image → 422 "קובץ התמונה לא תקין". The 503 guard wraps the FULL
-      inference path (session load, run, softmax, argsort, top-2 assembly) →
-      "שירות הזיהוי אינו זמין כרגע" (logged server-side; never a 500 stack).
-    - One structured log line per call: org_id, user_id, model_version, top1,
-      confidence, latency_ms. Image processed in memory only — never persisted.
-
-E3  backend/server.py — 2 lines (import + include_router) in the existing
-    block, placed after admin_router. Nothing else.
-
-E4  (UNPLANNED, environment fix — required for V1) backend/start.sh: +4 lines
-    exporting PYTHONPATH with .pythonlibs first before exec uvicorn.
-    WHY: the workspace's replit.nix pulls in pkgs.yakut, which injects a BROKEN
-    python3.12 numpy 2.2.5 onto PYTHONPATH ahead of the project's python3.11
-    site-packages. Nothing imported numpy at startup until this batch; the new
-    router's `import numpy` crashed boot (ImportError: numpy C-extensions).
-    The fix makes workspace packages (numpy 2.4.2 from requirements.txt)
-    resolve first. Local-dev script only — no EB/production file touched.
+E2  backend/contractor_ops/ai_classify_router.py — additive diff (+26/-1):
+    - import to_app_category, needs_surface_choice, APP_GENERAL from the module.
+    - Inside the existing 503-guarded inference block:
+        top1_class = CLASSES[order[0]]
+        suggested_category = APP_GENERAL if low_confidence
+                             else to_app_category(top1_class)
+        alternatives = mapped top-3 model classes (order[:3]), order-preserving
+                       dedupe, EXCLUDING suggested_category — always populated,
+                       including when the suggestion fell back to general, so
+                       the FE can one-tap the real trade.
+        surface_choice = (not low_confidence) and needs_surface_choice(top1_class)
+    - Response dict: 3 keys ADDED (suggested_category, alternatives,
+      needs_surface_choice). All 5 existing fields (model_version, category,
+      confidence, top2, low_confidence) kept exactly as-is — category/top2
+      remain model-native.
+    - [AI_CLASSIFY] log line extended with one field: suggested_category=%s.
+    No change to model files, preprocessing, softmax, 0.55 threshold, auth,
+    rate-limits, or error handling.
 
 --------------------------------------------------------------------------------
 V1 — BOOT
 --------------------------------------------------------------------------------
-Backend boots clean (local mongod, FILES_STORAGE_BACKEND=local, WA blank).
-No model load at startup — zero AI_CLASSIFY/onnx lines in the boot log; the
-session loads lazily on the first classify call. Boot time unchanged.
+Backend boots clean (local mongod). No model load at startup — lazy load
+preserved; startup log shows no AI_CLASSIFY/onnx activity until the first call.
 
 --------------------------------------------------------------------------------
-V2 — CURL (local, valid dev JWT for a seeded project_manager; test data
-seeded for the run and fully deleted afterwards)
+V2 — UNIT CHECKS (actual outputs)
 --------------------------------------------------------------------------------
-a. Valid 800×600 JPEG → HTTP 200, exact JSON:
+a. to_app_category:
+     אינסטלציה → plumbing          אריחים → flooring
+     דלתות → doors                 חלונות ואלומיניום → aluminum
+     חשמל ותקשורת → electrical     צבע וטיח → painting
+     ציפוי קירות חוץ → masonry     "בליבלי" (unknown) → general ✓
+b. needs_surface_choice("אריחים") → True; needs_surface_choice("דלתות") → False ✓
+
+--------------------------------------------------------------------------------
+V3 — CURL (local, dev JWT for a seeded project_manager; test data seeded for
+the run and fully deleted afterwards)
+--------------------------------------------------------------------------------
+a. Confident photo (model: צבע וטיח @ 0.781 ≥ 0.55) → HTTP 200, FULL JSON:
+   {"model_version":"v1","category":"צבע וטיח","confidence":0.781,
+    "top2":[{"category":"צבע וטיח","confidence":0.781},
+            {"category":"אריחים","confidence":0.079}],
+    "low_confidence":false,
+    "suggested_category":"painting",
+    "alternatives":["flooring","masonry"],
+    "needs_surface_choice":false}
+   suggested_category = mapped app value ✓; alternatives = mapped top-3
+   (painting, flooring, masonry) minus the suggestion, ordered + deduped ✓;
+   model-native category/top2 unchanged ✓; needs_surface_choice correct
+   (top1 is not אריחים) ✓.
+b. Low-confidence photo (top1 אינסטלציה @ 0.363 < 0.55) → HTTP 200, FULL JSON:
    {"model_version":"v1","category":"אינסטלציה","confidence":0.363,
     "top2":[{"category":"אינסטלציה","confidence":0.363},
             {"category":"צבע וטיח","confidence":0.249}],
-    "low_confidence":true}
-   Softmax over all 7 logits sums to 1.0 by construction (numpy softmax);
-   contract fields all present, confidence 3dp, low_confidence correct (<0.55).
-b. No auth → HTTP 401 {"detail":"Not authenticated"} (same as other routes).
-c. 11MB file → HTTP 413 {"detail":"התמונה גדולה מדי (מקסימום 10MB)"}.
-   Corrupt file → HTTP 422 {"detail":"קובץ התמונה לא תקין"}.
-d. Latency (final code, fresh boot): first call (cold, includes session load)
-   0.436s; second call (warm, cached session) 0.035s — second < first ✓.
-Structured log line emitted per call (org_id, user_id, model_version=v1,
-top1, confidence, latency_ms).
-
---------------------------------------------------------------------------------
-V3 — MODEL INTEGRITY
---------------------------------------------------------------------------------
-sha256sum backend/models_ai/defect_classifier_v1.onnx →
-5ce23eb561dd04d838e39abff531ec9fa53b0ac29c7391fdfd4ad1368804f95d ✓ matches spec.
-Session IO verified: input "image" [batch,3,224,224], output "logits" [batch,7].
+    "low_confidence":true,
+    "suggested_category":"general",
+    "alternatives":["plumbing","painting","electrical"],
+    "needs_surface_choice":false}
+   suggested_category = "general" ✓; low_confidence = true ✓; alternatives
+   still list the model's mapped top guesses (one-tap real trade) ✓;
+   needs_surface_choice suppressed under low confidence ✓.
+Log lines confirmed for both calls, e.g.:
+   [AI_CLASSIFY] org_id=... user_id=... model_version=v1 top1=צבע וטיח
+   confidence=0.781 latency_ms=78 suggested_category=painting
 
 --------------------------------------------------------------------------------
 V4 — DIFF SCOPE
 --------------------------------------------------------------------------------
-git diff --stat:
-   backend/requirements.txt | 1 +          (onnxruntime==1.27.0)
-   backend/server.py        | 3 +++        (import + include_router + blank)
-   backend/start.sh         | 4 ++++       (E4 environment fix, see above)
-   NEW: backend/contractor_ops/ai_classify_router.py
-Model files backend/models_ai/* already tracked in git (shipped with the spec).
-frontend/** untouched. services/ai_service.py, object_storage.py, existing
-routers, models/schemas, billing/auth/deletion code untouched. No env vars,
-no DB collections, no migrations, no torch.
+git status / diff --stat:
+   NEW: backend/contractor_ops/defect_category_map.py
+   backend/contractor_ops/ai_classify_router.py | 26 insertions(+), 1 deletion(-)
+No other file changed. frontend/** untouched. No env vars, no DB, no
+migrations, no new deps, no torch. Model files, meta.json, preprocessing,
+softmax, 0.55 threshold, auth, rate-limit, error handling — all untouched.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

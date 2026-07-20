@@ -14,6 +14,11 @@ import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from PIL import Image
 
+from contractor_ops.defect_category_map import (
+    APP_GENERAL,
+    needs_surface_choice,
+    to_app_category,
+)
 from contractor_ops.router import get_current_user, get_db
 from contractor_ops.upload_rate_limit import (
     check_upload_bytes,
@@ -113,6 +118,22 @@ async def classify_defect_photo(
             for i in order[:2]
         ]
         low_confidence = top1_raw < LOW_CONFIDENCE_THRESHOLD
+        # BATCH AI Phase 2b — app-category mapping (defect_category_map.py is the
+        # single source of truth). Low confidence → "general", never a confident
+        # wrong guess. alternatives = mapped top-3 model classes, order-preserving
+        # dedupe, excluding the suggestion — always present so the FE can offer
+        # one-tap chips even when the suggestion fell back to general.
+        top1_class = CLASSES[order[0]]
+        if low_confidence:
+            suggested_category = APP_GENERAL
+        else:
+            suggested_category = to_app_category(top1_class)
+        alternatives = []
+        for i in order[:3]:
+            mapped = to_app_category(CLASSES[i])
+            if mapped != suggested_category and mapped not in alternatives:
+                alternatives.append(mapped)
+        surface_choice = (not low_confidence) and needs_surface_choice(top1_class)
     except Exception:
         logger.exception("[AI_CLASSIFY] inference failure")
         raise HTTPException(status_code=503, detail="שירות הזיהוי אינו זמין כרגע")
@@ -130,8 +151,9 @@ async def classify_defect_photo(
         pass  # logging metadata only — never fail the request over it
 
     logger.info(
-        "[AI_CLASSIFY] org_id=%s user_id=%s model_version=%s top1=%s confidence=%.3f latency_ms=%d",
+        "[AI_CLASSIFY] org_id=%s user_id=%s model_version=%s top1=%s confidence=%.3f latency_ms=%d suggested_category=%s",
         org_id, user["id"], MODEL_VERSION, top[0]["category"], top[0]["confidence"], latency_ms,
+        suggested_category,
     )
 
     return {
@@ -140,4 +162,7 @@ async def classify_defect_photo(
         "confidence": top[0]["confidence"],
         "top2": top,
         "low_confidence": low_confidence,
+        "suggested_category": suggested_category,
+        "alternatives": alternatives,
+        "needs_surface_choice": surface_choice,
     }
