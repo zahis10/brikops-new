@@ -113,6 +113,10 @@ fi
 
 echo "[BOOT] Starting uvicorn on port $PORT..."
 cd "${WORKSPACE}/backend"
+# Workspace packages must resolve BEFORE Nix-provided python3.12 site-packages
+# (pkgs.yakut drags a broken numpy 2.2.5 for py3.12 onto PYTHONPATH, which
+# shadows the py3.11 numpy from requirements.txt and crashes on import).
+export PYTHONPATH="${WORKSPACE}/.pythonlibs/lib/python3.11/site-packages${PYTHONPATH:+:$PYTHONPATH}"
 exec python -m uvicorn server:app \
   --host 0.0.0.0 \
   --port "$PORT" \
