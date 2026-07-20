@@ -1,137 +1,133 @@
 ================================================================================
-BATCH #570 — AI Phase 2b: map model classes → app CATEGORIES — REVIEW
-Date: 2026-07-20 · Branch: staging · Base: de98b94 · BACKEND ONLY (EB)
-Scope: extend /classify-defect-photo ADDITIVELY so it returns app-native
-category suggestions (suggested_category, alternatives, needs_surface_choice)
-via a single source-of-truth mapping module. No FE changes (FE consumer =
-batch #571). No model/threshold/auth/rate-limit/error-handling changes.
+BATCH #573 — AI Phase 2c: FE auto-suggest category from defect photo — REVIEW
+Date: 2026-07-20 · Branch: staging · Base: df0a392 · FRONTEND ONLY
+Scope: photo-first mode — first photo with empty category calls the live
+POST /api/classify-defect-photo and prefills category (suggested_category),
+shows alternatives as one-tap chips + wall/floor toggle for tiles. All behind
+NEW dormant flag FEATURES.DEFECT_AI_SUGGEST (ships FALSE). Failure silent.
+ZAHI AMENDMENT applied: AI prefill, chip clicks, AND wall/floor toggle all
+flow through the existing handleCategoryChange() — NOT raw setCategory — so
+company/assignee reset + contractor filter behave exactly like a manual pick.
 ================================================================================
 
 --------------------------------------------------------------------------------
-STEP 0 — FINDINGS (verified before any edit; plan approved with "תתחיל")
+STEP 0 — FINDINGS (verified in plan mode on df0a392; plan approved)
 --------------------------------------------------------------------------------
-1. Response-building block quoted from ai_classify_router.py (pre-edit):
-       order = np.argsort(probs)[::-1]
-       top1_raw = float(probs[order[0]])
-       top = [
-           {"category": CLASSES[i], "confidence": round(float(probs[i]), 3)}
-           for i in order[:2]
-       ]
-       low_confidence = top1_raw < LOW_CONFIDENCE_THRESHOLD   # 0.55
-       ...
-       return {
-           "model_version": MODEL_VERSION,
-           "category": top[0]["category"],
-           "confidence": top[0]["confidence"],
-           "top2": top,
-           "low_confidence": low_confidence,
-       }
-   Extension is purely additive; alternatives computed from order[:3] without
-   touching the top2 construction.
-2. 7 model classes quoted from defect_classifier_v1.meta.json (exact strings,
-   mapping keys match byte-for-byte):
-   'אינסטלציה', 'אריחים', 'דלתות', 'חלונות ואלומיניום', 'חשמל ותקשורת',
-   'צבע וטיח', 'ציפוי קירות חוץ'
-3. App CATEGORIES confirmed at NewDefectModal.js:42-47 — all 17 values:
-   electrical, plumbing, hvac, painting, flooring, carpentry, masonry, windows,
-   doors, general, bathroom_cabinets, finishes, structural, aluminum, metalwork,
-   glazing, carpentry_kitchen. Every mapping target (electrical, plumbing,
-   doors, painting, aluminum, masonry, flooring) + fallback general is a REAL
-   enum value. No mismatch.
+1. features.js: flat FEATURES object, dormant-flag pattern confirmed
+   (OFFLINE_DEFECT_CREATE precedent). DEFECT_PHOTO_FIRST: true exists.
+2. handleImageAdd (NewDefectModal.js:354-397 pre-edit): compresses files;
+   SINGLE photo → setPendingFile(stableFile); MULTI → setImages(prev=>[...]).
+   useCallback with [] deps ⇒ stale-closure hazard over `category` — solved
+   with refs (categoryRef / aiSuggestEnabledRef / photosEmptyRef /
+   handleCategoryChangeRef) kept in sync via effects.
+3. category state + handleCategoryChange(:294-300) wraps setCategory and
+   resets company/assignee/auto flags; categoryMatchedCompanies/
+   filteredCompanies driven by `category` — untouched.
+4. api.js authed pattern (:266, :283) mirrored exactly for classifyDefectPhoto.
+5. photosBlock renders at `{effectivePhotoFirst && photosBlock}`; AI block
+   inserted between it and the category SelectField.
+6. No spec/code mismatches found.
 
 --------------------------------------------------------------------------------
-EDITS
+THE DIFF (V4: ONLY features.js, api.js, NewDefectModal.js — verified)
 --------------------------------------------------------------------------------
-E1  NEW backend/contractor_ops/defect_category_map.py — single source of truth,
-    dependency-free (no app imports), exactly per spec:
-       MODEL_TO_APP_CATEGORY = {
-           "חשמל ותקשורת": "electrical",
-           "אינסטלציה": "plumbing",
-           "דלתות": "doors",
-           "צבע וטיח": "painting",
-           "חלונות ואלומיניום": "aluminum",   # unified — no split to windows
-           "ציפוי קירות חוץ": "masonry",       # exterior stone/coating
-           "אריחים": "flooring",               # default; wall→masonry via surface choice
-       }
-       SURFACE_CHOICE_CLASSES = {"אריחים"}
-       APP_GENERAL = "general"
-       to_app_category(model_class) -> MODEL_TO_APP_CATEGORY.get(..., APP_GENERAL)
-       needs_surface_choice(model_class) -> model_class in SURFACE_CHOICE_CLASSES
+git diff --stat @ dd6db9b (staging):
+  frontend/src/components/NewDefectModal.js | 154 +++++++++++++++++++++++-
+  frontend/src/config/features.js           |   3 +
+  frontend/src/services/api.js              |  11 +++
+  3 files changed, 165 insertions(+), 3 deletions(-)
+git status --short shows NO other modified file. Full diff kept in git.
 
-E2  backend/contractor_ops/ai_classify_router.py — additive diff (+26/-1):
-    - import to_app_category, needs_surface_choice, APP_GENERAL from the module.
-    - Inside the existing 503-guarded inference block:
-        top1_class = CLASSES[order[0]]
-        suggested_category = APP_GENERAL if low_confidence
-                             else to_app_category(top1_class)
-        alternatives = mapped top-3 model classes (order[:3]), order-preserving
-                       dedupe, EXCLUDING suggested_category — always populated,
-                       including when the suggestion fell back to general, so
-                       the FE can one-tap the real trade.
-        surface_choice = (not low_confidence) and needs_surface_choice(top1_class)
-    - Response dict: 3 keys ADDED (suggested_category, alternatives,
-      needs_surface_choice). All 5 existing fields (model_version, category,
-      confidence, top2, low_confidence) kept exactly as-is — category/top2
-      remain model-native.
-    - [AI_CLASSIFY] log line extended with one field: suggested_category=%s.
-    No change to model files, preprocessing, softmax, 0.55 threshold, auth,
-    rate-limits, or error handling.
-
---------------------------------------------------------------------------------
-V1 — BOOT
---------------------------------------------------------------------------------
-Backend boots clean (local mongod). No model load at startup — lazy load
-preserved; startup log shows no AI_CLASSIFY/onnx activity until the first call.
+E1 features.js — DEFECT_AI_SUGGEST: false added with spec comment (dormant).
+E2 api.js — classifyDefectPhoto(file): FormData key "photo", spread
+   getAuthHeader(), no explicit Content-Type (axios sets multipart boundary),
+   no timeout/retry. Placed right after getAuthHeader.
+E3 NewDefectModal.js —
+   - effectiveAiSuggest = FEATURES.DEFECT_AI_SUGGEST && effectivePhotoFirst.
+   - aiState/aiSuggestion/aiSurface/aiAutoFilled state + aiTriedRef;
+     all reset on modal open and after successful submit.
+   - triggerAiClassify(file): guards — flag/classic OFF, aiTriedRef (at most
+     once per modal session), photos must be empty→first, category must be
+     empty. .catch() → silent reset (no toast, no block).
+   - aiSessionIdRef stale-response guard (added after architect review):
+     the session id increments on every modal open/close; the classify
+     .then/.catch capture the id at request time and bail if it changed —
+     a late response from a closed modal session can never prefill or
+     touch AI state in a freshly reopened modal.
+   - Trigger wired in BOTH handleImageAdd branches (single pendingFile path
+     and multi-images path) with the first compressed File.
+   - handleAiChipPick / handleAiSurfacePick / handleCategoryChangeUser all
+     call handleCategoryChange (Zahi amendment); each clears aiAutoFilled.
+   - Dropdown onChange = handleCategoryChangeUser when AI enabled (clears
+     the marker), else the original handleCategoryChange — classic path
+     byte-identical.
+   - Render block after photosBlock, before category field: analyzing row
+     ("✨ מזהה קטגוריה…"), indigo card "הצעת AI ✨" with badge (percent /
+     "לא בטוח" / "לא זוהה" for general), primary chip + alternative outline
+     chips via tCategory(), tiles-only "איפה האריחים?" toggle רצפה/קיר
+     (default רצפה→flooring, קיר→masonry), hint line, green
+     "✓ מולא אוטומטית" marker beside the category field.
 
 --------------------------------------------------------------------------------
-V2 — UNIT CHECKS (actual outputs)
+V1 — BUILD (CI=true, Zahi standing rule)
 --------------------------------------------------------------------------------
-a. to_app_category:
-     אינסטלציה → plumbing          אריחים → flooring
-     דלתות → doors                 חלונות ואלומיניום → aluminum
-     חשמל ותקשורת → electrical     צבע וטיח → painting
-     ציפוי קירות חוץ → masonry     "בליבלי" (unknown) → general ✓
-b. needs_surface_choice("אריחים") → True; needs_surface_choice("דלתות") → False ✓
+CI=true npx craco build → "Compiled with warnings." + build folder emitted,
+exit 0 (BUILD_OK sentinel). The only warnings are pre-existing source-map
+ENOENT parse warnings from @capacitor-community/apple-sign-in (present on
+df0a392 builds too; NOT eslint — CI=true fails the build on eslint warnings,
+and it did not). Zero eslint warnings in changed files.
+Final shipped state rebuilt with DEFECT_AI_SUGGEST: false — bundle greps as
+`DEFECT_AI_SUGGEST:!1`.
 
 --------------------------------------------------------------------------------
-V3 — CURL (local, dev JWT for a seeded project_manager; test data seeded for
-the run and fully deleted afterwards)
+V2 — UI VERIFICATION @390px (Playwright, real served build on :5000)
 --------------------------------------------------------------------------------
-a. Confident photo (model: צבע וטיח @ 0.781 ≥ 0.55) → HTTP 200, FULL JSON:
-   {"model_version":"v1","category":"צבע וטיח","confidence":0.781,
-    "top2":[{"category":"צבע וטיח","confidence":0.781},
-            {"category":"אריחים","confidence":0.079}],
-    "low_confidence":false,
-    "suggested_category":"painting",
-    "alternatives":["flooring","masonry"],
-    "needs_surface_choice":false}
-   suggested_category = mapped app value ✓; alternatives = mapped top-3
-   (painting, flooring, masonry) minus the suggestion, ordered + deduped ✓;
-   model-native category/top2 unchanged ✓; needs_surface_choice correct
-   (top1 is not אריחים) ✓.
-b. Low-confidence photo (top1 אינסטלציה @ 0.363 < 0.55) → HTTP 200, FULL JSON:
-   {"model_version":"v1","category":"אינסטלציה","confidence":0.363,
-    "top2":[{"category":"אינסטלציה","confidence":0.363},
-            {"category":"צבע וטיח","confidence":0.249}],
-    "low_confidence":true,
-    "suggested_category":"general",
-    "alternatives":["plumbing","painting","electrical"],
-    "needs_surface_choice":false}
-   suggested_category = "general" ✓; low_confidence = true ✓; alternatives
-   still list the model's mapped top guesses (one-tap real trade) ✓;
-   needs_surface_choice suppressed under low confidence ✓.
-Log lines confirmed for both calls, e.g.:
-   [AI_CLASSIFY] org_id=... user_id=... model_version=v1 top1=צבע וטיח
-   confidence=0.781 latency_ms=78 suggested_category=painting
+Method: token-injected PM session; seeded probe project/unit; photos injected
+into the real hidden gallery input; classification against the LIVE local
+/api/classify-defect-photo (real ONNX model) except where a mocked XHR
+response was required (tiles / forced-500), noted below.
+a. FLAG OFF (dormant build): photo-first modal after photo — NO AI elements
+   anywhere (no card, no spinner, no marker, no chips); classify calls = 0.
+   Classic mode likewise 0 calls. PASS.
+b. FLAG ON + confident (real model, 89%): indigo card, badge "89% ביטחון",
+   primary chip אינסטלציה highlighted, category auto-filled to אינסטלציה,
+   green "מולא אוטומטית" marker shown. PASS.
+c. FLAG ON + low-confidence (real model): gray badge "לא זוהה", primary chip
+   כללי with alternative chips (צביעה/חשמל/בנייה), category auto-filled to
+   כללי with marker. PASS.
+d. FLAG ON + needs_surface_choice (mocked 71% flooring response — the local
+   model never yields a confident אריחים for synthetic probe images): card
+   shows "71% ביטחון" + "איפה האריחים?" row; default רצפה selected and
+   category auto-filled ריצוף; tapping קיר selects it and category flips to
+   בנייה (masonry). PASS.
+
+--------------------------------------------------------------------------------
+V3 — BEHAVIOR TRANSCRIPT (flag ON, photo-first, XHR call-counter installed)
+--------------------------------------------------------------------------------
+a. First photo, empty category → exactly ONE POST /api/classify-defect-photo
+   (window.__classifyCalls === 1); category prefilled; contractor filter
+   reacts (prefill flows through handleCategoryChange). PASS.
+b. Alternative chip pick → category changes to the chip's value, chip
+   highlight moves, "מולא אוטומטית" marker CLEARS. Manual dropdown change
+   also clears the marker. PASS.
+c. No-override: with category already chosen (user picked דלתות), adding a
+   second photo → call counter STILL 1 (no new call), dropdown still דלתות.
+   PASS. (Also statically guarded: categoryRef !== '' short-circuits.)
+d. Failure silent: classify mocked to HTTP 500 → NO toast, NO error UI, no
+   stuck spinner; modal fully usable (dropdown opens, category selectable,
+   photo thumbnail intact). Endpoint called at most once. PASS.
+e. Classic mode → classify NEVER called (counter 0 after photo add); no AI
+   UI. Flag-off build additionally verified fully dormant (V2a). PASS.
 
 --------------------------------------------------------------------------------
 V4 — DIFF SCOPE
 --------------------------------------------------------------------------------
-git status / diff --stat:
-   NEW: backend/contractor_ops/defect_category_map.py
-   backend/contractor_ops/ai_classify_router.py | 26 insertions(+), 1 deletion(-)
-No other file changed. frontend/** untouched. No env vars, no DB, no
-migrations, no new deps, no torch. Model files, meta.json, preprocessing,
-softmax, 0.55 threshold, auth, rate-limit, error handling — all untouched.
+git status --short:
+   M frontend/src/components/NewDefectModal.js
+   M frontend/src/config/features.js
+   M frontend/src/services/api.js
+No other file touched. No new deps. No backend changes. Flag ships FALSE.
+
+NOT DEPLOYED. No EB/Cloudflare action taken.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

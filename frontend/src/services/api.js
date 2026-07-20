@@ -268,6 +268,17 @@ export const getAuthHeader = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
+// BATCH AI Phase 2c: classify a defect photo → app-category suggestion.
+// Best-effort — callers must swallow any failure silently. No retry, no
+// timeout override; mirrors the existing authed axios pattern.
+export async function classifyDefectPhoto(file) {
+  const form = new FormData();
+  form.append('photo', file);
+  const response = await axios.post(`${API}/classify-defect-photo`, form,
+    { headers: { ...getAuthHeader() } });   // let axios set multipart boundary
+  return response.data;
+}
+
 export const projectService = {
   async list() {
     const response = await axios.get(`${API}/projects`, { headers: getAuthHeader() });

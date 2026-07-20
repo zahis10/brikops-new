@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL } from '../services/api';
+import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL, classifyDefectPhoto } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import {
@@ -110,6 +110,14 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     try { window.localStorage.setItem('brikops_defect_photo_first_v1', on ? '1' : '0'); } catch {}
   };
   const effectivePhotoFirst = FEATURES.DEFECT_PHOTO_FIRST && photoFirst;
+  // BATCH AI Phase 2c E3a: AI suggestion only in photo-first + behind the flag.
+  const effectiveAiSuggest = FEATURES.DEFECT_AI_SUGGEST && effectivePhotoFirst;
+  // BATCH AI Phase 2c E3b: AI suggestion state (all reset on open/close + submit).
+  const [aiState, setAiState] = useState('idle');          // 'idle'|'analyzing'|'done'
+  const [aiSuggestion, setAiSuggestion] = useState(null);  // classify response or null
+  const [aiSurface, setAiSurface] = useState(null);        // 'floor'|'wall'|null
+  const [aiAutoFilled, setAiAutoFilled] = useState(false); // "✓ מולא אוטומטית" marker
+  const aiTriedRef = useRef(false);                        // at most once per modal session
   const [annotatingIndex, setAnnotatingIndex] = useState(null);
   const [pendingFile, setPendingFile] = useState(null);
   const [createdTaskId, setCreatedTaskId] = useState(null);
@@ -299,6 +307,76 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setAutoSelectedAssignee(false);
   }, []);
 
+  // BATCH AI Phase 2c: refs so the []-dep handleImageAdd callback reads CURRENT
+  // values (category / photos emptiness / gating) instead of stale closures.
+  const categoryRef = useRef(category);
+  categoryRef.current = category;
+  const aiSuggestEnabledRef = useRef(effectiveAiSuggest);
+  aiSuggestEnabledRef.current = effectiveAiSuggest;
+  const photosEmptyRef = useRef(true);
+  photosEmptyRef.current = images.length === 0 && !pendingFile;
+  const handleCategoryChangeRef = useRef(handleCategoryChange);
+  handleCategoryChangeRef.current = handleCategoryChange;
+
+  // BATCH AI Phase 2c E3b: reset the AI state on every modal open/close.
+  // aiSessionIdRef invalidates any in-flight classify response from a previous
+  // modal session so a late response can never leak into a fresh session.
+  const aiSessionIdRef = useRef(0);
+  useEffect(() => {
+    aiSessionIdRef.current += 1;
+    aiTriedRef.current = false;
+    setAiState('idle');
+    setAiSuggestion(null);
+    setAiSurface(null);
+    setAiAutoFilled(false);
+  }, [isOpen]);
+
+  // BATCH AI Phase 2c E3c: fire-once classify on the FIRST photo when the
+  // category is still empty. Best-effort — ANY failure is silent (no toast,
+  // no block); the form behaves exactly as photo-first-without-AI.
+  const triggerAiClassify = useCallback((file) => {
+    if (!aiSuggestEnabledRef.current) return;    // never in classic / flag off
+    if (aiTriedRef.current) return;              // at most once per modal session
+    if (!photosEmptyRef.current) return;         // only empty→first photo
+    if (categoryRef.current !== '') return;      // never override a chosen category
+    aiTriedRef.current = true;
+    const sessionId = aiSessionIdRef.current;   // ignore responses from a stale session
+    setAiState('analyzing');
+    classifyDefectPhoto(file)
+      .then((data) => {
+        if (aiSessionIdRef.current !== sessionId) return;   // modal closed/reopened meanwhile
+        setAiState('done');
+        setAiSuggestion(data);
+        if (categoryRef.current === '' && data && data.suggested_category) {
+          handleCategoryChangeRef.current(data.suggested_category);
+          setAiAutoFilled(true);
+        }
+        if (data && data.needs_surface_choice) setAiSurface('floor');
+      })
+      .catch(() => {
+        if (aiSessionIdRef.current !== sessionId) return;
+        setAiState('idle');
+        setAiSuggestion(null);
+      });
+  }, []);
+
+  // BATCH AI Phase 2c E3d: chip / toggle / manual dropdown all flow through the
+  // SAME handleCategoryChange (Zahi amendment) so company/assignee reset and the
+  // contractor filter behave exactly like a manual pick.
+  const handleAiChipPick = useCallback((value) => {
+    setAiAutoFilled(false);
+    handleCategoryChange(value);
+  }, [handleCategoryChange]);
+  const handleAiSurfacePick = useCallback((surface) => {
+    setAiSurface(surface);
+    setAiAutoFilled(false);
+    handleCategoryChange(surface === 'wall' ? 'masonry' : 'flooring');
+  }, [handleCategoryChange]);
+  const handleCategoryChangeUser = useCallback((v) => {
+    setAiAutoFilled(false);
+    handleCategoryChange(v);
+  }, [handleCategoryChange]);
+
   const handleCompanyChange = useCallback((v) => {
     setCompanyId(v);
     setAssigneeId('');
@@ -365,6 +443,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           const bytes = await stableFile.arrayBuffer();
           stableFile = new File([bytes], compressed[0].name, { type: compressed[0].type });
         }
+        triggerAiClassify(stableFile); // BATCH AI Phase 2c E3c (no-op unless gated on)
         setPendingFile(stableFile);
       } else {
         const newImages = await Promise.all(compressed.map(async (file) => {
@@ -379,6 +458,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
             name: stable.name,
           };
         }));
+        if (newImages.length > 0) triggerAiClassify(newImages[0].file); // BATCH AI Phase 2c E3c
         setImages(prev => [...prev, ...newImages]);
         toast.info(`${compressed.length} תמונות נוספו. ניתן לסמן כל תמונה בנפרד`);
       }
@@ -394,7 +474,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       processingImageRef.current = false;
       if (e.target) e.target.value = '';
     }
-  }, []);
+  }, [triggerAiClassify]);
 
   const removeImage = useCallback((index) => {
     setImages(prev => {
@@ -624,6 +704,12 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setErrors({});
     setCreatedTaskId(null);
     setUploadError(null);
+    // BATCH AI Phase 2c E3b: reset AI state on successful submit.
+    aiTriedRef.current = false;
+    setAiState('idle');
+    setAiSuggestion(null);
+    setAiSurface(null);
+    setAiAutoFilled(false);
     onSuccess(taskId);
   };
 
@@ -971,11 +1057,80 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           {/* BATCH defect-photo-first E3c: photo-first slot — same block, top position. */}
           {effectivePhotoFirst && photosBlock}
 
+          {/* BATCH AI Phase 2c E3d: AI suggestion block — after photos, before category. */}
+          {effectiveAiSuggest && aiState === 'analyzing' && (
+            <div dir="rtl" className="flex items-center gap-2 text-sm text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>✨ מזהה קטגוריה…</span>
+            </div>
+          )}
+          {effectiveAiSuggest && aiState === 'done' && aiSuggestion && (
+            <div dir="rtl" className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-indigo-800">הצעת AI ✨</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${aiSuggestion.low_confidence ? 'bg-slate-200 text-slate-600' : 'bg-indigo-200 text-indigo-800'}`}>
+                  {aiSuggestion.low_confidence
+                    ? (aiSuggestion.suggested_category === 'general' ? 'לא זוהה' : 'לא בטוח')
+                    : `${Math.round((aiSuggestion.confidence || 0) * 100)}% ביטחון`}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleAiChipPick(aiSuggestion.suggested_category)}
+                  className={`text-sm px-3 py-1.5 rounded-full border transition-colors ${category === aiSuggestion.suggested_category
+                    ? 'bg-amber-100 border-amber-400 text-amber-800 font-medium'
+                    : 'bg-white border-slate-300 text-slate-700'}`}
+                >
+                  {tCategory(aiSuggestion.suggested_category)}
+                </button>
+                {(aiSuggestion.alternatives || []).map(alt => (
+                  <button
+                    key={alt}
+                    type="button"
+                    onClick={() => handleAiChipPick(alt)}
+                    className={`text-sm px-3 py-1.5 rounded-full border transition-colors ${category === alt
+                      ? 'bg-amber-100 border-amber-400 text-amber-800 font-medium'
+                      : 'bg-white border-slate-300 text-slate-700'}`}
+                  >
+                    {tCategory(alt)}
+                  </button>
+                ))}
+              </div>
+              {aiSuggestion.needs_surface_choice && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">איפה האריחים?</span>
+                  <button
+                    type="button"
+                    onClick={() => handleAiSurfacePick('floor')}
+                    className={`text-xs px-2.5 py-1 rounded-full border ${aiSurface === 'floor' ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-300 text-slate-600'}`}
+                  >
+                    רצפה
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAiSurfacePick('wall')}
+                    className={`text-xs px-2.5 py-1 rounded-full border ${aiSurface === 'wall' ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-300 text-slate-600'}`}
+                  >
+                    קיר
+                  </button>
+                </div>
+              )}
+              <p className="text-xs text-slate-500">אפשר להתעלם מההצעה ולבחור קטגוריה מהרשימה כרגיל.</p>
+            </div>
+          )}
+
           <div className="space-y-3">
+            {effectiveAiSuggest && aiAutoFilled && (
+              <div dir="rtl" className="flex items-center gap-1 text-xs text-green-600">
+                <Check className="w-3 h-3" />
+                <span>מולא אוטומטית</span>
+              </div>
+            )}
             <SelectField
               label="קטגוריה *"
               value={category}
-              onChange={handleCategoryChange}
+              onChange={effectiveAiSuggest ? handleCategoryChangeUser : handleCategoryChange}
               options={CATEGORIES}
               error={errors.category}
               placeholder="בחר קטגוריה"
