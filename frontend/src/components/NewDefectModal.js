@@ -960,7 +960,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                 <button type="button" onClick={() => applyPhotoFirst(false)}
                   className={`px-3 py-1 text-xs rounded-md ${!photoFirst ? 'bg-amber-500 text-white font-semibold' : 'text-slate-500'}`}>קלאסי</button>
                 <button type="button" onClick={() => applyPhotoFirst(true)}
-                  className={`px-3 py-1 text-xs rounded-md ${photoFirst ? 'bg-amber-500 text-white font-semibold' : 'text-slate-500'}`}>📸 תמונה קודם</button>
+                  className={`px-3 py-1 text-xs rounded-md ${photoFirst ? 'bg-amber-500 text-white font-semibold' : 'text-slate-500'}`}>✨ מצב AI</button>
               </div>
             </div>
           )}

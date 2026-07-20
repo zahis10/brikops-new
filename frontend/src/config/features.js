@@ -15,6 +15,7 @@ export const FEATURES = {
   // new-defect modal; default stays classic.
   DEFECT_PHOTO_FIRST: true,
   // AI category suggestion from the defect photo (opt-in, needs
-  // DEFECT_PHOTO_FIRST). Off = photo-first behaves exactly as today.
-  DEFECT_AI_SUGGEST: false,
+  // DEFECT_PHOTO_FIRST). On = suggests a category when a photo is added
+  // in AI mode.
+  DEFECT_AI_SUGGEST: true,
 };

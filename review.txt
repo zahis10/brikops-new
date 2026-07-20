@@ -1,133 +1,81 @@
 ================================================================================
-BATCH #573 — AI Phase 2c: FE auto-suggest category from defect photo — REVIEW
-Date: 2026-07-20 · Branch: staging · Base: df0a392 · FRONTEND ONLY
-Scope: photo-first mode — first photo with empty category calls the live
-POST /api/classify-defect-photo and prefills category (suggested_category),
-shows alternatives as one-tap chips + wall/floor toggle for tiles. All behind
-NEW dormant flag FEATURES.DEFECT_AI_SUGGEST (ships FALSE). Failure silent.
-ZAHI AMENDMENT applied: AI prefill, chip clicks, AND wall/floor toggle all
-flow through the existing handleCategoryChange() — NOT raw setCategory — so
-company/assignee reset + contractor filter behave exactly like a manual pick.
+BATCH #572 — AI Phase 2d: enable AI suggestion + rename toggle to "מצב AI" — REVIEW
+Date: 2026-07-20 · Branch: staging · Base: ae275f5 · FRONTEND ONLY
+Scope: (1) flip FEATURES.DEFECT_AI_SUGGEST false→true; (2) rename the opt-in
+mode toggle label "📸 תמונה קודם" → "✨ מצב AI". Nothing else.
 ================================================================================
 
 --------------------------------------------------------------------------------
-STEP 0 — FINDINGS (verified in plan mode on df0a392; plan approved)
+STEP 0 — QUOTES (verified on ae275f5 before any edit; reported, task approved)
 --------------------------------------------------------------------------------
-1. features.js: flat FEATURES object, dormant-flag pattern confirmed
-   (OFFLINE_DEFECT_CREATE precedent). DEFECT_PHOTO_FIRST: true exists.
-2. handleImageAdd (NewDefectModal.js:354-397 pre-edit): compresses files;
-   SINGLE photo → setPendingFile(stableFile); MULTI → setImages(prev=>[...]).
-   useCallback with [] deps ⇒ stale-closure hazard over `category` — solved
-   with refs (categoryRef / aiSuggestEnabledRef / photosEmptyRef /
-   handleCategoryChangeRef) kept in sync via effects.
-3. category state + handleCategoryChange(:294-300) wraps setCategory and
-   resets company/assignee/auto flags; categoryMatchedCompanies/
-   filteredCompanies driven by `category` — untouched.
-4. api.js authed pattern (:266, :283) mirrored exactly for classifyDefectPhoto.
-5. photosBlock renders at `{effectivePhotoFirst && photosBlock}`; AI block
-   inserted between it and the category SelectField.
-6. No spec/code mismatches found.
+1. features.js (pre-edit):
+     DEFECT_PHOTO_FIRST: true,
+     // AI category suggestion from the defect photo (opt-in, needs
+     // DEFECT_PHOTO_FIRST). Off = photo-first behaves exactly as today.
+     DEFECT_AI_SUGGEST: false,
+   → DEFECT_AI_SUGGEST was false, DEFECT_PHOTO_FIRST true. ✓
+2. NewDefectModal.js:963 (pre-edit, exact):
+     className={`px-3 py-1 text-xs rounded-md ${photoFirst ? 'bg-amber-500
+     text-white font-semibold' : 'text-slate-500'}`}>📸 תמונה קודם</button>
+   grep "תמונה קודם" across frontend/src → EXACTLY ONE hit (this line). ✓
+3. localStorage key 'brikops_defect_photo_first_v1' appears ONLY at :106/:110
+   (getItem/setItem — not a label) — untouched. ✓
+4. No other file/string needs changing. ✓
 
 --------------------------------------------------------------------------------
-THE DIFF (V4: ONLY features.js, api.js, NewDefectModal.js — verified)
+THE DIFF (two logical changes)
 --------------------------------------------------------------------------------
-git diff --stat @ dd6db9b (staging):
-  frontend/src/components/NewDefectModal.js | 154 +++++++++++++++++++++++-
-  frontend/src/config/features.js           |   3 +
-  frontend/src/services/api.js              |  11 +++
-  3 files changed, 165 insertions(+), 3 deletions(-)
-git status --short shows NO other modified file. Full diff kept in git.
+git diff --stat:
+  frontend/src/components/NewDefectModal.js | 2 +-
+  frontend/src/config/features.js           | 5 +++--
+  2 files changed, 4 insertions(+), 3 deletions(-)
 
-E1 features.js — DEFECT_AI_SUGGEST: false added with spec comment (dormant).
-E2 api.js — classifyDefectPhoto(file): FormData key "photo", spread
-   getAuthHeader(), no explicit Content-Type (axios sets multipart boundary),
-   no timeout/retry. Placed right after getAuthHeader.
-E3 NewDefectModal.js —
-   - effectiveAiSuggest = FEATURES.DEFECT_AI_SUGGEST && effectivePhotoFirst.
-   - aiState/aiSuggestion/aiSurface/aiAutoFilled state + aiTriedRef;
-     all reset on modal open and after successful submit.
-   - triggerAiClassify(file): guards — flag/classic OFF, aiTriedRef (at most
-     once per modal session), photos must be empty→first, category must be
-     empty. .catch() → silent reset (no toast, no block).
-   - aiSessionIdRef stale-response guard (added after architect review):
-     the session id increments on every modal open/close; the classify
-     .then/.catch capture the id at request time and bail if it changed —
-     a late response from a closed modal session can never prefill or
-     touch AI state in a freshly reopened modal.
-   - Trigger wired in BOTH handleImageAdd branches (single pendingFile path
-     and multi-images path) with the first compressed File.
-   - handleAiChipPick / handleAiSurfacePick / handleCategoryChangeUser all
-     call handleCategoryChange (Zahi amendment); each clears aiAutoFilled.
-   - Dropdown onChange = handleCategoryChangeUser when AI enabled (clears
-     the marker), else the original handleCategoryChange — classic path
-     byte-identical.
-   - Render block after photosBlock, before category field: analyzing row
-     ("✨ מזהה קטגוריה…"), indigo card "הצעת AI ✨" with badge (percent /
-     "לא בטוח" / "לא זוהה" for general), primary chip + alternative outline
-     chips via tCategory(), tiles-only "איפה האריחים?" toggle רצפה/קיר
-     (default רצפה→flooring, קיר→masonry), hint line, green
-     "✓ מולא אוטומטית" marker beside the category field.
+features.js:
+  -  // DEFECT_PHOTO_FIRST). Off = photo-first behaves exactly as today.
+  -  DEFECT_AI_SUGGEST: false,
+  +  // DEFECT_PHOTO_FIRST). On = suggests a category when a photo is added
+  +  // in AI mode.
+  +  DEFECT_AI_SUGGEST: true,
+
+NewDefectModal.js (only the visible text; className/onClick/key unchanged):
+  -  ...'text-slate-500'}`}>📸 תמונה קודם</button>
+  +  ...'text-slate-500'}`}>✨ מצב AI</button>
 
 --------------------------------------------------------------------------------
 V1 — BUILD (CI=true, Zahi standing rule)
 --------------------------------------------------------------------------------
-CI=true npx craco build → "Compiled with warnings." + build folder emitted,
-exit 0 (BUILD_OK sentinel). The only warnings are pre-existing source-map
-ENOENT parse warnings from @capacitor-community/apple-sign-in (present on
-df0a392 builds too; NOT eslint — CI=true fails the build on eslint warnings,
-and it did not). Zero eslint warnings in changed files.
-Final shipped state rebuilt with DEFECT_AI_SUGGEST: false — bundle greps as
-`DEFECT_AI_SUGGEST:!1`.
+CI=true npx craco build → exit 0 (BUILD_OK sentinel). Only pre-existing
+source-map ENOENT warnings from @capacitor-community/apple-sign-in (present on
+base builds too; not eslint). Bundle verification:
+  - DEFECT_AI_SUGGEST compiles to `DEFECT_AI_SUGGEST:!0` (true) in main chunk.
+  - New label "מצב AI" present in the code-split modal chunk
+    (9094.*.chunk.js, unicode-escaped); old label "תמונה קודם" ABSENT from
+    every emitted JS chunk.
 
 --------------------------------------------------------------------------------
-V2 — UI VERIFICATION @390px (Playwright, real served build on :5000)
+V2 — UI VERIFICATION @390px (Playwright, real served build on :5000,
+     fresh browser context, token-injected PM session, seeded probe unit)
 --------------------------------------------------------------------------------
-Method: token-injected PM session; seeded probe project/unit; photos injected
-into the real hidden gallery input; classification against the LIVE local
-/api/classify-defect-photo (real ONNX model) except where a mocked XHR
-response was required (tiles / forced-500), noted below.
-a. FLAG OFF (dormant build): photo-first modal after photo — NO AI elements
-   anywhere (no card, no spinner, no marker, no chips); classify calls = 0.
-   Classic mode likewise 0 calls. PASS.
-b. FLAG ON + confident (real model, 89%): indigo card, badge "89% ביטחון",
-   primary chip אינסטלציה highlighted, category auto-filled to אינסטלציה,
-   green "מולא אוטומטית" marker shown. PASS.
-c. FLAG ON + low-confidence (real model): gray badge "לא זוהה", primary chip
-   כללי with alternative chips (צביעה/חשמל/בנייה), category auto-filled to
-   כללי with marker. PASS.
-d. FLAG ON + needs_surface_choice (mocked 71% flooring response — the local
-   model never yields a confident אריחים for synthetic probe images): card
-   shows "71% ביטחון" + "איפה האריחים?" row; default רצפה selected and
-   category auto-filled ריצוף; tapping קיר selects it and category flips to
-   בנייה (masonry). PASS.
+a. New-defect modal: "מצב מילוי" toggle shows exactly two buttons —
+   "קלאסי" and "✨ מצב AI". The old "תמונה קודם" label appears NOWHERE. PASS.
+b. Picked "✨ מצב AI", injected a photo into the real gallery input → the
+   "הצעת AI ✨" analyzing→card flow appeared against the LIVE
+   /api/classify-defect-photo endpoint (real ONNX model) and the category was
+   auto-filled (low-confidence path for the synthetic probe image: badge
+   "לא זוהה", category כללי prefilled + "מולא אוטומטית" marker; live-endpoint
+   smoke via curl returned 200 with suggested_category). PASS.
+c. Picked "קלאסי" → classic form, NO AI card, no "הצעת AI" text. PASS.
+(Console showed pre-existing CSP blob-preview warnings — unrelated, flow OK.)
 
 --------------------------------------------------------------------------------
-V3 — BEHAVIOR TRANSCRIPT (flag ON, photo-first, XHR call-counter installed)
+V3 — DIFF SCOPE
 --------------------------------------------------------------------------------
-a. First photo, empty category → exactly ONE POST /api/classify-defect-photo
-   (window.__classifyCalls === 1); category prefilled; contractor filter
-   reacts (prefill flows through handleCategoryChange). PASS.
-b. Alternative chip pick → category changes to the chip's value, chip
-   highlight moves, "מולא אוטומטית" marker CLEARS. Manual dropdown change
-   also clears the marker. PASS.
-c. No-override: with category already chosen (user picked דלתות), adding a
-   second photo → call counter STILL 1 (no new call), dropdown still דלתות.
-   PASS. (Also statically guarded: categoryRef !== '' short-circuits.)
-d. Failure silent: classify mocked to HTTP 500 → NO toast, NO error UI, no
-   stuck spinner; modal fully usable (dropdown opens, category selectable,
-   photo thumbnail intact). Endpoint called at most once. PASS.
-e. Classic mode → classify NEVER called (counter 0 after photo add); no AI
-   UI. Flag-off build additionally verified fully dormant (V2a). PASS.
+git status --short (app files):
+   M frontend/src/components/NewDefectModal.js   (one label string)
+   M frontend/src/config/features.js             (one flag line + comment)
+No other file. No other flag changed. localStorage key NOT renamed.
+"קלאסי" label and "מצב מילוי" header untouched. No backend/api.js changes.
 
---------------------------------------------------------------------------------
-V4 — DIFF SCOPE
---------------------------------------------------------------------------------
-git status --short:
-   M frontend/src/components/NewDefectModal.js
-   M frontend/src/config/features.js
-   M frontend/src/services/api.js
-No other file touched. No new deps. No backend changes. Flag ships FALSE.
+NOT DEPLOYED. No EB/Cloudflare/prod action taken; no prod command emitted.
 
-NOT DEPLOYED. No EB/Cloudflare action taken.
-
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+AWAITING ZAHI APPROVAL — DEPLOY TO STAGING ONLY
