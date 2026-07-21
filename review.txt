@@ -1,67 +1,80 @@
 ================================================================================
-BATCH #575 — label the AI suggestion as experimental (ניסיוני + learning note)
-Date: 2026-07-21 · Branch: staging · Base: 52f2e1d · FRONTEND ONLY (CF Pages).
-Scope: TWO tiny text/JSX changes in ONE file (NewDefectModal.js). Nothing else.
+BATCH #576 — Android: strip auto-injected AD_ID permission + bump to 24 — REVIEW
+Date: 2026-07-21 · Branch: staging · Base: de5eae4 · ANDROID PROJECT ONLY.
+Scope: tools:node="remove" rule for the library-injected AD_ID permission
+(app uses NO ads / advertising ID) + versionCode bump (23 burned on Play).
+No build/upload attempted — Zahi rebuilds and re-uploads on his Mac.
 ================================================================================
 
 --------------------------------------------------------------------------------
-STEP 0 — QUOTES (verified on 52f2e1d before any edit; reported, Zahi wrote
-"תתחיל" and approved the E1 wrapper correction)
+STEP 0 — QUOTES (verified on de5eae4 before any edit; Zahi wrote "תתחיל")
 --------------------------------------------------------------------------------
-1. :1070 card title span + 2 lines after (confidence badge) — pre-edit:
-     1070: <span className="text-sm font-semibold text-indigo-800">הצעת AI ✨</span>
-     1071: <span className={`text-xs px-2 py-0.5 rounded-full ${aiSuggestion.low_confidence ? 'bg-slate-200 text-slate-600' : 'bg-indigo-200 text-indigo-800'}`}>
-     1072:   {aiSuggestion.low_confidence
-   Structure confirmed: flex row (items-center justify-between) with title
-   then confidence badge ('לא זוהה'/'לא בטוח' or %). ✓
-2. :1119 hint <p> — pre-edit:
-     <p className="text-xs text-slate-500">אפשר להתעלם מההצעה ולבחור קטגוריה מהרשימה כרגיל.</p> ✓
-3. grep -rn "ניסיוני" frontend/src/ → ZERO hits. ✓
+1. Root <manifest> tag (pre-edit, line 2):
+     <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+   → xmlns:tools was ABSENT (added per E1a). ✓
+2. <uses-permission> lines (pre-edit, lines 49-54):
+     <uses-permission android:name="android.permission.CAMERA" />
+     <uses-permission android:name="android.permission.INTERNET" />
+     <!-- BATCH H.2c — Contact Picker -->
+     <uses-permission android:name="android.permission.READ_CONTACTS" />
+   → exactly CAMERA, INTERNET, READ_CONTACTS; NO AD_ID line in source
+     (library-injected, as expected). ✓
+3. build.gradle (pre-edit, lines 11-12):
+     versionCode 23
+     versionName "1.0.23"
+   ✓
 
 --------------------------------------------------------------------------------
-THE DIFF (2 changes, one file)
+THE DIFF (full)
 --------------------------------------------------------------------------------
-E1 (with Zahi's approved wrapper — title + pill anchored together, badge
-stays at the opposite end; minimal structural wrap on this line only):
-  -  <span className="text-sm font-semibold text-indigo-800">הצעת AI ✨</span>
-  +  <span className="flex items-center gap-1.5">
-  +    <span className="text-sm font-semibold text-indigo-800">הצעת AI ✨</span>
-  +    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">ניסיוני</span>
-  +  </span>
+git diff --stat:
+  frontend/android/app/build.gradle                 | 4 ++--
+  frontend/android/app/src/main/AndroidManifest.xml | 5 ++++-
+  2 files changed, 6 insertions(+), 3 deletions(-)
 
-E2 (text only, className unchanged):
-  -  <p className="text-xs text-slate-500">אפשר להתעלם מההצעה ולבחור קטגוריה מהרשימה כרגיל.</p>
-  +  <p className="text-xs text-slate-500">המודל עדיין בלמידה ומשתפר — אפשר להתעלם מההצעה ולבחור קטגוריה מהרשימה כרגיל.</p>
+AndroidManifest.xml:
+  -<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  +<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  +    xmlns:tools="http://schemas.android.com/tools">
+  ...
+       <uses-permission android:name="android.permission.READ_CONTACTS" />
+  +
+  +    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>
+   </manifest>
 
---------------------------------------------------------------------------------
-V1 — BUILD (CI=true)
---------------------------------------------------------------------------------
-CI=true npx craco build → EXIT 0 (BUILD_OK sentinel). Bundle verification:
-"ניסיוני" and "המודל עדיין בלמידה" both present in the code-split modal chunk
-(9094.5ad6c229.chunk.js). Start application restarted, serving the new build.
-
---------------------------------------------------------------------------------
-V2 — UI VERIFICATION @390px (Playwright, real served build on :5000,
-     token-injected PM session, seeded probe unit, LIVE classify endpoint)
---------------------------------------------------------------------------------
-a. AI mode + photo → AI suggestion card: header shows in ONE ROW without wrap
-   breakage at 390px — "הצעת AI ✨" + small amber "ניסיוני" pill right next to
-   the title + confidence badge ("לא זוהה") at the opposite end. Hint line
-   below reads the new text: "המודל עדיין בלמידה ומשתפר — אפשר להתעלם
-   מההצעה ולבחור קטגוריה מהרשימה כרגיל." PASS.
-b. Switched to "קלאסי" → classic form, NO AI card, no "ניסיוני",
-   no "הצעת AI". PASS.
+build.gradle:
+  -        versionCode 23
+  -        versionName "1.0.23"
+  +        versionCode 24
+  +        versionName "1.0.24"
 
 --------------------------------------------------------------------------------
-V3 — DIFF SCOPE
+V1 — MANIFEST VALIDITY
 --------------------------------------------------------------------------------
-git status (app files):
-   M frontend/src/components/NewDefectModal.js   ← ONLY file changed
-Exactly the 2 changes above. No logic touched (state, triggerAiClassify,
-chips, surface toggle, handleCategoryChange, flags, api.js untouched).
-Toggle labels "✨ מצב AI" / "קלאסי" and "מצב מילוי" header untouched.
-Confidence badge and its conditions untouched.
+XML parsed successfully (xml.etree parse → VALID).
+Final root tag:
+  <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+      xmlns:tools="http://schemas.android.com/tools">
+Final uses-permission block:
+  <uses-permission android:name="android.permission.CAMERA" />
+  <uses-feature android:name="android.hardware.camera" android:required="false" />
+  <uses-permission android:name="android.permission.INTERNET" />
+  <!-- BATCH H.2c — Contact Picker -->
+  <uses-permission android:name="android.permission.READ_CONTACTS" />
+  <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>
+Only AD_ID is marked for removal; ACCESS_ADSERVICES_* untouched (none declared
+in source); no other permission/element modified.
 
-NOT DEPLOYED. No CF Pages/EB/prod action taken.
+--------------------------------------------------------------------------------
+V2 — DIFF SCOPE
+--------------------------------------------------------------------------------
+EXACTLY 2 files:
+  - AndroidManifest.xml: 1 added uses-permission line (+ tools namespace,
+    which was missing, split across the root tag) — nothing else.
+  - build.gradle: 2 lines (versionCode 24, versionName "1.0.24").
+No iOS files, no gradle dependencies, no frontend/src/**,
+no capacitor.config.json. No build or upload run.
+
+NOT DEPLOYED. No store/staging/prod action taken.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
