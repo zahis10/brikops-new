@@ -1,81 +1,74 @@
 ================================================================================
-BATCH #572 — AI Phase 2d: enable AI suggestion + rename toggle to "מצב AI" — REVIEW
-Date: 2026-07-20 · Branch: staging · Base: ae275f5 · FRONTEND ONLY
-Scope: (1) flip FEATURES.DEFECT_AI_SUGGEST false→true; (2) rename the opt-in
-mode toggle label "📸 תמונה קודם" → "✨ מצב AI". Nothing else.
+BATCH #574 — bump mobile store version numbers (Android + iOS) — REVIEW
+Date: 2026-07-21 · Branch: staging · Base: 621a7b2 · 2 files, 6 lines total.
+Scope: version identifiers ONLY. No builds/uploads attempted (Zahi's Mac step).
 ================================================================================
 
 --------------------------------------------------------------------------------
-STEP 0 — QUOTES (verified on ae275f5 before any edit; reported, task approved)
+STEP 0 — QUOTES (verified on 621a7b2 before any edit; plan approved via
+task assignment)
 --------------------------------------------------------------------------------
-1. features.js (pre-edit):
-     DEFECT_PHOTO_FIRST: true,
-     // AI category suggestion from the defect photo (opt-in, needs
-     // DEFECT_PHOTO_FIRST). Off = photo-first behaves exactly as today.
-     DEFECT_AI_SUGGEST: false,
-   → DEFECT_AI_SUGGEST was false, DEFECT_PHOTO_FIRST true. ✓
-2. NewDefectModal.js:963 (pre-edit, exact):
-     className={`px-3 py-1 text-xs rounded-md ${photoFirst ? 'bg-amber-500
-     text-white font-semibold' : 'text-slate-500'}`}>📸 תמונה קודם</button>
-   grep "תמונה קודם" across frontend/src → EXACTLY ONE hit (this line). ✓
-3. localStorage key 'brikops_defect_photo_first_v1' appears ONLY at :106/:110
-   (getItem/setItem — not a label) — untouched. ✓
-4. No other file/string needs changing. ✓
+1. frontend/android/app/build.gradle (pre-edit, lines 11-12):
+       versionCode 22
+       versionName "1.0.22"
+   → matches expectation. ✓
+2. grep -n "MARKETING_VERSION\|CURRENT_PROJECT_VERSION" project.pbxproj:
+       354:  CURRENT_PROJECT_VERSION = 13;
+       359:  MARKETING_VERSION = 1.0.15;
+       376:  CURRENT_PROJECT_VERSION = 13;
+       381:  MARKETING_VERSION = 1.0.15;
+   → exactly 2 occurrences of each (Debug + Release configs). ✓
 
 --------------------------------------------------------------------------------
-THE DIFF (two logical changes)
+THE DIFF (full)
 --------------------------------------------------------------------------------
 git diff --stat:
-  frontend/src/components/NewDefectModal.js | 2 +-
-  frontend/src/config/features.js           | 5 +++--
-  2 files changed, 4 insertions(+), 3 deletions(-)
+  frontend/android/app/build.gradle              | 4 ++--
+  frontend/ios/App/App.xcodeproj/project.pbxproj | 8 ++++----
+  2 files changed, 6 insertions(+), 6 deletions(-)
 
-features.js:
-  -  // DEFECT_PHOTO_FIRST). Off = photo-first behaves exactly as today.
-  -  DEFECT_AI_SUGGEST: false,
-  +  // DEFECT_PHOTO_FIRST). On = suggests a category when a photo is added
-  +  // in AI mode.
-  +  DEFECT_AI_SUGGEST: true,
+frontend/android/app/build.gradle:
+  -        versionCode 22
+  -        versionName "1.0.22"
+  +        versionCode 23
+  +        versionName "1.0.23"
 
-NewDefectModal.js (only the visible text; className/onClick/key unchanged):
-  -  ...'text-slate-500'}`}>📸 תמונה קודם</button>
-  +  ...'text-slate-500'}`}>✨ מצב AI</button>
+frontend/ios/App/App.xcodeproj/project.pbxproj (Debug config, ~354/359):
+  -                                CURRENT_PROJECT_VERSION = 13;
+  +                                CURRENT_PROJECT_VERSION = 14;
+  -                                MARKETING_VERSION = 1.0.15;
+  +                                MARKETING_VERSION = 1.0.16;
 
---------------------------------------------------------------------------------
-V1 — BUILD (CI=true, Zahi standing rule)
---------------------------------------------------------------------------------
-CI=true npx craco build → exit 0 (BUILD_OK sentinel). Only pre-existing
-source-map ENOENT warnings from @capacitor-community/apple-sign-in (present on
-base builds too; not eslint). Bundle verification:
-  - DEFECT_AI_SUGGEST compiles to `DEFECT_AI_SUGGEST:!0` (true) in main chunk.
-  - New label "מצב AI" present in the code-split modal chunk
-    (9094.*.chunk.js, unicode-escaped); old label "תמונה קודם" ABSENT from
-    every emitted JS chunk.
+frontend/ios/App/App.xcodeproj/project.pbxproj (Release config, ~376/381):
+  -                                CURRENT_PROJECT_VERSION = 13;
+  +                                CURRENT_PROJECT_VERSION = 14;
+  -                                MARKETING_VERSION = 1.0.15;
+  +                                MARKETING_VERSION = 1.0.16;
 
 --------------------------------------------------------------------------------
-V2 — UI VERIFICATION @390px (Playwright, real served build on :5000,
-     fresh browser context, token-injected PM session, seeded probe unit)
---------------------------------------------------------------------------------
-a. New-defect modal: "מצב מילוי" toggle shows exactly two buttons —
-   "קלאסי" and "✨ מצב AI". The old "תמונה קודם" label appears NOWHERE. PASS.
-b. Picked "✨ מצב AI", injected a photo into the real gallery input → the
-   "הצעת AI ✨" analyzing→card flow appeared against the LIVE
-   /api/classify-defect-photo endpoint (real ONNX model) and the category was
-   auto-filled (low-confidence path for the synthetic probe image: badge
-   "לא זוהה", category כללי prefilled + "מולא אוטומטית" marker; live-endpoint
-   smoke via curl returned 200 with suggested_category). PASS.
-c. Picked "קלאסי" → classic form, NO AI card, no "הצעת AI" text. PASS.
-(Console showed pre-existing CSP blob-preview warnings — unrelated, flow OK.)
-
---------------------------------------------------------------------------------
-V3 — DIFF SCOPE
+V1 — DIFF SCOPE
 --------------------------------------------------------------------------------
 git status --short (app files):
-   M frontend/src/components/NewDefectModal.js   (one label string)
-   M frontend/src/config/features.js             (one flag line + comment)
-No other file. No other flag changed. localStorage key NOT renamed.
-"קלאסי" label and "מצב מילוי" header untouched. No backend/api.js changes.
+   M frontend/android/app/build.gradle
+   M frontend/ios/App/App.xcodeproj/project.pbxproj
+EXACTLY 6 changed lines (2 in build.gradle, 4 in project.pbxproj). No gradle
+deps, no build settings, no signing config, no Info.plist, no frontend/src/**,
+no capacitor.config.json, no package.json. ✓
 
-NOT DEPLOYED. No EB/Cloudflare/prod action taken; no prod command emitted.
+--------------------------------------------------------------------------------
+V2 — NEW VALUES GREPPED BACK
+--------------------------------------------------------------------------------
+build.gradle:
+  11:        versionCode 23
+  12:        versionName "1.0.23"
+project.pbxproj:
+  354:  CURRENT_PROJECT_VERSION = 14;
+  359:  MARKETING_VERSION = 1.0.16;
+  376:  CURRENT_PROJECT_VERSION = 14;
+  381:  MARKETING_VERSION = 1.0.16;
+→ Android 1.0.23 (versionCode 23); iOS 1.0.16 (build 14) in BOTH configs. ✓
 
-AWAITING ZAHI APPROVAL — DEPLOY TO STAGING ONLY
+No Android/iOS build, cap sync, or store upload was run or attempted.
+NOT DEPLOYED. No staging/prod action taken.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
