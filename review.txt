@@ -1,74 +1,67 @@
 ================================================================================
-BATCH #574 — bump mobile store version numbers (Android + iOS) — REVIEW
-Date: 2026-07-21 · Branch: staging · Base: 621a7b2 · 2 files, 6 lines total.
-Scope: version identifiers ONLY. No builds/uploads attempted (Zahi's Mac step).
+BATCH #575 — label the AI suggestion as experimental (ניסיוני + learning note)
+Date: 2026-07-21 · Branch: staging · Base: 52f2e1d · FRONTEND ONLY (CF Pages).
+Scope: TWO tiny text/JSX changes in ONE file (NewDefectModal.js). Nothing else.
 ================================================================================
 
 --------------------------------------------------------------------------------
-STEP 0 — QUOTES (verified on 621a7b2 before any edit; plan approved via
-task assignment)
+STEP 0 — QUOTES (verified on 52f2e1d before any edit; reported, Zahi wrote
+"תתחיל" and approved the E1 wrapper correction)
 --------------------------------------------------------------------------------
-1. frontend/android/app/build.gradle (pre-edit, lines 11-12):
-       versionCode 22
-       versionName "1.0.22"
-   → matches expectation. ✓
-2. grep -n "MARKETING_VERSION\|CURRENT_PROJECT_VERSION" project.pbxproj:
-       354:  CURRENT_PROJECT_VERSION = 13;
-       359:  MARKETING_VERSION = 1.0.15;
-       376:  CURRENT_PROJECT_VERSION = 13;
-       381:  MARKETING_VERSION = 1.0.15;
-   → exactly 2 occurrences of each (Debug + Release configs). ✓
+1. :1070 card title span + 2 lines after (confidence badge) — pre-edit:
+     1070: <span className="text-sm font-semibold text-indigo-800">הצעת AI ✨</span>
+     1071: <span className={`text-xs px-2 py-0.5 rounded-full ${aiSuggestion.low_confidence ? 'bg-slate-200 text-slate-600' : 'bg-indigo-200 text-indigo-800'}`}>
+     1072:   {aiSuggestion.low_confidence
+   Structure confirmed: flex row (items-center justify-between) with title
+   then confidence badge ('לא זוהה'/'לא בטוח' or %). ✓
+2. :1119 hint <p> — pre-edit:
+     <p className="text-xs text-slate-500">אפשר להתעלם מההצעה ולבחור קטגוריה מהרשימה כרגיל.</p> ✓
+3. grep -rn "ניסיוני" frontend/src/ → ZERO hits. ✓
 
 --------------------------------------------------------------------------------
-THE DIFF (full)
+THE DIFF (2 changes, one file)
 --------------------------------------------------------------------------------
-git diff --stat:
-  frontend/android/app/build.gradle              | 4 ++--
-  frontend/ios/App/App.xcodeproj/project.pbxproj | 8 ++++----
-  2 files changed, 6 insertions(+), 6 deletions(-)
+E1 (with Zahi's approved wrapper — title + pill anchored together, badge
+stays at the opposite end; minimal structural wrap on this line only):
+  -  <span className="text-sm font-semibold text-indigo-800">הצעת AI ✨</span>
+  +  <span className="flex items-center gap-1.5">
+  +    <span className="text-sm font-semibold text-indigo-800">הצעת AI ✨</span>
+  +    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">ניסיוני</span>
+  +  </span>
 
-frontend/android/app/build.gradle:
-  -        versionCode 22
-  -        versionName "1.0.22"
-  +        versionCode 23
-  +        versionName "1.0.23"
-
-frontend/ios/App/App.xcodeproj/project.pbxproj (Debug config, ~354/359):
-  -                                CURRENT_PROJECT_VERSION = 13;
-  +                                CURRENT_PROJECT_VERSION = 14;
-  -                                MARKETING_VERSION = 1.0.15;
-  +                                MARKETING_VERSION = 1.0.16;
-
-frontend/ios/App/App.xcodeproj/project.pbxproj (Release config, ~376/381):
-  -                                CURRENT_PROJECT_VERSION = 13;
-  +                                CURRENT_PROJECT_VERSION = 14;
-  -                                MARKETING_VERSION = 1.0.15;
-  +                                MARKETING_VERSION = 1.0.16;
+E2 (text only, className unchanged):
+  -  <p className="text-xs text-slate-500">אפשר להתעלם מההצעה ולבחור קטגוריה מהרשימה כרגיל.</p>
+  +  <p className="text-xs text-slate-500">המודל עדיין בלמידה ומשתפר — אפשר להתעלם מההצעה ולבחור קטגוריה מהרשימה כרגיל.</p>
 
 --------------------------------------------------------------------------------
-V1 — DIFF SCOPE
+V1 — BUILD (CI=true)
 --------------------------------------------------------------------------------
-git status --short (app files):
-   M frontend/android/app/build.gradle
-   M frontend/ios/App/App.xcodeproj/project.pbxproj
-EXACTLY 6 changed lines (2 in build.gradle, 4 in project.pbxproj). No gradle
-deps, no build settings, no signing config, no Info.plist, no frontend/src/**,
-no capacitor.config.json, no package.json. ✓
+CI=true npx craco build → EXIT 0 (BUILD_OK sentinel). Bundle verification:
+"ניסיוני" and "המודל עדיין בלמידה" both present in the code-split modal chunk
+(9094.5ad6c229.chunk.js). Start application restarted, serving the new build.
 
 --------------------------------------------------------------------------------
-V2 — NEW VALUES GREPPED BACK
+V2 — UI VERIFICATION @390px (Playwright, real served build on :5000,
+     token-injected PM session, seeded probe unit, LIVE classify endpoint)
 --------------------------------------------------------------------------------
-build.gradle:
-  11:        versionCode 23
-  12:        versionName "1.0.23"
-project.pbxproj:
-  354:  CURRENT_PROJECT_VERSION = 14;
-  359:  MARKETING_VERSION = 1.0.16;
-  376:  CURRENT_PROJECT_VERSION = 14;
-  381:  MARKETING_VERSION = 1.0.16;
-→ Android 1.0.23 (versionCode 23); iOS 1.0.16 (build 14) in BOTH configs. ✓
+a. AI mode + photo → AI suggestion card: header shows in ONE ROW without wrap
+   breakage at 390px — "הצעת AI ✨" + small amber "ניסיוני" pill right next to
+   the title + confidence badge ("לא זוהה") at the opposite end. Hint line
+   below reads the new text: "המודל עדיין בלמידה ומשתפר — אפשר להתעלם
+   מההצעה ולבחור קטגוריה מהרשימה כרגיל." PASS.
+b. Switched to "קלאסי" → classic form, NO AI card, no "ניסיוני",
+   no "הצעת AI". PASS.
 
-No Android/iOS build, cap sync, or store upload was run or attempted.
-NOT DEPLOYED. No staging/prod action taken.
+--------------------------------------------------------------------------------
+V3 — DIFF SCOPE
+--------------------------------------------------------------------------------
+git status (app files):
+   M frontend/src/components/NewDefectModal.js   ← ONLY file changed
+Exactly the 2 changes above. No logic touched (state, triggerAiClassify,
+chips, surface toggle, handleCategoryChange, flags, api.js untouched).
+Toggle labels "✨ מצב AI" / "קלאסי" and "מצב מילוי" header untouched.
+Confidence badge and its conditions untouched.
+
+NOT DEPLOYED. No CF Pages/EB/prod action taken.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

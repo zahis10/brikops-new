@@ -1067,7 +1067,10 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           {effectiveAiSuggest && aiState === 'done' && aiSuggestion && (
             <div dir="rtl" className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold text-indigo-800">הצעת AI ✨</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-sm font-semibold text-indigo-800">הצעת AI ✨</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">ניסיוני</span>
+                </span>
                 <span className={`text-xs px-2 py-0.5 rounded-full ${aiSuggestion.low_confidence ? 'bg-slate-200 text-slate-600' : 'bg-indigo-200 text-indigo-800'}`}>
                   {aiSuggestion.low_confidence
                     ? (aiSuggestion.suggested_category === 'general' ? 'לא זוהה' : 'לא בטוח')
@@ -1116,7 +1119,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                   </button>
                 </div>
               )}
-              <p className="text-xs text-slate-500">אפשר להתעלם מההצעה ולבחור קטגוריה מהרשימה כרגיל.</p>
+              <p className="text-xs text-slate-500">המודל עדיין בלמידה ומשתפר — אפשר להתעלם מההצעה ולבחור קטגוריה מהרשימה כרגיל.</p>
             </div>
           )}
 
