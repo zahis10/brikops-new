@@ -38,8 +38,16 @@ ZAHI'S 4 MANDATORY CORRECTIONS — IMPLEMENTED
    V3a: the chained building is created with the NEW name.
 2. Name collisions checked against BOTH the hierarchy prop AND
    sessionCreatedNames (names created while the sheet stays open).
-3. Quota: wouldExceed = currentUnitCount + unitsCreatedThisSession +
-   totalUnits vs the cap; unitsCreatedThisSession accumulates per creation.
+3. Quota: effectiveCurrent = Math.max(currentUnitCount,
+   initialUnitCount + unitsCreatedThisSession); wouldExceed =
+   effectiveCurrent + totalUnits > cap. initialUnitCount is a useState
+   snapshot taken when the wizard opens, so after each onSuccess() refresh
+   (which folds the new building into the currentUnitCount prop) units are
+   never double-counted in a chained session; if the prop hasn't refreshed
+   yet, snapshot+session is the floor. Correct in every scenario incl. undo.
+   (Zahi post-review fix: the previous currentUnitCount +
+   unitsCreatedThisSession formula double-counted after refresh and
+   false-blocked long chains, e.g. 7×44 under total_units=308.)
 4. Batch number is #577 in this file and in .local/.commit_message.
 
 WHAT CHANGED (by edit block)
@@ -81,7 +89,7 @@ E4 Copy-from-existing (step 1, loaded data only):
 VERIFICATION EVIDENCE
 --------------------------------------------------------------------------------
 V1 BUILD: CI=true REACT_APP_BACKEND_URL=/ npx craco build → EXIT 0,
-   "BUILD_OK_577" emitted, final bundle rebuilt after review fix (BUILD_OK_577B, EXIT 0), served on :5000.
+   "BUILD_OK_577" emitted, final bundle rebuilt after review fix (BUILD_OK_577C after quota fix, EXIT 0), served on :5000.
 V2 SCREENSHOTS @390px (captured during Playwright runs):
    a. FAB open: 4 pills with new labels + subtitles, no wrap/overflow.
    b. Empty state: primary "הוסף בניין", outline "בניין ריק בלבד".
@@ -104,6 +112,15 @@ V3 BEHAVIOR (Playwright e2e @390px, port 5000, seeded local data):
    d. PASS (code-path) — partial-failure variant renders its original
       actions + addAnotherButtons(true) which emits ONLY the add-another
       button (duplicate/close/undo-link are gated by !isPartial).
+   h. PASS — quota no-double-count (Zahi post-review fix, fresh Playwright
+      run @1280px): project with total_units=8 → created building 2 floors
+      × 2 units (4) → "צור עוד בניין זהה" → second identical building
+      created WITHOUT any quota banner (exactly 8/8 — cap reach is
+      allowed). Third identical attempt → amber quota banner ("הפרויקט
+      הוצהר ל-8 יחידות") shown and unit creation blocked; server created a
+      unit_quota_request (verified in DB, then cleaned). Note: server-side
+      partial handling created a 0-unit building shell on the blocked
+      attempt — pre-existing backend behavior, unchanged by this batch.
    e. PASS — E4: reopened wizard from FAB in the seeded project; selected
       "בניין 1 · 3 קומות · 7 דירות"; fromFloor=0, toFloor=2 prefilled
       (defaultUnits=2 most-common; floor 2 with 3 units derived as
@@ -112,14 +129,14 @@ V3 BEHAVIOR (Playwright e2e @390px, port 5000, seeded local data):
       in the copy select.
    g. PASS — grep "הקמה מהירה" over frontend/src → 0 hits.
 V4 DIFF SCOPE: git diff --stat → ONLY the 2 allowed code files:
-   frontend/src/pages/ProjectControlPage.js   | 205 ++++++++++++++-----
+   frontend/src/pages/ProjectControlPage.js   | 207 ++++++++++++++-----
    frontend/src/pages/QCFloorSelectionPage.js |   2 +-
    (review.txt / .local/.commit_message are the deliverables themselves)
 
 FULL DIFF
 ================================================================================
 diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index 25ca399..5ad2a3c 100644
+index 25ca399..290cc2b 100644
 --- a/frontend/src/pages/ProjectControlPage.js
 +++ b/frontend/src/pages/ProjectControlPage.js
 @@ -298,7 +298,19 @@ const AddBuildingForm = ({ projectId, onClose, onSuccess }) => {
@@ -143,12 +160,13 @@ index 25ca399..5ad2a3c 100644
    const [step, setStep] = useState(1);
    const [buildingName, setBuildingName] = useState('');
    const [buildingCode, setBuildingCode] = useState('');
-@@ -309,6 +321,33 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+@@ -309,6 +321,34 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
    const [submitting, setSubmitting] = useState(false);
    const [errors, setErrors] = useState({});
    const [result, setResult] = useState(null);
 +  const [sessionCreatedNames, setSessionCreatedNames] = useState([]);
 +  const [unitsCreatedThisSession, setUnitsCreatedThisSession] = useState(0);
++  const [initialUnitCount] = useState(currentUnitCount);
 +  const [showDupConfirm, setShowDupConfirm] = useState(false);
 +  const [dupName, setDupName] = useState('');
 +  const [prefillFrom, setPrefillFrom] = useState(null);
@@ -177,12 +195,13 @@ index 25ca399..5ad2a3c 100644
  
    const floorCount = fromFloor !== '' && toFloor !== '' ? Math.max(0, Number(toFloor) - Number(fromFloor) + 1) : 0;
  
-@@ -324,7 +363,21 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+@@ -324,7 +364,22 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
    const totalUnits = floorsList.reduce((sum, f) => sum + f.units, 0);
    const floorsWithoutUnits = floorsList.filter(f => f.units === 0).length;
    const projectCap = project?.total_units;
 -  const wouldExceed = projectCap != null && projectCap > 0 && (currentUnitCount + totalUnits) > projectCap;
-+  const wouldExceed = projectCap != null && projectCap > 0 && (currentUnitCount + unitsCreatedThisSession + totalUnits) > projectCap;
++  const effectiveCurrent = Math.max(currentUnitCount, initialUnitCount + unitsCreatedThisSession);
++  const wouldExceed = projectCap != null && projectCap > 0 && (effectiveCurrent + totalUnits) > projectCap;
 +
 +  const handleCopyFromBuilding = (buildingId) => {
 +    setCopiedFrom(buildingId);
@@ -200,7 +219,7 @@ index 25ca399..5ad2a3c 100644
  
    const handleUnitsChange = (setter) => (val) => {
      const raw = String(val).replace(/[^0-9]/g, '');
-@@ -411,12 +464,14 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+@@ -411,12 +466,14 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
  
    const handleBack = () => setStep(s => Math.max(s - 1, 1));
  
@@ -217,7 +236,7 @@ index 25ca399..5ad2a3c 100644
        });
        const buildingId = building.id;
  
-@@ -479,12 +534,15 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+@@ -479,12 +536,15 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
        }
  
        const failedUnits = unitsRequested - unitsCreated;
@@ -236,7 +255,7 @@ index 25ca399..5ad2a3c 100644
        }
        onSuccess();
      } catch (err) {
-@@ -499,6 +557,8 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+@@ -499,6 +559,8 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
      try {
        const res = await archiveService.undoBatch(result.batchId);
        toast.success(`בוטל בהצלחה: ${res.archived_count} פריטים הועברו לארכיון`);
@@ -245,7 +264,7 @@ index 25ca399..5ad2a3c 100644
        setResult(null);
        setStep(1);
        onSuccess();
-@@ -510,8 +570,66 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+@@ -510,8 +572,66 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
  
    const stepLabels = ['בניין', 'קומות', 'דירות', 'סיכום'];
  
@@ -313,7 +332,7 @@ index 25ca399..5ad2a3c 100644
        <div className="flex gap-1 mb-3">
          {stepLabels.map((label, i) => (
            <div key={i} className={`flex-1 text-center py-1.5 text-xs font-medium rounded-lg transition-colors ${i + 1 === step ? 'bg-amber-500 text-white' : i + 1 < step ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-400'}`}>
-@@ -549,6 +667,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+@@ -549,6 +669,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
              )}
              <Button onClick={onClose} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">סגור</Button>
            </div>
@@ -321,7 +340,7 @@ index 25ca399..5ad2a3c 100644
          </div>
          ) : (
          <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center space-y-2">
-@@ -556,14 +675,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+@@ -556,14 +677,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
            <p className="font-semibold text-green-800">הקמה הושלמה בהצלחה!</p>
            <p className="text-sm text-green-700">בניין: {result.building}</p>
            <p className="text-sm text-green-700">{result.floors} קומות, {result.units} דירות{result.floorsNoUnits > 0 ? `, ${result.floorsNoUnits} קומות ללא דירות` : ''}</p>
@@ -337,7 +356,7 @@ index 25ca399..5ad2a3c 100644
          </div>
          )
        ) : (
-@@ -571,11 +683,32 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+@@ -571,11 +685,32 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
            {step === 1 && (
              <div className="space-y-3">
                <p className="text-sm text-slate-600">הגדר את שם הבניין</p>
@@ -370,7 +389,7 @@ index 25ca399..5ad2a3c 100644
            {step === 2 && (
              <div className="space-y-3">
                <p className="text-sm text-slate-600">הגדר את טווח הקומות</p>
-@@ -669,7 +802,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+@@ -669,7 +804,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
                  הבא
                </Button>
              ) : (
@@ -379,7 +398,7 @@ index 25ca399..5ad2a3c 100644
                  {submitting ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />יוצר...</span> : `צור בניין (${floorCount} קומות, ${totalUnits} דירות)`}
                </Button>
              )}
-@@ -1852,7 +1985,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+@@ -1852,7 +1987,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                  className="bg-amber-500 hover:bg-amber-600 text-white font-medium px-6 py-2.5 rounded-lg text-sm"
                >
                  <Zap className="w-4 h-4 ml-1 inline" />
@@ -388,7 +407,7 @@ index 25ca399..5ad2a3c 100644
                </Button>
              )}
              {!isOnboarding && onAddBuilding && (
-@@ -1862,7 +1995,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+@@ -1862,7 +1997,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                  className="border-amber-300 text-amber-700 font-medium px-6 py-2.5 rounded-lg text-sm"
                >
                  <Plus className="w-4 h-4 ml-1 inline" />
@@ -397,7 +416,7 @@ index 25ca399..5ad2a3c 100644
                </Button>
              )}
            </div>
-@@ -4044,17 +4177,33 @@ const ProjectControlPage = () => {
+@@ -4044,17 +4179,33 @@ const ProjectControlPage = () => {
        {canMutateStructure && showFab && <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setShowFab(false)} />}
        {canMutateStructure && (
          <div className={`fixed bottom-20 right-5 z-50 flex flex-col gap-2 transition-all ${showFab ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
@@ -439,7 +458,7 @@ index 25ca399..5ad2a3c 100644
            </button>
          </div>
        )}
-@@ -4064,7 +4213,7 @@ const ProjectControlPage = () => {
+@@ -4064,7 +4215,7 @@ const ProjectControlPage = () => {
          </button>
        )}
  

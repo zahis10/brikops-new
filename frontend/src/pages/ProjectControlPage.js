@@ -323,6 +323,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = []
   const [result, setResult] = useState(null);
   const [sessionCreatedNames, setSessionCreatedNames] = useState([]);
   const [unitsCreatedThisSession, setUnitsCreatedThisSession] = useState(0);
+  const [initialUnitCount] = useState(currentUnitCount);
   const [showDupConfirm, setShowDupConfirm] = useState(false);
   const [dupName, setDupName] = useState('');
   const [prefillFrom, setPrefillFrom] = useState(null);
@@ -363,7 +364,8 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = []
   const totalUnits = floorsList.reduce((sum, f) => sum + f.units, 0);
   const floorsWithoutUnits = floorsList.filter(f => f.units === 0).length;
   const projectCap = project?.total_units;
-  const wouldExceed = projectCap != null && projectCap > 0 && (currentUnitCount + unitsCreatedThisSession + totalUnits) > projectCap;
+  const effectiveCurrent = Math.max(currentUnitCount, initialUnitCount + unitsCreatedThisSession);
+  const wouldExceed = projectCap != null && projectCap > 0 && (effectiveCurrent + totalUnits) > projectCap;
 
   const handleCopyFromBuilding = (buildingId) => {
     setCopiedFrom(buildingId);
