@@ -225,7 +225,7 @@ export default function QCFloorSelectionPage() {
             onClick={() => navigate(`/projects/${projectId}/control?tab=structure`)}
             className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-sm shadow-sm transition-colors"
           >
-            הקמה מהירה
+            הוסף בניין
           </button>
         </div>
       </div>

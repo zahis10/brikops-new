@@ -1,80 +1,465 @@
+BATCH #577 — Structure setup UX: explicit "הוסף בניין" flow (E1-E4)
 ================================================================================
-BATCH #576 — Android: strip auto-injected AD_ID permission + bump to 24 — REVIEW
-Date: 2026-07-21 · Branch: staging · Base: de5eae4 · ANDROID PROJECT ONLY.
-Scope: tools:node="remove" rule for the library-injected AD_ID permission
-(app uses NO ads / advertising ID) + versionCode bump (23 burned on Play).
-No build/upload attempted — Zahi rebuilds and re-uploads on his Mac.
+Task: rename "הקמה מהירה" → "הוספת בניין"/"הוסף בניין" everywhere, FAB
+subtitles, wizard success-screen continuation (duplicate-identical /
+add-different / close / ביטול הקמה link), step-1 copy-from-existing select.
+Scope: 2 files only — frontend/src/pages/ProjectControlPage.js +
+frontend/src/pages/QCFloorSelectionPage.js. No backend, no new deps, no new
+fetches. Includes Zahi's 4 mandatory corrections.
+
+STEP 0 QUOTES (verified on a4bcb12, before edits)
+--------------------------------------------------------------------------------
+1. grep "הקמה מהירה" — exactly 4 hits, all user-visible labels:
+   - ProjectControlPage.js:514 (wizard title), :1855 (empty-state primary),
+     :4048 (FAB pill)
+   - QCFloorSelectionPage.js:228 (empty-structure CTA)
+   NOTE: files live in pages/, not components/ as the spec header suggested.
+2. Success block :523-568 — partial-failure variant (:524-552, actions
+   "ביטול הקמה"+"סגור") and success variant (:553-567). Actions render
+   inside each variant's box.
+3. FAB block :4044-4059 (4 pills, matches spec); empty-state buttons
+   :1848-1867 — onboarding shows the wizard button only, non-onboarding adds
+   outline button → AddBuildingForm (bare form at :291).
+4. Wizard state (:301-311): step, buildingName, buildingCode, fromFloor,
+   toFloor, defaultUnits, exceptions, submitting, errors, result.
+   handleGenerate (:414) was a zero-arg closure over that state.
+5. E4 feasible from loaded data: page state `hierarchy` (:3202) via
+   projectService.getHierarchy; backend hierarchy (projects_router.py:1001)
+   returns per-building floors with integer floor_number + units arrays.
+   Wizard previously received only projectId/project/currentUnitCount
+   (:4067) → hierarchy passed as a new prop. No new endpoint/fetch.
+6. Zero mismatches vs spec (only the pages/ vs components/ path).
+
+ZAHI'S 4 MANDATORY CORRECTIONS — IMPLEMENTED
+--------------------------------------------------------------------------------
+1. No stale closure: handleGenerate(overrides = {}) accepts nameOverride/
+   codeOverride that beat state at creation time; the duplicate mini-confirm
+   calls handleGenerate({ nameOverride, codeOverride: '' }). Verified in
+   V3a: the chained building is created with the NEW name.
+2. Name collisions checked against BOTH the hierarchy prop AND
+   sessionCreatedNames (names created while the sheet stays open).
+3. Quota: wouldExceed = currentUnitCount + unitsCreatedThisSession +
+   totalUnits vs the cap; unitsCreatedThisSession accumulates per creation.
+4. Batch number is #577 in this file and in .local/.commit_message.
+
+WHAT CHANGED (by edit block)
+--------------------------------------------------------------------------------
+E1 Renames (labels only, no component/function/state renames):
+  - Wizard title "הקמה מהירה" → "הוספת בניין"
+  - FAB primary pill → "הוסף בניין"
+  - Empty-state primary → "הוסף בניין"; outline → "בניין ריק בלבד"
+  - QCFloorSelectionPage empty-structure CTA → "הוסף בניין"
+E2 FAB subtitles (text-[10px] muted second line, no overflow @390px):
+  - הוסף בניין / "אשף מלא: קומות + דירות"
+  - הוסף קומות / "לבניין קיים"
+  - הוסף דירות / "לקומות קיימות"
+  - יבוא אקסל / "כל המבנה מקובץ"
+E3 Success-screen continuation:
+  - handleUndoBatch also rolls back session tracking (unitsCreatedThisSession
+    decremented by the undone units, undone name removed from
+    sessionCreatedNames) so quota and name suggestions stay accurate after
+    undo (architect-review fix).
+  - suggestNextBuildingName(): trailing integer → n+1, else append " 2";
+    skips collisions vs existing + session-created names.
+  - "⧉ צור עוד בניין זהה" → inline mini-confirm with prefilled editable
+    name → handleGenerate with overrides (chainable).
+  - "➕ הוסף בניין שונה" → back to step 1, name suggested, previous values
+    kept, amber "מולא מראש לפי <שם>" banner on steps 2-3.
+  - "סיימתי, סגור" ghost button; "ביטול הקמה" demoted to muted text-link.
+  - Partial-failure variant keeps its existing actions and gains ONLY the
+    add-another button.
+E4 Copy-from-existing (step 1, loaded data only):
+  - New hierarchy prop; copyableBuildings = buildings with contiguous
+    floor_number range; select "העתק הגדרות מבניין קיים (אופציונלי)"
+    listing "שם · N קומות · M דירות".
+  - On select: fromFloor/toFloor from floor_number min/max, defaultUnits =
+    most-common units-per-floor, deviating floors → exceptions, name
+    suggested; note "הועתק מ<שם> — אפשר לשנות הכל בשלבים הבאים".
+  - "ללא העתקה" default keeps the blank flow. Non-contiguous buildings
+    excluded.
+
+VERIFICATION EVIDENCE
+--------------------------------------------------------------------------------
+V1 BUILD: CI=true REACT_APP_BACKEND_URL=/ npx craco build → EXIT 0,
+   "BUILD_OK_577" emitted, final bundle rebuilt after review fix (BUILD_OK_577B, EXIT 0), served on :5000.
+V2 SCREENSHOTS @390px (captured during Playwright runs):
+   a. FAB open: 4 pills with new labels + subtitles, no wrap/overflow.
+   b. Empty state: primary "הוסף בניין", outline "בניין ריק בלבד".
+   c. Success screen: 3 new actions + ביטול הקמה link; duplicate
+      mini-confirm with prefilled name.
+   d. Step-1 after "הוסף בניין שונה": name prefilled, prefill banner on
+      step 2 with previous values.
+   e. Copy-select visible in a project WITH buildings; absent in an empty
+      project (step-1 of the empty-project run showed no select).
+V3 BEHAVIOR (Playwright e2e @390px, port 5000, seeded local data):
+   a. PASS — created "בניין א" (3 floors × 2 units) → success → "צור עוד
+      בניין זהה" → mini-confirm suggested a NEW name → created; success
+      screen showed the NEW building name ("בניין א 2"), proving the
+      override (correction 1) works; chainable.
+   b. PASS — "הוסף בניין שונה" → step 1 prefilled with a fresh suggested
+      name; steps 2-3 show the "מולא מראש לפי" banner with previous values
+      editable.
+   c. PASS — collision-safe suggestions: with the duplicate existing, the
+      next suggestion skipped taken names (sessionCreatedNames + hierarchy).
+   d. PASS (code-path) — partial-failure variant renders its original
+      actions + addAnotherButtons(true) which emits ONLY the add-another
+      button (duplicate/close/undo-link are gated by !isPartial).
+   e. PASS — E4: reopened wizard from FAB in the seeded project; selected
+      "בניין 1 · 3 קומות · 7 דירות"; fromFloor=0, toFloor=2 prefilled
+      (defaultUnits=2 most-common; floor 2 with 3 units derived as
+      exception); name auto-suggested; note "הועתק מבניין 1" shown.
+   f. PASS — "בניין מדלג" (floors 0 and 5, non-contiguous) did NOT appear
+      in the copy select.
+   g. PASS — grep "הקמה מהירה" over frontend/src → 0 hits.
+V4 DIFF SCOPE: git diff --stat → ONLY the 2 allowed code files:
+   frontend/src/pages/ProjectControlPage.js   | 205 ++++++++++++++-----
+   frontend/src/pages/QCFloorSelectionPage.js |   2 +-
+   (review.txt / .local/.commit_message are the deliverables themselves)
+
+FULL DIFF
 ================================================================================
-
---------------------------------------------------------------------------------
-STEP 0 — QUOTES (verified on de5eae4 before any edit; Zahi wrote "תתחיל")
---------------------------------------------------------------------------------
-1. Root <manifest> tag (pre-edit, line 2):
-     <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-   → xmlns:tools was ABSENT (added per E1a). ✓
-2. <uses-permission> lines (pre-edit, lines 49-54):
-     <uses-permission android:name="android.permission.CAMERA" />
-     <uses-permission android:name="android.permission.INTERNET" />
-     <!-- BATCH H.2c — Contact Picker -->
-     <uses-permission android:name="android.permission.READ_CONTACTS" />
-   → exactly CAMERA, INTERNET, READ_CONTACTS; NO AD_ID line in source
-     (library-injected, as expected). ✓
-3. build.gradle (pre-edit, lines 11-12):
-     versionCode 23
-     versionName "1.0.23"
-   ✓
-
---------------------------------------------------------------------------------
-THE DIFF (full)
---------------------------------------------------------------------------------
-git diff --stat:
-  frontend/android/app/build.gradle                 | 4 ++--
-  frontend/android/app/src/main/AndroidManifest.xml | 5 ++++-
-  2 files changed, 6 insertions(+), 3 deletions(-)
-
-AndroidManifest.xml:
-  -<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  +<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-  +    xmlns:tools="http://schemas.android.com/tools">
-  ...
-       <uses-permission android:name="android.permission.READ_CONTACTS" />
-  +
-  +    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>
-   </manifest>
-
-build.gradle:
-  -        versionCode 23
-  -        versionName "1.0.23"
-  +        versionCode 24
-  +        versionName "1.0.24"
-
---------------------------------------------------------------------------------
-V1 — MANIFEST VALIDITY
---------------------------------------------------------------------------------
-XML parsed successfully (xml.etree parse → VALID).
-Final root tag:
-  <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-      xmlns:tools="http://schemas.android.com/tools">
-Final uses-permission block:
-  <uses-permission android:name="android.permission.CAMERA" />
-  <uses-feature android:name="android.hardware.camera" android:required="false" />
-  <uses-permission android:name="android.permission.INTERNET" />
-  <!-- BATCH H.2c — Contact Picker -->
-  <uses-permission android:name="android.permission.READ_CONTACTS" />
-  <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>
-Only AD_ID is marked for removal; ACCESS_ADSERVICES_* untouched (none declared
-in source); no other permission/element modified.
-
---------------------------------------------------------------------------------
-V2 — DIFF SCOPE
---------------------------------------------------------------------------------
-EXACTLY 2 files:
-  - AndroidManifest.xml: 1 added uses-permission line (+ tools namespace,
-    which was missing, split across the root tag) — nothing else.
-  - build.gradle: 2 lines (versionCode 24, versionName "1.0.24").
-No iOS files, no gradle dependencies, no frontend/src/**,
-no capacitor.config.json. No build or upload run.
-
-NOT DEPLOYED. No store/staging/prod action taken.
-
+diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+index 25ca399..5ad2a3c 100644
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -298,7 +298,19 @@ const AddBuildingForm = ({ projectId, onClose, onSuccess }) => {
+   );
+ };
+ 
+-const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuccess }) => {
++const suggestNextBuildingName = (base, takenNames) => {
++  const trimmed = (base || '').trim();
++  const m = trimmed.match(/^(.*?)(\d+)$/);
++  let prefix, n;
++  if (m) { prefix = m[1]; n = parseInt(m[2], 10) + 1; }
++  else { prefix = trimmed ? `${trimmed} ` : 'בניין '; n = 2; }
++  const taken = new Set((takenNames || []).map(s => String(s).trim()));
++  let name = `${prefix}${n}`;
++  while (taken.has(name)) { n++; name = `${prefix}${n}`; }
++  return name;
++};
++
++const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = [], onClose, onSuccess }) => {
+   const [step, setStep] = useState(1);
+   const [buildingName, setBuildingName] = useState('');
+   const [buildingCode, setBuildingCode] = useState('');
+@@ -309,6 +321,33 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+   const [submitting, setSubmitting] = useState(false);
+   const [errors, setErrors] = useState({});
+   const [result, setResult] = useState(null);
++  const [sessionCreatedNames, setSessionCreatedNames] = useState([]);
++  const [unitsCreatedThisSession, setUnitsCreatedThisSession] = useState(0);
++  const [showDupConfirm, setShowDupConfirm] = useState(false);
++  const [dupName, setDupName] = useState('');
++  const [prefillFrom, setPrefillFrom] = useState(null);
++  const [copiedFrom, setCopiedFrom] = useState('');
++
++  const existingBuildingNames = [
++    ...hierarchy.map(b => b.name).filter(Boolean),
++    ...sessionCreatedNames,
++  ];
++
++  const copyableBuildings = hierarchy.map(b => {
++    const floors = (b.floors || []).filter(f => Number.isInteger(f.floor_number));
++    if (floors.length === 0) return null;
++    const nums = floors.map(f => f.floor_number).sort((a, b2) => a - b2);
++    const min = nums[0], max = nums[nums.length - 1];
++    if (new Set(nums).size !== nums.length || max - min + 1 !== nums.length) return null;
++    const unitCounts = floors.map(f => ({ floor: f.floor_number, units: (f.units || []).length }));
++    const freq = {};
++    for (const fc of unitCounts) freq[fc.units] = (freq[fc.units] || 0) + 1;
++    let common = unitCounts[0].units, best = 0;
++    for (const [u, c] of Object.entries(freq)) { if (c > best) { best = c; common = parseInt(u, 10); } }
++    const excs = unitCounts.filter(fc => fc.units !== common).map(fc => ({ floor: fc.floor, units: String(fc.units) }));
++    const totalU = unitCounts.reduce((s, fc) => s + fc.units, 0);
++    return { id: b.id, name: b.name, min, max, floorsCount: nums.length, defaultUnits: common, exceptions: excs, totalUnits: totalU };
++  }).filter(Boolean);
+ 
+   const floorCount = fromFloor !== '' && toFloor !== '' ? Math.max(0, Number(toFloor) - Number(fromFloor) + 1) : 0;
+ 
+@@ -324,7 +363,21 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+   const totalUnits = floorsList.reduce((sum, f) => sum + f.units, 0);
+   const floorsWithoutUnits = floorsList.filter(f => f.units === 0).length;
+   const projectCap = project?.total_units;
+-  const wouldExceed = projectCap != null && projectCap > 0 && (currentUnitCount + totalUnits) > projectCap;
++  const wouldExceed = projectCap != null && projectCap > 0 && (currentUnitCount + unitsCreatedThisSession + totalUnits) > projectCap;
++
++  const handleCopyFromBuilding = (buildingId) => {
++    setCopiedFrom(buildingId);
++    if (!buildingId) return;
++    const src = copyableBuildings.find(b => b.id === buildingId);
++    if (!src) return;
++    setFromFloor(String(src.min));
++    setToFloor(String(src.max));
++    setDefaultUnits(String(src.defaultUnits));
++    setExceptions(src.exceptions.map(e => ({ ...e })));
++    if (!buildingName.trim()) {
++      setBuildingName(suggestNextBuildingName(src.name, existingBuildingNames));
++    }
++  };
+ 
+   const handleUnitsChange = (setter) => (val) => {
+     const raw = String(val).replace(/[^0-9]/g, '');
+@@ -411,12 +464,14 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+ 
+   const handleBack = () => setStep(s => Math.max(s - 1, 1));
+ 
+-  const handleGenerate = async () => {
++  const handleGenerate = async (overrides = {}) => {
++    const effName = (overrides.nameOverride ?? buildingName).trim();
++    const effCode = (overrides.codeOverride ?? buildingCode).trim();
+     setSubmitting(true);
+     try {
+       const batchId = `qs-${Date.now().toString(36)}`;
+       const building = await projectService.createBuilding(projectId, {
+-        project_id: projectId, name: buildingName.trim(), code: buildingCode.trim() || undefined,
++        project_id: projectId, name: effName, code: effCode || undefined,
+       });
+       const buildingId = building.id;
+ 
+@@ -479,12 +534,15 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+       }
+ 
+       const failedUnits = unitsRequested - unitsCreated;
+-      setResult({ building: buildingName, buildingId, floors: createdFloors, units: unitsCreated, unitsRequested, failedUnits, unitErrorDetails, batchId, floorsNoUnits });
++      setResult({ building: effName, buildingId, floors: createdFloors, units: unitsCreated, unitsRequested, failedUnits, unitErrorDetails, batchId, floorsNoUnits });
++      setSessionCreatedNames(prev => [...prev, effName]);
++      setUnitsCreatedThisSession(prev => prev + unitsCreated);
++      setShowDupConfirm(false);
+       const noUnitsLabel = floorsNoUnits > 0 ? `, ${floorsNoUnits} קומות ללא דירות` : '';
+       if (unitErrorDetails.length > 0) {
+-        toast.warning(`בניין "${buildingName}" נוצר עם ${createdFloors} קומות ו-${unitsCreated} דירות${noUnitsLabel} (${failedUnits} נכשלו)`);
++        toast.warning(`בניין "${effName}" נוצר עם ${createdFloors} קומות ו-${unitsCreated} דירות${noUnitsLabel} (${failedUnits} נכשלו)`);
+       } else {
+-        toast.success(`בניין "${buildingName}" נוצר עם ${createdFloors} קומות ו-${unitsCreated} דירות${noUnitsLabel}`);
++        toast.success(`בניין "${effName}" נוצר עם ${createdFloors} קומות ו-${unitsCreated} דירות${noUnitsLabel}`);
+       }
+       onSuccess();
+     } catch (err) {
+@@ -499,6 +557,8 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+     try {
+       const res = await archiveService.undoBatch(result.batchId);
+       toast.success(`בוטל בהצלחה: ${res.archived_count} פריטים הועברו לארכיון`);
++      setUnitsCreatedThisSession(prev => Math.max(0, prev - (result.units || 0)));
++      setSessionCreatedNames(prev => prev.filter(n => n !== result.building));
+       setResult(null);
+       setStep(1);
+       onSuccess();
+@@ -510,8 +570,66 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+ 
+   const stepLabels = ['בניין', 'קומות', 'דירות', 'סיכום'];
+ 
++  const openDupConfirm = () => {
++    setDupName(suggestNextBuildingName(result?.building || buildingName, existingBuildingNames));
++    setShowDupConfirm(true);
++  };
++
++  const handleDupCreate = () => {
++    const name = dupName.trim();
++    if (!name) return;
++    setBuildingName(name);
++    setBuildingCode('');
++    handleGenerate({ nameOverride: name, codeOverride: '' });
++  };
++
++  const handleAddDifferent = () => {
++    const prevName = result?.building || buildingName;
++    setPrefillFrom(prevName);
++    setBuildingName(suggestNextBuildingName(prevName, existingBuildingNames));
++    setBuildingCode('');
++    setResult(null);
++    setShowDupConfirm(false);
++    setStep(1);
++  };
++
++  const addAnotherButtons = (isPartial) => (
++    <div className="space-y-2 mt-2">
++      {!isPartial && (
++        showDupConfirm ? (
++          <div className="border border-dashed border-amber-400 rounded-lg p-2.5 space-y-2 bg-white text-right">
++            <p className="text-xs font-medium text-amber-800">שם הבניין החדש (זהה: {result?.floors} קומות, {result?.units} דירות)</p>
++            <div className="flex gap-2">
++              <input value={dupName} onChange={e => setDupName(e.target.value)}
++                className="flex-1 text-sm border border-slate-200 rounded-lg px-2 py-1.5" />
++              <Button onClick={handleDupCreate} disabled={submitting || !dupName.trim()} className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4">
++                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'צור'}
++              </Button>
++            </div>
++          </div>
++        ) : (
++          <button onClick={openDupConfirm} disabled={submitting}
++            className="w-full flex items-center justify-center gap-1.5 py-2.5 text-sm font-medium rounded-lg border border-dashed border-amber-400 text-amber-700 hover:bg-amber-50">
++            ⧉ צור עוד בניין זהה
++          </button>
++        )
++      )}
++      <Button onClick={handleAddDifferent} disabled={submitting} className="w-full bg-amber-500 hover:bg-amber-600 text-white text-sm py-2">
++        ➕ הוסף בניין שונה
++      </Button>
++      {!isPartial && (
++        <Button onClick={onClose} variant="ghost" className="w-full text-slate-600 text-sm">סיימתי, סגור</Button>
++      )}
++      {!isPartial && result?.batchId && (
++        <button onClick={handleUndoBatch} className="w-full text-xs text-slate-400 hover:text-red-500 underline underline-offset-2">
++          ביטול הקמה
++        </button>
++      )}
++    </div>
++  );
++
+   return (
+-    <BottomSheetModal open onClose={onClose} title="הקמה מהירה">
++    <BottomSheetModal open onClose={onClose} title="הוספת בניין">
+       <div className="flex gap-1 mb-3">
+         {stepLabels.map((label, i) => (
+           <div key={i} className={`flex-1 text-center py-1.5 text-xs font-medium rounded-lg transition-colors ${i + 1 === step ? 'bg-amber-500 text-white' : i + 1 < step ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-400'}`}>
+@@ -549,6 +667,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+             )}
+             <Button onClick={onClose} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">סגור</Button>
+           </div>
++          {addAnotherButtons(true)}
+         </div>
+         ) : (
+         <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center space-y-2">
+@@ -556,14 +675,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+           <p className="font-semibold text-green-800">הקמה הושלמה בהצלחה!</p>
+           <p className="text-sm text-green-700">בניין: {result.building}</p>
+           <p className="text-sm text-green-700">{result.floors} קומות, {result.units} דירות{result.floorsNoUnits > 0 ? `, ${result.floorsNoUnits} קומות ללא דירות` : ''}</p>
+-          <div className="flex gap-2 mt-2">
+-            {result.batchId && (
+-              <Button onClick={handleUndoBatch} variant="outline" className="flex-1 text-red-600 border-red-200 hover:bg-red-50 text-sm">
+-                <Undo2 className="w-4 h-4 ml-1" />ביטול הקמה
+-              </Button>
+-            )}
+-            <Button onClick={onClose} className="flex-1 bg-green-500 hover:bg-green-600 text-white">סגור</Button>
+-          </div>
++          {addAnotherButtons(false)}
+         </div>
+         )
+       ) : (
+@@ -571,11 +683,32 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+           {step === 1 && (
+             <div className="space-y-3">
+               <p className="text-sm text-slate-600">הגדר את שם הבניין</p>
++              {copyableBuildings.length > 0 && (
++                <div className="space-y-1">
++                  <label className="text-xs font-medium text-slate-600">העתק הגדרות מבניין קיים (אופציונלי)</label>
++                  <select value={copiedFrom} onChange={e => handleCopyFromBuilding(e.target.value)}
++                    className="w-full text-sm border border-slate-200 rounded-lg px-2 py-2 bg-white">
++                    <option value="">ללא העתקה</option>
++                    {copyableBuildings.map(b => (
++                      <option key={b.id} value={b.id}>{b.name} · {b.floorsCount} קומות · {b.totalUnits} דירות</option>
++                    ))}
++                  </select>
++                  {copiedFrom && (() => { const src = copyableBuildings.find(b => b.id === copiedFrom); return src ? (
++                    <p className="text-[11px] text-amber-700">הועתק מ{src.name} — אפשר לשנות הכל בשלבים הבאים</p>
++                  ) : null; })()}
++                </div>
++              )}
+               <InputField label="שם בניין *" value={buildingName} onChange={setBuildingName} placeholder="למשל: בניין A" error={errors.buildingName} />
+               <InputField label="קוד בניין" value={buildingCode} onChange={setBuildingCode} placeholder="למשל: A (אופציונלי)" />
+             </div>
+           )}
+ 
++          {prefillFrom && (step === 2 || step === 3) && (
++            <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 mb-2 text-[11px] text-amber-800 text-center">
++              מולא מראש לפי {prefillFrom} — שנה רק מה ששונה
++            </div>
++          )}
++
+           {step === 2 && (
+             <div className="space-y-3">
+               <p className="text-sm text-slate-600">הגדר את טווח הקומות</p>
+@@ -669,7 +802,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+                 הבא
+               </Button>
+             ) : (
+-              <Button onClick={handleGenerate} disabled={submitting} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm">
++              <Button onClick={() => handleGenerate()} disabled={submitting} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm">
+                 {submitting ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />יוצר...</span> : `צור בניין (${floorCount} קומות, ${totalUnits} דירות)`}
+               </Button>
+             )}
+@@ -1852,7 +1985,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+                 className="bg-amber-500 hover:bg-amber-600 text-white font-medium px-6 py-2.5 rounded-lg text-sm"
+               >
+                 <Zap className="w-4 h-4 ml-1 inline" />
+-                הקמה מהירה
++                הוסף בניין
+               </Button>
+             )}
+             {!isOnboarding && onAddBuilding && (
+@@ -1862,7 +1995,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+                 className="border-amber-300 text-amber-700 font-medium px-6 py-2.5 rounded-lg text-sm"
+               >
+                 <Plus className="w-4 h-4 ml-1 inline" />
+-                הוסף בניין
++                בניין ריק בלבד
+               </Button>
+             )}
+           </div>
+@@ -4044,17 +4177,33 @@ const ProjectControlPage = () => {
+       {canMutateStructure && showFab && <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setShowFab(false)} />}
+       {canMutateStructure && (
+         <div className={`fixed bottom-20 right-5 z-50 flex flex-col gap-2 transition-all ${showFab ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+-          <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-amber-500 rounded-full px-4 py-2.5 shadow-lg text-sm font-medium text-white hover:bg-amber-600 whitespace-nowrap">
+-            <Zap className="w-4 h-4" />הקמה מהירה
++          <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-amber-500 rounded-full px-4 py-2 shadow-lg text-sm font-medium text-white hover:bg-amber-600 whitespace-nowrap">
++            <Zap className="w-4 h-4" />
++            <span className="flex flex-col items-start leading-tight text-right">
++              <span>הוסף בניין</span>
++              <span className="text-[10px] font-normal text-amber-100">אשף מלא: קומות + דירות</span>
++            </span>
+           </button>
+-          <button onClick={() => { setShowBulkFloors(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
+-            <Layers className="w-4 h-4 text-blue-500" />הוסף קומות
++          <button onClick={() => { setShowBulkFloors(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
++            <Layers className="w-4 h-4 text-blue-500" />
++            <span className="flex flex-col items-start leading-tight text-right">
++              <span>הוסף קומות</span>
++              <span className="text-[10px] font-normal text-slate-400">לבניין קיים</span>
++            </span>
+           </button>
+-          <button onClick={() => { setShowBulkUnits(true); setShowFab(false); }} className="flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap bg-white border-slate-200 text-slate-700 hover:bg-amber-50">
+-            <DoorOpen className="w-4 h-4 text-green-500" />הוסף דירות
++          <button onClick={() => { setShowBulkUnits(true); setShowFab(false); }} className="flex items-center gap-2 rounded-full px-4 py-2 shadow-lg border text-sm font-medium whitespace-nowrap bg-white border-slate-200 text-slate-700 hover:bg-amber-50">
++            <DoorOpen className="w-4 h-4 text-green-500" />
++            <span className="flex flex-col items-start leading-tight text-right">
++              <span>הוסף דירות</span>
++              <span className="text-[10px] font-normal text-slate-400">לקומות קיימות</span>
++            </span>
+           </button>
+-          <button onClick={() => { setShowExcelImport(true); setShowFab(false); }} className="flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap bg-white border-slate-200 text-slate-700 hover:bg-amber-50">
+-            <Upload className="w-4 h-4 text-slate-500" />יבוא אקסל
++          <button onClick={() => { setShowExcelImport(true); setShowFab(false); }} className="flex items-center gap-2 rounded-full px-4 py-2 shadow-lg border text-sm font-medium whitespace-nowrap bg-white border-slate-200 text-slate-700 hover:bg-amber-50">
++            <Upload className="w-4 h-4 text-slate-500" />
++            <span className="flex flex-col items-start leading-tight text-right">
++              <span>יבוא אקסל</span>
++              <span className="text-[10px] font-normal text-slate-400">כל המבנה מקובץ</span>
++            </span>
+           </button>
+         </div>
+       )}
+@@ -4064,7 +4213,7 @@ const ProjectControlPage = () => {
+         </button>
+       )}
+ 
+-      {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
++      {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} hierarchy={hierarchy} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
+       {showAddBuilding && <AddBuildingForm projectId={projectId} onClose={() => setShowAddBuilding(false)} onSuccess={handleRefresh} />}
+       {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} hierarchy={hierarchy} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
+       {showBulkUnits && <BulkUnitsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkUnits(false)} onSuccess={handleRefresh} />}
+diff --git a/frontend/src/pages/QCFloorSelectionPage.js b/frontend/src/pages/QCFloorSelectionPage.js
+index 1c74261..7177491 100644
+--- a/frontend/src/pages/QCFloorSelectionPage.js
++++ b/frontend/src/pages/QCFloorSelectionPage.js
+@@ -225,7 +225,7 @@ export default function QCFloorSelectionPage() {
+             onClick={() => navigate(`/projects/${projectId}/control?tab=structure`)}
+             className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-sm shadow-sm transition-colors"
+           >
+-            הקמה מהירה
++            הוסף בניין
+           </button>
+         </div>
+       </div>
+================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

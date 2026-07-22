@@ -298,7 +298,19 @@ const AddBuildingForm = ({ projectId, onClose, onSuccess }) => {
   );
 };
 
-const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuccess }) => {
+const suggestNextBuildingName = (base, takenNames) => {
+  const trimmed = (base || '').trim();
+  const m = trimmed.match(/^(.*?)(\d+)$/);
+  let prefix, n;
+  if (m) { prefix = m[1]; n = parseInt(m[2], 10) + 1; }
+  else { prefix = trimmed ? `${trimmed} ` : 'בניין '; n = 2; }
+  const taken = new Set((takenNames || []).map(s => String(s).trim()));
+  let name = `${prefix}${n}`;
+  while (taken.has(name)) { n++; name = `${prefix}${n}`; }
+  return name;
+};
+
+const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = [], onClose, onSuccess }) => {
   const [step, setStep] = useState(1);
   const [buildingName, setBuildingName] = useState('');
   const [buildingCode, setBuildingCode] = useState('');
@@ -309,6 +321,33 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState({});
   const [result, setResult] = useState(null);
+  const [sessionCreatedNames, setSessionCreatedNames] = useState([]);
+  const [unitsCreatedThisSession, setUnitsCreatedThisSession] = useState(0);
+  const [showDupConfirm, setShowDupConfirm] = useState(false);
+  const [dupName, setDupName] = useState('');
+  const [prefillFrom, setPrefillFrom] = useState(null);
+  const [copiedFrom, setCopiedFrom] = useState('');
+
+  const existingBuildingNames = [
+    ...hierarchy.map(b => b.name).filter(Boolean),
+    ...sessionCreatedNames,
+  ];
+
+  const copyableBuildings = hierarchy.map(b => {
+    const floors = (b.floors || []).filter(f => Number.isInteger(f.floor_number));
+    if (floors.length === 0) return null;
+    const nums = floors.map(f => f.floor_number).sort((a, b2) => a - b2);
+    const min = nums[0], max = nums[nums.length - 1];
+    if (new Set(nums).size !== nums.length || max - min + 1 !== nums.length) return null;
+    const unitCounts = floors.map(f => ({ floor: f.floor_number, units: (f.units || []).length }));
+    const freq = {};
+    for (const fc of unitCounts) freq[fc.units] = (freq[fc.units] || 0) + 1;
+    let common = unitCounts[0].units, best = 0;
+    for (const [u, c] of Object.entries(freq)) { if (c > best) { best = c; common = parseInt(u, 10); } }
+    const excs = unitCounts.filter(fc => fc.units !== common).map(fc => ({ floor: fc.floor, units: String(fc.units) }));
+    const totalU = unitCounts.reduce((s, fc) => s + fc.units, 0);
+    return { id: b.id, name: b.name, min, max, floorsCount: nums.length, defaultUnits: common, exceptions: excs, totalUnits: totalU };
+  }).filter(Boolean);
 
   const floorCount = fromFloor !== '' && toFloor !== '' ? Math.max(0, Number(toFloor) - Number(fromFloor) + 1) : 0;
 
@@ -324,7 +363,21 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
   const totalUnits = floorsList.reduce((sum, f) => sum + f.units, 0);
   const floorsWithoutUnits = floorsList.filter(f => f.units === 0).length;
   const projectCap = project?.total_units;
-  const wouldExceed = projectCap != null && projectCap > 0 && (currentUnitCount + totalUnits) > projectCap;
+  const wouldExceed = projectCap != null && projectCap > 0 && (currentUnitCount + unitsCreatedThisSession + totalUnits) > projectCap;
+
+  const handleCopyFromBuilding = (buildingId) => {
+    setCopiedFrom(buildingId);
+    if (!buildingId) return;
+    const src = copyableBuildings.find(b => b.id === buildingId);
+    if (!src) return;
+    setFromFloor(String(src.min));
+    setToFloor(String(src.max));
+    setDefaultUnits(String(src.defaultUnits));
+    setExceptions(src.exceptions.map(e => ({ ...e })));
+    if (!buildingName.trim()) {
+      setBuildingName(suggestNextBuildingName(src.name, existingBuildingNames));
+    }
+  };
 
   const handleUnitsChange = (setter) => (val) => {
     const raw = String(val).replace(/[^0-9]/g, '');
@@ -411,12 +464,14 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
 
   const handleBack = () => setStep(s => Math.max(s - 1, 1));
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (overrides = {}) => {
+    const effName = (overrides.nameOverride ?? buildingName).trim();
+    const effCode = (overrides.codeOverride ?? buildingCode).trim();
     setSubmitting(true);
     try {
       const batchId = `qs-${Date.now().toString(36)}`;
       const building = await projectService.createBuilding(projectId, {
-        project_id: projectId, name: buildingName.trim(), code: buildingCode.trim() || undefined,
+        project_id: projectId, name: effName, code: effCode || undefined,
       });
       const buildingId = building.id;
 
@@ -479,12 +534,15 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
       }
 
       const failedUnits = unitsRequested - unitsCreated;
-      setResult({ building: buildingName, buildingId, floors: createdFloors, units: unitsCreated, unitsRequested, failedUnits, unitErrorDetails, batchId, floorsNoUnits });
+      setResult({ building: effName, buildingId, floors: createdFloors, units: unitsCreated, unitsRequested, failedUnits, unitErrorDetails, batchId, floorsNoUnits });
+      setSessionCreatedNames(prev => [...prev, effName]);
+      setUnitsCreatedThisSession(prev => prev + unitsCreated);
+      setShowDupConfirm(false);
       const noUnitsLabel = floorsNoUnits > 0 ? `, ${floorsNoUnits} קומות ללא דירות` : '';
       if (unitErrorDetails.length > 0) {
-        toast.warning(`בניין "${buildingName}" נוצר עם ${createdFloors} קומות ו-${unitsCreated} דירות${noUnitsLabel} (${failedUnits} נכשלו)`);
+        toast.warning(`בניין "${effName}" נוצר עם ${createdFloors} קומות ו-${unitsCreated} דירות${noUnitsLabel} (${failedUnits} נכשלו)`);
       } else {
-        toast.success(`בניין "${buildingName}" נוצר עם ${createdFloors} קומות ו-${unitsCreated} דירות${noUnitsLabel}`);
+        toast.success(`בניין "${effName}" נוצר עם ${createdFloors} קומות ו-${unitsCreated} דירות${noUnitsLabel}`);
       }
       onSuccess();
     } catch (err) {
@@ -499,6 +557,8 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
     try {
       const res = await archiveService.undoBatch(result.batchId);
       toast.success(`בוטל בהצלחה: ${res.archived_count} פריטים הועברו לארכיון`);
+      setUnitsCreatedThisSession(prev => Math.max(0, prev - (result.units || 0)));
+      setSessionCreatedNames(prev => prev.filter(n => n !== result.building));
       setResult(null);
       setStep(1);
       onSuccess();
@@ -510,8 +570,66 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
 
   const stepLabels = ['בניין', 'קומות', 'דירות', 'סיכום'];
 
+  const openDupConfirm = () => {
+    setDupName(suggestNextBuildingName(result?.building || buildingName, existingBuildingNames));
+    setShowDupConfirm(true);
+  };
+
+  const handleDupCreate = () => {
+    const name = dupName.trim();
+    if (!name) return;
+    setBuildingName(name);
+    setBuildingCode('');
+    handleGenerate({ nameOverride: name, codeOverride: '' });
+  };
+
+  const handleAddDifferent = () => {
+    const prevName = result?.building || buildingName;
+    setPrefillFrom(prevName);
+    setBuildingName(suggestNextBuildingName(prevName, existingBuildingNames));
+    setBuildingCode('');
+    setResult(null);
+    setShowDupConfirm(false);
+    setStep(1);
+  };
+
+  const addAnotherButtons = (isPartial) => (
+    <div className="space-y-2 mt-2">
+      {!isPartial && (
+        showDupConfirm ? (
+          <div className="border border-dashed border-amber-400 rounded-lg p-2.5 space-y-2 bg-white text-right">
+            <p className="text-xs font-medium text-amber-800">שם הבניין החדש (זהה: {result?.floors} קומות, {result?.units} דירות)</p>
+            <div className="flex gap-2">
+              <input value={dupName} onChange={e => setDupName(e.target.value)}
+                className="flex-1 text-sm border border-slate-200 rounded-lg px-2 py-1.5" />
+              <Button onClick={handleDupCreate} disabled={submitting || !dupName.trim()} className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4">
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'צור'}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={openDupConfirm} disabled={submitting}
+            className="w-full flex items-center justify-center gap-1.5 py-2.5 text-sm font-medium rounded-lg border border-dashed border-amber-400 text-amber-700 hover:bg-amber-50">
+            ⧉ צור עוד בניין זהה
+          </button>
+        )
+      )}
+      <Button onClick={handleAddDifferent} disabled={submitting} className="w-full bg-amber-500 hover:bg-amber-600 text-white text-sm py-2">
+        ➕ הוסף בניין שונה
+      </Button>
+      {!isPartial && (
+        <Button onClick={onClose} variant="ghost" className="w-full text-slate-600 text-sm">סיימתי, סגור</Button>
+      )}
+      {!isPartial && result?.batchId && (
+        <button onClick={handleUndoBatch} className="w-full text-xs text-slate-400 hover:text-red-500 underline underline-offset-2">
+          ביטול הקמה
+        </button>
+      )}
+    </div>
+  );
+
   return (
-    <BottomSheetModal open onClose={onClose} title="הקמה מהירה">
+    <BottomSheetModal open onClose={onClose} title="הוספת בניין">
       <div className="flex gap-1 mb-3">
         {stepLabels.map((label, i) => (
           <div key={i} className={`flex-1 text-center py-1.5 text-xs font-medium rounded-lg transition-colors ${i + 1 === step ? 'bg-amber-500 text-white' : i + 1 < step ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-400'}`}>
@@ -549,6 +667,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
             )}
             <Button onClick={onClose} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">סגור</Button>
           </div>
+          {addAnotherButtons(true)}
         </div>
         ) : (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center space-y-2">
@@ -556,14 +675,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
           <p className="font-semibold text-green-800">הקמה הושלמה בהצלחה!</p>
           <p className="text-sm text-green-700">בניין: {result.building}</p>
           <p className="text-sm text-green-700">{result.floors} קומות, {result.units} דירות{result.floorsNoUnits > 0 ? `, ${result.floorsNoUnits} קומות ללא דירות` : ''}</p>
-          <div className="flex gap-2 mt-2">
-            {result.batchId && (
-              <Button onClick={handleUndoBatch} variant="outline" className="flex-1 text-red-600 border-red-200 hover:bg-red-50 text-sm">
-                <Undo2 className="w-4 h-4 ml-1" />ביטול הקמה
-              </Button>
-            )}
-            <Button onClick={onClose} className="flex-1 bg-green-500 hover:bg-green-600 text-white">סגור</Button>
-          </div>
+          {addAnotherButtons(false)}
         </div>
         )
       ) : (
@@ -571,8 +683,29 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
           {step === 1 && (
             <div className="space-y-3">
               <p className="text-sm text-slate-600">הגדר את שם הבניין</p>
+              {copyableBuildings.length > 0 && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-600">העתק הגדרות מבניין קיים (אופציונלי)</label>
+                  <select value={copiedFrom} onChange={e => handleCopyFromBuilding(e.target.value)}
+                    className="w-full text-sm border border-slate-200 rounded-lg px-2 py-2 bg-white">
+                    <option value="">ללא העתקה</option>
+                    {copyableBuildings.map(b => (
+                      <option key={b.id} value={b.id}>{b.name} · {b.floorsCount} קומות · {b.totalUnits} דירות</option>
+                    ))}
+                  </select>
+                  {copiedFrom && (() => { const src = copyableBuildings.find(b => b.id === copiedFrom); return src ? (
+                    <p className="text-[11px] text-amber-700">הועתק מ{src.name} — אפשר לשנות הכל בשלבים הבאים</p>
+                  ) : null; })()}
+                </div>
+              )}
               <InputField label="שם בניין *" value={buildingName} onChange={setBuildingName} placeholder="למשל: בניין A" error={errors.buildingName} />
               <InputField label="קוד בניין" value={buildingCode} onChange={setBuildingCode} placeholder="למשל: A (אופציונלי)" />
+            </div>
+          )}
+
+          {prefillFrom && (step === 2 || step === 3) && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 mb-2 text-[11px] text-amber-800 text-center">
+              מולא מראש לפי {prefillFrom} — שנה רק מה ששונה
             </div>
           )}
 
@@ -669,7 +802,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
                 הבא
               </Button>
             ) : (
-              <Button onClick={handleGenerate} disabled={submitting} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm">
+              <Button onClick={() => handleGenerate()} disabled={submitting} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm">
                 {submitting ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />יוצר...</span> : `צור בניין (${floorCount} קומות, ${totalUnits} דירות)`}
               </Button>
             )}
@@ -1852,7 +1985,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                 className="bg-amber-500 hover:bg-amber-600 text-white font-medium px-6 py-2.5 rounded-lg text-sm"
               >
                 <Zap className="w-4 h-4 ml-1 inline" />
-                הקמה מהירה
+                הוסף בניין
               </Button>
             )}
             {!isOnboarding && onAddBuilding && (
@@ -1862,7 +1995,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                 className="border-amber-300 text-amber-700 font-medium px-6 py-2.5 rounded-lg text-sm"
               >
                 <Plus className="w-4 h-4 ml-1 inline" />
-                הוסף בניין
+                בניין ריק בלבד
               </Button>
             )}
           </div>
@@ -4044,17 +4177,33 @@ const ProjectControlPage = () => {
       {canMutateStructure && showFab && <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setShowFab(false)} />}
       {canMutateStructure && (
         <div className={`fixed bottom-20 right-5 z-50 flex flex-col gap-2 transition-all ${showFab ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
-          <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-amber-500 rounded-full px-4 py-2.5 shadow-lg text-sm font-medium text-white hover:bg-amber-600 whitespace-nowrap">
-            <Zap className="w-4 h-4" />הקמה מהירה
+          <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-amber-500 rounded-full px-4 py-2 shadow-lg text-sm font-medium text-white hover:bg-amber-600 whitespace-nowrap">
+            <Zap className="w-4 h-4" />
+            <span className="flex flex-col items-start leading-tight text-right">
+              <span>הוסף בניין</span>
+              <span className="text-[10px] font-normal text-amber-100">אשף מלא: קומות + דירות</span>
+            </span>
           </button>
-          <button onClick={() => { setShowBulkFloors(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
-            <Layers className="w-4 h-4 text-blue-500" />הוסף קומות
+          <button onClick={() => { setShowBulkFloors(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
+            <Layers className="w-4 h-4 text-blue-500" />
+            <span className="flex flex-col items-start leading-tight text-right">
+              <span>הוסף קומות</span>
+              <span className="text-[10px] font-normal text-slate-400">לבניין קיים</span>
+            </span>
           </button>
-          <button onClick={() => { setShowBulkUnits(true); setShowFab(false); }} className="flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap bg-white border-slate-200 text-slate-700 hover:bg-amber-50">
-            <DoorOpen className="w-4 h-4 text-green-500" />הוסף דירות
+          <button onClick={() => { setShowBulkUnits(true); setShowFab(false); }} className="flex items-center gap-2 rounded-full px-4 py-2 shadow-lg border text-sm font-medium whitespace-nowrap bg-white border-slate-200 text-slate-700 hover:bg-amber-50">
+            <DoorOpen className="w-4 h-4 text-green-500" />
+            <span className="flex flex-col items-start leading-tight text-right">
+              <span>הוסף דירות</span>
+              <span className="text-[10px] font-normal text-slate-400">לקומות קיימות</span>
+            </span>
           </button>
-          <button onClick={() => { setShowExcelImport(true); setShowFab(false); }} className="flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap bg-white border-slate-200 text-slate-700 hover:bg-amber-50">
-            <Upload className="w-4 h-4 text-slate-500" />יבוא אקסל
+          <button onClick={() => { setShowExcelImport(true); setShowFab(false); }} className="flex items-center gap-2 rounded-full px-4 py-2 shadow-lg border text-sm font-medium whitespace-nowrap bg-white border-slate-200 text-slate-700 hover:bg-amber-50">
+            <Upload className="w-4 h-4 text-slate-500" />
+            <span className="flex flex-col items-start leading-tight text-right">
+              <span>יבוא אקסל</span>
+              <span className="text-[10px] font-normal text-slate-400">כל המבנה מקובץ</span>
+            </span>
           </button>
         </div>
       )}
@@ -4064,7 +4213,7 @@ const ProjectControlPage = () => {
         </button>
       )}
 
-      {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
+      {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} hierarchy={hierarchy} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
       {showAddBuilding && <AddBuildingForm projectId={projectId} onClose={() => setShowAddBuilding(false)} onSuccess={handleRefresh} />}
       {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} hierarchy={hierarchy} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
       {showBulkUnits && <BulkUnitsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkUnits(false)} onSuccess={handleRefresh} />}
