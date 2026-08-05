@@ -195,9 +195,16 @@ const OnboardingPage = () => {
         // Pre-logout clears Android's CredentialManager cache (errors — e.g.
         // no prior session — swallowed); forcePrompt forces the iOS chooser.
         try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}
+        const loginOptions = Capacitor.getPlatform() === 'android'
+          // Android (capgo 7.6.5): passing `scopes` hard-rejects unless
+          // MainActivity implements ModifiedMainActivityForSocialLoginPlugin.
+          // The plugin adds email/profile/openid by default — scopes are
+          // redundant here.
+          ? { forcePrompt: true }
+          : { scopes: ['email', 'profile'], forcePrompt: true };
         const res = await SocialLogin.login({
           provider: 'google',
-          options: { scopes: ['email', 'profile'], forcePrompt: true },
+          options: loginOptions,
         });
         const idToken = res?.result?.idToken;
         if (!idToken) {
