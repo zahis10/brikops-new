@@ -864,3 +864,10 @@ id = "0qfIZEmlMcYT88PglPb-_"
 uri = "file://screenshots/visual-auth-fix1-login-top-390.jpg"
 type = "image"
 title = "FIX1 — crane now visible (top-area crop, 390px)"
+
+[[outputs]]
+id = "0pWBQPLeIQMNoLE7inXWU"
+uri = "file://plan_batch_578.md"
+type = "text"
+title = "תוכנית עבודה — BATCH #578"
+description = "תוכנית מסודרת לתיקון Google Sign-In נייטיבי באנדרואיד: הסרת scopes מיותר + העלאת גרסה ל-25. ממתין ל'תתחיל'."
