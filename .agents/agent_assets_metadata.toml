@@ -872,3 +872,10 @@ uri = "file://plan_batch_578.md"
 type = "text"
 title = "תוכנית עבודה — BATCH #578"
 description = "תוכנית מסודרת לתיקון Google Sign-In נייטיבי באנדרואיד: הסרת scopes מיותר + העלאת גרסה ל-25. ממתין ל'תתחיל'."
+
+[[outputs]]
+id = "fLcqYyyRGgXjwcPKTJbAR"
+uri = "file://plan_batch_579.md"
+type = "text"
+title = "תוכנית עבודה — BATCH #579"
+description = "קישורי הורדה לחנויות (device-aware, web only) בכרטיסי ההרשמה וההתחברות. ממתין ל'תתחיל'."
