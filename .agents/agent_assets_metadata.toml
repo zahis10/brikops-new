@@ -77,8 +77,8 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH #579 — review.txt"
-description = "STEP 0 quotes, full diff (2 files), V1–V4 evidence. AWAITING ZAHI APPROVAL — DO NOT DEPLOY."
+title = "BATCH #580 — review.txt"
+description = "STEP 0 quotes, full diff (2 files, svg blocks only), V1–V3 evidence. AWAITING ZAHI APPROVAL — DO NOT DEPLOY."
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
