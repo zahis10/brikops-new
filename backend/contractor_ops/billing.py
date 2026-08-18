@@ -1605,17 +1605,30 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
             )
             total_units_declared = proj.get('total_units') if proj else None
 
-            # Contracted units are the ONLY money input for the calculated
-            # tier. total_units_declared (quota) is display/info only;
-            # peak/observed keep being maintained (drift data) but are
-            # never read when computing the charge.
+            # Money input for the calculated tier:
+            #   1. contracted_units — whenever set (>0) it is the ONLY money
+            #      input. Manual pricing always wins; declared units never
+            #      override it (keeps the 2026-07-14 fix).
+            #   2. Never-priced fallback: if contracted==0, bill by the
+            #      customer's declared project.total_units. Restores
+            #      pre-2026-07-14 behavior for this case ONLY.
+            # peak/observed keep being maintained (drift data) but are never
+            # read when computing the charge.
             observed = await compute_observed_units(pb['project_id'])
             await _refresh_peak_units(pb, observed)
             pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
             contracted = pb.get('contracted_units', 0)
             peak = pb.get('cycle_peak_units', contracted)
             peak = max(peak, observed, contracted)
-            billable = contracted
+            if contracted > 0:
+                billable = contracted
+                billable_source = 'contracted'
+            elif (total_units_declared or 0) > 0:
+                billable = total_units_declared
+                billable_source = 'declared_fallback'
+            else:
+                billable = 0
+                billable_source = 'none'
 
             plan_id = pb.get('plan_id')
             proj_monthly = calculate_monthly(
@@ -1631,8 +1644,40 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
                 'observed_units': observed,
                 'cycle_peak_units': peak,
                 'billable_units': billable,
+                'billable_source': billable_source,
                 'monthly_total': proj_monthly,
             })
+
+        if not sorted_pbs:
+            # Read-time self-heal for orgs with ZERO active billing records
+            # (self-serve onboarding used to create the project directly and
+            # never created project_billing): price the org's declared
+            # projects directly. Hard-gated — an org with even ONE active
+            # record is manually managed and is never touched here.
+            # READS ONLY: no writes, no record creation.
+            org_projects = await db.projects.find(
+                {'org_id': org_id, 'total_units': {'$gt': 0}},
+                {'_id': 0, 'id': 1, 'name': 1, 'total_units': 1, 'created_at': 1}
+            ).to_list(1000)
+            these_projects = sorted(org_projects, key=lambda p: (p.get('created_at', ''), p.get('id', '')))
+            for n, proj in enumerate(these_projects):
+                billable = proj['total_units']
+                observed = await compute_observed_units(proj['id'])
+                proj_monthly = calculate_monthly(billable, plan_id=None,
+                                                 project_index=n + 1)
+                total_monthly += proj_monthly
+                breakdown.append({
+                    'project_id': proj['id'],
+                    'project_name': proj.get('name', ''),
+                    'plan_id': None,
+                    'total_units_declared': proj['total_units'],
+                    'contracted_units': 0,
+                    'observed_units': observed,
+                    'cycle_peak_units': observed,
+                    'billable_units': billable,
+                    'billable_source': 'declared_no_record',
+                    'monthly_total': proj_monthly,
+                })
 
     amount_ils = total_monthly if cycle == 'monthly' else total_monthly * 12
     return {

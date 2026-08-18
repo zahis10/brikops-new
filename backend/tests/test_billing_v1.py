@@ -568,3 +568,174 @@ class TestBillingAuditPhase2:
             sort=[("created_at", -1)]
         )
         assert event is not None
+
+
+class TestDeclaredUnitsFallback:
+    """BATCH #581: calculated tier — declared-units fallback when a
+    project_billing record exists but contracted_units was never set (==0).
+    contracted>0 must stay the sole money input (2026-07-14 fix)."""
+
+    def _run_case(self, contracted, declared, expected_amount, expected_source):
+        import asyncio
+        import sys
+        import uuid
+        from datetime import datetime, timezone
+        sys.path.insert(0, "/home/runner/workspace/backend")
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from contractor_ops.billing import set_billing_db, compute_org_billing_amount
+
+        async def run():
+            client = AsyncIOMotorClient("mongodb://localhost:27017")
+            mdb = client["contractor_ops"]
+            set_billing_db(mdb)
+            ts = datetime.now(timezone.utc).isoformat()
+            org_id = str(uuid.uuid4())
+            project_id = str(uuid.uuid4())
+            sub_id = str(uuid.uuid4())
+            pb_id = str(uuid.uuid4())
+            try:
+                await mdb.subscriptions.insert_one({
+                    "id": sub_id, "org_id": org_id, "plan_id": "standard",
+                    "status": "active", "created_at": ts,
+                })
+                await mdb.projects.insert_one({
+                    "id": project_id, "org_id": org_id, "name": "Test P",
+                    "status": "active", "total_units": declared,
+                    "created_at": ts, "updated_at": ts,
+                })
+                await mdb.project_billing.insert_one({
+                    "id": pb_id, "org_id": org_id, "project_id": project_id,
+                    "status": "active", "plan_id": None,
+                    "contracted_units": contracted, "created_at": ts,
+                })
+                result = await compute_org_billing_amount(org_id)
+                assert result["amount_ils"] == expected_amount, \
+                    f"contracted={contracted} declared={declared}: amount {result['amount_ils']} != {expected_amount}"
+                assert len(result["breakdown"]) == 1
+                assert result["breakdown"][0]["billable_source"] == expected_source
+            finally:
+                await mdb.subscriptions.delete_one({"id": sub_id})
+                await mdb.projects.delete_one({"id": project_id})
+                await mdb.project_billing.delete_one({"id": pb_id})
+
+        asyncio.run(run())
+
+    @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
+    def test_a_never_priced_falls_back_to_declared(self):
+        # The bug: contracted=0, declared=140 → 450 + 140*15 = 2550
+        self._run_case(0, 140, 2550, "declared_fallback")
+
+    @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
+    def test_b_contracted_wins_over_declared(self):
+        # 2026-07-14 behavior must NOT regress: 450 + 100*15 = 1950
+        self._run_case(100, 140, 1950, "contracted")
+
+    @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
+    def test_c_no_units_at_all_license_fee_only(self):
+        # billable_units=0; the record still carries the ₪450 license fee —
+        # byte-identical to today's behavior for such a record.
+        self._run_case(0, None, 450, "none")
+
+    @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
+    def test_d_ordinary_contracted_org(self):
+        # 450 + 50*15 = 1200
+        self._run_case(50, None, 1200, "contracted")
+
+
+class TestSelfServeNoRecords:
+    """BATCH #581 E3: org with ZERO active project_billing records prices its
+    declared projects at read time; hard-gated to zero-record orgs only."""
+
+    @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
+    def test_e_zero_records_prices_declared_project(self):
+        import asyncio
+        import sys
+        import uuid
+        from datetime import datetime, timezone
+        sys.path.insert(0, "/home/runner/workspace/backend")
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from contractor_ops.billing import set_billing_db, compute_org_billing_amount
+
+        async def run():
+            client = AsyncIOMotorClient("mongodb://localhost:27017")
+            mdb = client["contractor_ops"]
+            set_billing_db(mdb)
+            ts = datetime.now(timezone.utc).isoformat()
+            org_id = str(uuid.uuid4())
+            project_id = str(uuid.uuid4())
+            sub_id = str(uuid.uuid4())
+            try:
+                await mdb.subscriptions.insert_one({
+                    "id": sub_id, "org_id": org_id, "plan_id": "standard",
+                    "status": "active", "created_at": ts,
+                })
+                await mdb.projects.insert_one({
+                    "id": project_id, "org_id": org_id, "name": "Idan P",
+                    "status": "active", "total_units": 140,
+                    "created_at": ts, "updated_at": ts,
+                })
+                result = await compute_org_billing_amount(org_id)
+                assert result["amount_ils"] == 2550, f"amount {result['amount_ils']} != 2550"
+                assert len(result["breakdown"]) == 1
+                assert result["breakdown"][0]["billable_source"] == "declared_no_record"
+                assert result["breakdown"][0]["billable_units"] == 140
+            finally:
+                await mdb.subscriptions.delete_one({"id": sub_id})
+                await mdb.projects.delete_one({"id": project_id})
+
+        asyncio.run(run())
+
+    @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
+    def test_f_gate_org_with_a_record_never_bills_recordless_projects(self):
+        import asyncio
+        import sys
+        import uuid
+        from datetime import datetime, timezone
+        sys.path.insert(0, "/home/runner/workspace/backend")
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from contractor_ops.billing import set_billing_db, compute_org_billing_amount
+
+        async def run():
+            client = AsyncIOMotorClient("mongodb://localhost:27017")
+            mdb = client["contractor_ops"]
+            set_billing_db(mdb)
+            ts = datetime.now(timezone.utc).isoformat()
+            org_id = str(uuid.uuid4())
+            p1_id = str(uuid.uuid4())
+            p2_id = str(uuid.uuid4())
+            sub_id = str(uuid.uuid4())
+            pb2_id = str(uuid.uuid4())
+            try:
+                await mdb.subscriptions.insert_one({
+                    "id": sub_id, "org_id": org_id, "plan_id": "standard",
+                    "status": "active", "created_at": ts,
+                })
+                # P1: declared units but NO billing record — must NOT be billed.
+                await mdb.projects.insert_one({
+                    "id": p1_id, "org_id": org_id, "name": "P1 recordless",
+                    "status": "active", "total_units": 140,
+                    "created_at": ts, "updated_at": ts,
+                })
+                # P2: has an active record with contracted=50.
+                await mdb.projects.insert_one({
+                    "id": p2_id, "org_id": org_id, "name": "P2 contracted",
+                    "status": "active", "total_units": None,
+                    "created_at": ts, "updated_at": ts,
+                })
+                await mdb.project_billing.insert_one({
+                    "id": pb2_id, "org_id": org_id, "project_id": p2_id,
+                    "status": "active", "plan_id": None,
+                    "contracted_units": 50, "created_at": ts,
+                })
+                result = await compute_org_billing_amount(org_id)
+                # 450 + 50*15 = 1200; P1 NOT billed — proves the zero-records gate.
+                assert result["amount_ils"] == 1200, f"amount {result['amount_ils']} != 1200"
+                assert len(result["breakdown"]) == 1
+                assert result["breakdown"][0]["project_id"] == p2_id
+                assert result["breakdown"][0]["billable_source"] == "contracted"
+            finally:
+                await mdb.subscriptions.delete_one({"id": sub_id})
+                await mdb.projects.delete_many({"id": {"$in": [p1_id, p2_id]}})
+                await mdb.project_billing.delete_one({"id": pb2_id})
+
+        asyncio.run(run())

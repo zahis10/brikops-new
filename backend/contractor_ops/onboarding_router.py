@@ -1182,6 +1182,21 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             'created_at': project_ts,
         })
 
+        try:
+            from contractor_ops.billing import create_project_billing, recalc_org_total
+            _sub_plan = sub.get('plan_id') if sub else None
+            _plan_for_project = _sub_plan if _sub_plan in ('standard', 'founder_6m') else None
+            await create_project_billing(
+                project_id=project_id,
+                org_id=org['id'],
+                actor_id=user_id,
+                plan_id=_plan_for_project,
+                contracted_units=total_units or 0,
+            )
+            await recalc_org_total(org['id'])
+        except Exception as _bill_exc:
+            logger.warning(f"Auto billing creation failed for onboarding project {project_id}: {_bill_exc}")
+
         logger.info(f"[ONBOARDING] create-org user={user_id} org={org['id']} project={project_id} trial_end={sub.get('trial_end_at')}")
 
         return {
