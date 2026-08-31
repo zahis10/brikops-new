@@ -434,6 +434,7 @@ class NotificationJobResponse(BaseModel):
     attempts: int
     provider_message_id: Optional[str] = None
     last_error: Optional[str] = None
+    channel: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 

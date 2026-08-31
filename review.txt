@@ -1,107 +1,191 @@
 ================================================================================
-BATCH #580 — Auth store strip: original brand colors for the store icons
-Date: 2026-08-09 · Branch: staging · Base: 7db7861 · FRONTEND ONLY, 2 files
+BATCH #582 — Notification history UI: contain provider-error overflow +
+SMS-aware delivery note
+Date: 2026-08-31 · Branch: staging · Base: 44d2c7d
+FRONTEND + minimal additive serializer passthrough, 2 files
 ================================================================================
 
-STEP 0 — VERIFICATION (on base 7db7861)
+STEP 0 — VERIFICATION
 --------------------------------------------------------------------------------
-grep getWebStoreLinks → exactly 1 helper + 1 strip per file:
-  frontend/src/pages/LoginPage.js:43   const getWebStoreLinks = () => {
-  frontend/src/pages/LoginPage.js:577  const storeLinks = getWebStoreLinks();
-  frontend/src/pages/OnboardingPage.js:21   const getWebStoreLinks = () => {
-  frontend/src/pages/OnboardingPage.js:793  const storeLinks = getWebStoreLinks();
+1. Notification history source + render block
 
-Pre-change icon blocks (identical in both files; the ONLY store icons):
+Frontend load path (TaskDetailPage.js):
+  const [notifData, members, projCompanies] = await Promise.all([
+    notificationService.getTimeline(id),
+    projectService.getMemberships(taskData.project_id),
+    projectCompanyService.list(taskData.project_id).catch(() => []),
+  ]);
+  setNotifications(notifData);
 
-Apple (LoginPage.js:588-590 / OnboardingPage.js:804-806):
-  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-    <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
-  </svg>
+notificationService.getTimeline(taskId):
+  GET /tasks/{task_id}/notifications
 
-Google Play (LoginPage.js:592-594 / OnboardingPage.js:808-810):
-  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-    <path d="M3,20.5V3.5C3,2.91 3.34,2.39 3.84,2.15L13.69,12L3.84,21.85C3.34,21.6 3,21.09 3,20.5M16.81,15.12L6.05,21.34L14.54,12.85L16.81,15.12M20.16,10.81C20.5,11.08 20.75,11.5 20.75,12C20.75,12.5 20.5,12.92 20.16,13.19L17.89,14.5L15.39,12L17.89,9.5L20.16,10.81M6.05,2.66L16.81,8.88L14.54,11.15L6.05,2.66Z"/>
-  </svg>
+Notification object mapping / debug payload inside notifications.map(n => ...):
+  const channelLabel = n.channel === 'sms' ? 'SMS' :
+    n.channel === 'whatsapp' ? 'WhatsApp' : n.channel;
+  const debug = {
+    task_id: n.task_id,
+    job_id: n.id,
+    masked_phone: maskedPhone,
+    message_id: n.provider_message_id || '',
+    delivery_state: n.status,
+    channel: n.channel,
+    event_type: n.event_type,
+    error: n.last_error || null,
+    created_at: n.created_at,
+    updated_at: n.updated_at,
+  };
+
+Pre-change yellow warning condition/block:
+  {(n.status === 'queued' || n.status === 'sent') && n.created_at &&
+    (Date.now() - new Date(n.created_at).getTime() > 60000) && (
+    <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+      <p className="font-medium">⚠ לא התקבל אישור מסירה</p>
+      <p className="text-[10px] text-amber-600 mt-0.5">
+        עדכון אחרון: {new Date(n.updated_at || n.created_at).toLocaleString('he-IL')}
+        {n.provider_message_id && (
+          <span className="font-mono mr-2" dir="ltr">
+            msg: {n.provider_message_id.slice(-12)}
+          </span>
+        )}
+      </p>
+    </div>
+  )}
+
+Pre-change error:
+  {n.last_error && (
+    <p className="text-xs text-red-500 mt-1">{n.last_error}</p>
+  )}
+
+2. channel exposure finding
+
+The endpoint is backend/contractor_ops/notification_router.py:
+  @router.get("/tasks/{task_id}/notifications",
+              response_model=List[NotificationJobResponse])
+  ...
+  jobs = await db.notification_jobs.find(
+      {'task_id': task_id}, {'_id': 0}
+  ).sort('created_at', -1).to_list(100)
+  return [NotificationJobResponse(**j) for j in jobs]
+
+notification_jobs carry channel, but NotificationJobResponse in schemas.py
+omitted it. Pydantic therefore filtered channel out of the API response even
+though the frontend's existing channel chip code already expected it.
+Minimal additive passthrough required and allowed by the spec:
+  channel: Optional[str] = None
+No backend notification logic changed.
 
 EDITS
 --------------------------------------------------------------------------------
-E1  Play icon → official flat 4-color version (fills #00D7FE / #00F076 /
-    #FFC900 / #FF3A44), same size classes + aria-hidden. Both files.
-E2  Apple icon → fill="#0F172A" instead of currentColor; path unchanged. Both files.
-E3  Nothing else changed: labels, hrefs, <a> classes, hover states,
-    getWebStoreLinks() — untouched.
+E1 TaskDetailPage.js — last_error now has:
+     className="text-xs text-red-500 mt-1 break-all overflow-hidden"
+     dir="ltr"
+   Raw text remains complete and available in existing copy-debug payload.
+
+E2 TaskDetailPage.js — the existing >60s queued/sent condition remains.
+   Inside it, channel==='sms' renders the neutral line:
+     נשלח כ-SMS — אין מעקב מסירה להודעות SMS
+   All non-SMS channels render the pre-existing yellow warning unchanged.
+
+E3 Nothing else in the page changed: statuses, timestamps, message IDs,
+   copy-debug button and raw error content are untouched. The already-existing
+   SMS/WhatsApp channel chips become active once channel passes through.
+
+Serializer passthrough — schemas.py only:
+  NotificationJobResponse gains channel: Optional[str] = None.
 
 FULL DIFF
 --------------------------------------------------------------------------------
-diff --git a/frontend/src/pages/LoginPage.js b/frontend/src/pages/LoginPage.js
-index d1d2800..120bed6 100644
---- a/frontend/src/pages/LoginPage.js
-+++ b/frontend/src/pages/LoginPage.js
-@@ -585,12 +585,15 @@ const LoginPage = () => {
-             <a key={l.key} href={l.href} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:border-amber-400 hover:text-amber-700">
-               {l.key === 'ios' ? (
--                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="#0F172A" aria-hidden="true">
-                   <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
-                 </svg>
-               ) : (
--                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
--                  <path d="M3,20.5V3.5C3,2.91 3.34,2.39 3.84,2.15L13.69,12L3.84,21.85C3.34,21.6 3,21.09 3,20.5M16.81,15.12L6.05,21.34L14.54,12.85L16.81,15.12M20.16,10.81C20.5,11.08 20.75,11.5 20.75,12C20.75,12.5 20.5,12.92 20.16,13.19L17.89,14.5L15.39,12L17.89,9.5L20.16,10.81M6.05,2.66L16.81,8.88L14.54,11.15L6.05,2.66Z"/>
-+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" aria-hidden="true">
-+                  <path fill="#00D7FE" d="M3,20.5V3.5C3,2.91 3.34,2.39 3.84,2.15L13.69,12L3.84,21.85C3.34,21.6 3,21.09 3,20.5Z"/>
-+                  <path fill="#00F076" d="M6.05,2.66L16.81,8.88L14.54,11.15L6.05,2.66Z"/>
-+                  <path fill="#FFC900" d="M20.16,10.81C20.5,11.08 20.75,11.5 20.75,12C20.75,12.5 20.5,12.92 20.16,13.19L17.89,14.5L15.39,12L17.89,9.5L20.16,10.81Z"/>
-+                  <path fill="#FF3A44" d="M16.81,15.12L6.05,21.34L14.54,12.85L16.81,15.12Z"/>
-                 </svg>
-               )}
-               {l.label}
-diff --git a/frontend/src/pages/OnboardingPage.js b/frontend/src/pages/OnboardingPage.js
-index ebaf611..824c76d 100644
---- a/frontend/src/pages/OnboardingPage.js
-+++ b/frontend/src/pages/OnboardingPage.js
-@@ -801,12 +801,15 @@ const OnboardingPage = () => {
-             <a key={l.key} href={l.href} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:border-amber-400 hover:text-amber-700">
-               {l.key === 'ios' ? (
--                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="#0F172A" aria-hidden="true">
-                   <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
-                 </svg>
-               ) : (
--                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
--                  <path d="M3,20.5V3.5C3,2.91 3.34,2.39 3.84,2.15L13.69,12L3.84,21.85C3.34,21.6 3,21.09 3,20.5M16.81,15.12L6.05,21.34L14.54,12.85L16.81,15.12M20.16,10.81C20.5,11.08 20.75,11.5 20.75,12C20.75,12.5 20.5,12.92 20.16,13.19L17.89,14.5L15.39,12L17.89,9.5L20.16,10.81M6.05,2.66L16.81,8.88L14.54,11.15L6.05,2.66Z"/>
-+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" aria-hidden="true">
-+                  <path fill="#00D7FE" d="M3,20.5V3.5C3,2.91 3.34,2.39 3.84,2.15L13.69,12L3.84,21.85C3.34,21.6 3,21.09 3,20.5Z"/>
-+                  <path fill="#00F076" d="M6.05,2.66L16.81,8.88L14.54,11.15L6.05,2.66Z"/>
-+                  <path fill="#FFC900" d="M20.16,10.81C20.5,11.08 20.75,11.5 20.75,12C20.75,12.5 20.5,12.92 20.16,13.19L17.89,14.5L15.39,12L17.89,9.5L20.16,10.81Z"/>
-+                  <path fill="#FF3A44" d="M16.81,15.12L6.05,21.34L14.54,12.85L16.81,15.12Z"/>
-                 </svg>
-               )}
-               {l.label}
+diff --git a/backend/contractor_ops/schemas.py b/backend/contractor_ops/schemas.py
+index 9f4a6e6..ddafa05 100644
+--- a/backend/contractor_ops/schemas.py
++++ b/backend/contractor_ops/schemas.py
+@@ -434,6 +434,7 @@ class NotificationJobResponse(BaseModel):
+     attempts: int
+     provider_message_id: Optional[str] = None
+     last_error: Optional[str] = None
++    channel: Optional[str] = None
+     created_at: Optional[str] = None
+     updated_at: Optional[str] = None
+
+diff --git a/frontend/src/pages/TaskDetailPage.js b/frontend/src/pages/TaskDetailPage.js
+index afa758e..d29a3b6 100644
+--- a/frontend/src/pages/TaskDetailPage.js
++++ b/frontend/src/pages/TaskDetailPage.js
+@@ -1782,20 +1782,26 @@ const TaskDetailPage = () => {
+                       </p>
+                     )}
+                     {(n.status === 'queued' || n.status === 'sent') && n.created_at && (Date.now() - new Date(n.created_at).getTime() > 60000) && (
+-                      <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+-                        <p className="font-medium">⚠ לא התקבל אישור מסירה</p>
+-                        <p className="text-[10px] text-amber-600 mt-0.5">
+-                          עדכון אחרון: {new Date(n.updated_at || n.created_at).toLocaleString('he-IL')}
+-                          {n.provider_message_id && (
+-                            <span className="font-mono mr-2" dir="ltr">
+-                              msg: {n.provider_message_id.slice(-12)}
+-                            </span>
+-                          )}
++                      n.channel === 'sms' ? (
++                        <p className="text-[10px] text-slate-400 mt-1.5">
++                          נשלח כ-SMS — אין מעקב מסירה להודעות SMS
+                         </p>
+-                      </div>
++                      ) : (
++                        <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
++                          <p className="font-medium">⚠ לא התקבל אישור מסירה</p>
++                          <p className="text-[10px] text-amber-600 mt-0.5">
++                            עדכון אחרון: {new Date(n.updated_at || n.created_at).toLocaleString('he-IL')}
++                            {n.provider_message_id && (
++                              <span className="font-mono mr-2" dir="ltr">
++                                msg: {n.provider_message_id.slice(-12)}
++                              </span>
++                            )}
++                          </p>
++                        </div>
++                      )
+                     )}
+                     {n.last_error && (
+-                      <p className="text-xs text-red-500 mt-1">{n.last_error}</p>
++                      <p className="text-xs text-red-500 mt-1 break-all overflow-hidden" dir="ltr">{n.last_error}</p>
+                     )}
+                   </div>
+                 );
 
 VERIFICATION
 --------------------------------------------------------------------------------
-V1  CI=true production build: EXIT 0 (BUILD_OK_580, "Done in 35.47s").
-    Command: cd frontend && set -a && source .env.production && set +a && CI=true yarn build
+V1 CI=true craco production build: EXIT 0.
+   Command:
+     cd frontend && set -a && source .env.production && set +a && CI=true yarn build
+   Result: Done in 24.04s. BUILD_EXIT=0.
 
-V2  Playwright visual check @390x844, desktop UA (both icons shown), on both
-    pages — verdict: SUCCESS.
-    /login and /onboarding?mode=register:
-      - Both links present: "App Store" and "Google Play".
-      - Play icon multicolored with the 4 exact fills (#00D7FE, #00F076,
-        #FFC900, #FF3A44) — colored triangle, not gray.
-      - Apple icon solid dark fill="#0F172A".
-      - Strip layout intact at 390px, no overflow/wrap breakage.
-    Screenshots captured for both pages. Pre-existing CSP console warnings on
-    auth pages noted; unrelated.
+V2 Playwright at 390x844 with browser-side mocked task/notification data;
+   no database writes. Verdict: SUCCESS.
 
-V3  Diff scope: git diff = EXACTLY 2 files (LoginPage.js, OnboardingPage.js),
-    9 lines changed each, only the two <svg> blocks per file.
-    git diff --stat:
-      frontend/src/pages/LoginPage.js      | 9 ++++++---
-      frontend/src/pages/OnboardingPage.js | 9 ++++++---
-      2 files changed, 12 insertions(+), 6 deletions(-)
+   SMS case (screenshot id jawgf4):
+   - Existing channel chip "SMS" is visible near status "נשלח".
+   - Neutral line visible exactly:
+       נשלח כ-SMS — אין מעקב מסירה להודעות SMS
+   - No yellow warning for the SMS entry.
+   - 350-character unbroken raw last_error remains fully present in the DOM
+     and wraps inside the card.
+   - document.body.scrollWidth = 390;
+     window.innerWidth = 390; equality confirmed — no horizontal page scroll.
+
+   WhatsApp case (screenshot id ueqz41):
+   - Existing channel chip "WhatsApp" is visible near status "נשלח".
+   - Existing yellow box remains visible with:
+       ⚠ לא התקבל אישור מסירה
+
+V3 Scope / static verification:
+   git diff --stat:
+     backend/contractor_ops/schemas.py    |  1 +
+     frontend/src/pages/TaskDetailPage.js | 28 +++++++++++++++++-----------
+     2 files changed, 18 insertions(+), 11 deletions(-)
+   Exactly 2 diff entries. schemas.py change is only the additive channel
+   field. No notification service, webhook, channel logic, other page,
+   endpoint, dependency or image changed.
+   python3 -m py_compile backend/contractor_ops/schemas.py: PASS.
+   git diff --check: PASS.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================
