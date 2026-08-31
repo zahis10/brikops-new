@@ -879,3 +879,10 @@ uri = "file://plan_batch_579.md"
 type = "text"
 title = "תוכנית עבודה — BATCH #579"
 description = "קישורי הורדה לחנויות (device-aware, web only) בכרטיסי ההרשמה וההתחברות. ממתין ל'תתחיל'."
+
+[[outputs]]
+id = "p3s-dOv-r65KX67x4V6ge"
+uri = "file://plan_batch_582.md"
+type = "text"
+title = "תוכנית BATCH #582"
+description = "STEP 0 מלא, כולל הממצא שה-API מסנן את channel וה-passthrough המינימלי הנדרש. ממתין ל'תתחיל'."
