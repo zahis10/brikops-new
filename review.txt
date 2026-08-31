@@ -1,28 +1,20 @@
 ================================================================================
-BATCH #582 — Notification history UI: contain provider-error overflow +
-SMS-aware delivery note
-Date: 2026-08-31 · Branch: staging · Base: 44d2c7d
-FRONTEND + minimal additive serializer passthrough, 2 files
+BATCH #583 — Notification history: user-first view; technical debug folded
+into collapsed per-row "פרטים"
+Date: 2026-08-31 · Branch: staging · Base: 8c8abc8
+FRONTEND ONLY · 1 source file: frontend/src/pages/TaskDetailPage.js
 ================================================================================
 
 STEP 0 — VERIFICATION
 --------------------------------------------------------------------------------
-1. Notification history source + render block
+1. Current notification row (base 8c8abc8 / #582 state)
 
-Frontend load path (TaskDetailPage.js):
-  const [notifData, members, projCompanies] = await Promise.all([
-    notificationService.getTimeline(id),
-    projectService.getMemberships(taskData.project_id),
-    projectCompanyService.list(taskData.project_id).catch(() => []),
-  ]);
-  setNotifications(notifData);
+The row is rendered inside notifications.map(n => ...). Its top line contains
+NOTIF_STATUS_CONFIG icon+label, the existing channel chip (SMS/WhatsApp), and
+created_at. The second line contains the event-type tag, masked phone, retry
+(for failed) and the copy-debug button.
 
-notificationService.getTimeline(taskId):
-  GET /tasks/{task_id}/notifications
-
-Notification object mapping / debug payload inside notifications.map(n => ...):
-  const channelLabel = n.channel === 'sms' ? 'SMS' :
-    n.channel === 'whatsapp' ? 'WhatsApp' : n.channel;
+The copy-debug payload before this batch:
   const debug = {
     task_id: n.task_id,
     job_id: n.id,
@@ -36,101 +28,115 @@ Notification object mapping / debug payload inside notifications.map(n => ...):
     updated_at: n.updated_at,
   };
 
-Pre-change yellow warning condition/block:
+Technical lines shown in the default view before this batch:
+  {n.provider_message_id && (
+    <p className="text-[10px] text-slate-400 mt-1 font-mono truncate" dir="ltr">
+      msg: {n.provider_message_id}
+    </p>
+  )}
+  {n.updated_at && n.updated_at !== n.created_at && (
+    <p className="text-[10px] text-slate-400 mt-0.5">
+      עודכן: {new Date(n.updated_at).toLocaleString('he-IL')}
+    </p>
+  )}
+
+The >60s queued/sent block before this batch:
   {(n.status === 'queued' || n.status === 'sent') && n.created_at &&
-    (Date.now() - new Date(n.created_at).getTime() > 60000) && (
-    <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
-      <p className="font-medium">⚠ לא התקבל אישור מסירה</p>
-      <p className="text-[10px] text-amber-600 mt-0.5">
-        עדכון אחרון: {new Date(n.updated_at || n.created_at).toLocaleString('he-IL')}
-        {n.provider_message_id && (
-          <span className="font-mono mr-2" dir="ltr">
-            msg: {n.provider_message_id.slice(-12)}
-          </span>
-        )}
+   (Date.now() - new Date(n.created_at).getTime() > 60000) && (
+    n.channel === 'sms' ? (
+      <p className="text-[10px] text-slate-400 mt-1.5">
+        נשלח כ-SMS — אין מעקב מסירה להודעות SMS
       </p>
-    </div>
+    ) : (
+      <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+        <p className="font-medium">⚠ לא התקבל אישור מסירה</p>
+        <p className="text-[10px] text-amber-600 mt-0.5">
+          עדכון אחרון: {new Date(n.updated_at || n.created_at).toLocaleString('he-IL')}
+          {n.provider_message_id && (
+            <span className="font-mono mr-2" dir="ltr">
+              msg: {n.provider_message_id.slice(-12)}
+            </span>
+          )}
+        </p>
+      </div>
+    )
   )}
 
-Pre-change error:
+The raw error before this batch:
   {n.last_error && (
-    <p className="text-xs text-red-500 mt-1">{n.last_error}</p>
+    <p className="text-xs text-red-500 mt-1 break-all overflow-hidden" dir="ltr">
+      {n.last_error}
+    </p>
   )}
 
-2. channel exposure finding
+2. Expand/collapse pattern finding
 
-The endpoint is backend/contractor_ops/notification_router.py:
-  @router.get("/tasks/{task_id}/notifications",
-              response_model=List[NotificationJobResponse])
-  ...
-  jobs = await db.notification_jobs.find(
-      {'task_id': task_id}, {'_id': 0}
-  ).sort('created_at', -1).to_list(100)
-  return [NotificationJobResponse(**j) for j in jobs]
+There was no existing per-row expanded-ID or collapsed-content state in this
+file. The only local expand/open pattern is InlineSelect:
+  const [open, setOpen] = useState(false);
+and ChevronDown was already imported. ChevronRight usages are navigation.
 
-notification_jobs carry channel, but NotificationJobResponse in schemas.py
-omitted it. Pydantic therefore filtered channel out of the API response even
-though the frontend's existing channel chip code already expected it.
-Minimal additive passthrough required and allowed by the spec:
-  channel: Optional[str] = None
-No backend notification logic changed.
+Per E3, this batch adds exactly one state hook at TaskDetailPage level:
+  const [expandedNotificationIds, setExpandedNotificationIds] = useState(new Set());
+The Set is updated immutably. Existing ChevronDown is reused and rotated when
+open. No imports or dependencies were added.
 
 EDITS
 --------------------------------------------------------------------------------
-E1 TaskDetailPage.js — last_error now has:
-     className="text-xs text-red-500 mt-1 break-all overflow-hidden"
-     dir="ltr"
-   Raw text remains complete and available in existing copy-debug payload.
+E1 Default/collapsed row now shows user-facing information only:
+   status icon+label, channel chip, event tag, masked phone, created time,
+   existing retry when relevant, and the existing yellow WhatsApp no-receipt
+   warning. Provider msg id, updated-at, raw error, SMS no-tracking note and
+   copy-debug button moved out of the default view.
 
-E2 TaskDetailPage.js — the existing >60s queued/sent condition remains.
-   Inside it, channel==='sms' renders the neutral line:
-     נשלח כ-SMS — אין מעקב מסירה להודעות SMS
-   All non-SMS channels render the pre-existing yellow warning unchanged.
+E2 Friendly SMS-fallback summary appears only when:
+     n.channel === 'sms' && n.last_error?.startsWith('wa_failed')
+   Text: ווטסאפ לא היה זמין — נשלח כ-SMS
+   Plain SMS has no extra default-view line.
 
-E3 Nothing else in the page changed: statuses, timestamps, message IDs,
-   copy-debug button and raw error content are untouched. The already-existing
-   SMS/WhatsApp channel chips become active once channel passes through.
+E3 One per-row "פרטים" toggle backed by the single Set state. Expanded content
+   contains: updated-at, full msg id (LTR + break-all), full raw error (red,
+   break-all, overflow-hidden, LTR), SMS no-tracking note, and the moved
+   copy-debug button. The debug object and clipboard/toast logic are unchanged.
 
-Serializer passthrough — schemas.py only:
-  NotificationJobResponse gains channel: Optional[str] = None.
+E4 No changes to statuses, icons, ordering, yellow WA warning behavior, data
+   fetching or backend. No new dependencies/imports.
 
 FULL DIFF
 --------------------------------------------------------------------------------
-diff --git a/backend/contractor_ops/schemas.py b/backend/contractor_ops/schemas.py
-index 9f4a6e6..ddafa05 100644
---- a/backend/contractor_ops/schemas.py
-+++ b/backend/contractor_ops/schemas.py
-@@ -434,6 +434,7 @@ class NotificationJobResponse(BaseModel):
-     attempts: int
-     provider_message_id: Optional[str] = None
-     last_error: Optional[str] = None
-+    channel: Optional[str] = None
-     created_at: Optional[str] = None
-     updated_at: Optional[str] = None
-
 diff --git a/frontend/src/pages/TaskDetailPage.js b/frontend/src/pages/TaskDetailPage.js
-index afa758e..d29a3b6 100644
+index d29a3b6..40ffbe9 100644
 --- a/frontend/src/pages/TaskDetailPage.js
 +++ b/frontend/src/pages/TaskDetailPage.js
-@@ -1782,20 +1782,26 @@ const TaskDetailPage = () => {
-                       </p>
-                     )}
-                     {(n.status === 'queued' || n.status === 'sent') && n.created_at && (Date.now() - new Date(n.created_at).getTime() > 60000) && (
--                      <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
--                        <p className="font-medium">⚠ לא התקבל אישור מסירה</p>
--                        <p className="text-[10px] text-amber-600 mt-0.5">
--                          עדכון אחרון: {new Date(n.updated_at || n.created_at).toLocaleString('he-IL')}
--                          {n.provider_message_id && (
--                            <span className="font-mono mr-2" dir="ltr">
--                              msg: {n.provider_message_id.slice(-12)}
--                            </span>
--                          )}
-+                      n.channel === 'sms' ? (
-+                        <p className="text-[10px] text-slate-400 mt-1.5">
-+                          נשלח כ-SMS — אין מעקב מסירה להודעות SMS
-                         </p>
--                      </div>
-+                      ) : (
+@@ -177,6 +177,7 @@ const TaskDetailPage = () => {
+   const [companies, setCompanies] = useState([]);
+   const [projectCompanies, setProjectCompanies] = useState([]);
+   const [notifications, setNotifications] = useState([]);
++  const [expandedNotificationIds, setExpandedNotificationIds] = useState(new Set());
+   const [loading, setLoading] = useState(true);
+   const [comment, setComment] = useState('');
+   const [sending, setSending] = useState(false);
+@@ -1712,6 +1713,7 @@ const TaskDetailPage = () => {
+                 const Icon = cfg.icon;
+                 const channelLabel = n.channel === 'sms' ? 'SMS' : n.channel === 'whatsapp' ? 'WhatsApp' : n.channel;
+                 const maskedPhone = n.target_phone ? (n.target_phone.length > 8 ? n.target_phone.slice(0,4) + '****' + n.target_phone.slice(-4) : n.target_phone.slice(0,3) + '****') : '';
++                const isExpanded = expandedNotificationIds.has(n.id);
+                 return (
+                   <div key={n.id} className="border-b border-slate-100 pb-3 last:border-0">
+                     <div className="flex items-center justify-between mb-1">
+@@ -1745,6 +1747,62 @@ const TaskDetailPage = () => {
+                             נסה שוב
+                           </Button>
+                         )}
++                      </div>
++                    </div>
++                    {n.channel === 'sms' && n.last_error?.startsWith('wa_failed') && (
++                      <p className="text-[10px] text-slate-400 mt-1.5">
++                        ווטסאפ לא היה זמין — נשלח כ-SMS
++                      </p>
++                    )}
++                    {(n.status === 'queued' || n.status === 'sent') && n.created_at && (Date.now() - new Date(n.created_at).getTime() > 60000) && (
++                      n.channel !== 'sms' && (
 +                        <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
 +                          <p className="font-medium">⚠ לא התקבל אישור מסירה</p>
 +                          <p className="text-[10px] text-amber-600 mt-0.5">
@@ -143,10 +149,80 @@ index afa758e..d29a3b6 100644
 +                          </p>
 +                        </div>
 +                      )
-                     )}
-                     {n.last_error && (
--                      <p className="text-xs text-red-500 mt-1">{n.last_error}</p>
-+                      <p className="text-xs text-red-500 mt-1 break-all overflow-hidden" dir="ltr">{n.last_error}</p>
++                    )}
++                    <button
++                      type="button"
++                      onClick={() => setExpandedNotificationIds(prev => {
++                        const next = new Set(prev);
++                        if (next.has(n.id)) next.delete(n.id);
++                        else next.add(n.id);
++                        return next;
++                      })}
++                      className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-600"
++                      aria-expanded={isExpanded}
++                    >
++                      <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
++                      פרטים
++                    </button>
++                    {isExpanded && (
++                      <div className="mt-1.5 space-y-1">
++                        {n.updated_at && n.updated_at !== n.created_at && (
++                          <p className="text-[10px] text-slate-400">
++                            עודכן: {new Date(n.updated_at).toLocaleString('he-IL')}
++                          </p>
++                        )}
++                        {n.provider_message_id && (
++                          <p className="text-[10px] text-slate-400 font-mono break-all" dir="ltr">
++                            msg: {n.provider_message_id}
++                          </p>
++                        )}
++                        {n.last_error && (
++                          <p className="text-xs text-red-500 break-all overflow-hidden" dir="ltr">{n.last_error}</p>
++                        )}
++                        {n.channel === 'sms' && (
++                          <p className="text-[10px] text-slate-400">
++                            נשלח כ-SMS — אין מעקב מסירה להודעות SMS
++                          </p>
++                        )}
+                         <Button
+                           size="sm"
+                           variant="ghost"
+@@ -1770,38 +1828,6 @@ const TaskDetailPage = () => {
+                           העתק דיבוג
+                         </Button>
+                       </div>
+-                    </div>
+-                    {n.provider_message_id && (
+-                      <p className="text-[10px] text-slate-400 mt-1 font-mono truncate" dir="ltr">
+-                        msg: {n.provider_message_id}
+-                      </p>
+-                    )}
+-                    {n.updated_at && n.updated_at !== n.created_at && (
+-                      <p className="text-[10px] text-slate-400 mt-0.5">
+-                        עודכן: {new Date(n.updated_at).toLocaleString('he-IL')}
+-                      </p>
+-                    )}
+-                    {(n.status === 'queued' || n.status === 'sent') && n.created_at && (Date.now() - new Date(n.created_at).getTime() > 60000) && (
+-                      n.channel === 'sms' ? (
+-                        <p className="text-[10px] text-slate-400 mt-1.5">
+-                          נשלח כ-SMS — אין מעקב מסירה להודעות SMS
+-                        </p>
+-                      ) : (
+-                        <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+-                          <p className="font-medium">⚠ לא התקבל אישור מסירה</p>
+-                          <p className="text-[10px] text-amber-600 mt-0.5">
+-                            עדכון אחרון: {new Date(n.updated_at || n.created_at).toLocaleString('he-IL')}
+-                            {n.provider_message_id && (
+-                              <span className="font-mono mr-2" dir="ltr">
+-                                msg: {n.provider_message_id.slice(-12)}
+-                              </span>
+-                            )}
+-                          </p>
+-                        </div>
+-                      )
+-                    )}
+-                    {n.last_error && (
+-                      <p className="text-xs text-red-500 mt-1 break-all overflow-hidden" dir="ltr">{n.last_error}</p>
                      )}
                    </div>
                  );
@@ -156,35 +232,35 @@ VERIFICATION
 V1 CI=true craco production build: EXIT 0.
    Command:
      cd frontend && set -a && source .env.production && set +a && CI=true yarn build
-   Result: Done in 24.04s. BUILD_EXIT=0.
+   Result: Done in 35.68s. BUILD_EXIT=0.
 
-V2 Playwright at 390x844 with browser-side mocked task/notification data;
-   no database writes. Verdict: SUCCESS.
+V2 Playwright at 390x844 with browser-side mock data; no database writes.
+   Verdict: SUCCESS.
 
-   SMS case (screenshot id jawgf4):
-   - Existing channel chip "SMS" is visible near status "נשלח".
-   - Neutral line visible exactly:
-       נשלח כ-SMS — אין מעקב מסירה להודעות SMS
-   - No yellow warning for the SMS entry.
-   - 350-character unbroken raw last_error remains fully present in the DOM
-     and wraps inside the card.
-   - document.body.scrollWidth = 390;
-     window.innerWidth = 390; equality confirmed — no horizontal page scroll.
+   Default/collapsed screenshot: jwzj2b
+   - SMS fallback row shows status, SMS chip, event tag, masked phone, created
+     time, exact friendly line "ווטסאפ לא היה זמין — נשלח כ-SMS", and "פרטים".
+   - It does NOT expose raw error, msg id, updated-at, SMS no-tracking note or
+     copy-debug button.
+   - WhatsApp read row shows status, WhatsApp chip, event tag, masked phone,
+     created time and "פרטים", with no debug content.
+   - Old WhatsApp sent row retains the yellow "⚠ לא התקבל אישור מסירה" box
+     in the DEFAULT view, together with its WhatsApp chip.
 
-   WhatsApp case (screenshot id ueqz41):
-   - Existing channel chip "WhatsApp" is visible near status "נשלח".
-   - Existing yellow box remains visible with:
-       ⚠ לא התקבל אישור מסירה
+   Expanded SMS screenshot: 6nzh30
+   - Clicking the SMS row's "פרטים" opens only that row; aria-expanded state:
+     one true, the two other rows false.
+   - Expanded content includes updated-at, full provider msg id, full red raw
+     error, exact gray SMS note and the copy-debug button.
+   - Raw error DOM text length: 350 (complete, not truncated).
+   - document.body.scrollWidth = 390; window.innerWidth = 390 — no horizontal
+     page scroll.
 
-V3 Scope / static verification:
-   git diff --stat:
-     backend/contractor_ops/schemas.py    |  1 +
-     frontend/src/pages/TaskDetailPage.js | 28 +++++++++++++++++-----------
-     2 files changed, 18 insertions(+), 11 deletions(-)
-   Exactly 2 diff entries. schemas.py change is only the additive channel
-   field. No notification service, webhook, channel logic, other page,
-   endpoint, dependency or image changed.
-   python3 -m py_compile backend/contractor_ops/schemas.py: PASS.
+V3 Scope/static checks:
+   git diff --stat -- frontend/src/pages/TaskDetailPage.js:
+     frontend/src/pages/TaskDetailPage.js | 90 +++++++++++++++++++++++-------------
+     1 file changed, 58 insertions(+), 32 deletions(-)
+   Exactly one source diff entry: TaskDetailPage.js only.
    git diff --check: PASS.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

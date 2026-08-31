@@ -77,8 +77,8 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH #582 — review.txt (final)"
-description = "מסמך מסודר ומעודכן: STEP 0, diff מלא, V1–V3, ושני צילומי V2 עם צ'יפי SMS/WhatsApp. AWAITING ZAHI APPROVAL — DO NOT DEPLOY."
+title = "BATCH #583 — review.txt"
+description = "STEP 0, diff מלא, V1–V3 וצילומי collapsed/expanded ב-390px. AWAITING ZAHI APPROVAL — DO NOT DEPLOY."
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"

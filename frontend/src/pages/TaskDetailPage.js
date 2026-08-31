@@ -177,6 +177,7 @@ const TaskDetailPage = () => {
   const [companies, setCompanies] = useState([]);
   const [projectCompanies, setProjectCompanies] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [expandedNotificationIds, setExpandedNotificationIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [comment, setComment] = useState('');
   const [sending, setSending] = useState(false);
@@ -1712,6 +1713,7 @@ const TaskDetailPage = () => {
                 const Icon = cfg.icon;
                 const channelLabel = n.channel === 'sms' ? 'SMS' : n.channel === 'whatsapp' ? 'WhatsApp' : n.channel;
                 const maskedPhone = n.target_phone ? (n.target_phone.length > 8 ? n.target_phone.slice(0,4) + '****' + n.target_phone.slice(-4) : n.target_phone.slice(0,3) + '****') : '';
+                const isExpanded = expandedNotificationIds.has(n.id);
                 return (
                   <div key={n.id} className="border-b border-slate-100 pb-3 last:border-0">
                     <div className="flex items-center justify-between mb-1">
@@ -1745,6 +1747,62 @@ const TaskDetailPage = () => {
                             נסה שוב
                           </Button>
                         )}
+                      </div>
+                    </div>
+                    {n.channel === 'sms' && n.last_error?.startsWith('wa_failed') && (
+                      <p className="text-[10px] text-slate-400 mt-1.5">
+                        ווטסאפ לא היה זמין — נשלח כ-SMS
+                      </p>
+                    )}
+                    {(n.status === 'queued' || n.status === 'sent') && n.created_at && (Date.now() - new Date(n.created_at).getTime() > 60000) && (
+                      n.channel !== 'sms' && (
+                        <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+                          <p className="font-medium">⚠ לא התקבל אישור מסירה</p>
+                          <p className="text-[10px] text-amber-600 mt-0.5">
+                            עדכון אחרון: {new Date(n.updated_at || n.created_at).toLocaleString('he-IL')}
+                            {n.provider_message_id && (
+                              <span className="font-mono mr-2" dir="ltr">
+                                msg: {n.provider_message_id.slice(-12)}
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                      )
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setExpandedNotificationIds(prev => {
+                        const next = new Set(prev);
+                        if (next.has(n.id)) next.delete(n.id);
+                        else next.add(n.id);
+                        return next;
+                      })}
+                      className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-600"
+                      aria-expanded={isExpanded}
+                    >
+                      <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                      פרטים
+                    </button>
+                    {isExpanded && (
+                      <div className="mt-1.5 space-y-1">
+                        {n.updated_at && n.updated_at !== n.created_at && (
+                          <p className="text-[10px] text-slate-400">
+                            עודכן: {new Date(n.updated_at).toLocaleString('he-IL')}
+                          </p>
+                        )}
+                        {n.provider_message_id && (
+                          <p className="text-[10px] text-slate-400 font-mono break-all" dir="ltr">
+                            msg: {n.provider_message_id}
+                          </p>
+                        )}
+                        {n.last_error && (
+                          <p className="text-xs text-red-500 break-all overflow-hidden" dir="ltr">{n.last_error}</p>
+                        )}
+                        {n.channel === 'sms' && (
+                          <p className="text-[10px] text-slate-400">
+                            נשלח כ-SMS — אין מעקב מסירה להודעות SMS
+                          </p>
+                        )}
                         <Button
                           size="sm"
                           variant="ghost"
@@ -1770,38 +1828,6 @@ const TaskDetailPage = () => {
                           העתק דיבוג
                         </Button>
                       </div>
-                    </div>
-                    {n.provider_message_id && (
-                      <p className="text-[10px] text-slate-400 mt-1 font-mono truncate" dir="ltr">
-                        msg: {n.provider_message_id}
-                      </p>
-                    )}
-                    {n.updated_at && n.updated_at !== n.created_at && (
-                      <p className="text-[10px] text-slate-400 mt-0.5">
-                        עודכן: {new Date(n.updated_at).toLocaleString('he-IL')}
-                      </p>
-                    )}
-                    {(n.status === 'queued' || n.status === 'sent') && n.created_at && (Date.now() - new Date(n.created_at).getTime() > 60000) && (
-                      n.channel === 'sms' ? (
-                        <p className="text-[10px] text-slate-400 mt-1.5">
-                          נשלח כ-SMS — אין מעקב מסירה להודעות SMS
-                        </p>
-                      ) : (
-                        <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
-                          <p className="font-medium">⚠ לא התקבל אישור מסירה</p>
-                          <p className="text-[10px] text-amber-600 mt-0.5">
-                            עדכון אחרון: {new Date(n.updated_at || n.created_at).toLocaleString('he-IL')}
-                            {n.provider_message_id && (
-                              <span className="font-mono mr-2" dir="ltr">
-                                msg: {n.provider_message_id.slice(-12)}
-                              </span>
-                            )}
-                          </p>
-                        </div>
-                      )
-                    )}
-                    {n.last_error && (
-                      <p className="text-xs text-red-500 mt-1 break-all overflow-hidden" dir="ltr">{n.last_error}</p>
                     )}
                   </div>
                 );
