@@ -886,3 +886,10 @@ uri = "file://plan_batch_582.md"
 type = "text"
 title = "תוכנית BATCH #582"
 description = "STEP 0 מלא, כולל הממצא שה-API מסנן את channel וה-passthrough המינימלי הנדרש. ממתין ל'תתחיל'."
+
+[[outputs]]
+id = "iCEF_DK3lCMfP6jwPD39q"
+uri = "file://plan_batch_583.md"
+type = "text"
+title = "תוכנית BATCH #583"
+description = "STEP 0 מלא, כולל ממצא שאין כיום expanded-row pattern והיישום המינימלי לפי E3. ממתין ל'תתחיל'."
