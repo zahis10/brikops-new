@@ -60,6 +60,23 @@ def _compute_admin_status(score: int, login_days_ago) -> str:
     return 'dormant'
 
 
+def _latest_user_activity(user: dict) -> str | None:
+    candidates = []
+    for key in ('last_seen_at', 'last_login_at'):
+        value = user.get(key)
+        if value:
+            try:
+                parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                else:
+                    parsed = parsed.astimezone(timezone.utc)
+                candidates.append(parsed)
+            except Exception:
+                pass
+    return max(candidates).isoformat() if candidates else None
+
+
 @router.get("/user-activity")
 async def user_activity(
     period: int = Query(7),
@@ -90,8 +107,10 @@ async def user_activity(
 
     all_users = await db.users.find(
         user_filter,
-        {'_id': 0, 'id': 1, 'name': 1, 'role': 1, 'last_login_at': 1, 'login_count': 1}
+        {'_id': 0, 'id': 1, 'name': 1, 'role': 1, 'last_seen_at': 1, 'last_login_at': 1, 'login_count': 1}
     ).to_list(5000)
+    for u in all_users:
+        u['_recency_at'] = _latest_user_activity(u)
 
     if org_id:
         org_mems = await db.organization_memberships.find(
@@ -110,7 +129,7 @@ async def user_activity(
     sort_key_mongo = {
         'name': ('name', ''),
         'login_count': ('login_count', 0),
-        'last_login': ('last_login_at', ''),
+        'last_login': ('_recency_at', ''),
         'role': ('role', ''),
     }
 
@@ -120,7 +139,7 @@ async def user_activity(
 
     if sort == 'score':
         for u in all_users:
-            lla = u.get('last_login_at')
+            lla = u.get('_recency_at')
             if lla:
                 try:
                     ld = (now - datetime.fromisoformat(lla.replace('Z', '+00:00'))).days
@@ -209,7 +228,7 @@ async def user_activity(
     for uid in page_user_ids:
         u = user_map[uid]
         login_days_ago = None
-        last_login = u.get('last_login_at')
+        last_login = u.get('_recency_at')
         if last_login:
             try:
                 login_dt = datetime.fromisoformat(last_login.replace('Z', '+00:00'))
@@ -237,7 +256,7 @@ async def user_activity(
             'role': u.get('role', ''),
             'org_id': oid,
             'org_name': org_name_map.get(oid, ''),
-            'last_login': u.get('last_login_at'),
+            'last_login': u.get('_recency_at'),
             'login_count': u.get('login_count', 0),
             'activity_score': activity_score,
             'status': status,

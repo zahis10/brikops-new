@@ -685,7 +685,7 @@ async def get_team_activity(
 
     users_docs = await db.users.find(
         {'id': {'$in': user_ids}},
-        {'_id': 0, 'id': 1, 'name': 1, 'role': 1, 'last_login_at': 1}
+        {'_id': 0, 'id': 1, 'name': 1, 'role': 1, 'last_seen_at': 1, 'last_login_at': 1}
     ).to_list(None)
     user_map = {u['id']: u for u in users_docs}
 
@@ -772,14 +772,20 @@ async def get_team_activity(
 
     for uid in user_ids:
         u = user_map.get(uid, {})
-        login_days_ago = None
-        last_login = u.get('last_login_at')
-        if last_login:
-            try:
-                login_dt = datetime.fromisoformat(last_login.replace('Z', '+00:00'))
-                login_days_ago = max(0, (now - login_dt).days)
-            except Exception:
-                pass
+        _candidates = []
+        for _k in ('last_seen_at', 'last_login_at'):
+            _v = u.get(_k)
+            if _v:
+                try:
+                    _dt = datetime.fromisoformat(str(_v).replace('Z', '+00:00'))
+                    if _dt.tzinfo is None:
+                        _dt = _dt.replace(tzinfo=timezone.utc)
+                    else:
+                        _dt = _dt.astimezone(timezone.utc)
+                    _candidates.append(_dt)
+                except Exception:
+                    pass
+        login_days_ago = max(0, (now - max(_candidates)).days) if _candidates else None
 
         metrics = {
             'login_days_ago': login_days_ago,

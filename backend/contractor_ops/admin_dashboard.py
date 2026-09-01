@@ -30,6 +30,23 @@ def _churn_status(last_login_iso: str | None) -> str:
     return 'dormant'
 
 
+def _latest_user_activity(user: dict) -> str | None:
+    candidates = []
+    for key in ('last_seen_at', 'last_login_at'):
+        value = user.get(key)
+        if value:
+            try:
+                parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                else:
+                    parsed = parsed.astimezone(timezone.utc)
+                candidates.append(parsed)
+            except Exception:
+                pass
+    return max(candidates).isoformat() if candidates else None
+
+
 def _sub_status_label(status: str | None) -> str:
     m = {
         'active': 'פעיל',
@@ -103,9 +120,9 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
 
     users_login = await db.users.find(
         {'id': {'$in': all_user_ids}},
-        {'_id': 0, 'id': 1, 'last_login_at': 1}
+        {'_id': 0, 'id': 1, 'last_seen_at': 1, 'last_login_at': 1}
     ).to_list(50000)
-    user_login_map = {u['id']: u.get('last_login_at') for u in users_login}
+    user_login_map = {u['id']: _latest_user_activity(u) for u in users_login}
 
     org_last_login = {}
     for oid, uids in org_user_ids.items():

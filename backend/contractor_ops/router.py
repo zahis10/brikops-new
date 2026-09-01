@@ -216,6 +216,24 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
                 status_code=403,
                 detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'},
             )
+        # Presence stamp (best-effort, throttled): real "last seen" for
+        # team-activity / admin recency. Never blocks or fails auth.
+        try:
+            _seen_raw = user.get('last_seen_at')
+            _stale = True
+            if _seen_raw:
+                _seen_dt = datetime.fromisoformat(str(_seen_raw).replace('Z', '+00:00'))
+                if _seen_dt.tzinfo is None:
+                    _seen_dt = _seen_dt.replace(tzinfo=timezone.utc)
+                else:
+                    _seen_dt = _seen_dt.astimezone(timezone.utc)
+                _stale = (datetime.now(timezone.utc) - _seen_dt) > timedelta(minutes=10)
+            if _stale:
+                _now_iso = datetime.now(timezone.utc).isoformat()
+                await db.users.update_one({'id': user['id']}, {'$set': {'last_seen_at': _now_iso}})
+                user['last_seen_at'] = _now_iso
+        except Exception:
+            pass
         return user
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f'Invalid token: {str(e)}')
