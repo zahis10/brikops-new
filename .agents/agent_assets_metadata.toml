@@ -6,72 +6,84 @@ id = "kvOenhCVwxPYRIqYSU0Vf"
 uri = "file://brikops-source.zip"
 type = "unspecified"
 title = "BrikOps Source Code (March 11, 2026)"
+logical_id = "3644b47a-60f1-4ccb-b7dd-fd03745529d4"
 
 [[outputs]]
 id = "o-uOOYY9SpJm7-IRckVbJ"
 uri = "file://WEEKLY_CHANGELOG.md"
 type = "text"
 title = "Weekly Changelog (March 4-11, 2026)"
+logical_id = "fff3dfb7-25e3-4f84-ba7a-f2fe96553502"
 
 [[outputs]]
 id = "AWBwNTn8NTAzcXNCYDixT"
 uri = "file://brikops-slim.zip"
 type = "unspecified"
 title = "BrikOps Source Code (8.2MB)"
+logical_id = "f512277b-f999-4112-b324-7f55eb3a696f"
 
 [[outputs]]
 id = "GYLksbxKV7S1clpc_ExyA"
 uri = "file://SECURITY_AUDIT_REPORT.md"
 type = "text"
 title = "BrikOps Security Audit Report"
+logical_id = "3f72e6f4-8fcf-4637-8654-c3b5ced54368"
 
 [[outputs]]
 id = "dgCS26DyHIqCarOkDhll3"
 uri = "file://review-88a.txt"
 type = "text"
 title = "review-88a.txt — Task #88a Code Review"
+logical_id = "336f50b8-404e-4b2e-83db-b41a7a5bb0c8"
 
 [[outputs]]
 id = "VfSkskaF3EWw0aTlG5wBd"
 uri = "file:///tmp/review-88b.txt"
 type = "text"
 title = "review-88b.txt — Task #88b Code Review"
+logical_id = "dbc7e100-6b7a-42b2-90fc-5802a982943c"
 
 [[outputs]]
 id = "PTg1uKFjr1xbzH6X-vsKE"
 uri = "file://review-88b.txt"
 type = "text"
 title = "review-88b.txt — Task #88b Code Review"
+logical_id = "28a82630-e8cd-4898-bc1c-e28dab5f84b9"
 
 [[outputs]]
 id = "q-CamLfzP94ALKtrO84rm"
 uri = "file://review-90.txt"
 type = "text"
 title = "review-90.txt — Task #90 Code Review"
+logical_id = "f9b72712-7ec0-45e7-becd-c6b4d6a6ce68"
 
 [[outputs]]
 id = "Iz3DefZA_5y3voOF4qkeY"
 uri = "file://review-89.txt"
 type = "text"
 title = "review-89.txt — Task #89 Code Review"
+logical_id = "bc7023d5-2b30-4f9f-8fee-173c8b15f6bf"
 
 [[outputs]]
 id = "BXSLrEQenp0pS-npwJXgT"
 uri = "file://review-92.txt"
 type = "text"
 title = "Review Task #92 — PDF Generation Code Review"
+logical_id = "61c4d44a-c260-451c-812d-e16ed28a7045"
 
 [[outputs]]
 id = "UorJ02-eRdhHQp2jPMMiJ"
 uri = "file:///tmp/review-94.txt"
 type = "text"
 title = "review-94.txt"
+logical_id = "77da1247-6be5-4092-9a00-67949184b1fb"
 
 [[outputs]]
 id = "LrcoviA7LHuZmOjnTSw3w"
 uri = "file://review-94.txt"
 type = "text"
 title = "review-94.txt"
+logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 
 [[outputs]]
 id = "ocdrZig6YPfAjD1XCgrbr"
@@ -79,792 +91,924 @@ uri = "file://review.txt"
 type = "text"
 title = "BATCH #583 — review.txt"
 description = "STEP 0, diff מלא, V1–V3 וצילומי collapsed/expanded ב-390px. AWAITING ZAHI APPROVAL — DO NOT DEPLOY."
+logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
 uri = "file://review-107-final.txt"
 type = "text"
 title = "Task #107 — All Checks (Final)"
+logical_id = "ad6b12d5-a341-4e8e-802c-6d5fa0a1436d"
 
 [[outputs]]
 id = "Hhih25JjJ_C-9nXzhLTsl"
 uri = "file://review1.txt"
 type = "text"
 title = "#211 Handover Photo Annotation + Android Fixes — Full Diff (327 lines)"
+logical_id = "c05b9ecc-217e-48e3-bc77-31b56f5c2135"
 
 [[outputs]]
 id = "uGeCjGUZR8Wa5wgYvwdLd"
 uri = "file://review2.txt"
 type = "text"
 title = "#212 Contractor Proof Photo Annotation + Safety Fixes — Full Diff (139 lines)"
+logical_id = "3b2c7fd8-b153-4012-81fa-bfde5d525614"
 
 [[outputs]]
 id = "-tFBL-wqdxD-rzS_5vwTn"
 uri = "file://review3.txt"
 type = "text"
 title = "review3.txt — דיפים Tasks #213-#215"
+logical_id = "1e3a4e9a-0b1f-49fc-9c24-86ce45a5257a"
 
 [[outputs]]
 id = "j93L_Qy6er_ALi-5YJSPJ"
 uri = "file://security_report.txt"
 type = "text"
 title = "BrikOps Security Report — 294 Issues"
+logical_id = "ae3e6b6d-75cf-48af-b041-208073cd2bc4"
 
 [[outputs]]
 id = "3cBYpZ9RQYruAA4XvbLBj"
 uri = "file://brikops-context.txt"
 type = "text"
 title = "BrikOps Context — לצ'אט חדש"
+logical_id = "78b89978-c306-4dd7-8cb9-4bb209399356"
 
 [[outputs]]
 id = "aKZetj3IBv-ZTxGuRajRA"
 uri = "file://CODEBASE_SUMMARY.md"
 type = "text"
 title = "BrikOps — Codebase Summary"
+logical_id = "e0195a08-7d98-4097-aebb-7f131701d748"
 
 [[outputs]]
 id = "r7MU_Jr0qH6pgSnPBl162"
 uri = "file://review_248_frontend.txt"
 type = "text"
 title = "Task #248 — Frontend Diff (380 lines, 5 files)"
+logical_id = "219adfa2-dfa1-4502-9ec7-4e5a95c119e1"
 
 [[outputs]]
 id = "dMauyN9NYIsJWotlbNq6X"
 uri = "file://billing_bugs2_diff.txt"
 type = "text"
 title = "Billing Bugs #2 — Full Diff (Task #250)"
+logical_id = "74b342c6-268b-4238-bbf6-c03d2a8fd748"
 
 [[outputs]]
 id = "moqFZUgKv_rc2bQ3f5Qaf"
 uri = "file://.local/review.txt"
 type = "text"
 title = "Wave 5 — commit 7eca1f7 (8 proof blocks)"
+logical_id = "d0ffde6e-25c5-4053-b701-4b33f0fe0028"
 
 [[outputs]]
 id = "Uttosn1CSRes5mf7KkA_R"
 uri = "file://review-276b.txt"
 type = "text"
 title = "#276b Social Login Frontend — Full Diff"
+logical_id = "03ac00b5-750c-45df-8a30-3b506b8c8a0e"
 
 [[outputs]]
 id = "jBFKu1Xd0hCZn5hd2L0ys"
 uri = "file://.local/ic_launcher_foreground_xxxhdpi.png"
 type = "image"
 title = "Android adaptive icon foreground (xxxhdpi 432×432)"
+logical_id = "b3820b4e-9063-4c54-abb5-8bf79eb0b851"
 
 [[outputs]]
 id = "PK5UMGCcFq2Cl_B1jpp7s"
 uri = "file://.local/review-phase1.txt"
 type = "text"
 title = "Phase 1 — pull + @capacitor/preferences (לא קומיט)"
+logical_id = "82bbd12e-e01a-4a6b-a771-627450bb1633"
 
 [[outputs]]
 id = "EDFBvT8q1uwrKOtWssInW"
 uri = "file://.local/review-phase2.txt"
 type = "text"
 title = "Wave 1 Phases 2-5 — commit d954be5 (8 proof blocks)"
+logical_id = "c74cd54a-bbc8-42aa-8a9f-ec9715829aa8"
 
 [[outputs]]
 id = "B4fRcQyFJPkGysmxx2BeP"
 uri = "file://.local/review-phase7-wave2.txt"
 type = "text"
 title = "Wave 2 — commit 9034aad (refreshed logo + extended D3-A hold)"
+logical_id = "67c889ed-952d-40b2-a73c-3821f7389a30"
 
 [[outputs]]
 id = "pfVhCyGRUgjdawIHkwEZE"
 uri = "file://.local/review-phase7-wave2b.txt"
 type = "text"
 title = "Wave 2b — commit 964c719 (BrikSplash owns its own lifecycle)"
+logical_id = "a8e7f16b-f8cd-469c-abc4-3f4d81aa9991"
 
 [[outputs]]
 id = "k7nwQ0YPtJ91ofbfe-D_L"
 uri = "file://.local/review-phase7-wave2c.txt"
 type = "text"
 title = "Wave 2c — commit 6c982d7 (build tag on splash, diagnostic)"
+logical_id = "9906a57d-bba4-40d4-9079-aa206749e049"
 
 [[outputs]]
 id = "Kap0FoM8gxlUDjb3ozLjR"
 uri = "file://.local/review-phase7-wave2d.txt"
 type = "text"
 title = "Wave 2d — commit d7ea3cf (orange logo + Capgo autoUpdate + native-change guard)"
+logical_id = "34e52ec4-46d1-4a61-9611-8428dcc3941d"
 
 [[outputs]]
 id = "ZIFUepo-oSQm7hhl29j7U"
 uri = "file://.local/review-393-login-ux.txt"
 type = "text"
 title = "Task #393 — commit 8055d22 (login UX: no auto-keyboard + Web OTP autofill)"
+logical_id = "0fc6ea04-dcb3-4087-873f-28e069b5a078"
 
 [[outputs]]
 id = "9Jfz3vQ9ZdkSMnxP2vVWF"
 uri = "file://.local/review-394-ios-otp-autofill.txt"
 type = "text"
 title = "Task #394 — commit 9e26e67 (iOS OTP autofill: Associated Domains + AASA)"
+logical_id = "38b1872b-f41d-4f60-93ee-1ba9ca91b260"
 
 [[outputs]]
 id = "fb7inUlLBqi_2dBwdlWjH"
 uri = "file://.local/review-395-android-sms-retriever.txt"
 type = "text"
 title = "Review #395 — Android OTP Autofill (9 Proofs)"
+logical_id = "8c06b7ff-7d39-4ef3-81d8-6b9eb4b62bd1"
 
 [[outputs]]
 id = "RtjVuDC-J0JLsueQg_Pn3"
 uri = "file://frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
 type = "image"
 title = "ic_launcher.png xxxhdpi (B at ~37% of canvas, composited over #323A4E)"
+logical_id = "794511e0-cf3f-407b-b17f-b5ac93d9ece1"
 
 [[outputs]]
 id = "vVoVL7MRRa-PLLcTiLWy2"
 uri = "file://frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png"
 type = "image"
 title = "ic_launcher_round.png xxxhdpi (circular mask)"
+logical_id = "600a3f53-9f09-4bd3-9182-43f26506b5d2"
 
 [[outputs]]
 id = "pZGm3qlpZoA8zgNDOJyMT"
 uri = "file://frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png"
 type = "image"
 title = "ic_launcher_foreground.png xxxhdpi (transparent bg, adaptive layer)"
+logical_id = "1011ea50-d30c-43ab-ab1b-3bfa71e5726d"
 
 [[outputs]]
 id = "7OLWmHUzQOwZkKktx0Hig"
 uri = "file://docs/architecture/README.md"
 type = "text"
 title = "Architecture README — Index + Conventions + Anti-patterns"
+logical_id = "755cd03e-4f6d-47a6-8387-bc20772cc0ec"
 
 [[outputs]]
 id = "HHkzqu6GQ6pec9k4u3Loy"
 uri = "file://docs/architecture/adr-006-status-system.md"
 type = "text"
 title = "ADR-006 — Status System (recommended ADR sample)"
+logical_id = "7efbe140-7a5e-4b6a-85d7-796af5c17e11"
 
 [[outputs]]
 id = "NGOsY-qu8gVjQENGVEJEG"
 uri = "file://docs/refactor-backlog.md"
 type = "text"
 title = "Refactor Backlog — 21 actionable items"
+logical_id = "1bd5c6c8-e9e9-4896-a957-999c58b3caaf"
 
 [[outputs]]
 id = "DtBPlf09-Xqr71-kEXhRx"
 uri = "file://CLAUDE.md"
 type = "text"
 title = "CLAUDE.md (extended) — original 41 lines + new Cowork section"
+logical_id = "b85f3991-e637-404f-96a6-fd931ce2070c"
 
 [[outputs]]
 id = "nGoHvjzzLw38cW6LMIzlQ"
 uri = "file://attached_assets/brikops-snapshot-2026-04-30.zip"
 type = "unspecified"
 title = "brikops-snapshot-2026-04-30.zip (23MB) — לחץ להורדה"
+logical_id = "20da1c27-16a3-40aa-83c5-057729c9bc5b"
 
 [[outputs]]
 id = "H1cFkuDvymGmvmMCqbh-a"
 uri = "file://.local/tasks/465-batch-7a-defect-bell-notifications.md"
 type = "text"
 title = "Task #465 — Updated plan (with ADDENDUM #1)"
+logical_id = "ff170b2d-1365-4dbc-88eb-1e0e3d9ca47e"
 
 [[outputs]]
 id = "YwmkUiTwAtQm9wd6xeBSc"
 uri = "file://.local/tasks/task-468.md"
 type = "text"
 title = "Task #468 — Plan + Addendum #1 (Extract registration router)"
+logical_id = "dc2c1dc8-d631-4559-a98a-1265f9998edf"
 
 [[outputs]]
 id = "UM3w15hfglJQ2Lp0mtTOm"
 uri = "file://.local/tasks/task-468-with-addendum1.md"
 type = "text"
 title = "Task #468 — Plan + ADDENDUM #1 (FRESH COPY)"
+logical_id = "6339c6c3-0411-4caa-8ce7-5a707dc401a0"
 
 [[outputs]]
 id = "iA7SqFIATcfzejv4UY8KG"
 uri = "file://.local/tasks/task-500.md"
 type = "text"
 title = "#500 — Phase 2D-1 Filter System + Saved Views — תוכנית מלאה"
+logical_id = "7709c7bc-c681-401c-b62b-56e75d260b9b"
 
 [[outputs]]
 id = "QclvWyt5qQQIe1VvCC9Xd"
 uri = "file://.local/plans/502_excel_export_plan.md"
 type = "text"
 title = "#502 — Excel Export Plan"
+logical_id = "d81fb21e-c0c8-4db3-a892-481cc634c962"
 
 [[outputs]]
 id = "-8OVs7HnIVCi8HfYLMVEi"
 uri = "file://.local/plans/503_qc_to_matrix_sync.md"
 type = "text"
 title = "תוכנית #503 — QC → Matrix sync"
+logical_id = "a147780a-6126-49ef-aec8-1a037b50fb26"
 
 [[outputs]]
 id = "bH4MKWAP3loO3g0u8RqH_"
 uri = "file://.local/plans/503_followup_remove_floor_skip.md"
 type = "text"
 title = "#503-followup — remove floor-scope skip"
+logical_id = "117ed5f4-ccd9-4cdf-a437-fcd57cfbc3dc"
 
 [[outputs]]
 id = "fHo4lNlDUuwrHpwXcfRo5"
 uri = "file://.local/plans/503_followup_2_stage_level_mapping.md"
 type = "text"
 title = "#503-followup-2 — תוכנית מלאה: stage-level + reject hook + floor-scope + pending_review"
+logical_id = "16ec4adb-fecc-47c7-a48d-99a751cc276d"
 
 [[outputs]]
 id = "06zwRzZIFriPJCaHiO5Zk"
 uri = "file://.local/plans/503_followup_3_submit_hook_item_fix_ready_status.md"
 type = "text"
 title = "#503-followup-3 PLAN — STEP 0 stop-gate found 2 unhooked reopen endpoints (D5+D6 need approval)"
+logical_id = "01408f0f-e006-46b5-8b3f-13c31e16bde2"
 
 [[outputs]]
 id = "HtEwWgG1CEQCRZK8EbU0Z"
 uri = "file://.local/plans/601_auto_upgrade_qc_run_template.md"
 type = "text"
 title = "#601 PLAN — auto-upgrade stale QC runs to current template (Zahi prod 2026-05-07 fix)"
+logical_id = "55ef36be-1a9b-4a33-80bc-63ce9f47f435"
 
 [[outputs]]
 id = "cnDWPPsTEFloeqYpz16FD"
 uri = "file://.local/plans/qc_ux_3bugs_2026_05_07.md"
 type = "text"
 title = "QC UX 3 bugs / 2 files — plan ready, awaiting תתחיל"
+logical_id = "352b3896-50b6-42ff-b872-25fb74c67016"
 
 [[outputs]]
 id = "FLSKfjKZHFm0GbLIyiAVu"
 uri = "file://.local/plans/matrix_qc_deeplink_2026_05_07.md"
 type = "text"
 title = "Matrix→QC deep-link — plan ready"
+logical_id = "1aea092c-8f6e-4d4d-a23c-099e480482e9"
 
 [[outputs]]
 id = "8QA5bNx-_GEmeEjYrZfhO"
 uri = "file://.local/plans/p0_contractor_visibility_2026_05_08.md"
 type = "text"
 title = "P0 contractor visibility — plan ready"
+logical_id = "70eb395e-8d44-4ab6-a3c1-0523d2561c2e"
 
 [[outputs]]
 id = "9e39vMTj1RSfz6rr6HZ4E"
 uri = "file://.local/plans/p1_split_company_contractor_2026_05_08.md"
 type = "text"
 title = "P1 plan — split management panel: חברה + קבלן ספציפי dropdowns + assignee_name fallback"
+logical_id = "f79b66f2-3545-44b8-af39-468cfff9f792"
 
 [[outputs]]
 id = "Z0a8SYPi89dTZLNFjksG1"
 uri = "file://.local/plans/504_split_company_contractor_2026_05_08.md"
 type = "text"
 title = "504 — split mgmt panel: חברה + קבלן ספציפי + assignee_name fallback"
+logical_id = "136b0311-6187-403d-b843-1e06e106c0b1"
 
 [[outputs]]
 id = "7Rgjr36gecm_NBEjIGiNS"
 uri = "file://.local/h2b_plan.md"
 type = "text"
 title = "H.2b — תוכנית ביצוע (לאישור)"
+logical_id = "6ccf5b14-de04-41bc-95b8-9f9a81a60037"
 
 [[outputs]]
 id = "WdAv4xN91QcEN7yUVCGOf"
 uri = "file://.local/plans/H.2c-contact-picker-plan.md"
 type = "text"
 title = "H.2c Contact Picker — תוכנית ביצוע"
+logical_id = "010c42a2-db8f-4716-accf-f379b3c0ac93"
 
 [[outputs]]
 id = "J__1RJxM-WJD4UTT7thE5"
 uri = "file://.local/plans/ship-push-immediate-2026-05-16-plan.md"
 type = "text"
 title = "ship-push-immediate — תוכנית ביצוע"
+logical_id = "c6da5fb3-2041-4b13-a9f2-e7fd6c9637d8"
 
 [[outputs]]
 id = "Tmoouws_USflFbrqHCGmP"
 uri = "file://.local/plans/reminder-rate-limit-2026-05-16-plan.md"
 type = "text"
 title = "reminder-rate-limit — תוכנית ביצוע (5/5 pre-flight PASS, 3 open Qs)"
+logical_id = "d6f846fc-b4f4-46c1-9dfd-0dbb36ae7a41"
 
 [[outputs]]
 id = "y7VoF_osiqZkEelWfTrA7"
 uri = "file://.local/plans/reminder-rate-limit-followup-1-2026-05-17-plan.md"
 type = "text"
 title = "reminder-rate-limit-followup-1 — plan (SHIPPED 35d05571)"
+logical_id = "398825b4-8860-4dfa-83a1-6f691ce41746"
 
 [[outputs]]
 id = "aghsxkp-sFPM6J0UZ_4ir"
 uri = "file://.local/plans/idor-notify-sso-email-verified-2026-05-17-plan.md"
 type = "text"
 title = "plan file"
+logical_id = "6411ea56-9212-4192-b9b5-ed70243850d0"
 
 [[outputs]]
 id = "-6RTVtuVSSoOjZoD7Gg7G"
 uri = "file://.local/tasks/doc-scanner-in-plans-tabs.md"
 type = "text"
 title = "Plan — doc-scanner-in-plans-tabs"
+logical_id = "b86d421b-7976-4b19-a9e0-5a8ba9d212ba"
 
 [[outputs]]
 id = "lMxEJ7MRp-MrdDfbm0bfD"
 uri = "file://.local/tasks/upload-abuse-hardening-phase1.md"
 type = "text"
 title = "Plan — upload-abuse-hardening PHASE 1"
+logical_id = "3f67347b-77ce-40e7-b1d4-8f3d79fd50e4"
 
 [[outputs]]
 id = "Dhtr3VoH4w3d2M7eH8RuO"
 uri = "file://review_v2_diff.txt"
 type = "text"
 title = "review_v2_diff.txt — FULL diff v1+v2 (3 files, +33/-1)"
+logical_id = "f0519be4-ed1d-4b9b-8a3b-43112fb1c017"
 
 [[outputs]]
 id = "17tXl6BHCJSaWBUZXLl8-"
 uri = "file://.local/tasks/batch-3b-offline-photos-plan.md"
 type = "text"
 title = "PLAN — BATCH 3b: Offline QC Photos (capture → queue → sync)"
+logical_id = "03aa1844-237d-4a43-8cd5-682d12e84561"
 
 [[outputs]]
 id = "n3GRCZVIEZaH4WUd0Zg1o"
 uri = "file://.local/tasks/batch-5-offline-defect-create-plan.md"
 type = "text"
 title = "BATCH 5 — Offline Defect Create: plan (revised, dormant-flag)"
+logical_id = "f5ee34f7-849d-4558-81cf-866b16a59c09"
 
 [[outputs]]
 id = "QUNl4MTS4ie3QMpxCcIch"
 uri = "file://.local/plans/ratelimit-resilience-plan.md"
 type = "text"
 title = "BATCH ratelimit-resilience — תוכנית מלאה (לאישור)"
+logical_id = "8fdecd0e-f58d-4a29-ab46-c84946e77da9"
 
 [[outputs]]
 id = "9rLSR7BOGq20E1BBnS86O"
 uri = "file://.local/plans/offline-newdefect-modal-plan.md"
 type = "text"
 title = "תוכנית — offline-newdefect-modal (⛔ PII gate, צריך החלטה לפני מימוש)"
+logical_id = "94d6efde-ada1-4c72-af95-4996ceee773e"
 
 [[outputs]]
 id = "GAiVjaYNnh_i155_hnIYT"
 uri = "file://.local/plans/defects-backnav-origin-plan.md"
 type = "text"
 title = "תוכנית BATCH defects-backnav-origin (לעיון, טרם יישום)"
+logical_id = "6d25c996-5a6e-4d9e-be2a-a6bb76602835"
 
 [[outputs]]
 id = "q5AEFwkiC9OyXF8ceyqRM"
 uri = "file://.local/plans/offline-handover-read-4a-plan.md"
 type = "text"
 title = "תוכנית BATCH offline-handover-read-4a (לעיון, טרם יישום)"
+logical_id = "d369c771-b9a9-4da7-8866-2ead2cc4a0e5"
 
 [[outputs]]
 id = "4gNkl1ZQdkj5c2MqW0zfA"
 uri = "file://.local/plans/offline-handover-capture-4b-plan.md"
 type = "text"
 title = "תוכנית BATCH offline-handover-capture-4b (לעיון, טרם יישום)"
+logical_id = "6ea4b0ab-42a9-4baa-b769-bc720c294944"
 
 [[outputs]]
 id = "OJG_H9BOLoTLg5TRI0boQ"
 uri = "file://.local/plans/offline-handover-photos-4c-plan.md"
 type = "text"
 title = "BATCH 4c — תוכנית תמונות אופליין (מעודכנת)"
+logical_id = "16c23df7-e7de-4fce-902e-40e5fcc8c7a8"
 
 [[outputs]]
 id = "f2KbtHdsZnKyBpn-kZf3y"
 uri = "file://.local/plans/offline-handover-photos-4c-fix1-plan.md"
 type = "text"
 title = "BATCH 4c — FIX 1 תוכנית (display_url leak)"
+logical_id = "92a909ae-ed9b-48c2-930b-51898373502c"
 
 [[outputs]]
 id = "TzbBfRxL-s7dQFXdqemlg"
 uri = "file://.local/plans/safety-p2-1-plan.md"
 type = "text"
 title = "BATCH safety-p2-1 — Plan (Safety Create/Edit modals)"
+logical_id = "72539b74-7816-4e4a-930b-d1ba8c732799"
 
 [[outputs]]
 id = "3Zl-9KLz5NVVl5z-JbkjX"
 uri = "file://.local/plans/safety-p2-2-plan.md"
 type = "text"
 title = "BATCH safety-p2-2 — תוכנית מלאה (אחראי / assignee picker)"
+logical_id = "c1fc87c6-c618-4ae0-ab53-699cdedb434c"
 
 [[outputs]]
 id = "t-UaNDQQ44BDTQLzmHFHr"
 uri = "file://.local/plans/safety-p2-2-fix1-plan.md"
 type = "text"
 title = "BATCH safety-p2-2 FIX 1+2 — תוכנית (assignee status filter + תווית כפתור)"
+logical_id = "8d426c91-2f07-4181-a107-451bf6f26a28"
 
 [[outputs]]
 id = "qei3kS2V_L027XDQoqnma"
 uri = "file://.local/plans/safety-p2-1b-plan.md"
 type = "text"
 title = "BATCH safety-p2-1b — תוכנית (תמונות לליקויי בטיחות — durable)"
+logical_id = "6dafa324-9386-46e1-bfa3-7643e1497800"
 
 [[outputs]]
 id = "Tk2EqZK6dFpakNVG3pqyX"
 uri = "file://.local/plans/safety-p2-1c-plan.md"
 type = "text"
 title = "BATCH safety-p2-1c — תוכנית (פנקס כללי PDF redesign + לוגואים + Excel ליקויים)"
+logical_id = "f7abbe5d-28b7-4f6c-965e-35a845333bfe"
 
 [[outputs]]
 id = "-s9SWhmjc4f3tLaoZbfcZ"
 uri = "file://.local/proof/safety-p2-1c_pg1.png"
 type = "image"
 title = "הוכחה V3 — עמוד 1 (שער + סקשנים 1–4)"
+logical_id = "5e984c92-851f-491c-bdb9-2c125aafab75"
 
 [[outputs]]
 id = "sl-c7wp6vask2FKPM3b-b"
 uri = "file://.local/proof/safety-p2-1c_pg2.png"
 type = "image"
 title = "הוכחה V3 — עמוד 2 (סקשן 5 ליקויים + 6)"
+logical_id = "ea44da07-6a8b-4698-b0ef-0c1ef234b76e"
 
 [[outputs]]
 id = "NTFxXlkw0OGX4RfM__jb7"
 uri = "file://.local/proof/safety-p2-1c-fix1_pg1.png"
 type = "image"
 title = "הוכחה V3 — סקשנים 1/3/4 (שדה/שם מלא/עובד מימין)"
+logical_id = "393e53c5-5915-425c-928c-3344bae72b1f"
 
 [[outputs]]
 id = "6q4KyZE2jjVc9IqbQZ_2U"
 uri = "file://.local/proof/safety-p2-1c-fix1_pg3.png"
 type = "image"
 title = "הוכחה V3 — טבלת audit (תאריך מימין, מבצע = שם אמיתי)"
+logical_id = "e036ce39-8f55-442c-a947-6ada5cad7c16"
 
 [[outputs]]
 id = "CI5HFIVY5Nkyh5U7C3wkR"
 uri = "file://.local/plans/safety-p2-1d-plan.txt"
 type = "text"
 title = "תוכנית עבודה — safety-p2-1d (thumbnail + detail + כפתור תמונה)"
+logical_id = "e92b852c-4534-42b5-804e-7788a7869e84"
 
 [[outputs]]
 id = "kB7AOarrYsnaqXSamoC7I"
 uri = "file://.local/plans/companies-placeholder-visibility-plan.txt"
 type = "text"
 title = "companies-placeholder-visibility — תוכנית לאישור"
+logical_id = "2f98582f-a265-4b58-96b2-31ca61ceff2e"
 
 [[outputs]]
 id = "JI38T_n60R_a5dPonSKdP"
 uri = "file://.local/plans/safety-p2-2b1-plan.txt"
 type = "text"
 title = "safety-p2-2b1 — תוכנית לאישור (משימות מתקנות)"
+logical_id = "82dcd001-4f10-4d74-98d1-0b05a5301288"
 
 [[outputs]]
 id = "m73l6e1kk0S-9Osb4qt1A"
 uri = "file://.local/plans/safety-p2-2b2-plan.txt"
 type = "text"
 title = "safety-p2-2b2 — תוכנית לאישור (הדרכות + אירועים)"
+logical_id = "f94059b3-b66f-4cf4-82e6-6229e7fd6a08"
 
 [[outputs]]
 id = "YJgErYD_t1yKnoFXwdwys"
 uri = "file://.local/plans/safety-p2-2c-plan.txt"
 type = "text"
 title = "safety-p2-2c — תוכנית לאישור (display-url regen — תעודות + תמונות אירוע)"
+logical_id = "06fd0020-75e8-44b5-bf59-2f09793c0d7a"
 
 [[outputs]]
 id = "Z-BW8WzGTsnEB2XnsanOQ"
 uri = "file://.local/plans/safety-p2-2d-plan.txt"
 type = "text"
 title = "safety-p2-2d — תוכנית לאישור (תעודות הדרכה + תמונות אירוע + שרשרת עובד)"
+logical_id = "97f02201-b20d-465e-9ee4-5aa44540aa4c"
 
 [[outputs]]
 id = "6CnfNSw2X_PuTmp_ytGxW"
 uri = "file://.local/plans/safety-p2-3a-plan.txt"
 type = "text"
 title = "safety-p2-3a — תוכנית (⛔ ממתין אישור)"
+logical_id = "6f967f29-e730-4374-ba84-08dcba1495ba"
 
 [[outputs]]
 id = "D6rOKqTaow-yUp7pkFlnH"
 uri = "file://.local/plans/safety-tabs-top-overview-plan.txt"
 type = "text"
 title = "safety-tabs-top-overview — תוכנית (⛔ ממתין אישור)"
+logical_id = "544574cf-7a03-48d6-af3d-68799ea430ee"
 
 [[outputs]]
 id = "oc-ifmNPay45UuUnbI8Dv"
 uri = "file://.local/plans/safety-global-add-chooser-plan.txt"
 type = "text"
 title = "safety-global-add-chooser — תוכנית (⛔ ממתין אישור)"
+logical_id = "4a73c22d-3e1d-4ff2-9cfd-4b0f4a8e4fe9"
 
 [[outputs]]
 id = "l0UZC92SO_ml_VLU6bA16"
 uri = "file://.local/plans/safety-tab-url-back-nav-plan.txt"
 type = "text"
 title = "safety-tab-url-back-nav — תוכנית (⛔ ממתין אישור)"
+logical_id = "b157d986-8648-4e9e-8384-2244de463ab6"
 
 [[outputs]]
 id = "rHYjstRkD_kVoxH_W1wDT"
 uri = "file://.local/plans/safety-back-arrow-control-plan.txt"
 type = "text"
 title = "safety-back-arrow-control — תוכנית (ממתין תתחיל)"
+logical_id = "cc798d2a-edb3-4390-8d8e-449193080f32"
 
 [[outputs]]
 id = "fB_HzMsNvMuTENiTwrOVf"
 uri = "file://.local/plans/safety-worker-card-plan.txt"
 type = "text"
 title = "safety-worker-card — תוכנית (ממתין תתחיל)"
+logical_id = "30368ea0-957e-470e-b33f-521be7f048ed"
 
 [[outputs]]
 id = "yGBKo8fZ7se_TpOWWzOiS"
 uri = "file://.local/plans/safety-p2-3b-plan.txt"
 type = "text"
 title = "safety-p2-3b — תוכנית סינון אדפטיבי לפי טאב"
+logical_id = "c6b5b173-1d34-44ac-8c9c-96805cf60905"
 
 [[outputs]]
 id = "q9BVkFpn1kQB_4uJDbqbh"
 uri = "file://.local/plans/safety-p2-step3-plan.txt"
 type = "text"
 title = "תוכנית BATCH safety-p2-step3 — הפרדת תיעוד (observation) מליקוי (defect)"
+logical_id = "baedb33d-e4ff-40c8-95a7-a69f76993eb3"
 
 [[outputs]]
 id = "U4XALrHoAvdEtWSoTabJI"
 uri = "file://.local/plans/safety-p2-4a-plan.txt"
 type = "text"
 title = "תוכנית Batch safety-p2-4a — סיורי בטיחות (Backend)"
+logical_id = "f401fc0d-4250-471e-b78b-ead0d14dc995"
 
 [[outputs]]
 id = "LREkKkpoV7Lb1nMavGJ9b"
 uri = "file://.local/plans/safety-p2-4b-plan.txt"
 type = "text"
 title = "תוכנית safety-p2-4b — Safety Tours UI (טאב סיורים + RUNNER)"
+logical_id = "6eaba9fd-a164-46cb-88fc-914a3e3c6124"
 
 [[outputs]]
 id = "D8BDsOgnG7Dwyz1SYMN5O"
 uri = "file://.local/plans/safety-p2-4c-plan.txt"
 type = "text"
 title = "safety-p2-4c — tour signatures + auto-signed + tour PDF — תוכנית"
+logical_id = "5b15b1b2-0a6e-41e2-801f-7fac53ca84a0"
 
 [[outputs]]
 id = "u7SvJrSir27zMQZvG0krV"
 uri = "file://.local/plans/safety-p2-4c-fix1-plan.txt"
 type = "text"
 title = "תוכנית — safety-p2-4c-fix1 (PDF 500 fix)"
+logical_id = "6dadc88a-a937-441d-8363-ded1a8f1a3ed"
 
 [[outputs]]
 id = "MSLG6GDNDCXatxYaVPrPu"
 uri = "file://.local/plans/safety-p2-4c2-plan.txt"
 type = "text"
 title = "תוכנית — safety-p2-4c2 (תמונות פריט שנכשל: PDF + שורה)"
+logical_id = "5f0d0356-4914-4ded-9b6c-290296e82ea5"
 
 [[outputs]]
 id = "cQmu2VgmUazPW2E5Rr7Vw"
 uri = "file://.local/plans/safety-p3a-plan.txt"
 type = "text"
 title = "תוכנית — safety-p3a (כשירות ציוד — backend)"
+logical_id = "b79fb5cf-00c4-4514-a4df-88ee29ab5871"
 
 [[outputs]]
 id = "jd2wi4f8BozizLCRO82Hp"
 uri = "file://.local/plans/safety-p3b-plan.txt"
 type = "text"
 title = "תוכנית מעודכנת — safety-p3b (2 תיקוני Zahi)"
+logical_id = "76afff81-1419-428b-b92c-434b973c10f1"
 
 [[outputs]]
 id = "J9JXtRJTulEg1BhvYCdFk"
 uri = "file://.local/plans/safety-p3b-fix1-plan.txt"
 type = "text"
 title = "תוכנית safety-p3b-fix1 — פריט ציוד בבורר הגלובלי (ממתין לאישור)"
+logical_id = "5432a200-ffc0-42d8-afef-f41275d70a24"
 
 [[outputs]]
 id = "k7JGuvezUOdJ3XFKhhCO5"
 uri = "file://.local/plans/safety-p3b-fix2-plan.txt"
 type = "text"
 title = "תוכנית safety-p3b-fix2 — רישום בדיקה לפריטי קטגוריה מותאמת (ממתין לאישור)"
+logical_id = "58c2e0a6-5069-4dc5-9786-8d2491a34549"
 
 [[outputs]]
 id = "z1a4A93BMcFsTrHs8nI2o"
 uri = "file://.local/plans/safety-p3b-fix3-plan.txt"
 type = "text"
 title = "תוכנית safety-p3b-fix3 — פריט ללא בדיקות נספר כ\"לא תקין\" (STEP 0 תאם — ממתין ל֪֪חיל)"
+logical_id = "a7f4d7e6-31e5-4727-874c-aabaee3737c9"
 
 [[outputs]]
 id = "eMj-yo16A6C5xs0nU3et2"
 uri = "file://.local/plans/safety-p3c-plan.txt"
 type = "text"
 title = "תוכנית safety-p3c — חידוש הדרכה + חתימת עובד (STEP 0 תאם — ממתין ל֪֪חיל)"
+logical_id = "4db8c80f-652c-4f2f-accf-f97801bd3591"
 
 [[outputs]]
 id = "Qb5ob4wk8AivtFMQpZuMV"
 uri = "file://.local/plans/safety-p3c-fix1-plan.txt"
 type = "text"
 title = "PLAN — safety-p3c-fix1: group training renewals (latest + collapse old)"
+logical_id = "572ff134-9fd1-467f-ae3b-ce672de4bff4"
 
 [[outputs]]
 id = "01BRMMGRFsk4DIAZckBEI"
 uri = "file://.local/plans/safety-p3c-fix2-plan.txt"
 type = "text"
 title = "PLAN — safety-p3c-fix2: trainings tab counts groups (current), not records"
+logical_id = "fc4efd12-905b-409d-a044-d98ae045f018"
 
 [[outputs]]
 id = "OCwcPDycuDK01NopcsR4t"
 uri = "file://.local/plans/hotfix-validation-handler-plan.txt"
 type = "text"
 title = "PLAN — hotfix-validation-handler: dev-mode 422 via jsonable_encoder"
+logical_id = "18fc966f-735f-4c9b-8a56-11e7de0334bf"
 
 [[outputs]]
 id = "QoRlDkMLYjNAj3Vb71FJs"
 uri = "file://.local/plans/safety-tabs-overflow-plan.txt"
 type = "text"
 title = "safety-tabs-overflow — Plan (STEP 0 תואם, ui/tabs לא ייגע)"
+logical_id = "9b90ee10-72a5-47b5-ab7f-3e6a98bc799f"
 
 [[outputs]]
 id = "cJbmWZ5R5uRzK5yo8t-pv"
 uri = "file://.local/plans/refactor-safety-split-plan.txt"
 type = "text"
 title = "refactor-safety-split — Plan (BEFORE artifacts מוכנים; ⚠️ הכרעה נדרשת על P-D)"
+logical_id = "409b1b6f-56a2-47b3-a8bf-7dce517d9888"
 
 [[outputs]]
 id = "UZDHzcNJiEzwWcB5btOCn"
 uri = "file://.local/plans/safety-w1-alerts-phase-g-report.txt"
 type = "text"
 title = "PHASE G — safety-w1-alerts: אינוונטר תבניות + המלצה"
+logical_id = "5163b711-b978-4d4a-a915-2bf5189df824"
 
 [[outputs]]
 id = "z07wUW2j57TBtHMID6XcV"
 uri = "file://.local/plans/diary-d1-plan.txt"
 type = "text"
 title = "PLAN — diary-d1: Work Diary backend (יומן עבודה, D1)"
+logical_id = "8c1222e1-cecd-4251-9407-2f6a71864517"
 
 [[outputs]]
 id = "9PbtqUTJ1J5LoURMfqoxW"
 uri = "file://.local/plans/safety-1-7-plan.txt"
 type = "text"
 title = "PLAN — safety-1.7: worker profile photo (ממתין לאישור)"
+logical_id = "ebffb848-6034-4237-97d0-49567ca53870"
 
 [[outputs]]
 id = "5O-RXLOpjBsHC0rBsXbY0"
 uri = "file://.local/plans/diary-d2-plan.txt"
 type = "text"
 title = "PLAN — diary-d2: Work Diary UI (ממתין לאישור)"
+logical_id = "ebffbdbc-7bb4-4a07-8d62-01947bfc8d59"
 
 [[outputs]]
 id = "FcosFeGsYbCgV34kB7g9m"
 uri = "file://.local/plans/diary-d3-plan.txt"
 type = "text"
 title = "PLAN — diary-d3: PDF + תמונות + קריאה לבעלים + paywall"
+logical_id = "33ceb052-3197-40a2-bf14-9ace1eb5b1cd"
 
 [[outputs]]
 id = "JlC2StZCmZI2fLOZIA2vm"
 uri = "file://plan_diary_d3_fix2.txt"
 type = "text"
 title = "תוכנית עבודה — BATCH diary-d3-fix2 (תיקון וולידציית photo_refs ל-S3)"
+logical_id = "f989e684-874f-4fc8-a804-4ae722f7aee9"
 
 [[outputs]]
 id = "UKZlBGj-xSP2k0NQsbFpw"
 uri = "file://plan_safety_1_7.txt"
 type = "text"
 title = "תוכנית עבודה — BATCH safety-1.7 (תמונת פרופיל לעובד)"
+logical_id = "b9148538-831f-4575-bc47-b846d69f813f"
 
 [[outputs]]
 id = "Apy36rMueJbcQgEOFfuwx"
 uri = "file://plan_diary_d4a.txt"
 type = "text"
 title = "Plan — diary-d4a (updated: V1 perf amendment)"
+logical_id = "a3672247-c6f5-4c47-b61f-18389de8a9b2"
 
 [[outputs]]
 id = "OOgWluQINPIrOLLFQjBIT"
 uri = "file://w0_report_diary_d4b.txt"
 type = "text"
 title = "W0 report — diary-d4b IMS source inventory"
+logical_id = "a6ef6445-d714-4a7a-8a34-eeb244930c4e"
 
 [[outputs]]
 id = "14usuvwsBSXGlW53M-BGW"
 uri = "file://plan_diary_d4b.txt"
 type = "text"
 title = "תוכנית W1 — diary-d4b (תואמת ל-spec v3)"
+logical_id = "8292c65f-933f-41db-90aa-1473dbc7be70"
 
 [[outputs]]
 id = "Iiri1gaCvx4J4M6L65p66"
 uri = "file://plan_safety_w1_alerts.txt"
 type = "text"
 title = "PLAN v2 — safety-w1-alerts: התראות תפוגה + opt-out פר-משתמש"
+logical_id = "c96f8975-839d-40ad-b9f1-1f685813a2a3"
 
 [[outputs]]
 id = "6ZMgEqLf_TPBz776Ww91O"
 uri = "file://plan_safety_ind1.txt"
 type = "text"
 title = "PLAN — BATCH safety-ind1"
+logical_id = "00fe8593-3a02-4ad6-91e0-75034facef5f"
 
 [[outputs]]
 id = "sNC4p9-a9JyiKgF587NKO"
 uri = "file://plan_qr_gate.txt"
 type = "text"
 title = "PLAN — GATE qr-scan-diagnostic"
+logical_id = "7b5c5573-fdc9-4811-bd9f-760562036800"
 
 [[outputs]]
 id = "hYsWKw9lcCA-rUoEK8Qb0"
 uri = "file://qr_diagnostic_report.txt"
 type = "text"
 title = "qr_diagnostic_report — GATE qr-scan-diagnostic"
+logical_id = "bd092146-b320-42d5-b8c9-e9e10e2d1add"
 
 [[outputs]]
 id = "4K_UrZ8FG_Z0B5kG1MwPU"
 uri = "file://plan_safety_ind2.txt"
 type = "text"
 title = "תוכנית — BATCH safety-ind2 (ביצוע הדרכת אתר IND-2)"
+logical_id = "4bfba23b-fb8f-481c-b8e8-492934221d2b"
 
 [[outputs]]
 id = "OTQZPuu8liZiqiQbFCrRg"
 uri = "file://plan_fix_annotation_ios_text.txt"
 type = "text"
 title = "PLAN — BATCH fix-annotation-ios-text v2.1"
+logical_id = "1d429f3f-953d-4326-ae62-0d3e56348413"
 
 [[outputs]]
 id = "jmfwKah95w_s4Cah4F5I_"
 uri = "file://plan_fix_annotation_ios_text_3.txt"
 type = "text"
 title = "תוכנית — BATCH fix-annotation-ios-text-3"
+logical_id = "b3e64b73-a7a0-4b4e-88f0-457eda9237c6"
 
 [[outputs]]
 id = "y1VGZFKgX7_kjUKGRMlDb"
 uri = "file://plan_billing_contracted_binds.txt"
 type = "text"
 title = "תוכנית — BATCH billing-contracted-binds"
+logical_id = "49d80666-0ee8-479d-aa84-e976b358d9da"
 
 [[outputs]]
 id = "XjX0ehACCAtLRmoIWNuDr"
 uri = "file://billing-contracted-binds-v2.diff.txt"
 type = "text"
 title = "Diff מלא — BATCH billing-contracted-binds v2"
+logical_id = "297ad79f-9371-493f-98e9-d32fdc1c5582"
 
 [[outputs]]
 id = "aMxVX7Rv2KuV13EmH9Aft"
 uri = "file://attached_assets/cert_sample_he.pdf"
 type = "pdf"
 title = "דוגמה — תעודה בעברית"
+logical_id = "63a85a8c-aa76-4f8a-95e0-a343c1e3b010"
 
 [[outputs]]
 id = "mqZitfvC_duvIt1a86fwf"
 uri = "file://attached_assets/cert_sample_zh.pdf"
 type = "pdf"
 title = "דוגמה — תעודה בסינית"
+logical_id = "711f0d90-e999-4262-a3ac-7bf8a4382e17"
 
 [[outputs]]
 id = "BgVuc5QfkDWnBTVSe03wh"
 uri = "file://attached_assets/cert_sample_en.pdf"
 type = "pdf"
 title = "דוגמה — תעודה באנגלית"
+logical_id = "59b9dcea-f5cd-43f2-85af-8171d359849a"
 
 [[outputs]]
 id = "evfR6AJzNpu9NixdJN6Dt"
 uri = "file://attached_assets/cert_sample_ru.pdf"
 type = "pdf"
 title = "דוגמה — תעודה ברוסית"
+logical_id = "5a2ccf3e-fd84-4aaa-96a3-afb1ba6a0114"
 
 [[outputs]]
 id = "LPgR4exMWOuu4aL0D7TCP"
 uri = "file://attached_assets/cert_sample_ar.pdf"
 type = "pdf"
 title = "דוגמה — תעודה בערבית"
+logical_id = "c1aa0e6d-3068-4d1c-83f7-382ee771e2f7"
 
 [[outputs]]
 id = "o5w-TRF3V0ETOyv3JEd5r"
 uri = "file://screenshots/qrg_guest_briefing.jpg"
 type = "image"
 title = "Guest briefing + signature page"
+logical_id = "eee9e3cf-6ef5-42d0-8efd-9e99651c6bee"
 
 [[outputs]]
 id = "yDYOIv97RBvUtyoIYoeZD"
 uri = "file://screenshots/qrg_guest_green.jpg"
 type = "image"
 title = "Guest GREEN — approved for today"
+logical_id = "390d211f-a315-4c86-8e9d-a7548dcc1bf4"
 
 [[outputs]]
 id = "efTTS1-7YTEp8SSxYvg7p"
 uri = "file://screenshots/qrg_guest_red_date.jpg"
 type = "image"
 title = "Guest RED — wrong date"
+logical_id = "5ae36d9c-aae2-4dbe-b5b7-50e664e8daec"
 
 [[outputs]]
 id = "rT4pTjWHd4C8IFTAW6wiy"
 uri = "file://screenshots/qrg_share_fix_gate_green.jpg"
 type = "image"
 title = "Green pass page with its own QR"
+logical_id = "72dd059e-a013-4cae-b55d-5c1cff506821"
 
 [[outputs]]
 id = "NOEJQa57iuctJ-XLN5RNh"
 uri = "file://screenshots/qrg_ux1_overview_guests.jpg"
 type = "image"
 title = "Safety overview tab (סקירה) after the change"
+logical_id = "e584ff3c-d614-4a00-b68d-61cb0c1983c5"
 
 [[outputs]]
 id = "0qfIZEmlMcYT88PglPb-_"
 uri = "file://screenshots/visual-auth-fix1-login-top-390.jpg"
 type = "image"
 title = "FIX1 — crane now visible (top-area crop, 390px)"
+logical_id = "e6ef1409-9c1e-4116-afa3-49a04c8f8794"
 
 [[outputs]]
 id = "0pWBQPLeIQMNoLE7inXWU"
@@ -872,6 +1016,7 @@ uri = "file://plan_batch_578.md"
 type = "text"
 title = "תוכנית עבודה — BATCH #578"
 description = "תוכנית מסודרת לתיקון Google Sign-In נייטיבי באנדרואיד: הסרת scopes מיותר + העלאת גרסה ל-25. ממתין ל'תתחיל'."
+logical_id = "0d8b1922-979e-4631-ab59-7ba99a6dd066"
 
 [[outputs]]
 id = "fLcqYyyRGgXjwcPKTJbAR"
@@ -879,6 +1024,7 @@ uri = "file://plan_batch_579.md"
 type = "text"
 title = "תוכנית עבודה — BATCH #579"
 description = "קישורי הורדה לחנויות (device-aware, web only) בכרטיסי ההרשמה וההתחברות. ממתין ל'תתחיל'."
+logical_id = "33de5a16-5536-4abf-91b8-d13711eb2368"
 
 [[outputs]]
 id = "p3s-dOv-r65KX67x4V6ge"
@@ -886,6 +1032,7 @@ uri = "file://plan_batch_582.md"
 type = "text"
 title = "תוכנית BATCH #582"
 description = "STEP 0 מלא, כולל הממצא שה-API מסנן את channel וה-passthrough המינימלי הנדרש. ממתין ל'תתחיל'."
+logical_id = "2f2d3d53-319a-4406-b826-598aff40bebe"
 
 [[outputs]]
 id = "iCEF_DK3lCMfP6jwPD39q"
@@ -893,3 +1040,18 @@ uri = "file://plan_batch_583.md"
 type = "text"
 title = "תוכנית BATCH #583"
 description = "STEP 0 מלא, כולל ממצא שאין כיום expanded-row pattern והיישום המינימלי לפי E3. ממתין ל'תתחיל'."
+logical_id = "4cba6361-413b-41fa-8de1-3c6217499d94"
+
+[[outputs]]
+id = "NKHloylJmc1Q5dTaSi7-R"
+uri = "file://plan_batch_584.txt"
+type = "text"
+title = "תוכנית BATCH #584"
+description = "תוכנית STEP 0 ו-E1–E4 בקובץ TXT, כולל ה-mismatch של plans_router והאימותים V1–V5. לא בוצעו שינויי קוד."
+logical_id = "a4752527-251a-494f-9d74-a771b5abe93c"
+content_hash = "sha256:4396efd3b0e2ad7e88ad1bcbdcdfc71906d80d4f8c33a47c47cd071fc6e10b08"
+size = 9302
+mtime_ms = 1788276586417
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/a4752527-251a-494f-9d74-a771b5abe93c/16dea409-6ade-456a-80d4-6f8e47250889"
+storage_version_token = "1788276595308957"
+content_type = "text/plain"

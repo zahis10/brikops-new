@@ -1,0 +1,290 @@
+BATCH #584 — תוכנית עבודה
+Real "last seen" presence: team-activity + admin recency
+========================================================
+
+תאריך: 2026-09-01
+Branch: staging
+Base: 14ad351 (תואם HEAD; workspace נקי)
+Scope מתוכנן: BACKEND בלבד, 4 קבצים:
+1. backend/contractor_ops/router.py
+2. backend/contractor_ops/stats_router.py
+3. backend/contractor_ops/admin_analytics.py
+4. backend/contractor_ops/admin_dashboard.py
+
+
+STEP 0 — ממצאים
+================
+
+1. get_current_user — router.py:184-222
+----------------------------------------
+
+הפונקציה:
+- דורשת credentials.
+- מפענחת JWT ובודקת issuer, exp/iat ו-secret_version.
+- שולפת user לפי payload['user_id'].
+- דוחה user חסר.
+- דוחה pending_pm_approval.
+- דוחה suspended.
+- משווה session_version ומבטלת session ישן.
+- מוסיפה ל-user את _jwt_sv ו-_jwt_exp.
+- דוחה pending_deletion.
+- מסתיימת ב-return user יחיד.
+
+הנקודה להוספת presence stamp היא אחרי בדיקת pending_deletion ולפני:
+
+    return user
+
+הפונקציה האחות get_current_user_allow_pending_deletion מתחילה מיד אחריה
+ואינה חלק מה-scope.
+
+router.py כבר מייבא:
+
+    from datetime import datetime, timezone, timedelta
+
+לכן אין צורך בשינוי imports.
+
+
+2. team-activity — stats_router.py
+----------------------------------
+
+Projection המשתמשים הנוכחי:
+
+    {'_id': 0, 'id': 1, 'name': 1, 'role': 1, 'last_login_at': 1}
+
+חישוב recency הנוכחי:
+
+    login_days_ago = None
+    last_login = u.get('last_login_at')
+    if last_login:
+        try:
+            login_dt = datetime.fromisoformat(last_login.replace('Z', '+00:00'))
+            login_days_ago = max(0, (now - login_dt).days)
+        except Exception:
+            pass
+
+הערך ממשיך ל-metrics['login_days_ago'], לחישובי הפעילות ולטקסט
+last_login_relative ("היום" / "אתמול" / "לפני N ימים").
+
+
+3. admin_analytics.py — קריאות last_login_at
+---------------------------------------------
+
+שורות שנמצאו:
+- :93 — projection כולל last_login_at + login_count.
+- :113 — מיון last_login ממופה ל-last_login_at.
+- :123 — scoring קורא u.get('last_login_at').
+- :212 — recency פר משתמש קורא u.get('last_login_at').
+- :240 — output בשם last_login מחזיר u.get('last_login_at').
+
+כל המקומות האלה צריכים להשתמש בערך המאוחר מבין last_seen_at /
+last_login_at, בלי לשנות שמות output או נוסחאות scoring.
+
+
+4. admin_dashboard.py — קריאות last_login_at
+---------------------------------------------
+
+שורות שנמצאו:
+- :106 — projection משתמשים כולל last_login_at.
+- :108 — user_login_map נבנה מ-u.get('last_login_at').
+
+לאחר מכן org_last_login הוא max של ערכי המשתמשים, ומזין:
+- _churn_status
+- org_rows[].last_login
+- alerts[].last_login
+- days_inactive
+
+כל שמות ה-output וה-thresholds נשארים ללא שינוי.
+
+
+5. mismatch שנמצא ב-grep last_seen_at
+--------------------------------------
+
+הספק ציפה ל-0 תוצאות, אך נמצאו:
+
+    backend/contractor_ops/plans_router.py:272
+        '$set': {'last_seen_at': ts, 'project_id': project_id},
+
+    backend/contractor_ops/plans_router.py:336
+        'last_seen_at': r.get('last_seen_at', ''),
+
+אלה שימושים קיימים בתחום plans read tracking, לא users.last_seen_at.
+לכן הם נראים בלתי קשורים ואינם דורשים שינוי, אך לפי כלל ה-mismatch
+נדרש אישור מפורש שזה אינו חוסם לפני תחילת הקידוד.
+
+
+תוכנית העריכות
+==============
+
+E1 — router.py: presence stamp ב-get_current_user בלבד
+------------------------------------------------------
+
+מיד לפני return user, אחרי שכל בדיקות הסטטוס עברו:
+
+    # Presence stamp (best-effort, throttled): real "last seen" for
+    # team-activity / admin recency. Never blocks or fails auth.
+    try:
+        _seen_raw = user.get('last_seen_at')
+        _stale = True
+        if _seen_raw:
+            _seen_dt = datetime.fromisoformat(str(_seen_raw).replace('Z', '+00:00'))
+            _stale = (datetime.now(timezone.utc) - _seen_dt) > timedelta(minutes=10)
+        if _stale:
+            _now_iso = datetime.now(timezone.utc).isoformat()
+            await db.users.update_one(
+                {'id': user['id']},
+                {'$set': {'last_seen_at': _now_iso}},
+            )
+            user['last_seen_at'] = _now_iso
+    except Exception:
+        pass
+
+מאפיינים מחייבים:
+- לכל היותר write אחד למשתמש בכל 10 דקות.
+- best-effort; כל exception נבלע.
+- auth result נשאר זהה.
+- משתמשים pending/suspended/pending_deletion לא מגיעים ל-stamp.
+- לא נוגעים ב-get_current_user_allow_pending_deletion.
+
+
+E2 — stats_router.py: later-of לשימוש ב-team activity
+-----------------------------------------------------
+
+1. להוסיף last_seen_at ל-projection.
+2. להחליף רק את חישוב login_days_ago:
+
+    _candidates = []
+    for _k in ('last_seen_at', 'last_login_at'):
+        _v = u.get(_k)
+        if _v:
+            try:
+                _candidates.append(
+                    datetime.fromisoformat(str(_v).replace('Z', '+00:00'))
+                )
+            except Exception:
+                pass
+    login_days_ago = (
+        max(0, (now - max(_candidates)).days)
+        if _candidates else None
+    )
+
+כל מה שממשיך אחרי החישוב נשאר ללא שינוי:
+- metrics['login_days_ago']
+- score/status
+- last_login_relative
+- שמות שדות ה-response
+
+
+E3 — admin_analytics.py: later-of בכל קריאות ה-recency
+------------------------------------------------------
+
+1. להוסיף last_seen_at ל-projection.
+2. לחשב לכל user את הערך המאוחר מבין last_seen_at / last_login_at.
+3. להשתמש בערך המאוחר עבור:
+   - sort של last_login
+   - login recency score
+   - login_days_ago
+   - output key בשם last_login
+4. לא לשנות:
+   - output key names
+   - login_count
+   - _compute_admin_score
+   - _compute_admin_status
+   - thresholds/formulas
+
+
+E4 — admin_dashboard.py: later-of ל-org recency/churn
+-----------------------------------------------------
+
+1. להוסיף last_seen_at ל-projection המשתמשים.
+2. לבנות את מפת ה-recency של כל user מהמאוחר מבין שני השדות.
+3. org_last_login ימשיך להיות max בין חברי הארגון, אך על הערך המשולב.
+4. _churn_status, org output ו-alert output יישארו ללא שינוי בשמות ובמבנה.
+
+
+מה לא משתנה
+============
+
+- אין שינוי ב-login endpoints.
+- אין שינוי בכתיבות last_login_at או במשמעות השדה.
+- אין שינוי ב-login_count.
+- אין שינוי ב-get_current_user_allow_pending_deletion.
+- אין שינוי בנוסחאות/thresholds של activity/churn/status.
+- אין frontend.
+- אין endpoints/indexes/dependencies חדשים.
+- אין נגיעה ב-plans_router.py או ב-last_seen_at של plans read tracking.
+
+
+אימות
+=====
+
+V1 — Backend tests
+------------------
+להריץ את הסוויטות הקיימות שנוגעות ב-auth/stats/admin:
+
+    pytest backend/tests -k "auth or stats or admin"
+
+אם יהיו כשלים, להשוות ל-base 14ad351 ולהוכיח אילו pre-existing.
+
+
+V2 — הוכחת throttle ב-dev DB
+-----------------------------
+
+עם משתמש PM ו-GET /auth/me:
+1. קריאה ראשונה: users.last_seen_at נכתב.
+2. קריאה שנייה תוך פחות מדקה: timestamp נשאר זהה.
+3. עדכון last_seen_at ישירות ל-20 דקות אחורה.
+4. קריאה נוספת: timestamp מתעדכן.
+
+להציג את שלושת timestamps הרלוונטיים בלי לחשוף token/credentials.
+
+
+V3 — team-activity
+------------------
+
+להוכיח:
+1. last_login_at לפני 7 ימים + last_seen_at עכשיו → "היום".
+2. אין last_seen_at + last_login_at לפני 3 ימים → "לפני 3 ימים".
+3. אין אף אחד מהשדות → None.
+
+
+V4 — Admin
+-----------
+
+- analytics/dashboard payloads עדיין תקינים.
+- לפחות org אחד מחזיר last_login לפי last_seen_at כאשר הוא המאוחר.
+- churn/status/output key names נשארים זהים.
+
+
+V5 — Scope
+-----------
+
+ה-diff חייב לכלול בדיוק:
+- router.py
+- stats_router.py
+- admin_analytics.py
+- admin_dashboard.py
+
+grep של diff עבור last_login_at:
+- אין הסרת writes.
+- רק projections/reads משתנים.
+
+
+תוצרים
+======
+
+1. review.txt:
+   - ציטוטי STEP 0
+   - diff מלא
+   - ראיות V1-V5
+   - סיום מדויק:
+     AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+2. .local/.commit_message לפי הנוסח בספק.
+
+
+סטטוס
+======
+
+עוצר כאן. אין שינויי קוד.
+ממתין לאישור שהשימושים הקיימים ב-plans_router.py אינם חוסמים,
+ולאחר מכן ל-"תתחיל".
