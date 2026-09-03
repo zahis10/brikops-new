@@ -862,6 +862,24 @@ export default function ProjectDashboardPage() {
         </div>
         )}
 
+        <DashboardFoldSection
+          id="spare-tiles"
+          projectId={projectId}
+          icon={Construction}
+          iconColor="text-amber-600"
+          title="ריצוף ספייר"
+          summary="פרופילים ומלאי"
+        >
+          <button
+            onClick={() => navigate(`/projects/${projectId}/spare-tiles`)}
+            className="w-full bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 text-right hover:border-amber-300 hover:bg-amber-50/30 transition-all"
+          >
+            <span className="p-2.5 bg-amber-100 text-amber-700 rounded-xl"><Construction className="w-5 h-5" /></span>
+            <span className="flex-1 min-w-0"><span className="block font-bold text-slate-800">ריצוף ספייר</span><span className="block text-xs text-slate-500 mt-0.5">הגדרת פרופילים, יעדים ושיוך דירות</span></span>
+            <ChevronLeft className="w-5 h-5 text-slate-300" />
+          </button>
+        </DashboardFoldSection>
+
         {isPmOrOwner && (
         <div ref={el => { foldRefs.current['team'] = el; }}>
           <DashboardFoldSection

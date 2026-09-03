@@ -15,6 +15,7 @@ from contractor_ops.schemas import (
     Project, Building, Floor, Unit, Task,
     BulkFloorRequest, BulkUnitRequest, InsertFloorRequest,
 )
+from contractor_ops.spare_tiles import compute_spare_status, default_spare_settings
 
 router = APIRouter(prefix="/api")
 
@@ -1215,6 +1216,17 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
         s = t.get('status', 'open')
         by_status[s] = by_status.get(s, 0) + 1
 
+    spare_settings = (
+        project.get('spare_settings')
+        if project and project.get('spare_settings')
+        else default_spare_settings()
+    )
+    spare_status = compute_spare_status(unit, spare_settings)
+    spare_can_write = (
+        await _get_project_role(user, project_id) in ('project_manager', 'owner', 'management_team')
+        if project_id else False
+    )
+
     return {
         'unit': {
             **unit,
@@ -1223,6 +1235,10 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
         'floor': {'id': floor['id'], 'name': floor.get('name', '')} if floor else None,
         'building': {'id': building['id'], 'name': building.get('name', '')} if building else None,
         'project': {'id': project['id'], 'name': project.get('name', ''), 'code': project.get('code', '')} if project else None,
+        'spare_settings': spare_settings,
+        'spare_profiles_exist': bool(spare_settings.get('profiles')),
+        'spare_status': spare_status,
+        'spare_can_write': spare_can_write,
         'kpi': {
             'total': len(tasks),
             'open': by_status.get('open', 0) + by_status.get('assigned', 0) + by_status.get('reopened', 0),

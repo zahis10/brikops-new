@@ -79,6 +79,7 @@ const HandoverSectionPage = React.lazy(() => import('./pages/HandoverSectionPage
 const SafetyHomePage = React.lazy(() => import('./pages/SafetyHomePage'));
 const SafetyProjectRegistrationPage = React.lazy(() => import('./pages/SafetyProjectRegistrationPage'));
 const WorkDiaryPage = React.lazy(() => import('./pages/WorkDiaryPage'));
+const SpareTilesPage = React.lazy(() => import('./pages/SpareTilesPage'));
 
 const INTENDED_PATH_KEY = 'intendedPath';
 
@@ -412,6 +413,10 @@ const AppRoutes = () => {
               <ProjectDashboardPage />
             </ProtectedRoute>
           }
+        />
+        <Route
+          path="/projects/:projectId/spare-tiles"
+          element={<ProtectedRoute><SpareTilesPage /></ProtectedRoute>}
         />
         <Route
           path="/projects/:projectId/floors/:floorId"

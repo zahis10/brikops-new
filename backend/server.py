@@ -533,6 +533,9 @@ app.include_router(auth_router)
 from contractor_ops.projects_router import router as projects_router
 app.include_router(projects_router)
 
+from contractor_ops.spare_tiles_router import router as spare_tiles_router
+app.include_router(spare_tiles_router)
+
 from contractor_ops.tasks_router import router as tasks_router
 app.include_router(tasks_router)
 

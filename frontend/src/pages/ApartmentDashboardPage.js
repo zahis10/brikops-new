@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { unitService } from '../services/api';
+import { unitService, spareTilesService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
@@ -123,6 +123,7 @@ const ApartmentDashboardPage = () => {
   const [spareTilesEntries, setSpareTilesEntries] = useState([]);
   const [spareTilesSaving, setSpareTilesSaving] = useState(false);
   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
+  const spareCanWrite = unitData?.spare_can_write === true;
   const flagChecked = !!features?.defects_v2;
 
   useEffect(() => {
@@ -214,8 +215,10 @@ const ApartmentDashboardPage = () => {
   }, [flagChecked, loadUnit, loadTasks]);
 
   const SPARE_TILES_BASE_TYPES = useMemo(() => [
-    'ריצוף יבש', 'ריצוף מרפסות', 'חיפוי אמבטיות', 'ריצוף אמבטיות', 'חיפוי מטבח',
-  ], []);
+    ...(unitData?.spare_profiles_exist
+      ? (unitData?.spare_settings?.categories || []).map(category => category.name)
+      : ['ריצוף יבש', 'ריצוף מרפסות', 'חיפוי אמבטיות', 'ריצוף אמבטיות', 'חיפוי מטבח']),
+  ], [unitData?.spare_profiles_exist, unitData?.spare_settings]);
 
   const startSpareTilesEdit = useCallback(() => {
     const u = unitData?.unit;
@@ -273,6 +276,22 @@ const ApartmentDashboardPage = () => {
       setSpareTilesSaving(false);
     }
   }, [unitId, spareTilesEntries]);
+
+  const changeSpareProfile = useCallback(async (nextProfileId) => {
+    const currentProfileId = unitData?.unit?.spare_profile_id;
+    if (nextProfileId === (currentProfileId || '')) return;
+    try {
+      if (nextProfileId) {
+        await spareTilesService.patchSpareProfileUnits(projectId, nextProfileId, { add: [unitId], remove: [] });
+      } else if (currentProfileId) {
+        await spareTilesService.patchSpareProfileUnits(projectId, currentProfileId, { add: [], remove: [unitId] });
+      }
+      await loadUnit();
+      toast.success('פרופיל ריצוף הספייר עודכן');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'עדכון הפרופיל נכשל');
+    }
+  }, [loadUnit, projectId, unitData, unitId]);
 
   useEffect(() => {
     setFilters(prev => {
@@ -624,6 +643,71 @@ const ApartmentDashboardPage = () => {
         </div>
       )}
 
+      {unitData.spare_profiles_exist && (
+        <div className="max-w-lg mx-auto px-4 mt-3">
+          <div className="bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden">
+            <button
+              onClick={() => setSpareTilesOpen(!spareTilesOpen)}
+              className="w-full flex items-center justify-between p-3 text-right"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-slate-700">ריצוף ספייר</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                  unitData.spare_status?.overall === 'short' ? 'bg-red-500 text-white' :
+                  unitData.spare_status?.overall === 'borderline' ? 'bg-amber-500 text-white' :
+                  unitData.spare_status?.overall === 'ok' ? 'bg-green-500 text-white' : 'bg-slate-400 text-white'
+                }`}>
+                  {unitData.spare_status?.overall === 'short' ? 'חסר — להזמין' :
+                    unitData.spare_status?.overall === 'borderline' ? 'גבולי' :
+                    unitData.spare_status?.overall === 'ok' ? 'מספיק' :
+                    unitData.spare_status?.overall === 'no_profile' ? 'אחר' : 'לא הוזן'}
+                </span>
+              </div>
+              {spareTilesOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+            </button>
+            {spareTilesOpen && (
+              <div className="px-4 pb-4">
+                <div className="text-xs text-slate-500 mb-3 pb-2 border-b border-slate-100">
+                  {spareCanWrite ? (
+                    <label className="flex items-center gap-2">פרופיל:
+                      <select value={unit.spare_profile_id || ''} onChange={e => changeSpareProfile(e.target.value)} className="border border-slate-200 rounded-md px-2 py-1 text-xs">
+                        <option value="">אחר</option>
+                        {(unitData.spare_settings?.profiles || []).map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                      </select>
+                    </label>
+                  ) : (unitData.spare_status?.profile?.name ? `פרופיל: ${unitData.spare_status.profile.name}` : 'דירה ללא פרופיל — ניתן לעדכן מלאי בלבד')}
+                </div>
+                {Array.isArray(unitData.spare_status?.categories) && (
+                  <div className="space-y-1.5 mb-3">
+                    {unitData.spare_status.categories.map((row, idx) => (
+                      <div key={`${row.type}-${idx}`} className="flex items-center gap-2 text-xs">
+                        <span className="flex-1 font-medium text-slate-700">{row.name || row.type}</span>
+                        <span className="text-slate-500">{row.actual ?? row.entered ?? 0} / {row.target || '—'} {row.measure === 'tiles' ? 'אריחים' : row.measure === 'cartons' ? 'קרטונים' : row.measure === 'sqm' ? 'מ"ר' : ''}</span>
+                        {row.target > 0 && <span className="w-12 bg-slate-100 rounded-full h-1.5 overflow-hidden"><span className={`block h-full rounded-full ${row.status === 'short' ? 'bg-red-500' : row.status === 'borderline' ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${Math.min(100, ((row.actual ?? row.entered ?? 0) / row.target) * 100)}%` }} /></span>}
+                        <span className={`w-2 h-2 rounded-full ${row.status === 'short' ? 'bg-red-500' : row.status === 'borderline' ? 'bg-amber-500' : row.status === 'ok' ? 'bg-green-500' : 'bg-slate-300'}`} />
+                        <span className="w-14 text-[10px] text-slate-500">{row.status === 'short' ? `חסר ${row.missing || 0}` : row.status === 'borderline' ? 'גבולי' : row.status === 'ok' ? 'מספיק' : row.status === 'no_target' ? 'ללא יעד' : 'לא הוזן'}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {spareTilesEditing ? (
+                  <div className="space-y-3">
+                    {spareTilesEntries.map((entry, idx) => (
+                      <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
+                        <div className="flex items-center justify-between"><span className="text-xs font-semibold text-slate-700">{entry.type}</span>{!entry.isBase && <button type="button" onClick={() => setSpareTilesEntries(prev => prev.filter((_, i) => i !== idx))} className="p-1 text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>}</div>
+                        <div className="flex gap-2 items-end"><label className="w-24 text-[10px] text-slate-500">כמות<input type="number" min="0" value={entry.count} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: e.target.value } : en))} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" />{(() => { const measure = (unitData.spare_settings?.categories || []).find(c => c.name === entry.type)?.measure; return <span className="block mt-0.5 text-[10px] text-slate-400">{measure === 'tiles' ? 'אריחים' : measure === 'cartons' ? 'קרטונים' : measure === 'sqm' ? 'מ"ר' : ''}</span>; })()}</label><label className="flex-1 text-[10px] text-slate-500">הערות<input type="text" value={entry.notes} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, notes: e.target.value } : en))} maxLength={500} placeholder="הערה..." className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /></label></div>
+                      </div>
+                    ))}
+                    {spareTilesEntries.length < 20 && <button type="button" onClick={() => { const name = window.prompt('שם סוג ריצוף חדש:'); if (!name?.trim()) return; const trimmed = name.trim().slice(0, 50); if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) { toast.error('סוג ריצוף כבר קיים'); return; } setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', isBase: false }]); }} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Plus className="w-3.5 h-3.5" />הוסף סוג ריצוף</button>}
+                    <div className="flex gap-2"><button onClick={saveSpareTiles} disabled={spareTilesSaving} className="flex-1 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium">{spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin inline" /> : 'שמור'}</button><button onClick={() => setSpareTilesEditing(false)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600">ביטול</button></div>
+                  </div>
+                ) : spareCanWrite && <button onClick={startSpareTilesEdit} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Pencil className="w-3.5 h-3.5" />עדכון מלאי</button>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {!unitData.spare_profiles_exist && (
       <div className="max-w-lg mx-auto px-4 mt-3">
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <button
@@ -772,6 +856,7 @@ const ApartmentDashboardPage = () => {
           )}
         </div>
       </div>
+      )}
 
       <div className="max-w-lg mx-auto px-4 mt-4 space-y-2">
         <div className="flex gap-2">

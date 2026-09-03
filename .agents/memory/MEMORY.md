@@ -7,3 +7,4 @@
 - [Day-dependent probe failures](probe-day-dependent-failures.md) — reminder-day prefs exclude Friday; alert-send probes fail Fri/Sat with day_N_not_in_user_days, not a regression.
 - [Dev preview for safety UI](dev-preview-safety.md) — safety routers off by default (ENABLE_SAFETY_MODULE in backend/.env); build bakes API URL; UI login blocks short seed passwords — inject token instead.
 - [yarn.lock Replit proxy URLs](yarn-lock-replit-proxy.md) — deps installed inside Replit resolve via package-firewall.replit.local; rewrite to registry.npmjs.org before review or external CI builds fail.
+- [Spare-profile write serialization](spare-profile-write-serialization.md) — serialize settings and assignments with a non-stealable project mutex; integrity wins over crash auto-recovery.

@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH #584 — review.txt"
-description = "STEP 0 evidence, complete diff, verification results, and final approval gate. No commit or deploy was performed."
+title = "BATCH #585 — review.txt"
+description = "STEP 0, complete source/test diff, V1–V6 verification evidence, architect PASS, and approval gate. No commit or deploy was performed."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:a83d9e58ffc24235c106298cf493ca2060006a10d3ece11d397e62f29e59810c"
-size = 17458
-mtime_ms = 1788277494086
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/c0eecd07-8354-4e95-ad9d-59fae82dc613"
-storage_version_token = "1788277515011902"
+content_hash = "sha256:2b02b207d2ed319571bff2ea9d7fc1823b17c2cdaecac0fb9e29855704059e28"
+size = 111059
+mtime_ms = 1788441574855
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/8e92833a-38da-4dac-a3a0-e46fdbc7d277"
+storage_version_token = "1788441614762667"
 content_type = "text/plain"
 
 [[outputs]]

@@ -1067,6 +1067,25 @@ export const unitService = {
   },
 };
 
+export const spareTilesService = {
+  async getSpareSettings(projectId) {
+    const response = await axios.get(`${API}/projects/${projectId}/spare-settings`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async saveSpareSettings(projectId, settings) {
+    const response = await axios.put(`${API}/projects/${projectId}/spare-settings`, settings, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async getSpareAssignments(projectId, buildingId) {
+    const response = await axios.get(`${API}/projects/${projectId}/spare-assignments`, { headers: getAuthHeader(), params: buildingId ? { building_id: buildingId } : {} });
+    return response.data;
+  },
+  async patchSpareProfileUnits(projectId, profileId, body) {
+    const response = await axios.patch(`${API}/projects/${projectId}/spare-profiles/${profileId}/units`, body, { headers: getAuthHeader() });
+    return response.data;
+  },
+};
+
 export const archiveService = {
   async archiveBuilding(buildingId, reason) {
     const response = await axios.post(`${API}/buildings/${buildingId}/archive`, { reason }, { headers: getAuthHeader() });

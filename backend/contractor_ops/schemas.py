@@ -189,6 +189,7 @@ class Unit(BaseModel):
     spare_tiles_count: Optional[int] = None
     spare_tiles_notes: Optional[str] = None
     spare_tiles: Optional[List[Dict]] = None
+    spare_profile_id: Optional[str] = None
     created_at: Optional[str] = None
 
 
