@@ -1313,7 +1313,15 @@ FIX-2 — Made overall spare-status computation total for a valid profile with z
 
 FIX-3 — Corrected profile-aware unit-card rendering for missing inventory: a not_entered row shows an em dash for actual quantity and does not render progress; no_target is labeled ללא יעד.
 
-FIX-4 — Reconciled legacy editor parity with mandatory inventory preservation. The no-profile branch retains unchanged legacy presentation: the five original fixed base categories appear in their original order and custom inventory types remain visible. To preserve existing spare_tiles exactly, untouched synthetic zero rows are omitted from the save payload; this prevents their introduction into legacy inventory while retaining the original array order, notes, counts, and aggregate fields. In profile-aware editing, configured categories remain distinguished from custom entries so a deleted configured category reopens as a custom entry.
+FIX-4 — Reconciled legacy editor parity with mandatory inventory preservation. The no-profile branch retains unchanged legacy presentation: the five original fixed base categories appear in their original order and custom inventory types remain visible. To preserve existing spare_tiles exactly, untouched synthetic zero rows are omitted from the save payload; this prevents their introduction into legacy inventory while retaining the original array order, notes, counts, and aggregate fields.
+
+LATEST CORRECTION — 2026-09-03
+==============================
+Scope: ApartmentDashboardPage.js only.
+
+The profile-aware editor now uses a configured-first merge algorithm. Configured categories are shown in spare_settings.categories settings order. Each persisted matching entry carries its originalIndex. A missing configured category is represented as a synthetic count-0 row and has shouldPersist only when the unit has no saved entries. Persisted nonconfigured rows are appended after configured rows as custom rows. Save logic is otherwise unchanged.
+
+This correction preserves profile-aware configured-category visibility without changing an existing unit's inventory merely because a configuration category has no persisted entry. It also preserves the legacy/no-profile behavior described above.
 
 CODE ARCHITECTURE REVIEW
 ========================
@@ -1326,7 +1334,7 @@ V1 — Focused pure-helper tests: PASS — 17 tests passed. Coverage includes st
 
 V2/V3 — Live real HTTP probe: PASS — 60/60 checks passed. The probe exercised viewer/PM/owner RBAC, defaults, settings save/conflict/deletion guard, explicit add/move/remove, ordering, audit actions, unit-detail compatibility and profile-aware status.
 
-V4 — Final frontend build: PASS — CI=true build completed successfully. The only output warnings were the pre-existing Apple source-map warnings.
+V4 — Final frontend build: PASS — CI=true build completed successfully. The only output warnings were the existing Apple source-map warnings.
 
 V5 — Mobile acceptance: PASS — prior acceptance remains valid.
 
@@ -1921,19 +1929,22 @@ The following latest successful tester output is included verbatim. It contains 
 
 All 60 live HTTP checks passed.
 
-V7 — FINAL BROWSER REGRESSION EVIDENCE
-=======================================
+
+V5(c) / V7(c-d) — FINAL BROWSER AND DATA-PRESERVATION REGRESSION
+==================================================================
+V5(c) PASS — At 390px, screenshot evidence ln0mcx shows all configured categories, including one with no saved inventory entry, followed by the custom row in the correct configured-first/custom-appended order. No horizontal overflow occurred.
+V7(c) PASS — An unchanged profile-aware save was Mongo deep-equal; the synthetic missing configured row was not persisted.
+V7(d) PASS — After deletion of a configured category that had persisted inventory, the category reopened as a custom row and an unchanged save remained deep-equal.
 PASS — No-profile editor visibly showed the five original fixed base categories in their original order, plus the custom type סוג מותאם.
 PASS — No-profile save without changes kept spare_tiles deep-equal, including original order, notes, and legacy aggregate fields.
 PASS — Profile-aware unchanged save was deep-equal.
 PASS — After deleting חיפוי מטבח from configured categories, it reopened as custom with count 0 and note נבדק.
 PASS — no_target label is ללא יעד.
 PASS — not_entered row shows an em dash and no progress bar.
-PASS — At 390px width there was no horizontal overflow.
 PASS — Tester cleanup completed.
-PASS — A setup-only invalid UUID was corrected; this was test setup correction, not an application bug.
+PASS — A setup-only invalid UUID was corrected; this was a test setup correction, not an application bug.
 
-Reconciliation result: legacy presentation is unchanged while mandatory data preservation is honored. The editor may show fixed zero-value base rows, but it omits untouched synthetic zero rows when saving so it does not alter a legacy unit's persisted spare_tiles array.
+Reconciliation result: legacy presentation remains unchanged while mandatory data preservation is honored. Profile-aware settings are rendered configured-first in settings order, with persisted custom inventory afterward; a synthetic missing configured row is saved only in the empty-inventory case.
 
 COMPLETE UNIFIED DIFF AGAINST d0eeeae
 =====================================
@@ -3334,7 +3345,7 @@ index 3d81ba8..7d93aad 100644
            path="/projects/:projectId/floors/:floorId"
            element={
 diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index 31205b3..8b82703 100644
+index 31205b3..bcba0f0 100644
 --- a/frontend/src/pages/ApartmentDashboardPage.js
 +++ b/frontend/src/pages/ApartmentDashboardPage.js
 @@ -1,6 +1,6 @@
@@ -3353,7 +3364,7 @@ index 31205b3..8b82703 100644
    const flagChecked = !!features?.defects_v2;
 
    useEffect(() => {
-@@ -214,26 +215,60 @@ const ApartmentDashboardPage = () => {
+@@ -214,26 +215,65 @@ const ApartmentDashboardPage = () => {
    }, [flagChecked, loadUnit, loadTasks]);
 
    const SPARE_TILES_BASE_TYPES = useMemo(() => [
@@ -3378,28 +3389,34 @@ index 31205b3..8b82703 100644
 -    saved.forEach(e => {
 -      if (!SPARE_TILES_BASE_TYPES.includes(e.type)) {
 -        merged.push({ type: e.type, count: String(e.count), notes: e.notes || '', isBase: false });
+-      }
+-    });
+-    setSpareTilesEntries(merged);
 +    if (unitData?.spare_profiles_exist) {
-+      if (saved.length > 0) {
-+        setSpareTilesEntries(saved.map((entry, originalIndex) => ({
++      const indexedSaved = saved.map((entry, originalIndex) => ({ entry, originalIndex }));
++      const configuredEntries = SPARE_TILES_BASE_TYPES.map(type => {
++        const savedEntry = indexedSaved.find(({ entry }) => entry.type === type);
++        return {
++          type,
++          count: savedEntry ? String(savedEntry.entry.count) : '0',
++          notes: savedEntry?.entry.notes ?? '',
++          isConfigured: true,
++          isPersisted: !!savedEntry,
++          originalIndex: savedEntry?.originalIndex,
++          shouldPersist: saved.length === 0,
++        };
++      });
++      const customEntries = indexedSaved
++        .filter(({ entry }) => !SPARE_TILES_BASE_TYPES.includes(entry.type))
++        .map(({ entry, originalIndex }) => ({
 +          type: entry.type,
 +          count: String(entry.count),
 +          notes: entry.notes ?? '',
-+          isConfigured: SPARE_TILES_BASE_TYPES.includes(entry.type),
++          isConfigured: false,
 +          isPersisted: true,
 +          originalIndex,
-+        })));
-+      } else {
-+        setSpareTilesEntries(SPARE_TILES_BASE_TYPES.map(type => ({
-+          type,
-+          count: '0',
-+          notes: '',
-+          isConfigured: true,
-+          isPersisted: false,
-+          shouldPersist: true,
-+        })));
-       }
--    });
--    setSpareTilesEntries(merged);
++        }));
++      setSpareTilesEntries([...configuredEntries, ...customEntries]);
 +    } else {
 +      const indexedSaved = saved.map((entry, originalIndex) => ({ entry, originalIndex }));
 +      const baseEntries = SPARE_TILES_BASE_TYPES.map(type => {
@@ -3429,7 +3446,7 @@ index 31205b3..8b82703 100644
      setSpareTilesEditing(true);
    }, [unitData, SPARE_TILES_BASE_TYPES]);
 
-@@ -250,17 +285,27 @@ const ApartmentDashboardPage = () => {
+@@ -250,17 +290,27 @@ const ApartmentDashboardPage = () => {
    const saveSpareTiles = useCallback(async () => {
      try {
        setSpareTilesSaving(true);
@@ -3460,7 +3477,7 @@ index 31205b3..8b82703 100644
        await unitService.updateSpareTiles(unitId, payload);
        const refreshed = await unitService.get(unitId);
        setUnitData(refreshed);
-@@ -274,6 +319,22 @@ const ApartmentDashboardPage = () => {
+@@ -274,6 +324,22 @@ const ApartmentDashboardPage = () => {
      }
    }, [unitId, spareTilesEntries]);
 
@@ -3483,7 +3500,7 @@ index 31205b3..8b82703 100644
    useEffect(() => {
      setFilters(prev => {
        const next = { ...prev };
-@@ -624,6 +685,72 @@ const ApartmentDashboardPage = () => {
+@@ -624,6 +690,72 @@ const ApartmentDashboardPage = () => {
          </div>
        )}
 
@@ -3556,7 +3573,7 @@ index 31205b3..8b82703 100644
        <div className="max-w-lg mx-auto px-4 mt-3">
          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
            <button
-@@ -667,7 +794,7 @@ const ApartmentDashboardPage = () => {
+@@ -667,7 +799,7 @@ const ApartmentDashboardPage = () => {
                      <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
                        <div className="flex items-center justify-between">
                          <span className="text-xs font-semibold text-slate-700">{entry.type}</span>
@@ -3565,7 +3582,7 @@ index 31205b3..8b82703 100644
                            <button
                              type="button"
                              onClick={() => setSpareTilesEntries(prev => prev.filter((_, i) => i !== idx))}
-@@ -719,7 +846,7 @@ const ApartmentDashboardPage = () => {
+@@ -719,7 +851,7 @@ const ApartmentDashboardPage = () => {
                            toast.error('סוג ריצוף כבר קיים');
                            return;
                          }
@@ -3574,7 +3591,7 @@ index 31205b3..8b82703 100644
                        }}
                        className="flex items-center gap-1.5 text-xs text-amber-600 font-medium hover:text-amber-700 transition-colors"
                      >
-@@ -772,6 +899,7 @@ const ApartmentDashboardPage = () => {
+@@ -772,6 +904,7 @@ const ApartmentDashboardPage = () => {
            )}
          </div>
        </div>

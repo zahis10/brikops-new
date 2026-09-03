@@ -90,13 +90,13 @@ id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
 title = "BATCH #585 — updated review.txt"
-description = "Final mutex-free implementation, consolidated FIX-1–FIX-4, complete 12-file diff, V1–V7 evidence, full data-preservation JSON, and architect PASS. No deployment performed."
+description = "Latest ApartmentDashboardPage-only correction with full 12-file diff, V4 build evidence, V5(c) screenshot evidence, V7(c)/(d) round-trip proof, and architect PASS. No deployment performed."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:cf695b2d5a51e06c1664b6440c3ca4f3678ff98e0e2afaf4be6424af5f4ae3c5"
-size = 156844
-mtime_ms = 1788444411783
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/0d60b9ff-2848-4465-b95e-302323395c91"
-storage_version_token = "1788444436569131"
+content_hash = "sha256:ae4c5138fa31312321a2da2560d6a0502b94cf7c738aa64aeb1eeb556dd5a64f"
+size = 158495
+mtime_ms = 1788455697664
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/89a76002-9f9d-435c-97dc-6140ac65d408"
+storage_version_token = "1788455727216127"
 content_type = "text/plain"
 
 [[outputs]]

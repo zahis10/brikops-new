@@ -224,25 +224,30 @@ const ApartmentDashboardPage = () => {
     const u = unitData?.unit;
     const saved = Array.isArray(u?.spare_tiles) ? u.spare_tiles : [];
     if (unitData?.spare_profiles_exist) {
-      if (saved.length > 0) {
-        setSpareTilesEntries(saved.map((entry, originalIndex) => ({
+      const indexedSaved = saved.map((entry, originalIndex) => ({ entry, originalIndex }));
+      const configuredEntries = SPARE_TILES_BASE_TYPES.map(type => {
+        const savedEntry = indexedSaved.find(({ entry }) => entry.type === type);
+        return {
+          type,
+          count: savedEntry ? String(savedEntry.entry.count) : '0',
+          notes: savedEntry?.entry.notes ?? '',
+          isConfigured: true,
+          isPersisted: !!savedEntry,
+          originalIndex: savedEntry?.originalIndex,
+          shouldPersist: saved.length === 0,
+        };
+      });
+      const customEntries = indexedSaved
+        .filter(({ entry }) => !SPARE_TILES_BASE_TYPES.includes(entry.type))
+        .map(({ entry, originalIndex }) => ({
           type: entry.type,
           count: String(entry.count),
           notes: entry.notes ?? '',
-          isConfigured: SPARE_TILES_BASE_TYPES.includes(entry.type),
+          isConfigured: false,
           isPersisted: true,
           originalIndex,
-        })));
-      } else {
-        setSpareTilesEntries(SPARE_TILES_BASE_TYPES.map(type => ({
-          type,
-          count: '0',
-          notes: '',
-          isConfigured: true,
-          isPersisted: false,
-          shouldPersist: true,
-        })));
-      }
+        }));
+      setSpareTilesEntries([...configuredEntries, ...customEntries]);
     } else {
       const indexedSaved = saved.map((entry, originalIndex) => ({ entry, originalIndex }));
       const baseEntries = SPARE_TILES_BASE_TYPES.map(type => {
