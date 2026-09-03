@@ -738,7 +738,13 @@ async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(
         if len(notes) > 500:
             raise HTTPException(status_code=422, detail='הערה ארוכה מדי (מקסימום 500 תווים)')
 
-        validated.append({'type': tile_type, 'count': count, 'notes': notes})
+        entered = entry.get('entered') is True
+        validated.append({
+            'type': tile_type,
+            'count': count,
+            'notes': notes,
+            **({'entered': True} if entered else {}),
+        })
 
     total_count = sum(e['count'] for e in validated)
     all_notes = ', '.join(f"{e['type']}: {e['notes']}" for e in validated if e['notes'])

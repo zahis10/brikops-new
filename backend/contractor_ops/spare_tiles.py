@@ -1,6 +1,7 @@
 import math
 import uuid
 from copy import deepcopy
+from decimal import Decimal, InvalidOperation
 
 from fastapi import HTTPException
 
@@ -60,8 +61,25 @@ def validate_spare_settings(body):
         measure = raw.get('measure')
         if measure not in MEASURES:
             raise HTTPException(status_code=422, detail='יחידת מידה לא חוקית')
+        per_carton = raw.get('per_carton')
+        if measure == 'cartons' or per_carton in (None, ''):
+            per_carton = None
+        else:
+            if isinstance(per_carton, bool):
+                raise HTTPException(status_code=422, detail='כמות בקרטון לא חוקית')
+            try:
+                decimal_value = Decimal(str(per_carton))
+            except (InvalidOperation, ValueError):
+                raise HTTPException(status_code=422, detail='כמות בקרטון לא חוקית')
+            if (
+                not decimal_value.is_finite()
+                or not Decimal('0.01') <= decimal_value <= Decimal('10000')
+                or decimal_value.as_tuple().exponent < -2
+            ):
+                raise HTTPException(status_code=422, detail='כמות בקרטון לא חוקית')
+            per_carton = int(decimal_value) if decimal_value == decimal_value.to_integral() else float(decimal_value)
         category_names.add(name_key)
-        categories.append({'name': name, 'measure': measure})
+        categories.append({'name': name, 'measure': measure, 'per_carton': per_carton})
 
     raw_profiles = body.get('profiles', [])
     if not isinstance(raw_profiles, list) or len(raw_profiles) > 10:
@@ -162,7 +180,9 @@ def compute_spare_status(unit_doc, spare_settings):
         except (TypeError, ValueError):
             count = 0
         notes = entry.get('notes') if entry else None
-        entered = entry is not None and (count > 0 or bool(notes))
+        entered = entry is not None and (
+            count > 0 or bool(notes) or entry.get('entered') is True
+        )
         actual = count if entered else None
         target = targets.get(name) if profile else None
         missing = None
@@ -184,6 +204,7 @@ def compute_spare_status(unit_doc, spare_settings):
             'actual': actual,
             'status': status,
             'missing': missing,
+            'entered': entered,
         })
 
     if not profile:

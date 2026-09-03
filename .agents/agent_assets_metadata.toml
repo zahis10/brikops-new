@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH #585 — updated review.txt"
-description = "Latest ApartmentDashboardPage-only correction with full 12-file diff, V4 build evidence, V5(c) screenshot evidence, V7(c)/(d) round-trip proof, and architect PASS. No deployment performed."
+title = "BATCH #587 — review.txt"
+description = "STEP 0, complete six-file diff, V1–V7 evidence, mobile screenshots, preservation proof, and architect PASS. Ends with the required approval marker."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:ae4c5138fa31312321a2da2560d6a0502b94cf7c738aa64aeb1eeb556dd5a64f"
-size = 158495
-mtime_ms = 1788455697664
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/89a76002-9f9d-435c-97dc-6140ac65d408"
-storage_version_token = "1788455727216127"
+content_hash = "sha256:ff155df87bd03ff4a18ceb00fdf70eb022dbf81b387c56d981799294f6872687"
+size = 49728
+mtime_ms = 1788462573131
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/548e054d-bddb-4d86-b24d-bbcb81892a9e"
+storage_version_token = "1788462605769791"
 content_type = "text/plain"
 
 [[outputs]]

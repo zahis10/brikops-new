@@ -1,66 +1,20 @@
-BATCH #585 — SPARE TILES PROJECT PROFILES
-FINAL DELIVERY REVIEW — MUTEX-FREE CONSOLIDATED TREE
+BATCH #587 — EXPLICIT NO-SPARE + PER-CARTON CONVERSION
+FINAL DELIVERY REVIEW — DO NOT COMMIT OR DEPLOY
 
-Required comparison base: d0eeeae733b87923cd954e301f90e2ce7542b725
+Base: 30ac278 (final #585 tree, FIX-1..5). FIX-6/FIX-7 were not present and are implemented here as E0.
 
-This report compares the final working tree directly with required base d0eeeae. Replit automatic checkpoint commits advanced HEAD after that base; they are not the comparison base for this review. The embedded unified diff below is restricted to the exact twelve approved product/test paths. No metadata, memory, delivery, plan, or attachment file is included in that embedded diff.
+STEP 0 — VERBATIM BASELINE EVIDENCE
+===================================
+$ git rev-parse --short HEAD
+30ac278
 
-STEP 0 AND ORIGINAL PLAN CONTEXT
-================================
-The following is the original STEP 0 findings and implementation-plan context, preserved verbatim as the historical planning record. Its original CURRENT STATUS section is historical only and is superseded by the final implementation/evidence sections below.
+$ git status --short --untracked-files=all
+(no output — clean tree before implementation)
 
-BATCH #585 — SPARE TILES PROJECT PROFILES
-FULL STEP 0 FINDINGS + IMPLEMENTATION PLAN
-Date: 2026-09-03
-Branch: staging
-Required base: d0eeeae
+30ac278b80dd09ef344fe1186fe1fa3d0c5cace8 is HEAD and therefore an ancestor of HEAD.
+No separate FIX-6/FIX-7 commit was present. The baseline still had key={`${cat.name}-${i}`}, sent draft.categories.filter(c => c.name.trim()), and rendered the defect FAB whenever canCreateDefect was true.
 
-================================================================================
-MANDATORY STOP
-================================================================================
-
-This document contains STEP 0 findings and the proposed implementation plan only.
-No product code may be changed until Zahi explicitly writes:
-
-תתחיל
-
-================================================================================
-1. BASELINE CONFIRMATION
-================================================================================
-
-Verified current branch:
-
-staging
-
-Verified current HEAD:
-
-d0eeeae
-
-The required base exists and is the current HEAD.
-
-The working tree was clean at the start of STEP 0.
-
-Search performed:
-
-grep -rn "spare_settings\|spare_profile_id" backend/ frontend/src
-
-Result:
-
-0 hits.
-
-Neither projects.spare_settings nor units.spare_profile_id currently exists in
-the backend or frontend.
-
-================================================================================
-2. EXISTING SPARE-TILES WRITE ENDPOINT
-================================================================================
-
-File:
-
-backend/contractor_ops/projects_router.py
-
-Current block, lines 691-751:
-
+patch_unit_spare_tiles baseline, in full:
 @router.patch("/units/{unit_id}/spare-tiles")
 async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(get_current_user)):
     db = get_db()
@@ -123,3681 +77,632 @@ async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(
     updated = await db.units.find_one({'id': unit_id}, {'_id': 0})
     return Unit(**updated)
 
-Confirmed behavior:
-
-- The endpoint is PATCH /api/units/{unit_id}/spare-tiles.
-- It requires an authenticated user.
-- It loads a non-archived unit.
-- It permits project_manager, owner, and management_team.
-- It accepts up to 20 entries.
-- Tile type is required, trimmed, limited to 50 characters, and unique
-  case-insensitively.
-- Count is normalized to an integer and must be non-negative.
-- Notes are normalized to text, trimmed, and limited to 500 characters.
-- It writes the existing spare_tiles list and maintains the legacy summary
-  fields spare_tiles_count and spare_tiles_notes.
-- It writes an audit event.
-- It returns the updated Unit.
-
-Implementation constraint:
-
-This endpoint, its request/response shape, validation, persistence behavior, and
-audit behavior must remain byte-identical.
-
-================================================================================
-3. EXISTING GET /UNITS/{UNIT_ID} RESPONSE
-================================================================================
-
-File:
-
-backend/contractor_ops/projects_router.py
-
-Current endpoint starts at line 1192. Current return block, lines 1218-1232:
-
-return {
-    'unit': {
-        **unit,
-        'effective_label': effective_label,
-    },
-    'floor': {'id': floor['id'], 'name': floor.get('name', '')} if floor else None,
-    'building': {'id': building['id'], 'name': building.get('name', '')} if building else None,
-    'project': {'id': project['id'], 'name': project.get('name', ''), 'code': project.get('code', '')} if project else None,
-    'kpi': {
-        'total': len(tasks),
-        'open': by_status.get('open', 0) + by_status.get('assigned', 0) + by_status.get('reopened', 0),
-        'in_progress': by_status.get('in_progress', 0) + by_status.get('waiting_verify', 0) + by_status.get('pending_contractor_proof', 0) + by_status.get('pending_manager_approval', 0),
-        'closed': by_status.get('closed', 0) + by_status.get('approved', 0),
-    },
-}
-
-Confirmed behavior:
-
-- The endpoint loads the unit, floor, building, and project documents.
-- Project read access is checked through _check_project_read_access.
-- Existing response keys are unit, floor, building, project, and kpi.
-- The implementation for this batch must only add the requested spare fields.
-- No existing key or value may be removed or renamed.
-
-================================================================================
-4. CURRENT FRONTEND SPARE CARD
-================================================================================
-
-File:
-
-frontend/src/pages/ApartmentDashboardPage.js
-
-Exact areas:
-
-- Existing row-model preparation: lines 216-238.
-- Existing status summary calculation: lines 240-248.
-- Existing spare-card DOM: lines 627-774.
-- Existing summary badge: lines 635-645.
-- Existing edit rows: lines 664-746.
-- Existing display rows: lines 749-759.
-- Existing edit button and permission gate: lines 760-768.
-
-Current base types and row model, lines 216-238:
-
-const SPARE_TILES_BASE_TYPES = useMemo(() => [
-  'ריצוף יבש', 'ריצוף מרפסות', 'חיפוי אמבטיות', 'ריצוף אמבטיות', 'חיפוי מטבח',
-], []);
-
-const startSpareTilesEdit = useCallback(() => {
-  const u = unitData?.unit;
-  const saved = Array.isArray(u?.spare_tiles) ? u.spare_tiles : [];
-  const savedMap = {};
-  saved.forEach(e => { savedMap[e.type] = e; });
-  const merged = SPARE_TILES_BASE_TYPES.map(bt => ({
-    type: bt,
-    count: savedMap[bt] ? String(savedMap[bt].count) : '0',
-    notes: savedMap[bt]?.notes || '',
-    isBase: true,
-  }));
-  saved.forEach(e => {
-    if (!SPARE_TILES_BASE_TYPES.includes(e.type)) {
-      merged.push({ type: e.type, count: String(e.count), notes: e.notes || '', isBase: false });
-    }
-  });
-  setSpareTilesEntries(merged);
-  setSpareTilesEditing(true);
-}, [unitData, SPARE_TILES_BASE_TYPES]);
-
-Current card block, lines 627-774:
-
-<div className="max-w-lg mx-auto px-4 mt-3">
-  <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-    <button
-      onClick={() => setSpareTilesOpen(!spareTilesOpen)}
-      className="w-full flex items-center justify-between p-3 text-right"
-    >
-      <div className="flex items-center gap-2">
-        <span className="text-sm font-semibold text-slate-700">ריצוף ספייר</span>
-        {spareTilesStatus === 'not_updated' && (
-          <span className="text-[10px] bg-blue-400 text-white px-2 py-0.5 rounded-full font-bold">לא עודכן</span>
-        )}
-        {spareTilesStatus === 'none' && (
-          <span className="text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">אין ספייר</span>
-        )}
-        {typeof spareTilesStatus === 'object' && spareTilesStatus.status === 'has_tiles' && (
-          <span className="text-[10px] bg-green-500 text-white px-2 py-0.5 rounded-full font-bold">
-            {spareTilesStatus.totalCount} אריחים ב-{spareTilesStatus.typesWithCount} סוגים
-          </span>
-        )}
-      </div>
-      {spareTilesOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-    </button>
-    {spareTilesOpen && (
-      <div className="px-4 pb-4">
-        {spareTilesStatus === 'none' && !spareTilesEditing && (
-          <div className="flex items-center gap-2 p-2 mb-3 rounded-lg bg-amber-50 border border-amber-200">
-            <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <span className="text-xs text-amber-700 font-medium">אין ריצוף ספייר</span>
-          </div>
-        )}
-        {spareTilesStatus === 'not_updated' && !spareTilesEditing && (
-          <div className="flex items-center gap-2 p-2 mb-3 rounded-lg bg-blue-50 border border-blue-200">
-            <Info className="w-4 h-4 text-blue-500 flex-shrink-0" />
-            <span className="text-xs text-blue-600 font-medium">לא עודכן מצב ריצוף ספייר</span>
-          </div>
-        )}
-
-        {spareTilesEditing ? (
-          <div className="space-y-3">
-            {spareTilesEntries.map((entry, idx) => (
-              <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-700">{entry.type}</span>
-                  {!entry.isBase && (
-                    <button
-                      type="button"
-                      onClick={() => setSpareTilesEntries(prev => prev.filter((_, i) => i !== idx))}
-                      className="p-1 text-red-400 hover:text-red-600 transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <div className="w-20">
-                    <label className="block text-[10px] text-slate-500 mb-0.5">כמות</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={entry.count}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: val } : en));
-                      }}
-                      className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className="block text-[10px] text-slate-500 mb-0.5">הערות</label>
-                    <input
-                      type="text"
-                      value={entry.notes}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, notes: val } : en));
-                      }}
-                      maxLength={500}
-                      placeholder="הערה..."
-                      className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
-            {spareTilesEntries.length < 20 && (
-              <button
-                type="button"
-                onClick={() => {
-                  const name = prompt('שם סוג ריצוף חדש:');
-                  if (!name || !name.trim()) return;
-                  const trimmed = name.trim().slice(0, 50);
-                  if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) {
-                    toast.error('סוג ריצוף כבר קיים');
-                    return;
-                  }
-                  setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', isBase: false }]);
-                }}
-                className="flex items-center gap-1.5 text-xs text-amber-600 font-medium hover:text-amber-700 transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                הוסף סוג ריצוף
-              </button>
-            )}
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={saveSpareTiles}
-                disabled={spareTilesSaving}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 disabled:opacity-50 transition-colors"
-              >
-                {spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                שמור
-              </button>
-              <button
-                onClick={() => setSpareTilesEditing(false)}
-                className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
-              >
-                ביטול
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {Array.isArray(unit?.spare_tiles) && unit.spare_tiles.length > 0 && (
-              <div className="space-y-1.5">
-                {unit.spare_tiles.filter(e => e.count > 0 || e.notes).map((entry, idx) => (
-                  <div key={idx} className="flex items-center gap-2 text-sm text-slate-700">
-                    <span className="font-medium min-w-[100px]">{entry.type}:</span>
-                    <span>{entry.count}</span>
-                    {entry.notes && <span className="text-slate-500 text-xs truncate">({entry.notes})</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-            {canCreateDefect && (
-              <button
-                onClick={startSpareTilesEdit}
-                className="flex items-center gap-1.5 text-xs text-amber-600 font-medium hover:text-amber-700 transition-colors mt-1"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-                עריכה
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    )}
-  </div>
-</div>
-
-Implementation constraint:
-
-- For a project with no profiles, the existing card DOM must remain unchanged.
-- Only the row model and the card block identified above may be changed.
-- The existing edit action, notes field, custom types, and spare_tiles payload
-  must continue to work.
-
-================================================================================
-5. STRUCTURE ENDPOINTS AND SORTING
-================================================================================
-
-Floors-per-building endpoint:
-
-GET /api/buildings/{building_id}/floors
-
-File:
-
-backend/contractor_ops/projects_router.py:537-541
-
-It filters archived floors and sorts by:
-
-sort_index ascending
-
-Units-per-floor endpoint:
-
-GET /api/floors/{floor_id}/units
-
-File:
-
-backend/contractor_ops/projects_router.py:638-642
-
-It filters archived units and sorts by:
-
-sort_index ascending
-
-The current structure page, frontend/src/pages/InnerBuildingPage.js, loads:
-
-GET /api/projects/{project_id}/hierarchy
-
-The hierarchy endpoint sorts:
-
-- Buildings by sort_index and then natural name order.
-- Floors by sort_index.
-- Units by sort_index.
-
-The relevant hierarchy fields are:
-
-Floors:
-- id
-- name
-- floor_number
-- sort_index
-- display_label
-- kind
-
-Units:
-- id
-- unit_no
-- unit_type
-- status
-- sort_index
-- display_label
-- effective_label
-
-Display fallbacks:
-
-- Floor display: display_label or name.
-- Unit display: display_label or unit_no.
-
-Plan for E2.3:
-
-Reuse these fields and ordering rules exactly. Do not introduce automatic,
-numeric, alphabetical, or profile-based sorting.
-
-================================================================================
-6. ROUTER REGISTRATION AND PROJECT TOOL ENTRY POINT
-================================================================================
-
-Current registration pattern in backend/server.py:
-
-from contractor_ops.projects_router import router as projects_router
-app.include_router(projects_router)
-
-Comparable feature routers use an APIRouter and are imported into server.py,
-then registered once with app.include_router.
-
-The new spare router will follow the same pattern:
-
-from contractor_ops.spare_tiles_router import router as spare_tiles_router
-app.include_router(spare_tiles_router)
-
-The intended prefix is:
-
-APIRouter(prefix="/api")
-
-Current project-dashboard tool pattern:
-
-- ProjectDashboardPage uses DashboardFoldSection for project-level feature
-  entry points.
-- The current "בקרת ביצוע" section includes a button navigating to:
-
-  /projects/${projectId}/qc
-
-- App.js lazy-loads the page and registers the route under ProtectedRoute.
-
-Plan for E3.4:
-
-- Add a visible "ריצוף ספייר" entry point using the same project-tool visual
-  and navigation pattern.
-- Navigate to /projects/${projectId}/spare-tiles.
-- Make the entry visible to all project members.
-- Keep write controls disabled for roles without write permission rather than
-  hiding the page.
-
-================================================================================
-7. DO-NOT-TOUCH DEFECT-CREATION FLOW
-================================================================================
-
-ApartmentDashboardPage.js passes prefillData to NewDefectModal at lines
-918-936:
-
-<NewDefectModal
-  isOpen={showDefectModal}
-  onClose={() => setShowDefectModal(false)}
-  onSuccess={() => {
-    loadUnit();
-    loadTasks();
-  }}
-  prefillData={{
-    project_id: project?.id || unit?.project_id || projectId,
-    building_id: building?.id || unit?.building_id || '',
-    floor_id: floor?.id || unit?.floor_id || '',
-    unit_id: unitId,
-    project_name: project?.name || '',
-    building_name: building?.name || '',
-    floor_name: floor?.name || '',
-    unit_label: effectiveLabel,
-  }}
-/>
-
-Detected mismatch in the written specification:
-
-- prefillData is present directly in ApartmentDashboardPage.js.
-- categoryMatchedCompanies is not declared in ApartmentDashboardPage.js.
-- categoryMatchedCompanies is declared and used in the imported
-  frontend/src/components/NewDefectModal.js at lines 408-426.
-
-Interpretation:
-
-The frozen defect-creation flow exists and is connected to
-ApartmentDashboardPage, but one identifier named by the specification lives in
-the child modal rather than directly in the page.
-
-Required approval:
-
-Zahi must confirm that this location mismatch is accepted before implementation.
-Neither ApartmentDashboardPage's prefillData block nor NewDefectModal's
-categoryMatchedCompanies flow will be modified.
-
-================================================================================
-8. PROPOSED DATA MODEL
-================================================================================
-
-No migration or backfill.
-
-Optional project field:
-
-projects.spare_settings = {
-  'categories': [
-    {'name': 'ריצוף יבש', 'measure': 'tiles'},
-  ],
-  'profiles': [
-    {
-      'id': '<uuid>',
-      'name': '3 חדרים',
-      'targets': {
-        'ריצוף יבש': 8,
-      },
-    },
-  ],
-  'margin_pct': 10,
-  'updated_at': '<UTC ISO timestamp>',
-  'updated_by': '<user id>',
-}
-
-Optional unit field:
-
-units.spare_profile_id = None
-
-Absence behavior:
-
-- Missing spare_settings returns defaults without writing them.
-- Missing or null spare_profile_id means "אחר".
-- A dangling profile id is treated as unassigned/no profile.
-- Existing spare_tiles documents remain unchanged.
-
-Default categories returned when settings are absent:
-
-1. ריצוף יבש — tiles
-2. ריצוף מרפסות — cartons
-3. חיפוי אמבטיות — cartons
-4. ריצוף אמבטיות — cartons
-5. חיפוי מטבח — cartons
-
-Default margin:
-
-10%
-
-Default profiles:
-
-[]
-
-================================================================================
-9. IMPLEMENTATION PLAN — BACKEND PURE HELPERS
-================================================================================
-
-New file:
-
-backend/contractor_ops/spare_tiles.py
-
-Contents:
-
-1. DEFAULT_SPARE_CATEGORIES
-   - Five approved default category names.
-   - Structured measure values.
-
-2. MEASURES
-   - tiles
-   - cartons
-   - sqm
-
-3. default_spare_settings helper
-   - Return a new default object on every call.
-   - Never mutate or persist defaults implicitly.
-
-4. validate_spare_settings(body)
-   - Require an object.
-   - Validate 1-20 categories.
-   - Trim category names.
-   - Enforce category name length <= 50.
-   - Enforce category uniqueness case-insensitively.
-   - Enforce measure membership in MEASURES.
-   - Validate 0-10 profiles.
-   - Preserve an existing valid string UUID id.
-   - Generate a string UUID only for a new profile without an id.
-   - Trim profile names.
-   - Enforce profile name length <= 40.
-   - Enforce profile name uniqueness.
-   - Validate every target against an existing category name.
-   - Normalize targets to integers from 0 through 10000.
-   - Drop targets for deleted categories.
-   - Validate margin_pct as an integer from 0 through 100.
-   - Raise HTTPException(422) with Hebrew messages for invalid input.
-   - Return a normalized settings object.
-
-5. compute_spare_status(unit_doc, spare_settings)
-   - Find the assigned profile by exact string id.
-   - Treat missing and dangling ids as no profile.
-   - Index existing spare entries by exact type name.
-   - Emit configured categories in settings order.
-   - Append custom unit-only types after configured categories.
-   - Calculate entered, actual, target, missing, and status.
-   - Use max(1, ceil(target * margin_pct / 100)) for the borderline band.
-   - Apply the required overall precedence:
-     short
-     not_entered
-     borderline
-     ok
-     no_target
-   - Return no_profile when there is no valid profile.
-   - Return only JSON-serializable values.
-
-The helper will perform no database I/O.
-
-================================================================================
-10. IMPLEMENTATION PLAN — BACKEND ROUTER
-================================================================================
-
-New file:
-
-backend/contractor_ops/spare_tiles_router.py
-
-Router:
-
-APIRouter(prefix="/api")
-
-Shared rules:
-
-- Every endpoint requires get_current_user.
-- Read endpoints call _check_project_read_access.
-- Write endpoints call _get_project_role.
-- Write roles are project_manager, owner, and management_team.
-- Unauthorized writes return 403 with a Hebrew error.
-- IDs remain string UUIDs.
-- Datetimes use datetime.now(timezone.utc).isoformat().
-- No ObjectId.
-
-Endpoint 1:
-
-GET /api/projects/{project_id}/spare-settings
-
-Plan:
-
-- Verify project existence and read access.
-- Load settings or construct defaults without persisting.
-- Count active/non-archived units assigned to each existing profile.
-- Count active/non-archived units with null, missing, or dangling profile ids.
-- Return normalized settings.
-- Add assigned_units to each returned profile.
-- Add unassigned_units at the top level.
-
-Endpoint 2:
-
-PUT /api/projects/{project_id}/spare-settings
-
-Plan:
-
-- Verify project existence and write role.
-- Validate and normalize the request through validate_spare_settings.
-- Compare existing profile ids with retained profile ids.
-- For every deleted profile, count active units assigned to it.
-- If any deleted profile has assigned units, return 409:
-
-  יש להסיר תחילה N דירות מהפרופיל
-
-- Allow category deletion.
-- Drop deleted-category targets during normalization.
-- Add updated_at and updated_by.
-- Persist only projects.spare_settings.
-- Write one audit_events record:
-  entity_type = project
-  action = spare_settings_updated
-  payload contains counts only and no PII.
-- Return the saved normalized settings with assignment counts.
-
-Endpoint 3:
-
-GET /api/projects/{project_id}/spare-assignments?building_id=...
-
-Plan:
-
-- Verify project existence and read access.
-- Return all active buildings as selector options.
-- If building_id is supplied, verify that it belongs to the project and is
-  non-archived.
-- Load active floors and units for the selected building.
-- Sort floors and units by sort_index, matching the structure hierarchy.
-- Return:
-
-  {
-    'buildings': [{'id', 'name'}],
-    'floors': [{
-      'id',
-      'name',
-      'sort',
-      'units': [{
-        'id',
-        'unit_no',
-        'display_label',
-        'spare_profile_id',
-      }],
-    }],
-  }
-
-- Do not infer or assign a profile.
-
-Endpoint 4:
-
-PATCH /api/projects/{project_id}/spare-profiles/{profile_id}/units
-
-Body:
-
-{
-  'add': ['unit-id'],
-  'remove': ['unit-id'],
-}
-
-Plan:
-
-- Verify project existence and write role.
-- Require a valid current profile id.
-- Require add and remove to be arrays.
-- Enforce at most 2000 total ids.
-- Normalize ids and reject duplicates/overlap where needed.
-- Verify every supplied unit belongs to the project and is non-archived.
-- If not, return 422 with the offending ids.
-- Add:
-  set spare_profile_id to the selected profile.
-  Moving from another profile is allowed.
-- Remove:
-  set spare_profile_id to None only if its current value equals profile_id.
-- Return actual added and removed counts.
-- Write one audit_events record:
-  entity_type = project
-  action = spare_profile_units_updated
-  payload contains profile id and counts, with no PII.
-
-Single-unit "אחר" behavior:
-
-Because the specified endpoint identifies the source profile in its path,
-changing a unit to "אחר" will call remove against its current assigned profile.
-The frontend must not send a removal against an unrelated profile.
-
-================================================================================
-11. IMPLEMENTATION PLAN — BACKEND TOUCH POINTS
-================================================================================
-
-File:
-
-backend/contractor_ops/schemas.py
-
-Change:
-
-Add exactly one optional Unit field:
-
-spare_profile_id: Optional[str] = None
-
-File:
-
-backend/contractor_ops/projects_router.py
-
-Change:
-
-Modify only GET /units/{unit_id}.
-
-Plan:
-
-- Import the pure default/status helpers.
-- Read project.spare_settings.
-- Use defaults when absent.
-- Calculate spare_status from the unit and effective settings.
-- Add to the response:
-
-  spare_settings
-  spare_profiles_exist
-  spare_status
-
-- spare_profiles_exist is true only when the effective project settings contain
-  at least one profile.
-- Preserve every existing response key.
-
-Forbidden in this file:
-
-- No changes to patch_unit_spare_tiles.
-- No changes to PATCH /units/{unit_id}.
-- No changes to structure editing.
-- No migration or backfill.
-
-File:
-
-backend/server.py
-
-Change:
-
-- Import spare_tiles_router.
-- Register it once with app.include_router.
-- No other server changes.
-
-================================================================================
-12. IMPLEMENTATION PLAN — FRONTEND API AND ROUTE
-================================================================================
-
-File:
-
-frontend/src/services/api.js
-
-Add four methods:
-
-1. getSpareSettings(projectId)
-   GET /api/projects/{projectId}/spare-settings
-
-2. saveSpareSettings(projectId, settings)
-   PUT /api/projects/{projectId}/spare-settings
-
-3. getSpareAssignments(projectId, buildingId)
-   GET /api/projects/{projectId}/spare-assignments?building_id=...
-
-4. patchSpareProfileUnits(projectId, profileId, body)
-   PATCH /api/projects/{projectId}/spare-profiles/{profileId}/units
-
-Use the existing axios instance and authentication-header pattern.
-No new dependency.
-
-File:
-
-frontend/src/App.js
-
-Plan:
-
-- Lazy-load SpareTilesPage.
-- Register:
-
-  /projects/:projectId/spare-tiles
-
-- Wrap with ProtectedRoute.
-- Make no unrelated route changes.
-
-================================================================================
-13. IMPLEMENTATION PLAN — NEW SPARE-TILES PAGE
-================================================================================
-
-New file:
-
-frontend/src/pages/SpareTilesPage.js
-
-General:
-
-- Mobile-first.
-- RTL.
-- Amber/slate visual language.
-- Existing Lucide icon package only.
-- No new dependencies.
-- Read access for all project members.
-- Read-only controls for roles outside project_manager, owner, and
-  management_team.
-- Clear loading, empty, save, and error states.
-- No horizontal page scrolling.
-
-TAB 1 — הגדרות
-
-Categories:
-
-- Display ordered category rows.
-- Show category name.
-- Show measure select:
-  אריחים
-  קרטונים
-  מ"ר
-- Add category.
-- Remove category.
-- Existing category names are not editable in v1.
-- Newly added unsaved category names can be entered before first save.
-- Enforce 1-20 categories in the UI in addition to backend validation.
-
-Profiles:
-
-- Display 0-10 profiles.
-- Add profile.
-- Rename profile.
-- Remove profile.
-- Display a targets grid:
-  profile rows or cards × category targets.
-- Use mobile cards/stacks where a wide table would overflow.
-- Use integer inputs.
-- Treat blank/0 as no target.
-- Display assigned unit count on each profile.
-- Display the "אחר" unassigned count.
-
-Margin:
-
-- Integer margin_pct input from 0 through 100.
-- Explain that it controls the orange borderline band above the target.
-
-Legend:
-
-- Red: חסר — להזמין
-- Orange: גבולי
-- Green: מספיק
-- Grey: לא הוזן / ללא יעד
-
-Save:
-
-- PUT the full normalized settings object.
-- Show backend Hebrew errors.
-- Reload returned counts after save.
-- Disable all mutations for read-only roles.
-
-TAB 2 — שיוך
-
-Selectors:
-
-- Profile selector.
-- Building selector.
-- Do not select or assign units automatically.
-
-Floor sections:
-
-- Load the selected building only.
-- Render floors in sort_index order.
-- Render unit chips in sort_index order.
-- Each chip displays the unit label.
-- If assigned to another profile, show that current profile name as a small tag.
-- If unassigned or dangling, show "אחר".
-
-Explicit selection:
-
-- Tapping a chip toggles its pending selected state.
-- "בחר הכל בקומה" explicitly selects/deselects units in that floor.
-- No assignment based on unit number, floor position, pattern, type, or any
-  other inferred rule.
-
-Save:
-
-- Retain the loaded baseline.
-- Compute an explicit add/remove diff relative to the selected profile.
-- Units moved from another profile are included in add.
-- Units removed from the selected profile are included in remove.
-- PATCH the endpoint once.
-- Reload assignments and settings counts after success.
-- Show live selected/add/remove counters.
-
-================================================================================
-14. IMPLEMENTATION PLAN — PROJECT ENTRY POINT
-================================================================================
-
-File:
-
-frontend/src/pages/ProjectDashboardPage.js
-
-Plan:
-
-- Add one "ריצוף ספייר" project-tool entry using the established dashboard
-  section/card navigation pattern.
-- Navigate to /projects/${projectId}/spare-tiles.
-- Make it visible to every project member.
-- Do not gate navigation by write role.
-- The destination page itself controls read-only/write behavior.
-- Do not alter existing QC, execution, handover, safety, team, or KPI sections.
-
-================================================================================
-15. IMPLEMENTATION PLAN — UNIT SPARE CARD
-================================================================================
-
-File:
-
-frontend/src/pages/ApartmentDashboardPage.js
-
-Permitted scope:
-
-- Existing spare row-model preparation around lines 216-238.
-- Existing spare status calculation only as required.
-- Existing spare card block around lines 627-774.
-
-Safety branch:
-
-If response.spare_profiles_exist is false:
-
-- Execute the current rendering branch.
-- Preserve the current card DOM.
-- Do not show profile selector.
-- Do not show target/status rows.
-- Keep current badges, rows, edit action, and modal behavior.
-
-Profile-aware branch:
-
-If response.spare_profiles_exist is true:
-
-Header:
-
-- Show overall status chip.
-- Use required labels and colors.
-- Show profile selector for write roles.
-- Read-only roles see the assigned profile label without a mutation control.
-- Options are current profiles plus "אחר".
-
-Profile changes:
-
-- Selecting a profile calls PATCH with add: [unitId].
-- Moving directly from another profile is allowed.
-- Selecting "אחר" calls remove against the unit's current profile.
-- Reload the unit response after success.
-
-Rows:
-
-- Render response.spare_status.categories.
-- Show:
-  colored status dot
-  category name
-  compact progress bar where a target exists
-  actual / target with translated measure
-  status chip
-- short: red, "חסר N"
-- borderline: orange, "גבולי"
-- ok: green, "מספיק"
-- not_entered: grey, "לא הוזן"
-- no_target: grey, "ללא יעד"
-- Preserve custom unit-only types as no_target rows.
-
-Existing edit mode:
-
-- Keep the existing update action and spare_tiles endpoint.
-- Build base rows from spare_settings.categories when profiles/settings are
-  active.
-- Fall back to SPARE_TILES_BASE_TYPES when settings are absent.
-- Show the translated measure next to the count input.
-- Keep notes unchanged.
-- Keep custom type behavior.
-
-Explicit frozen areas:
-
-- NewDefectModal invocation.
-- prefillData.
-- categoryMatchedCompanies in NewDefectModal.
-- Defect creation.
-- QC links.
-- Header.
-- Summary cards.
-- Task filters and task list.
-
-================================================================================
-16. FILE SCOPE
-================================================================================
-
-Allowed source files:
-
-NEW:
-- backend/contractor_ops/spare_tiles.py
-- backend/contractor_ops/spare_tiles_router.py
-- frontend/src/pages/SpareTilesPage.js
-
-MODIFIED:
-- backend/server.py
-- backend/contractor_ops/schemas.py
-- backend/contractor_ops/projects_router.py
-- frontend/src/App.js
-- frontend/src/services/api.js
-- frontend/src/pages/ApartmentDashboardPage.js
-- frontend/src/pages/ProjectDashboardPage.js
-
-TEST FILES:
-
-- Add focused backend unit tests for spare_tiles.py.
-- Add or use focused endpoint probes/tests without broad unrelated edits.
-
-DELIVERABLE FILES:
-
-- review.txt
-- .local/.commit_message
-
-Explicitly forbidden:
-
-- backend/contractor_ops/export_router.py
-- backend/contractor_ops/execution_matrix_router.py
-- frontend/src/pages/HandoverOverviewPage.js
-- frontend/src/components/NewDefectModal.js
-- Existing PATCH /units/{unit_id}/spare-tiles block
-- Existing PATCH /units/{unit_id} guard or behavior
-- Structure editing behavior
-- Automatic profile assignment
-- New dependencies
-- ObjectId
-- Migration or backfill
-
-================================================================================
-17. VERIFICATION PLAN
-================================================================================
-
-V1 — PURE HELPER TESTS
-
-Run focused direct tests covering:
-
-- short: actual 8, target 10, missing 2.
-- borderline: actual 3, target 3, margin 10; band remains at least 1.
-- ok: actual 7, target 5.
-- not_entered for absent entry.
-- not_entered for count 0 with no notes.
-- Entered behavior for count 0 with notes.
-- no_target for missing or zero target.
-- no_profile for unset profile id.
-- no_profile for dangling profile id.
-- Custom unit type appended as no_target.
-- Overall precedence.
-- Margin 0 still produces a band of 1.
-- Duplicate category names rejected case-insensitively.
-- More than 10 profiles rejected.
-- Invalid measure rejected.
-- Negative target rejected.
-- Oversized values and names rejected.
-
-V2 — ENDPOINT TESTS ON DEV SERVER
-
-Verify:
-
-- Viewer can GET settings and assignments.
-- Viewer receives 403 for PUT and PATCH.
-- PM can save valid settings.
-- Defaults are returned but not persisted before first save.
-- Deleting an assigned profile returns 409.
-- Assignment add works.
-- Assignment move works.
-- Assignment remove works.
-- Returned counts are accurate.
-- A unit from another project in add returns 422 with its id.
-- Archived units cannot be assigned.
-- Audit records contain counts and no PII.
-
-V3 — GET UNIT COMPATIBILITY
-
-Project without spare_settings:
-
-- spare_profiles_exist is false.
-- spare_status.overall is no_profile.
-- Existing top-level JSON keys remain present and unchanged.
-- Existing nested unit, floor, building, project, and kpi values remain
-  compatible.
-
-Project with profiles:
-
-- Effective defaults/settings are returned.
-- Assigned profile and category statuses are correct.
-- Dangling profile id is handled safely.
-
-V4 — FRONTEND BUILD
-
-Run exactly:
-
-CI=true
-
-Then run the existing frontend build command.
-
-Required result:
-
-EXIT 0
-
-Warnings count as failures under the standing CI=true rule.
-
-V5 — MOBILE PLAYWRIGHT AT 390PX
-
-One focused verification pass covering:
-
-A. Settings tab:
-- Three profiles.
-- Categories and structured measures.
-- Responsive targets UI.
-- Margin input and legend.
-- Assigned and "אחר" counts.
-
-B. Assignment tab:
-- One selected building.
-- At least one floor.
-- One unit currently assigned to another profile.
-- One "אחר" unit.
-- "בחר הכל בקומה".
-- Explicit selection counters.
-
-C. Profile-aware unit card:
-- Red row.
-- Orange row.
-- Green row.
-- Grey row.
-- Overall chip.
-- Profile selector.
-- No horizontal scroll.
-
-D. Project without profiles:
-- Compare the spare-card DOM to base.
-- Confirm it is identical.
-- Confirm no new profile/status UI is present.
-
-V6 — DIFF SCOPE
-
-Confirm source diff contains only:
-
-- spare_tiles.py
-- spare_tiles_router.py
-- server.py registration only
-- schemas.py one field
-- projects_router.py additive GET-unit block only
-- SpareTilesPage.js
-- App.js route only
-- api.js four methods
-- ApartmentDashboardPage.js spare block/model only
-- ProjectDashboardPage.js entry point only
-
-Confirm no diff in:
-
-- patch_unit_spare_tiles
-- export_router.py
-- execution_matrix_router.py
-- HandoverOverviewPage.js
-- NewDefectModal.js
-- structure editing
-- PATCH /units/{unit_id}
-
-Additional checks:
-
-- Python syntax compilation for changed backend modules.
-- git diff --check.
-- No new dependency or lockfile changes.
-- No automatic assignment logic.
-- No ObjectId usage.
-
-================================================================================
-18. DELIVERY PLAN
-================================================================================
-
-After implementation and verification:
-
-1. Write review.txt containing:
-   - STEP 0 findings and quotes.
-   - The complete final diff.
-   - V1-V6 commands and evidence.
-   - Any base-versus-branch comparison needed to distinguish existing failures.
-   - Exact scope confirmation.
-
-2. Ensure review.txt ends exactly with:
-
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-
-3. Prepare .local/.commit_message with:
-
-feat(spare-tiles): project profiles with targets, explicit unit
-assignment, and color status on the unit card
-
-Adds project-level spare-tile settings (categories with a structured
-unit of measure, up to 10 profiles with per-category targets, a
-"borderline" margin), explicit assignment of units to a profile (pick a
-building, tick units — no automatic assignment; unassigned = "אחר"), and
-a unit-card status view: red short with the quantity to order, orange
-borderline, green ok, grey not entered / no target. Fully additive:
-projects without settings behave exactly as before; spare_tiles data and
-its endpoint are unchanged.
-
-4. Do not commit.
-5. Do not deploy.
-6. Wait for Zahi's explicit approval.
-
-================================================================================
-CURRENT STATUS
-================================================================================
-
-- STEP 0 completed.
-- Full implementation plan prepared.
-- One specification-location mismatch reported:
-  categoryMatchedCompanies is in NewDefectModal.js, not directly in
-  ApartmentDashboardPage.js.
-- No product code changed.
-- Implementation is blocked until Zahi writes:
-
-תתחיל
-
-FINAL CONSOLIDATED FIXES
-========================
-
-FIX-1 — Removed the project write serialization implementation completely. The final tree contains no project write mutex/lease implementation, retry constants, lock collection access, or related cleanup path. Settings and explicit assignment writes use the final direct implementation with the existing optimistic settings-version comparison where applicable.
-
-FIX-2 — Made overall spare-status computation total for a valid profile with zero emitted category rows: it now resolves to no_target rather than exhausting the precedence iterator.
-
-FIX-3 — Corrected profile-aware unit-card rendering for missing inventory: a not_entered row shows an em dash for actual quantity and does not render progress; no_target is labeled ללא יעד.
-
-FIX-4 — Reconciled legacy editor parity with mandatory inventory preservation. The no-profile branch retains unchanged legacy presentation: the five original fixed base categories appear in their original order and custom inventory types remain visible. To preserve existing spare_tiles exactly, untouched synthetic zero rows are omitted from the save payload; this prevents their introduction into legacy inventory while retaining the original array order, notes, counts, and aggregate fields.
-
-LATEST CORRECTION — 2026-09-03
-==============================
-Scope: ApartmentDashboardPage.js only.
-
-The profile-aware editor now uses a configured-first merge algorithm. Configured categories are shown in spare_settings.categories settings order. Each persisted matching entry carries its originalIndex. A missing configured category is represented as a synthetic count-0 row and has shouldPersist only when the unit has no saved entries. Persisted nonconfigured rows are appended after configured rows as custom rows. Save logic is otherwise unchanged.
-
-This correction preserves profile-aware configured-category visibility without changing an existing unit's inventory merely because a configuration category has no persisted entry. It also preserves the legacy/no-profile behavior described above.
-
-CODE ARCHITECTURE REVIEW
-========================
-PASS — Final architect review found no correctness or security blocker; no security issue was observed. Legacy branch separation restores the original five-category presentation while persisted metadata preserves the exact original spare_tiles array and order. Profile-aware preservation remains correct. The mutex-free backend, 17 tests, and complete V1-V7 evidence were accepted.
-
-VERIFICATION EVIDENCE
-=====================
-
-V1 — Focused pure-helper tests: PASS — 17 tests passed. Coverage includes status precedence/bands, absent and dangling profiles, validation boundaries, custom types, and the empty-category no_target result.
-
-V2/V3 — Live real HTTP probe: PASS — 60/60 checks passed. The probe exercised viewer/PM/owner RBAC, defaults, settings save/conflict/deletion guard, explicit add/move/remove, ordering, audit actions, unit-detail compatibility and profile-aware status.
-
-V4 — Final frontend build: PASS — CI=true build completed successfully. The only output warnings were the existing Apple source-map warnings.
-
-V5 — Mobile acceptance: PASS — prior acceptance remains valid.
-
-V6 — Final scope and integrity: PASS — no lock symbols remain in final implementation paths; legacy PATCH /api/units/{unit_id}/spare-tiles is byte-identical; frozen/forbidden and dependency files are untouched; git diff --check and Python py_compile are clean. The final embedded diff is limited to the twelve approved product/test files listed below.
-
-V7 — SYNTHETIC DATA-PRESERVATION AND COMPATIBILITY PROBE
-=========================================================
-The following latest successful tester output is included verbatim. It contains every PASS line and the full exact BEFORE/AFTER JSON blocks for settings save, assignment, removal, profile-aware unchanged save, category-deletion save, legacy no-profile save, and handover/export comparison.
-
-[SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****0001,****9991
+compute_spare_status entered line:
+entered = entry is not None and (count > 0 or bool(notes))
+
+compute_spare_status row dict:
+rows.append({'name': name, 'measure': measure, 'target': target, 'actual': actual, 'status': status, 'missing': missing})
+
+validate_spare_settings category normalization ended with:
+categories.append({'name': name, 'measure': measure})
+
+ApartmentDashboardPage baseline: both configured row literals contained type/count/notes/isConfigured/isPersisted/originalIndex/shouldPersist; save serialized only type/count/notes; profile row rendered row.actual or em dash; legacy filter was e.count > 0 || e.notes; spareTilesStatus returned none when totalCount === 0.
+
+SpareTilesPage baseline category row used key={`${cat.name}-${i}`}; PUT payload used categories = draft.categories.filter(c => c.name.trim()) and sent categories directly.
+
+$ rg -n "per_carton|'entered'" backend/contractor_ops frontend/src
+(no output; 0 matches)
+
+IMPLEMENTATION SUMMARY
+======================
+- E0: stable client-only category keys, explicit category payload, target disablement for blank names, defect FAB hidden during either editor.
+- E1/E2b: entered:true accepted only literally, omitted otherwise; status rows expose entered and confirmed zero is short with actual 0.
+- E2a/E4: optional per_carton validation and settings UI; cartons measure normalizes to null.
+- E5: both editors expose deliberate zero checkbox; profile-aware bulk-zero and UI-only carton conversion; legacy serialization/order preserved.
+
+VERIFICATION
+============
+V1 focused backend tests: 24 passed.
+V2/V3 live HTTP probe: 75/75 passed against restarted real server.
+V4 frontend build: CI=true REACT_APP_BACKEND_URL=https://$REPLIT_DEV_DOMAIN yarn build — EXIT 0. Only existing Apple Sign-In source-map warnings.
+V5 diff scope: exactly six approved source/test files before delivery files; git diff --check passed.
+V6 Playwright 390px: delayed character-by-character typing retained document.activeElement and final value ריצוף מטבח; target disabled while blank and enabled after typing. Screenshot o4fzqe.
+V7 Playwright 390px: carton 2 converted to 8 with exact caption; direct count cleared helper; confirmed zero card showed אין ספייר / 10 אריחים and red חסר 10; FAB hidden while editing and returned after cancel in profile-aware and legacy branches; no horizontal overflow. Screenshots f20s8s, 5ajuin, kxofii.
+V7 preservation: profile-aware and legacy no-op saves remained Mongo deep-equal; restored legacy rows contain no entered keys; deleted configured category remains exact custom entry; handover and export values unchanged. Full review-ready BEFORE/AFTER JSON was printed by the probe.
+
+ARCHITECT REVIEW
+================
+PASS — no correctness, authorization, serialization, data-loss, React-key, or security blocker. The reviewer confirmed exact six-file scope and all required semantics.
+
+PROBE PASS LIST
+===============
 [PASS] live server reachable without ASGITransport — status=200
-[PASS] GET /api/units/probe-spare-unit-1-5559894ef4 -> 200 — status=200
+[PASS] GET /api/units/probe-spare-unit-1-5fa81118af -> 200 — status=200
 [PASS] V3 absent settings has no profiles
 [PASS] V3 absent settings status is no_profile
 [PASS] V3 baseline existing top-level keys captured
 [PASS] V3 baseline existing unit keys captured
 [PASS] V7 seeded legacy spare_tiles exact array
 [PASS] V7 seeded legacy aggregate fields exact
-[PASS] GET /api/projects/probe-spare-project-5559894ef4/handover/overview -> 200 — status=200
+[PASS] GET /api/projects/probe-spare-project-5fa81118af/handover/overview -> 200 — status=200
 [PASS] POST /api/defects/export -> 200 — status=200
-[PASS] GET /api/projects/probe-spare-project-5559894ef4/spare-settings -> 200 — status=200
+[PASS] GET /api/projects/probe-spare-project-5fa81118af/spare-settings -> 200 — status=200
 [PASS] V2 viewer GET settings allowed and read-only
-[PASS] GET /api/projects/probe-spare-project-5559894ef4/spare-assignments -> 200 — status=200
-[PASS] PUT /api/projects/probe-spare-project-5559894ef4/spare-settings -> 403 — status=403
-[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0abd3ced-459f-43c2-9a89-862b0fd2c99d/units -> 403 — status=403
-[PASS] PUT /api/projects/probe-spare-project-5559894ef4/spare-settings -> 200 — status=200
+[PASS] GET /api/projects/probe-spare-project-5fa81118af/spare-assignments -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-5fa81118af/spare-settings -> 403 — status=403
+[PASS] PATCH /api/projects/probe-spare-project-5fa81118af/spare-profiles/cb195020-d5c4-4fbc-aebe-633ef045cb92/units -> 403 — status=403
+[PASS] PUT /api/projects/probe-spare-project-5fa81118af/spare-settings -> 200 — status=200
 [PASS] V2 PM saved two profiles
-
-[V7 JSON] settings save BEFORE
-{
-  "archived": false,
-  "building_id": "probe-spare-building-main-5559894ef4",
-  "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-5559894ef4",
-  "id": "probe-spare-unit-1-5559894ef4",
-  "project_id": "probe-spare-project-5559894ef4",
-  "sort_index": 10,
-  "spare_profile_id": null,
-  "spare_tiles": [
-    {
-      "count": 8,
-      "notes": "אריחים",
-      "type": "ריצוף יבש"
-    },
-    {
-      "count": 3,
-      "notes": "קרטון",
-      "type": "ריצוף מרפסות"
-    },
-    {
-      "count": 2,
-      "notes": "",
-      "type": "סוג מותאם"
-    },
-    {
-      "count": 0,
-      "notes": "נבדק",
-      "type": "חיפוי מטבח"
-    }
-  ],
-  "spare_tiles_count": 13,
-  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-  "status": "available",
-  "unit_no": "101"
-}
-[V7 JSON] settings save AFTER
-{
-  "archived": false,
-  "building_id": "probe-spare-building-main-5559894ef4",
-  "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-5559894ef4",
-  "id": "probe-spare-unit-1-5559894ef4",
-  "project_id": "probe-spare-project-5559894ef4",
-  "sort_index": 10,
-  "spare_profile_id": null,
-  "spare_tiles": [
-    {
-      "count": 8,
-      "notes": "אריחים",
-      "type": "ריצוף יבש"
-    },
-    {
-      "count": 3,
-      "notes": "קרטון",
-      "type": "ריצוף מרפסות"
-    },
-    {
-      "count": 2,
-      "notes": "",
-      "type": "סוג מותאם"
-    },
-    {
-      "count": 0,
-      "notes": "נבדק",
-      "type": "חיפוי מטבח"
-    }
-  ],
-  "spare_tiles_count": 13,
-  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-  "status": "available",
-  "unit_no": "101"
-}
+[PASS] V3 per-carton values normalize by measure
 [PASS] V7 whole unit unchanged after settings/profile save
-[PASS] PUT /api/projects/probe-spare-project-5559894ef4/spare-settings -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-5fa81118af/spare-settings -> 200 — status=200
 [PASS] V2 owner project-scoped write allowed
-[PASS] PUT /api/projects/probe-spare-project-5559894ef4/spare-settings -> 409 — status=409
-[PASS] GET /api/projects/probe-spare-project-5559894ef4/spare-assignments?building_id=probe-spare-building-main-5559894ef4 -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-5fa81118af/spare-settings -> 422 — status=422
+[PASS] V3 invalid per-carton has Hebrew error
+[PASS] PUT /api/projects/probe-spare-project-5fa81118af/spare-settings -> 422 — status=422
+[PASS] V3 invalid per-carton has Hebrew error
+[PASS] PUT /api/projects/probe-spare-project-5fa81118af/spare-settings -> 422 — status=422
+[PASS] V3 invalid per-carton has Hebrew error
+[PASS] PUT /api/projects/probe-spare-project-5fa81118af/spare-settings -> 409 — status=409
+[PASS] GET /api/projects/probe-spare-project-5fa81118af/spare-assignments?building_id=probe-spare-building-main-5fa81118af -> 200 — status=200
 [PASS] V2 buildings preserve structure ordering
 [PASS] V2 floors preserve sort_index ordering
 [PASS] V2 units preserve sort_index ordering
 [PASS] V2 assignment unit payload is exact
-[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0abd3ced-459f-43c2-9a89-862b0fd2c99d/units -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-5fa81118af/spare-profiles/cb195020-d5c4-4fbc-aebe-633ef045cb92/units -> 200 — status=200
 [PASS] V2 assignment add exact count
-
-[V7 JSON] profile assignment BEFORE
-{
-  "archived": false,
-  "building_id": "probe-spare-building-main-5559894ef4",
-  "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-5559894ef4",
-  "id": "probe-spare-unit-1-5559894ef4",
-  "project_id": "probe-spare-project-5559894ef4",
-  "sort_index": 10,
-  "spare_profile_id": null,
-  "spare_tiles": [
-    {
-      "count": 8,
-      "notes": "אריחים",
-      "type": "ריצוף יבש"
-    },
-    {
-      "count": 3,
-      "notes": "קרטון",
-      "type": "ריצוף מרפסות"
-    },
-    {
-      "count": 2,
-      "notes": "",
-      "type": "סוג מותאם"
-    },
-    {
-      "count": 0,
-      "notes": "נבדק",
-      "type": "חיפוי מטבח"
-    }
-  ],
-  "spare_tiles_count": 13,
-  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-  "status": "available",
-  "unit_no": "101"
-}
-[V7 JSON] profile assignment AFTER
-{
-  "archived": false,
-  "building_id": "probe-spare-building-main-5559894ef4",
-  "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-5559894ef4",
-  "id": "probe-spare-unit-1-5559894ef4",
-  "project_id": "probe-spare-project-5559894ef4",
-  "sort_index": 10,
-  "spare_profile_id": "0abd3ced-459f-43c2-9a89-862b0fd2c99d",
-  "spare_tiles": [
-    {
-      "count": 8,
-      "notes": "אריחים",
-      "type": "ריצוף יבש"
-    },
-    {
-      "count": 3,
-      "notes": "קרטון",
-      "type": "ריצוף מרפסות"
-    },
-    {
-      "count": 2,
-      "notes": "",
-      "type": "סוג מותאם"
-    },
-    {
-      "count": 0,
-      "notes": "נבדק",
-      "type": "חיפוי מטבח"
-    }
-  ],
-  "spare_tiles_count": 13,
-  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-  "status": "available",
-  "unit_no": "101"
-}
 [PASS] V7 assignment changes only spare_profile_id
-[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0c3e6a83-1ac5-4f2c-82b6-5e778797ac69/units -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-5fa81118af/spare-profiles/f477c9cd-444b-4579-aad9-48d2bc8f149a/units -> 200 — status=200
 [PASS] V2 assignment move exact count
-[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0c3e6a83-1ac5-4f2c-82b6-5e778797ac69/units -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-5fa81118af/spare-profiles/f477c9cd-444b-4579-aad9-48d2bc8f149a/units -> 200 — status=200
 [PASS] V2 assignment remove exact count
-
-[V7 JSON] profile removal BEFORE
-{
-  "archived": false,
-  "building_id": "probe-spare-building-main-5559894ef4",
-  "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-5559894ef4",
-  "id": "probe-spare-unit-1-5559894ef4",
-  "project_id": "probe-spare-project-5559894ef4",
-  "sort_index": 10,
-  "spare_profile_id": "0abd3ced-459f-43c2-9a89-862b0fd2c99d",
-  "spare_tiles": [
-    {
-      "count": 8,
-      "notes": "אריחים",
-      "type": "ריצוף יבש"
-    },
-    {
-      "count": 3,
-      "notes": "קרטון",
-      "type": "ריצוף מרפסות"
-    },
-    {
-      "count": 2,
-      "notes": "",
-      "type": "סוג מותאם"
-    },
-    {
-      "count": 0,
-      "notes": "נבדק",
-      "type": "חיפוי מטבח"
-    }
-  ],
-  "spare_tiles_count": 13,
-  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-  "status": "available",
-  "unit_no": "101"
-}
-[V7 JSON] profile removal AFTER
-{
-  "archived": false,
-  "building_id": "probe-spare-building-main-5559894ef4",
-  "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-5559894ef4",
-  "id": "probe-spare-unit-1-5559894ef4",
-  "project_id": "probe-spare-project-5559894ef4",
-  "sort_index": 10,
-  "spare_profile_id": null,
-  "spare_tiles": [
-    {
-      "count": 8,
-      "notes": "אריחים",
-      "type": "ריצוף יבש"
-    },
-    {
-      "count": 3,
-      "notes": "קרטון",
-      "type": "ריצוף מרפסות"
-    },
-    {
-      "count": 2,
-      "notes": "",
-      "type": "סוג מותאם"
-    },
-    {
-      "count": 0,
-      "notes": "נבדק",
-      "type": "חיפוי מטבח"
-    }
-  ],
-  "spare_tiles_count": 13,
-  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-  "status": "available",
-  "unit_no": "101"
-}
 [PASS] V7 removal restores whole unit with spare_profile_id None
-[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0c3e6a83-1ac5-4f2c-82b6-5e778797ac69/units -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-5fa81118af/spare-profiles/f477c9cd-444b-4579-aad9-48d2bc8f149a/units -> 200 — status=200
 [PASS] V2 no-op removal reports zero
-[PASS] PUT /api/projects/probe-spare-project-5559894ef4/spare-settings -> 409 — status=409
-[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0c3e6a83-1ac5-4f2c-82b6-5e778797ac69/units -> 422 — status=422
-[PASS] PATCH /api/units/probe-spare-unit-1-5559894ef4/spare-tiles -> 200 — status=200
-
-[V7 JSON] profile-aware unchanged inventory save BEFORE
-{
-  "archived": false,
-  "building_id": "probe-spare-building-main-5559894ef4",
-  "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-5559894ef4",
-  "id": "probe-spare-unit-1-5559894ef4",
-  "project_id": "probe-spare-project-5559894ef4",
-  "sort_index": 10,
-  "spare_profile_id": null,
-  "spare_tiles": [
-    {
-      "count": 8,
-      "notes": "אריחים",
-      "type": "ריצוף יבש"
-    },
-    {
-      "count": 3,
-      "notes": "קרטון",
-      "type": "ריצוף מרפסות"
-    },
-    {
-      "count": 2,
-      "notes": "",
-      "type": "סוג מותאם"
-    },
-    {
-      "count": 0,
-      "notes": "נבדק",
-      "type": "חיפוי מטבח"
-    }
-  ],
-  "spare_tiles_count": 13,
-  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-  "status": "available",
-  "unit_no": "101"
-}
-[V7 JSON] profile-aware unchanged inventory save AFTER
-{
-  "archived": false,
-  "building_id": "probe-spare-building-main-5559894ef4",
-  "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-5559894ef4",
-  "id": "probe-spare-unit-1-5559894ef4",
-  "project_id": "probe-spare-project-5559894ef4",
-  "sort_index": 10,
-  "spare_profile_id": null,
-  "spare_tiles": [
-    {
-      "count": 8,
-      "notes": "אריחים",
-      "type": "ריצוף יבש"
-    },
-    {
-      "count": 3,
-      "notes": "קרטון",
-      "type": "ריצוף מרפסות"
-    },
-    {
-      "count": 2,
-      "notes": "",
-      "type": "סוג מותאם"
-    },
-    {
-      "count": 0,
-      "notes": "נבדק",
-      "type": "חיפוי מטבח"
-    }
-  ],
-  "spare_tiles_count": 13,
-  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-  "status": "available",
-  "unit_no": "101"
-}
+[PASS] PUT /api/projects/probe-spare-project-5fa81118af/spare-settings -> 409 — status=409
+[PASS] PATCH /api/projects/probe-spare-project-5fa81118af/spare-profiles/f477c9cd-444b-4579-aad9-48d2bc8f149a/units -> 422 — status=422
+[PASS] PATCH /api/units/probe-spare-unit-1-5fa81118af/spare-tiles -> 200 — status=200
 [PASS] V7 profile-aware unchanged save preserves whole unit
-[PASS] PUT /api/projects/probe-spare-project-5559894ef4/spare-settings -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-5fa81118af/spare-profiles/cb195020-d5c4-4fbc-aebe-633ef045cb92/units -> 200 — status=200
+[PASS] PATCH /api/units/probe-spare-unit-1-5fa81118af/spare-tiles -> 200 — status=200
+[PASS] V1 confirmed zero stored exactly
+[PASS] GET /api/units/probe-spare-unit-1-5fa81118af -> 200 — status=200
+[PASS] V1 confirmed zero is short with full target missing
+[PASS] PATCH /api/units/probe-spare-unit-1-5fa81118af/spare-tiles -> 200 — status=200
+[PASS] V7 legacy array restored without entered keys
+[PASS] PATCH /api/projects/probe-spare-project-5fa81118af/spare-profiles/cb195020-d5c4-4fbc-aebe-633ef045cb92/units -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-5fa81118af/spare-settings -> 200 — status=200
 [PASS] V7 category deletion persisted
-[PASS] PATCH /api/units/probe-spare-unit-1-5559894ef4/spare-tiles -> 200 — status=200
-
-[V7 JSON] save after category deletion BEFORE
-{
-  "archived": false,
-  "building_id": "probe-spare-building-main-5559894ef4",
-  "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-5559894ef4",
-  "id": "probe-spare-unit-1-5559894ef4",
-  "project_id": "probe-spare-project-5559894ef4",
-  "sort_index": 10,
-  "spare_profile_id": null,
-  "spare_tiles": [
-    {
-      "count": 8,
-      "notes": "אריחים",
-      "type": "ריצוף יבש"
-    },
-    {
-      "count": 3,
-      "notes": "קרטון",
-      "type": "ריצוף מרפסות"
-    },
-    {
-      "count": 2,
-      "notes": "",
-      "type": "סוג מותאם"
-    },
-    {
-      "count": 0,
-      "notes": "נבדק",
-      "type": "חיפוי מטבח"
-    }
-  ],
-  "spare_tiles_count": 13,
-  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-  "status": "available",
-  "unit_no": "101"
-}
-[V7 JSON] save after category deletion AFTER
-{
-  "archived": false,
-  "building_id": "probe-spare-building-main-5559894ef4",
-  "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-5559894ef4",
-  "id": "probe-spare-unit-1-5559894ef4",
-  "project_id": "probe-spare-project-5559894ef4",
-  "sort_index": 10,
-  "spare_profile_id": null,
-  "spare_tiles": [
-    {
-      "count": 8,
-      "notes": "אריחים",
-      "type": "ריצוף יבש"
-    },
-    {
-      "count": 3,
-      "notes": "קרטון",
-      "type": "ריצוף מרפסות"
-    },
-    {
-      "count": 2,
-      "notes": "",
-      "type": "סוג מותאם"
-    },
-    {
-      "count": 0,
-      "notes": "נבדק",
-      "type": "חיפוי מטבח"
-    }
-  ],
-  "spare_tiles_count": 13,
-  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-  "status": "available",
-  "unit_no": "101"
-}
+[PASS] PATCH /api/units/probe-spare-unit-1-5fa81118af/spare-tiles -> 200 — status=200
 [PASS] V7 deleted configured category remains exact custom entry
-[PASS] PATCH /api/units/probe-spare-cross-unit-5559894ef4/spare-tiles -> 200 — status=200
-
-[V7 JSON] legacy no-profile unchanged save BEFORE
-{
-  "archived": false,
-  "building_id": "probe-cross-building-5559894ef4",
-  "floor_id": "probe-cross-floor-5559894ef4",
-  "id": "probe-spare-cross-unit-5559894ef4",
-  "project_id": "probe-spare-other-project-5559894ef4",
-  "sort_index": 1,
-  "spare_tiles": [
-    {
-      "count": 8,
-      "notes": "אריחים",
-      "type": "ריצוף יבש"
-    },
-    {
-      "count": 3,
-      "notes": "קרטון",
-      "type": "ריצוף מרפסות"
-    },
-    {
-      "count": 2,
-      "notes": "",
-      "type": "סוג מותאם"
-    },
-    {
-      "count": 0,
-      "notes": "נבדק",
-      "type": "חיפוי מטבח"
-    }
-  ],
-  "spare_tiles_count": 13,
-  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-  "status": "available",
-  "unit_no": "X1"
-}
-[V7 JSON] legacy no-profile unchanged save AFTER
-{
-  "archived": false,
-  "building_id": "probe-cross-building-5559894ef4",
-  "floor_id": "probe-cross-floor-5559894ef4",
-  "id": "probe-spare-cross-unit-5559894ef4",
-  "project_id": "probe-spare-other-project-5559894ef4",
-  "sort_index": 1,
-  "spare_tiles": [
-    {
-      "count": 8,
-      "notes": "אריחים",
-      "type": "ריצוף יבש"
-    },
-    {
-      "count": 3,
-      "notes": "קרטון",
-      "type": "ריצוף מרפסות"
-    },
-    {
-      "count": 2,
-      "notes": "",
-      "type": "סוג מותאם"
-    },
-    {
-      "count": 0,
-      "notes": "נבדק",
-      "type": "חיפוי מטבח"
-    }
-  ],
-  "spare_tiles_count": 13,
-  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-  "status": "available",
-  "unit_no": "X1"
-}
+[PASS] PATCH /api/units/probe-spare-cross-unit-5fa81118af/spare-tiles -> 200 — status=200
 [PASS] V7 no-profile legacy branch preserves whole unit
-[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0abd3ced-459f-43c2-9a89-862b0fd2c99d/units -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-5fa81118af/spare-profiles/cb195020-d5c4-4fbc-aebe-633ef045cb92/units -> 200 — status=200
 [PASS] V3 final profile assignment exact count
-[PASS] GET /api/units/probe-spare-unit-1-5559894ef4 -> 200 — status=200
+[PASS] GET /api/units/probe-spare-unit-1-5fa81118af -> 200 — status=200
 [PASS] V3 existing top-level keys unchanged
 [PASS] V3 existing nested unit keys unchanged
 [PASS] V3 assigned profile returned
 [PASS] V3 status reflects actual 8 against target 10
 [PASS] V3 viewer unit capability is false
-[PASS] GET /api/projects/probe-spare-project-5559894ef4/handover/overview -> 200 — status=200
+[PASS] GET /api/projects/probe-spare-project-5fa81118af/handover/overview -> 200 — status=200
 [PASS] POST /api/defects/export -> 200 — status=200
-
-[V7 JSON] handover/export BEFORE
-{
-  "export": {
-    "ספייר: הערות": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-    "ספייר: חיפוי אמבטיות": null,
-    "ספייר: חיפוי מטבח": 0,
-    "ספייר: סוגים נוספים": "סוג מותאם: 2",
-    "ספייר: ריצוף אמבטיות": null,
-    "ספייר: ריצוף יבש": 8,
-    "ספייר: ריצוף מרפסות": 3
-  },
-  "handover": {
-    "spare_tiles": [
-      {
-        "count": 8,
-        "notes": "אריחים",
-        "type": "ריצוף יבש"
-      },
-      {
-        "count": 3,
-        "notes": "קרטון",
-        "type": "ריצוף מרפסות"
-      },
-      {
-        "count": 2,
-        "notes": "",
-        "type": "סוג מותאם"
-      },
-      {
-        "count": 0,
-        "notes": "נבדק",
-        "type": "חיפוי מטבח"
-      }
-    ],
-    "spare_tiles_count": 13
-  }
-}
-[V7 JSON] handover/export AFTER
-{
-  "export": {
-    "ספייר: הערות": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
-    "ספייר: חיפוי אמבטיות": null,
-    "ספייר: חיפוי מטבח": 0,
-    "ספייר: סוגים נוספים": "סוג מותאם: 2",
-    "ספייר: ריצוף אמבטיות": null,
-    "ספייר: ריצוף יבש": 8,
-    "ספייר: ריצוף מרפסות": 3
-  },
-  "handover": {
-    "spare_tiles": [
-      {
-        "count": 8,
-        "notes": "אריחים",
-        "type": "ריצוף יבש"
-      },
-      {
-        "count": 3,
-        "notes": "קרטון",
-        "type": "ריצוף מרפסות"
-      },
-      {
-        "count": 2,
-        "notes": "",
-        "type": "סוג מותאם"
-      },
-      {
-        "count": 0,
-        "notes": "נבדק",
-        "type": "חיפוי מטבח"
-      }
-    ],
-    "spare_tiles_count": 13
-  }
-}
 [PASS] V7 handover overview spare values unchanged
 [PASS] V7 export spare columns unchanged
 [PASS] V2 settings audit action recorded
 [PASS] V2 assignment audit action recorded
+All 75 live HTTP checks passed.
 
-All 60 live HTTP checks passed.
+FINAL WORKING-TREE CHECK
+========================
+HEAD_SHORT=30ac278
 
+STATUS_BEGIN
+ M backend/contractor_ops/projects_router.py
+ M backend/contractor_ops/spare_tiles.py
+ M backend/tests/probe_spare_tiles_http.py
+ M backend/tests/test_spare_tiles.py
+ M frontend/src/pages/ApartmentDashboardPage.js
+ M frontend/src/pages/SpareTilesPage.js
+ M review.txt
+STATUS_END
+CHANGED_BEGIN
+backend/contractor_ops/projects_router.py
+backend/contractor_ops/spare_tiles.py
+backend/tests/probe_spare_tiles_http.py
+backend/tests/test_spare_tiles.py
+frontend/src/pages/ApartmentDashboardPage.js
+frontend/src/pages/SpareTilesPage.js
+review.txt
+CHANGED_END
 
-V5(c) / V7(c-d) — FINAL BROWSER AND DATA-PRESERVATION REGRESSION
-==================================================================
-V5(c) PASS — At 390px, screenshot evidence ln0mcx shows all configured categories, including one with no saved inventory entry, followed by the custom row in the correct configured-first/custom-appended order. No horizontal overflow occurred.
-V7(c) PASS — An unchanged profile-aware save was Mongo deep-equal; the synthetic missing configured row was not persisted.
-V7(d) PASS — After deletion of a configured category that had persisted inventory, the category reopened as a custom row and an unchanged save remained deep-equal.
-PASS — No-profile editor visibly showed the five original fixed base categories in their original order, plus the custom type סוג מותאם.
-PASS — No-profile save without changes kept spare_tiles deep-equal, including original order, notes, and legacy aggregate fields.
-PASS — Profile-aware unchanged save was deep-equal.
-PASS — After deleting חיפוי מטבח from configured categories, it reopened as custom with count 0 and note נבדק.
-PASS — no_target label is ללא יעד.
-PASS — not_entered row shows an em dash and no progress bar.
-PASS — Tester cleanup completed.
-PASS — A setup-only invalid UUID was corrected; this was a test setup correction, not an application bug.
-
-Reconciliation result: legacy presentation remains unchanged while mandatory data preservation is honored. Profile-aware settings are rendered configured-first in settings order, with persisted custom inventory afterward; a synthetic missing configured row is saved only in the empty-inventory case.
-
-COMPLETE UNIFIED DIFF AGAINST d0eeeae
-=====================================
-The following complete unified diff is exactly for these twelve files and no other path:
-
-1. backend/contractor_ops/projects_router.py
-2. backend/contractor_ops/schemas.py
-3. backend/contractor_ops/spare_tiles.py
-4. backend/contractor_ops/spare_tiles_router.py
-5. backend/server.py
-6. backend/tests/probe_spare_tiles_http.py
-7. backend/tests/test_spare_tiles.py
-8. frontend/src/App.js
-9. frontend/src/pages/ApartmentDashboardPage.js
-10. frontend/src/pages/ProjectDashboardPage.js
-11. frontend/src/pages/SpareTilesPage.js
-12. frontend/src/services/api.js
-
+COMPLETE DIFF AGAINST 30ac278
+==============================
 diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
-index f1540d6..56d7417 100644
+index 56d7417..66dbc4b 100644
 --- a/backend/contractor_ops/projects_router.py
 +++ b/backend/contractor_ops/projects_router.py
-@@ -15,6 +15,7 @@ from contractor_ops.schemas import (
-     Project, Building, Floor, Unit, Task,
-     BulkFloorRequest, BulkUnitRequest, InsertFloorRequest,
- )
-+from contractor_ops.spare_tiles import compute_spare_status, default_spare_settings
+@@ -738,7 +738,13 @@ async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(
+         if len(notes) > 500:
+             raise HTTPException(status_code=422, detail='הערה ארוכה מדי (מקסימום 500 תווים)')
 
- router = APIRouter(prefix="/api")
+-        validated.append({'type': tile_type, 'count': count, 'notes': notes})
++        entered = entry.get('entered') is True
++        validated.append({
++            'type': tile_type,
++            'count': count,
++            'notes': notes,
++            **({'entered': True} if entered else {}),
++        })
 
-@@ -1215,6 +1216,17 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
-         s = t.get('status', 'open')
-         by_status[s] = by_status.get(s, 0) + 1
-
-+    spare_settings = (
-+        project.get('spare_settings')
-+        if project and project.get('spare_settings')
-+        else default_spare_settings()
-+    )
-+    spare_status = compute_spare_status(unit, spare_settings)
-+    spare_can_write = (
-+        await _get_project_role(user, project_id) in ('project_manager', 'owner', 'management_team')
-+        if project_id else False
-+    )
-+
-     return {
-         'unit': {
-             **unit,
-@@ -1223,6 +1235,10 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
-         'floor': {'id': floor['id'], 'name': floor.get('name', '')} if floor else None,
-         'building': {'id': building['id'], 'name': building.get('name', '')} if building else None,
-         'project': {'id': project['id'], 'name': project.get('name', ''), 'code': project.get('code', '')} if project else None,
-+        'spare_settings': spare_settings,
-+        'spare_profiles_exist': bool(spare_settings.get('profiles')),
-+        'spare_status': spare_status,
-+        'spare_can_write': spare_can_write,
-         'kpi': {
-             'total': len(tasks),
-             'open': by_status.get('open', 0) + by_status.get('assigned', 0) + by_status.get('reopened', 0),
-diff --git a/backend/contractor_ops/schemas.py b/backend/contractor_ops/schemas.py
-index ddafa05..c363a8b 100644
---- a/backend/contractor_ops/schemas.py
-+++ b/backend/contractor_ops/schemas.py
-@@ -189,6 +189,7 @@ class Unit(BaseModel):
-     spare_tiles_count: Optional[int] = None
-     spare_tiles_notes: Optional[str] = None
-     spare_tiles: Optional[List[Dict]] = None
-+    spare_profile_id: Optional[str] = None
-     created_at: Optional[str] = None
-
-
+     total_count = sum(e['count'] for e in validated)
+     all_notes = ', '.join(f"{e['type']}: {e['notes']}" for e in validated if e['notes'])
 diff --git a/backend/contractor_ops/spare_tiles.py b/backend/contractor_ops/spare_tiles.py
-new file mode 100644
-index 0000000..c5f7a7d
---- /dev/null
+index c5f7a7d..23ea3b9 100644
+--- a/backend/contractor_ops/spare_tiles.py
 +++ b/backend/contractor_ops/spare_tiles.py
-@@ -0,0 +1,204 @@
-+import math
-+import uuid
-+from copy import deepcopy
-+
-+from fastapi import HTTPException
-+
-+
-+DEFAULT_SPARE_CATEGORIES = [
-+    {'name': 'ריצוף יבש', 'measure': 'tiles'},
-+    {'name': 'ריצוף מרפסות', 'measure': 'cartons'},
-+    {'name': 'חיפוי אמבטיות', 'measure': 'cartons'},
-+    {'name': 'ריצוף אמבטיות', 'measure': 'cartons'},
-+    {'name': 'חיפוי מטבח', 'measure': 'cartons'},
-+]
-+MEASURES = {'tiles', 'cartons', 'sqm'}
-+
-+
-+def default_spare_settings():
-+    return {
-+        'categories': deepcopy(DEFAULT_SPARE_CATEGORIES),
-+        'profiles': [],
-+        'margin_pct': 10,
-+    }
-+
-+
-+def _integer(value, message):
-+    if isinstance(value, bool):
-+        raise HTTPException(status_code=422, detail=message)
-+    try:
-+        normalized = int(value)
-+    except (TypeError, ValueError, OverflowError):
-+        raise HTTPException(status_code=422, detail=message)
-+    if isinstance(value, float) and not value.is_integer():
-+        raise HTTPException(status_code=422, detail=message)
-+    return normalized
-+
-+
-+def validate_spare_settings(body):
-+    if not isinstance(body, dict):
-+        raise HTTPException(status_code=422, detail='הגדרות ריצוף ספייר חייבות להיות אובייקט')
-+
-+    raw_categories = body.get('categories')
-+    if not isinstance(raw_categories, list) or not 1 <= len(raw_categories) <= 20:
-+        raise HTTPException(status_code=422, detail='יש להגדיר בין 1 ל-20 קטגוריות')
-+
-+    categories = []
-+    category_names = set()
-+    for raw in raw_categories:
-+        if not isinstance(raw, dict):
-+            raise HTTPException(status_code=422, detail='קטגוריה חייבת להיות אובייקט')
-+        name = raw.get('name')
-+        if not isinstance(name, str) or not name.strip():
-+            raise HTTPException(status_code=422, detail='שם קטגוריה הוא שדה חובה')
-+        name = name.strip()
-+        if len(name) > 50:
-+            raise HTTPException(status_code=422, detail='שם קטגוריה ארוך מדי (עד 50 תווים)')
-+        name_key = name.casefold()
-+        if name_key in category_names:
-+            raise HTTPException(status_code=422, detail=f'שם קטגוריה כפול: {name}')
-+        measure = raw.get('measure')
-+        if measure not in MEASURES:
-+            raise HTTPException(status_code=422, detail='יחידת מידה לא חוקית')
-+        category_names.add(name_key)
-+        categories.append({'name': name, 'measure': measure})
-+
-+    raw_profiles = body.get('profiles', [])
-+    if not isinstance(raw_profiles, list) or len(raw_profiles) > 10:
-+        raise HTTPException(status_code=422, detail='ניתן להגדיר עד 10 פרופילים')
-+
-+    exact_category_names = {category['name'] for category in categories}
-+    profiles = []
-+    profile_names = set()
-+    profile_ids = set()
-+    for raw in raw_profiles:
-+        if not isinstance(raw, dict):
-+            raise HTTPException(status_code=422, detail='פרופיל חייב להיות אובייקט')
-+        name = raw.get('name')
-+        if not isinstance(name, str) or not name.strip():
-+            raise HTTPException(status_code=422, detail='שם פרופיל הוא שדה חובה')
-+        name = name.strip()
-+        if len(name) > 40:
-+            raise HTTPException(status_code=422, detail='שם פרופיל ארוך מדי (עד 40 תווים)')
-+        name_key = name.casefold()
-+        if name_key in profile_names:
-+            raise HTTPException(status_code=422, detail=f'שם פרופיל כפול: {name}')
-+        profile_names.add(name_key)
-+
-+        profile_id = raw.get('id')
-+        if profile_id is None:
-+            profile_id = str(uuid.uuid4())
-+        elif not isinstance(profile_id, str):
-+            raise HTTPException(status_code=422, detail='מזהה פרופיל אינו חוקי')
+@@ -1,6 +1,7 @@
+ import math
+ import uuid
+ from copy import deepcopy
++from decimal import Decimal, InvalidOperation
+
+ from fastapi import HTTPException
+
+@@ -60,8 +61,25 @@ def validate_spare_settings(body):
+         measure = raw.get('measure')
+         if measure not in MEASURES:
+             raise HTTPException(status_code=422, detail='יחידת מידה לא חוקית')
++        per_carton = raw.get('per_carton')
++        if measure == 'cartons' or per_carton in (None, ''):
++            per_carton = None
 +        else:
++            if isinstance(per_carton, bool):
++                raise HTTPException(status_code=422, detail='כמות בקרטון לא חוקית')
 +            try:
-+                uuid.UUID(profile_id)
-+            except ValueError:
-+                raise HTTPException(status_code=422, detail='מזהה פרופיל אינו חוקי')
-+        if profile_id in profile_ids:
-+            raise HTTPException(status_code=422, detail='מזהה פרופיל כפול')
-+        profile_ids.add(profile_id)
-+
-+        raw_targets = raw.get('targets', {})
-+        if not isinstance(raw_targets, dict):
-+            raise HTTPException(status_code=422, detail='יעדי פרופיל חייבים להיות אובייקט')
-+        targets = {}
-+        for category_name, value in raw_targets.items():
-+            if category_name not in exact_category_names:
-+                continue
-+            target = _integer(value, 'יעד חייב להיות מספר שלם')
-+            if not 0 <= target <= 10000:
-+                raise HTTPException(status_code=422, detail='יעד חייב להיות בין 0 ל-10000')
-+            targets[category_name] = target
-+        profiles.append({'id': profile_id, 'name': name, 'targets': targets})
-+
-+    margin_pct = _integer(body.get('margin_pct', 10), 'אחוז גבולי חייב להיות מספר שלם')
-+    if not 0 <= margin_pct <= 100:
-+        raise HTTPException(status_code=422, detail='אחוז גבולי חייב להיות בין 0 ל-100')
-+
-+    return {
-+        'categories': categories,
-+        'profiles': profiles,
-+        'margin_pct': margin_pct,
-+    }
-+
-+
-+def compute_spare_status(unit_doc, spare_settings):
-+    settings = spare_settings or default_spare_settings()
-+    profiles = settings.get('profiles') or []
-+    profile_id = unit_doc.get('spare_profile_id')
-+    profile = next(
-+        (item for item in profiles if isinstance(item, dict) and item.get('id') == profile_id),
-+        None,
-+    )
-+
-+    entries = {}
-+    custom_names = []
-+    for entry in unit_doc.get('spare_tiles') or []:
-+        if not isinstance(entry, dict) or not isinstance(entry.get('type'), str):
-+            continue
-+        entry_name = entry['type']
-+        if entry_name not in entries:
-+            custom_names.append(entry_name)
-+        entries[entry_name] = entry
-+
-+    configured = []
-+    configured_names = set()
-+    for category in settings.get('categories') or []:
-+        if not isinstance(category, dict) or not isinstance(category.get('name'), str):
-+            continue
-+        configured.append((category['name'], category.get('measure')))
-+        configured_names.add(category['name'])
-+    configured.extend((name, None) for name in custom_names if name not in configured_names)
-+
-+    rows = []
-+    targets = profile.get('targets', {}) if profile else {}
-+    margin_pct = settings.get('margin_pct', 10)
-+    for name, measure in configured:
-+        entry = entries.get(name)
-+        count = entry.get('count', 0) if entry else 0
-+        try:
-+            count = int(count)
-+        except (TypeError, ValueError):
-+            count = 0
-+        notes = entry.get('notes') if entry else None
-+        entered = entry is not None and (count > 0 or bool(notes))
-+        actual = count if entered else None
-+        target = targets.get(name) if profile else None
-+        missing = None
-+        if not target or target <= 0:
-+            status = 'no_target'
-+        elif not entered:
-+            status = 'not_entered'
-+        elif actual < target:
-+            status = 'short'
-+            missing = target - actual
-+        elif actual < target + max(1, math.ceil(target * margin_pct / 100)):
-+            status = 'borderline'
-+        else:
-+            status = 'ok'
-+        rows.append({
-+            'name': name,
-+            'measure': measure,
-+            'target': target,
-+            'actual': actual,
-+            'status': status,
-+            'missing': missing,
-+        })
-+
-+    if not profile:
-+        overall = 'no_profile'
-+    else:
-+        statuses = {row['status'] for row in rows}
-+        overall = next(
-+            (
-+                status for status in ('short', 'not_entered', 'borderline', 'ok', 'no_target')
-+                if status in statuses
-+            ),
-+            'no_target',
-+        )
-+    return {
-+        'profile': {'id': profile['id'], 'name': profile['name']} if profile else None,
-+        'overall': overall,
-+        'categories': rows,
-+    }
-\ No newline at end of file
-diff --git a/backend/contractor_ops/spare_tiles_router.py b/backend/contractor_ops/spare_tiles_router.py
-new file mode 100644
-index 0000000..39dc346
---- /dev/null
-+++ b/backend/contractor_ops/spare_tiles_router.py
-@@ -0,0 +1,308 @@
-+import re
-+from copy import deepcopy
-+from datetime import datetime, timezone
-+
-+from fastapi import APIRouter, Depends, HTTPException, Query
-+
-+from contractor_ops.router import (
-+    _audit,
-+    _check_project_read_access,
-+    _get_project_role,
-+    get_current_user,
-+    get_db,
-+)
-+from contractor_ops.spare_tiles import default_spare_settings, validate_spare_settings
-+
-+
-+router = APIRouter(prefix='/api')
-+WRITE_ROLES = ('project_manager', 'owner', 'management_team')
-+
-+
-+async def _project_or_404(db, project_id):
-+    project = await db.projects.find_one({'id': project_id}, {'_id': 0})
-+    if not project:
-+        raise HTTPException(status_code=404, detail='הפרויקט לא נמצא')
-+    return project
-+
-+
-+async def _require_write(user, project_id):
-+    role = await _get_project_role(user, project_id)
-+    if role not in WRITE_ROLES:
-+        raise HTTPException(status_code=403, detail='אין הרשאה לעדכן הגדרות ריצוף ספייר')
-+
-+
-+async def _can_write(user, project_id):
-+    return await _get_project_role(user, project_id) in WRITE_ROLES
-+
-+
-+async def _settings_with_counts(db, project_id, settings):
-+    result = deepcopy(settings)
-+    profile_ids = {profile['id'] for profile in result.get('profiles', [])}
-+    counts = {profile_id: 0 for profile_id in profile_ids}
-+    unassigned = 0
-+    units = await db.units.find(
-+        {'project_id': project_id, 'archived': {'$ne': True}},
-+        {'_id': 0, 'spare_profile_id': 1},
-+    ).to_list(100000)
-+    for unit in units:
-+        profile_id = unit.get('spare_profile_id')
-+        if profile_id in counts:
-+            counts[profile_id] += 1
-+        else:
-+            unassigned += 1
-+    for profile in result.get('profiles', []):
-+        profile['assigned_units'] = counts[profile['id']]
-+    result['unassigned_units'] = unassigned
-+    return result
-+
-+
-+@router.get('/projects/{project_id}/spare-settings')
-+async def get_spare_settings(project_id: str, user: dict = Depends(get_current_user)):
-+    db = get_db()
-+    project = await _project_or_404(db, project_id)
-+    await _check_project_read_access(user, project_id)
-+    settings = project.get('spare_settings') or default_spare_settings()
-+    response = await _settings_with_counts(db, project_id, settings)
-+    response['can_write'] = await _can_write(user, project_id)
-+    return response
-+
-+
-+@router.put('/projects/{project_id}/spare-settings')
-+async def put_spare_settings(project_id: str, body: dict, user: dict = Depends(get_current_user)):
-+    db = get_db()
-+    await _project_or_404(db, project_id)
-+    await _require_write(user, project_id)
-+    expected_updated_at = body.get('updated_at') if isinstance(body, dict) else None
-+    settings = validate_spare_settings(body)
-+    project = await _project_or_404(db, project_id)
-+    stored_settings = project.get('spare_settings')
-+    had_settings_field = 'spare_settings' in project
-+    has_stored_settings = isinstance(stored_settings, dict)
-+    current_updated_at = stored_settings.get('updated_at') if has_stored_settings else None
-+    if has_stored_settings and expected_updated_at != current_updated_at:
-+        raise HTTPException(
-+            status_code=409,
-+            detail='הגדרות ריצוף הספייר השתנו, יש לטעון מחדש',
-+        )
-+    old_profile_ids = {
-+        profile.get('id')
-+        for profile in (stored_settings or {}).get('profiles', [])
-+        if isinstance(profile, dict) and profile.get('id')
-+    }
-+    retained_ids = {profile['id'] for profile in settings['profiles']}
-+    deleted_ids = old_profile_ids - retained_ids
-+    if deleted_ids:
-+        assigned_count = await db.units.count_documents({
-+            'project_id': project_id,
-+            'archived': {'$ne': True},
-+            'spare_profile_id': {'$in': list(deleted_ids)},
-+        })
-+        if assigned_count:
-+            raise HTTPException(
-+                status_code=409,
-+                detail=f'יש להסיר תחילה {assigned_count} דירות מהפרופיל',
-+            )
-+
-+    settings['updated_at'] = datetime.now(timezone.utc).isoformat()
-+    settings['updated_by'] = user['id']
-+    if has_stored_settings:
-+        update_filter = {
-+            'id': project_id,
-+            'spare_settings.updated_at': current_updated_at,
-+        }
-+    else:
-+        update_filter = {'id': project_id}
-+        if had_settings_field:
-+            update_filter['spare_settings'] = stored_settings
-+        else:
-+            update_filter['spare_settings'] = {'$exists': False}
-+    update_result = await db.projects.update_one(
-+        update_filter,
-+        {'$set': {'spare_settings': settings}},
-+    )
-+    if update_result.modified_count != 1:
-+        raise HTTPException(
-+            status_code=409,
-+            detail='הגדרות ריצוף הספייר השתנו, יש לטעון מחדש',
-+        )
-+    await _audit('project', project_id, 'spare_settings_updated', user['id'], {
-+        'categories_count': len(settings['categories']),
-+        'profiles_count': len(settings['profiles']),
-+    })
-+    response = await _settings_with_counts(db, project_id, settings)
-+    response['can_write'] = True
-+    return response
-+
-+
-+def _natural_name_key(document):
-+    return [
-+        int(part) if part.isdigit() else part.casefold()
-+        for part in re.split(r'(\d+)', document.get('name', ''))
-+    ]
-+
-+
-+@router.get('/projects/{project_id}/spare-assignments')
-+async def get_spare_assignments(
-+    project_id: str,
-+    building_id: str = Query(default=None),
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+    await _project_or_404(db, project_id)
-+    await _check_project_read_access(user, project_id)
-+    buildings = await db.buildings.find(
-+        {'project_id': project_id, 'archived': {'$ne': True}},
-+        {'_id': 0},
-+    ).to_list(1000)
-+    buildings.sort(key=lambda item: (item.get('sort_index', 0), _natural_name_key(item)))
-+    building_options = [{'id': item['id'], 'name': item.get('name', '')} for item in buildings]
-+
-+    if not building_id:
-+        return {'buildings': building_options, 'floors': []}
-+    if not any(item['id'] == building_id for item in buildings):
-+        raise HTTPException(status_code=404, detail='הבניין לא נמצא בפרויקט')
-+
-+    floors = await db.floors.find(
-+        {
-+            'project_id': project_id,
-+            'building_id': building_id,
-+            'archived': {'$ne': True},
-+        },
-+        {'_id': 0},
-+    ).to_list(10000)
-+    floors.sort(key=lambda item: item.get('sort_index', item.get('floor_number', 0) * 1000))
-+    floor_ids = [floor['id'] for floor in floors]
-+    units = []
-+    if floor_ids:
-+        units = await db.units.find(
-+            {
-+                'project_id': project_id,
-+                'floor_id': {'$in': floor_ids},
-+                'archived': {'$ne': True},
-+            },
-+            {'_id': 0},
-+        ).to_list(100000)
-+    units_by_floor = {floor_id: [] for floor_id in floor_ids}
-+    for unit in units:
-+        units_by_floor[unit['floor_id']].append(unit)
-+    for floor_units in units_by_floor.values():
-+        floor_units.sort(key=lambda item: item.get('sort_index', 0))
-+
-+    return {
-+        'buildings': building_options,
-+        'floors': [
-+            {
-+                'id': floor['id'],
-+                'name': floor.get('name', ''),
-+                'sort': floor.get('sort_index', floor.get('floor_number', 0) * 1000),
-+                'units': [
-+                    {
-+                        'id': unit['id'],
-+                        'unit_no': unit.get('unit_no', ''),
-+                        'display_label': unit.get('display_label'),
-+                        'spare_profile_id': unit.get('spare_profile_id'),
-+                    }
-+                    for unit in units_by_floor[floor['id']]
-+                ],
-+            }
-+            for floor in floors
-+        ],
-+    }
-+
-+
-+def _normalize_unit_ids(value, field_name):
-+    if not isinstance(value, list):
-+        raise HTTPException(status_code=422, detail=f'{field_name} חייב להיות מערך')
-+    normalized = []
-+    for unit_id in value:
-+        if not isinstance(unit_id, str) or not unit_id.strip():
-+            raise HTTPException(status_code=422, detail='מזהה דירה אינו חוקי')
-+        normalized.append(unit_id.strip())
-+    if len(set(normalized)) != len(normalized):
-+        raise HTTPException(status_code=422, detail='אין לשלוח מזהי דירות כפולים')
-+    return normalized
-+
-+
-+@router.patch('/projects/{project_id}/spare-profiles/{profile_id}/units')
-+async def patch_spare_profile_units(
-+    project_id: str,
-+    profile_id: str,
-+    body: dict,
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+    await _project_or_404(db, project_id)
-+    await _require_write(user, project_id)
-+    if not isinstance(body, dict):
-+        raise HTTPException(status_code=422, detail='הבקשה חייבת להיות אובייקט')
-+    add_ids = _normalize_unit_ids(body.get('add'), 'add')
-+    remove_ids = _normalize_unit_ids(body.get('remove'), 'remove')
-+    if len(add_ids) + len(remove_ids) > 2000:
-+        raise HTTPException(status_code=422, detail='ניתן לעדכן עד 2000 דירות בבקשה')
-+    overlap = set(add_ids) & set(remove_ids)
-+    if overlap:
-+        raise HTTPException(status_code=422, detail='לא ניתן להוסיף ולהסיר אותה דירה')
-+
-+    project = await _project_or_404(db, project_id)
-+    profiles = (project.get('spare_settings') or {}).get('profiles', [])
-+    if not any(isinstance(profile, dict) and profile.get('id') == profile_id for profile in profiles):
-+        raise HTTPException(status_code=404, detail='פרופיל ריצוף ספייר לא נמצא')
-+
-+    requested_ids = add_ids + remove_ids
-+    units = []
-+    if requested_ids:
-+        units = await db.units.find(
-+            {
-+                'id': {'$in': requested_ids},
-+                'project_id': project_id,
-+                'archived': {'$ne': True},
-+            },
-+            {'_id': 0, 'id': 1, 'spare_profile_id': 1},
-+        ).to_list(2000)
-+    units_by_id = {unit['id']: unit for unit in units}
-+    offending = [unit_id for unit_id in requested_ids if unit_id not in units_by_id]
-+    if offending:
-+        raise HTTPException(
-+            status_code=422,
-+            detail=f"מזהי דירות לא חוקיים: {', '.join(offending)}",
-+        )
-+
-+    actual_add_ids = [
-+        unit_id for unit_id in add_ids
-+        if units_by_id[unit_id].get('spare_profile_id') != profile_id
-+    ]
-+    actual_remove_ids = [
-+        unit_id for unit_id in remove_ids
-+        if units_by_id[unit_id].get('spare_profile_id') == profile_id
-+    ]
-+    added = 0
-+    removed = 0
-+    if actual_add_ids:
-+        add_result = await db.units.update_many(
-+            {
-+                'id': {'$in': actual_add_ids},
-+                'project_id': project_id,
-+                'archived': {'$ne': True},
-+                'spare_profile_id': {'$ne': profile_id},
-+            },
-+            {'$set': {'spare_profile_id': profile_id}},
-+        )
-+        added = add_result.modified_count
-+    if actual_remove_ids:
-+        remove_result = await db.units.update_many(
-+            {
-+                'id': {'$in': actual_remove_ids},
-+                'project_id': project_id,
-+                'archived': {'$ne': True},
-+                'spare_profile_id': profile_id,
-+            },
-+            {'$set': {'spare_profile_id': None}},
-+        )
-+        removed = remove_result.modified_count
-+
-+    result = {'added': added, 'removed': removed}
-+    await _audit('project', project_id, 'spare_profile_units_updated', user['id'], {
-+        'profile_id': profile_id,
-+        **result,
-+    })
-+    return result
-\ No newline at end of file
-diff --git a/backend/server.py b/backend/server.py
-index 1efca9d..fef4a86 100644
---- a/backend/server.py
-+++ b/backend/server.py
-@@ -533,6 +533,9 @@ app.include_router(auth_router)
- from contractor_ops.projects_router import router as projects_router
- app.include_router(projects_router)
++                decimal_value = Decimal(str(per_carton))
++            except (InvalidOperation, ValueError):
++                raise HTTPException(status_code=422, detail='כמות בקרטון לא חוקית')
++            if (
++                not decimal_value.is_finite()
++                or not Decimal('0.01') <= decimal_value <= Decimal('10000')
++                or decimal_value.as_tuple().exponent < -2
++            ):
++                raise HTTPException(status_code=422, detail='כמות בקרטון לא חוקית')
++            per_carton = int(decimal_value) if decimal_value == decimal_value.to_integral() else float(decimal_value)
+         category_names.add(name_key)
+-        categories.append({'name': name, 'measure': measure})
++        categories.append({'name': name, 'measure': measure, 'per_carton': per_carton})
 
-+from contractor_ops.spare_tiles_router import router as spare_tiles_router
-+app.include_router(spare_tiles_router)
-+
- from contractor_ops.tasks_router import router as tasks_router
- app.include_router(tasks_router)
+     raw_profiles = body.get('profiles', [])
+     if not isinstance(raw_profiles, list) or len(raw_profiles) > 10:
+@@ -162,7 +180,9 @@ def compute_spare_status(unit_doc, spare_settings):
+         except (TypeError, ValueError):
+             count = 0
+         notes = entry.get('notes') if entry else None
+-        entered = entry is not None and (count > 0 or bool(notes))
++        entered = entry is not None and (
++            count > 0 or bool(notes) or entry.get('entered') is True
++        )
+         actual = count if entered else None
+         target = targets.get(name) if profile else None
+         missing = None
+@@ -184,6 +204,7 @@ def compute_spare_status(unit_doc, spare_settings):
+             'actual': actual,
+             'status': status,
+             'missing': missing,
++            'entered': entered,
+         })
 
+     if not profile:
 diff --git a/backend/tests/probe_spare_tiles_http.py b/backend/tests/probe_spare_tiles_http.py
-new file mode 100644
-index 0000000..1d35f63
---- /dev/null
+index 1d35f63..6d6a3e6 100644
+--- a/backend/tests/probe_spare_tiles_http.py
 +++ b/backend/tests/probe_spare_tiles_http.py
-@@ -0,0 +1,503 @@
-+"""Live HTTP + local Mongo probe for BATCH #585 spare-tile profiles.
-+
-+This intentionally targets the already-running development server. It does not
-+use ASGITransport and never prints minted bearer tokens.
-+"""
-+
-+import json
-+import os
-+import sys
-+import uuid
-+from io import BytesIO
-+from datetime import datetime, timedelta, timezone
-+
-+import requests
-+from openpyxl import load_workbook
-+from pymongo import MongoClient
-+
-+
-+os.environ["MONGO_URL"] = "mongodb://127.0.0.1:27017"
-+os.environ["DB_NAME"] = "contractor_ops"
-+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-+
-+from contractor_ops.router import _create_token  # noqa: E402
-+
-+
-+BASE_URL = "http://127.0.0.1:5000"
-+RESULTS = []
-+
-+
-+def check(name, condition, detail=""):
-+    if not condition:
-+        raise AssertionError(f"{name}: {detail}")
-+    RESULTS.append(name)
-+    print(f"[PASS] {name}" + (f" — {detail}" if detail else ""))
-+
-+
-+def call(method, path, headers, expected, **kwargs):
-+    response = requests.request(
-+        method,
-+        f"{BASE_URL}{path}",
-+        headers=headers,
-+        timeout=15,
-+        **kwargs,
-+    )
-+    check(
-+        f"{method} {path} -> {expected}",
-+        response.status_code == expected,
-+        f"status={response.status_code}",
-+    )
-+    return response
-+
-+
-+def unit_document(db, unit_id):
-+    return db.units.find_one({"id": unit_id}, {"_id": 0})
-+
-+
-+def emit_documents(label, before, after):
-+    """Print review-ready, synthetic probe documents without auth headers."""
-+    print(f"\n[V7 JSON] {label} BEFORE")
-+    print(json.dumps(before, ensure_ascii=False, sort_keys=True, indent=2))
-+    print(f"[V7 JSON] {label} AFTER")
-+    print(json.dumps(after, ensure_ascii=False, sort_keys=True, indent=2))
-+
-+
-+def only_profile_changed(before, after, expected_profile_id):
-+    expected = dict(before)
-+    expected["spare_profile_id"] = expected_profile_id
-+    return after == expected
-+
-+
-+def overview_spare_values(payload, unit_id):
-+    for building in payload["buildings"]:
-+        for floor in building["floors"]:
-+            for unit in floor["units"]:
-+                if unit["unit_id"] == unit_id:
-+                    return {
-+                        "spare_tiles_count": unit["spare_tiles_count"],
-+                        "spare_tiles": unit["spare_tiles"],
-+                    }
-+    raise AssertionError(f"unit missing from handover overview: {unit_id}")
-+
-+
-+def exported_spare_values(content):
-+    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
-+    sheet = workbook["ליקויים"]
-+    headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
-+    values = [cell.value for cell in next(sheet.iter_rows(min_row=2, max_row=2))]
-+    spare_headers = [header for header in headers if str(header).startswith("ספייר:")]
-+    return {header: values[headers.index(header)] for header in spare_headers}
-+
-+
-+def main():
-+    client = MongoClient(os.environ["MONGO_URL"], serverSelectionTimeoutMS=3000)
-+    db = client[os.environ["DB_NAME"]]
-+    tag = uuid.uuid4().hex[:10]
-+    org_id = f"probe-spare-org-{tag}"
-+    project_id = f"probe-spare-project-{tag}"
-+    other_project_id = f"probe-spare-other-project-{tag}"
-+    pm_id = f"probe-spare-pm-{tag}"
-+    owner_id = f"probe-spare-owner-{tag}"
-+    viewer_id = f"probe-spare-viewer-{tag}"
-+    building_id = f"probe-spare-building-main-{tag}"
-+    other_building_id = f"probe-spare-building-first-{tag}"
-+    floor_low_id = f"probe-spare-floor-low-{tag}"
-+    floor_high_id = f"probe-spare-floor-high-{tag}"
-+    unit_one_id = f"probe-spare-unit-1-{tag}"
-+    unit_two_id = f"probe-spare-unit-2-{tag}"
-+    unit_three_id = f"probe-spare-unit-3-{tag}"
-+    cross_unit_id = f"probe-spare-cross-unit-{tag}"
-+    profile_a = str(uuid.uuid4())
-+    profile_b = str(uuid.uuid4())
-+    task_id = f"probe-spare-task-{tag}"
-+    legacy_spare_tiles = [
-+        {"type": "ריצוף יבש", "count": 8, "notes": "אריחים"},
-+        {"type": "ריצוף מרפסות", "count": 3, "notes": "קרטון"},
-+        {"type": "סוג מותאם", "count": 2, "notes": ""},
-+        {"type": "חיפוי מטבח", "count": 0, "notes": "נבדק"},
-+    ]
-+    legacy_count = 13
-+    legacy_notes = "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק"
-+
-+    user_ids = [pm_id, owner_id, viewer_id]
-+    project_ids = [project_id, other_project_id]
-+    building_ids = [building_id, other_building_id]
-+    floor_ids = [floor_low_id, floor_high_id]
-+    unit_ids = [unit_one_id, unit_two_id, unit_three_id, cross_unit_id]
-+
-+    try:
-+        client.admin.command("ping")
-+        health = requests.get(f"{BASE_URL}/api/health", timeout=10)
-+        check("live server reachable without ASGITransport", health.status_code < 500,
-+              f"status={health.status_code}")
-+
-+        now = datetime.now(timezone.utc)
-+        db.organizations.insert_one({
-+            "id": org_id,
-+            "name": f"Spare Probe {tag}",
-+            "owner_user_id": owner_id,
-+        })
-+        db.subscriptions.insert_one({
-+            "id": f"probe-spare-sub-{tag}",
-+            "org_id": org_id,
-+            "status": "active",
-+            "paid_until": (now + timedelta(days=30)).isoformat(),
-+        })
-+        db.projects.insert_many([
-+            {
-+                "id": project_id,
-+                "name": f"Spare Probe Project {tag}",
-+                "code": tag,
-+                "org_id": org_id,
-+                "status": "active",
-+                "archived": False,
-+            },
-+            {
-+                "id": other_project_id,
-+                "name": f"Spare Probe Other {tag}",
-+                "org_id": org_id,
-+                "status": "active",
-+                "archived": False,
-+            },
-+        ])
-+        db.users.insert_many([
-+            {
-+                "id": pm_id,
-+                "role": "project_manager",
-+                "full_name": "מנהל בדיקת ספייר",
-+                "user_status": "active",
-+                "session_version": 0,
-+            },
-+            {
-+                "id": owner_id,
-+                "role": "owner",
-+                "full_name": "בעלים בדיקת ספייר",
-+                "user_status": "active",
-+                "session_version": 0,
-+            },
-+            {
-+                "id": viewer_id,
-+                "role": "viewer",
-+                "full_name": "צופה בדיקת ספייר",
-+                "user_status": "active",
-+                "session_version": 0,
-+            },
-+        ])
-+        db.organization_memberships.insert_many([
-+            {"id": f"probe-om-pm-{tag}", "org_id": org_id, "user_id": pm_id, "role": "member"},
-+            {"id": f"probe-om-owner-{tag}", "org_id": org_id, "user_id": owner_id, "role": "owner"},
-+            {"id": f"probe-om-view-{tag}", "org_id": org_id, "user_id": viewer_id, "role": "member"},
-+        ])
-+        db.project_memberships.insert_many([
-+            {"id": f"probe-pm-pm-{tag}", "project_id": project_id, "user_id": pm_id,
-+             "role": "project_manager"},
-+            {"id": f"probe-pm-owner-{tag}", "project_id": project_id, "user_id": owner_id,
-+             "role": "owner"},
-+            {"id": f"probe-pm-view-{tag}", "project_id": project_id, "user_id": viewer_id,
-+             "role": "viewer"},
-+            {"id": f"probe-pm-other-{tag}", "project_id": other_project_id, "user_id": pm_id,
-+             "role": "project_manager"},
-+        ])
-+        # Insert deliberately out of display order.
-+        db.buildings.insert_many([
-+            {"id": building_id, "project_id": project_id, "name": "בניין 20",
-+             "sort_index": 20, "archived": False},
-+            {"id": other_building_id, "project_id": project_id, "name": "בניין 2",
-+             "sort_index": 10, "archived": False},
-+        ])
-+        db.floors.insert_many([
-+            {"id": floor_high_id, "project_id": project_id, "building_id": building_id,
-+             "name": "קומה 8", "floor_number": 8, "sort_index": 8000, "archived": False},
-+            {"id": floor_low_id, "project_id": project_id, "building_id": building_id,
-+             "name": "קומה 1", "floor_number": 1, "sort_index": 1000, "archived": False},
-+        ])
-+        db.units.insert_many([
-+            {
-+                "id": unit_two_id, "project_id": project_id, "building_id": building_id,
-+                "floor_id": floor_low_id, "unit_no": "102", "display_label": "דירה 102",
-+                "sort_index": 20, "status": "available", "archived": False,
-+            },
-+            {
-+                "id": unit_one_id, "project_id": project_id, "building_id": building_id,
-+                "floor_id": floor_low_id, "unit_no": "101", "display_label": "דירה 101",
-+                "sort_index": 10, "status": "available", "archived": False,
-+                "spare_profile_id": None,
-+                "spare_tiles": legacy_spare_tiles,
-+                "spare_tiles_count": legacy_count,
-+                "spare_tiles_notes": legacy_notes,
-+            },
-+            {
-+                "id": unit_three_id, "project_id": project_id, "building_id": building_id,
-+                "floor_id": floor_high_id, "unit_no": "801", "display_label": "דירה 801",
-+                "sort_index": 5, "status": "available", "archived": False,
-+            },
-+            {
-+                "id": cross_unit_id, "project_id": other_project_id,
-+                "building_id": f"probe-cross-building-{tag}",
-+                "floor_id": f"probe-cross-floor-{tag}", "unit_no": "X1",
-+                "sort_index": 1, "status": "available", "archived": False,
-+                "spare_tiles": legacy_spare_tiles,
-+                "spare_tiles_count": legacy_count,
-+                "spare_tiles_notes": legacy_notes,
-+            },
-+        ])
-+        db.tasks.insert_one({
-+            "id": task_id,
-+            "project_id": project_id,
-+            "building_id": building_id,
-+            "floor_id": floor_low_id,
-+            "unit_id": unit_one_id,
-+            "display_number": f"SPARE-{tag}",
-+            "title": "בדיקת שימור ספייר",
-+            "description": "",
-+            "category": "tiling",
-+            "status": "open",
-+            "created_at": now.isoformat(),
-+            "updated_at": now.isoformat(),
-+            "archived": False,
-+        })
-+
-+        pm_headers = {"Authorization": f"Bearer {_create_token(pm_id, 'project_manager')}"}
-+        owner_headers = {"Authorization": f"Bearer {_create_token(owner_id, 'owner')}"}
-+        viewer_headers = {"Authorization": f"Bearer {_create_token(viewer_id, 'viewer')}"}
-+
-+        # V3 baseline before any project settings are persisted.
-+        baseline_response = call("GET", f"/api/units/{unit_one_id}", viewer_headers, 200)
-+        baseline = baseline_response.json()
-+        check("V3 absent settings has no profiles", baseline["spare_profiles_exist"] is False)
-+        check("V3 absent settings status is no_profile",
-+              baseline["spare_status"]["overall"] == "no_profile")
-+        additive_top = {"spare_settings", "spare_profiles_exist", "spare_status", "spare_can_write"}
-+        baseline_top_keys = set(baseline) - additive_top
-+        baseline_unit_keys = set(baseline["unit"]) - {"spare_profile_id"}
-+        check("V3 baseline existing top-level keys captured", bool(baseline_top_keys))
-+        check("V3 baseline existing unit keys captured", bool(baseline_unit_keys))
-+        legacy_before = unit_document(db, unit_one_id)
-+        check("V7 seeded legacy spare_tiles exact array",
-+              legacy_before["spare_tiles"] == legacy_spare_tiles)
-+        check("V7 seeded legacy aggregate fields exact",
-+              legacy_before["spare_tiles_count"] == legacy_count
-+              and legacy_before["spare_tiles_notes"] == legacy_notes)
-+
-+        overview_path = f"/api/projects/{project_id}/handover/overview"
-+        overview_before = overview_spare_values(
-+            call("GET", overview_path, pm_headers, 200).json(), unit_one_id
-+        )
-+        export_request = {
-+            "scope": "unit",
-+            "unit_id": unit_one_id,
-+            "format": "excel",
-+            "filters": {},
+@@ -1,4 +1,4 @@
+-"""Live HTTP + local Mongo probe for BATCH #585 spare-tile profiles.
++"""Live HTTP + local Mongo probe for BATCH #587 spare-tile enhancements.
+
+ This intentionally targets the already-running development server. It does not
+ use ASGITransport and never prints minted bearer tokens.
+@@ -297,9 +297,9 @@ def main():
+         assignments_path = f"/api/projects/{project_id}/spare-assignments"
+         profile_payload = {
+             "categories": [
+-                {"name": "ריצוף יבש", "measure": "tiles"},
+-                {"name": "ריצוף מרפסות", "measure": "cartons"},
+-                {"name": "חיפוי מטבח", "measure": "cartons"},
++                {"name": "ריצוף יבש", "measure": "tiles", "per_carton": 4},
++                {"name": "ריצוף מרפסות", "measure": "cartons", "per_carton": 9},
++                {"name": "חיפוי מטבח", "measure": "sqm", "per_carton": 1.44},
+             ],
+             "profiles": [
+                 {"id": profile_a, "name": "3 חדרים",
+@@ -321,6 +321,16 @@ def main():
+         pm_saved = call("PUT", settings_path, pm_headers, 200, json=profile_payload).json()
+         check("V2 PM saved two profiles",
+               [p["id"] for p in pm_saved["profiles"]] == [profile_a, profile_b])
++        per_carton_by_name = {
++            category["name"]: category.get("per_carton")
++            for category in pm_saved["categories"]
 +        }
-+        export_before = exported_spare_values(
-+            call("POST", "/api/defects/export", pm_headers, 200, json=export_request).content
-+        )
-+
-+        settings_path = f"/api/projects/{project_id}/spare-settings"
-+        assignments_path = f"/api/projects/{project_id}/spare-assignments"
-+        profile_payload = {
-+            "categories": [
-+                {"name": "ריצוף יבש", "measure": "tiles"},
-+                {"name": "ריצוף מרפסות", "measure": "cartons"},
-+                {"name": "חיפוי מטבח", "measure": "cartons"},
-+            ],
-+            "profiles": [
-+                {"id": profile_a, "name": "3 חדרים",
-+                 "targets": {"ריצוף יבש": 10, "ריצוף מרפסות": 2}},
-+                {"id": profile_b, "name": "4 חדרים",
-+                 "targets": {"ריצוף יבש": 12, "ריצוף מרפסות": 3}},
-+            ],
-+            "margin_pct": 10,
-+        }
-+
-+        viewer_get = call("GET", settings_path, viewer_headers, 200).json()
-+        check("V2 viewer GET settings allowed and read-only",
-+              viewer_get["can_write"] is False)
-+        call("GET", assignments_path, viewer_headers, 200)
-+        call("PUT", settings_path, viewer_headers, 403, json=profile_payload)
-+        call("PATCH", f"{settings_path.rsplit('/', 1)[0]}/spare-profiles/{profile_a}/units",
-+             viewer_headers, 403, json={"add": [unit_one_id], "remove": []})
-+
-+        pm_saved = call("PUT", settings_path, pm_headers, 200, json=profile_payload).json()
-+        check("V2 PM saved two profiles",
-+              [p["id"] for p in pm_saved["profiles"]] == [profile_a, profile_b])
-+        after_settings_save = unit_document(db, unit_one_id)
-+        emit_documents("settings save", legacy_before, after_settings_save)
-+        check("V7 whole unit unchanged after settings/profile save",
-+              after_settings_save == legacy_before)
-+        pm_version = pm_saved["updated_at"]
-+
-+        owner_payload = {
-+            **profile_payload,
-+            "margin_pct": 11,
-+            "updated_at": pm_version,
-+        }
-+        owner_saved = call("PUT", settings_path, owner_headers, 200, json=owner_payload).json()
-+        check("V2 owner project-scoped write allowed",
-+              owner_saved["can_write"] is True and owner_saved["margin_pct"] == 11)
-+        owner_version = owner_saved["updated_at"]
-+
-+        stale_payload = {**profile_payload, "margin_pct": 12, "updated_at": pm_version}
-+        call("PUT", settings_path, pm_headers, 409, json=stale_payload)
-+
-+        assignment_payload = call(
-+            "GET", f"{assignments_path}?building_id={building_id}", viewer_headers, 200
-+        ).json()
-+        check("V2 buildings preserve structure ordering",
-+              [b["id"] for b in assignment_payload["buildings"]]
-+              == [other_building_id, building_id])
-+        check("V2 floors preserve sort_index ordering",
-+              [f["id"] for f in assignment_payload["floors"]]
-+              == [floor_low_id, floor_high_id])
-+        check("V2 units preserve sort_index ordering",
-+              [u["id"] for u in assignment_payload["floors"][0]["units"]]
-+              == [unit_one_id, unit_two_id])
-+        expected_unit_keys = {"id", "unit_no", "display_label", "spare_profile_id"}
-+        check("V2 assignment unit payload is exact",
-+              set(assignment_payload["floors"][0]["units"][0]) == expected_unit_keys)
-+
-+        profile_base = f"/api/projects/{project_id}/spare-profiles"
-+        added = call("PATCH", f"{profile_base}/{profile_a}/units", pm_headers, 200,
-+                     json={"add": [unit_one_id, unit_two_id], "remove": []}).json()
-+        check("V2 assignment add exact count", added == {"added": 2, "removed": 0})
-+        after_assign = unit_document(db, unit_one_id)
-+        emit_documents("profile assignment", legacy_before, after_assign)
-+        check("V7 assignment changes only spare_profile_id",
-+              only_profile_changed(legacy_before, after_assign, profile_a))
-+        moved = call("PATCH", f"{profile_base}/{profile_b}/units", owner_headers, 200,
-+                     json={"add": [unit_one_id], "remove": []}).json()
-+        check("V2 assignment move exact count", moved == {"added": 1, "removed": 0})
-+        removed = call("PATCH", f"{profile_base}/{profile_b}/units", pm_headers, 200,
-+                       json={"add": [], "remove": [unit_one_id]}).json()
-+        check("V2 assignment remove exact count", removed == {"added": 0, "removed": 1})
-+        after_remove = unit_document(db, unit_one_id)
-+        emit_documents("profile removal", after_assign, after_remove)
-+        check("V7 removal restores whole unit with spare_profile_id None",
-+              after_remove == legacy_before)
-+        removed_again = call("PATCH", f"{profile_base}/{profile_b}/units", pm_headers, 200,
-+                             json={"add": [], "remove": [unit_one_id]}).json()
-+        check("V2 no-op removal reports zero", removed_again == {"added": 0, "removed": 0})
-+
-+        delete_assigned = {
-+            "categories": owner_saved["categories"],
-+            "profiles": [p for p in owner_saved["profiles"] if p["id"] != profile_a],
-+            "margin_pct": owner_saved["margin_pct"],
-+            "updated_at": owner_version,
-+        }
-+        call("PUT", settings_path, pm_headers, 409, json=delete_assigned)
-+        call("PATCH", f"{profile_base}/{profile_b}/units", pm_headers, 422,
-+             json={"add": [cross_unit_id], "remove": []})
-+
-+        unchanged_save_before = unit_document(db, unit_one_id)
-+        call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
-+             json={"spare_tiles": legacy_spare_tiles})
-+        unchanged_save_after = unit_document(db, unit_one_id)
-+        emit_documents("profile-aware unchanged inventory save",
-+                       unchanged_save_before, unchanged_save_after)
-+        check("V7 profile-aware unchanged save preserves whole unit",
-+              unchanged_save_after == unchanged_save_before)
-+
-+        category_delete_payload = {
-+            **owner_payload,
-+            "categories": [
-+                category for category in owner_saved["categories"]
-+                if category["name"] != "חיפוי מטבח"
-+            ],
-+            "updated_at": owner_version,
-+        }
-+        category_saved = call(
-+            "PUT", settings_path, owner_headers, 200, json=category_delete_payload
-+        ).json()
-+        check("V7 category deletion persisted",
-+              all(item["name"] != "חיפוי מטבח" for item in category_saved["categories"]))
-+        category_save_before = unit_document(db, unit_one_id)
-+        call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
-+             json={"spare_tiles": legacy_spare_tiles})
-+        category_save_after = unit_document(db, unit_one_id)
-+        emit_documents("save after category deletion",
-+                       category_save_before, category_save_after)
-+        check("V7 deleted configured category remains exact custom entry",
-+              category_save_after == category_save_before
-+              and category_save_after["spare_tiles"][-1]
-+              == {"type": "חיפוי מטבח", "count": 0, "notes": "נבדק"})
-+
-+        legacy_branch_before = unit_document(db, cross_unit_id)
-+        call("PATCH", f"/api/units/{cross_unit_id}/spare-tiles", pm_headers, 200,
-+             json={"spare_tiles": legacy_spare_tiles})
-+        legacy_branch_after = unit_document(db, cross_unit_id)
-+        emit_documents("legacy no-profile unchanged save",
-+                       legacy_branch_before, legacy_branch_after)
-+        check("V7 no-profile legacy branch preserves whole unit",
-+              legacy_branch_after == legacy_branch_before)
-+
-+        final_add = call("PATCH", f"{profile_base}/{profile_a}/units", pm_headers, 200,
-+                         json={"add": [unit_one_id], "remove": []}).json()
-+        check("V3 final profile assignment exact count",
-+              final_add == {"added": 1, "removed": 0})
-+        after = call("GET", f"/api/units/{unit_one_id}", viewer_headers, 200).json()
-+        check("V3 existing top-level keys unchanged",
-+              set(after) - additive_top == baseline_top_keys)
-+        check("V3 existing nested unit keys unchanged",
-+              set(after["unit"]) - {"spare_profile_id"} == baseline_unit_keys)
-+        check("V3 assigned profile returned",
-+              after["spare_status"]["profile"]["id"] == profile_a)
-+        dry_row = next(row for row in after["spare_status"]["categories"]
-+                       if row["name"] == "ריצוף יבש")
-+        check("V3 status reflects actual 8 against target 10",
-+              after["spare_status"]["overall"] == "short"
-+              and dry_row["actual"] == 8 and dry_row["target"] == 10
-+              and dry_row["missing"] == 2)
-+        check("V3 viewer unit capability is false", after["spare_can_write"] is False)
-+
-+        overview_after = overview_spare_values(
-+            call("GET", overview_path, pm_headers, 200).json(), unit_one_id
-+        )
-+        export_after = exported_spare_values(
-+            call("POST", "/api/defects/export", pm_headers, 200, json=export_request).content
-+        )
-+        print("\n[V7 JSON] handover/export BEFORE")
-+        print(json.dumps({"handover": overview_before, "export": export_before},
-+                         ensure_ascii=False, sort_keys=True, indent=2))
-+        print("[V7 JSON] handover/export AFTER")
-+        print(json.dumps({"handover": overview_after, "export": export_after},
-+                         ensure_ascii=False, sort_keys=True, indent=2))
-+        check("V7 handover overview spare values unchanged",
-+              overview_after == overview_before)
-+        check("V7 export spare columns unchanged", export_after == export_before)
-+
-+        audit_actions = {
-+            row["action"] for row in db.audit_events.find(
-+                {"entity_type": "project", "entity_id": project_id},
-+                {"_id": 0, "action": 1},
++        check("V3 per-carton values normalize by measure",
++              per_carton_by_name == {
++                  "ריצוף יבש": 4,
++                  "ריצוף מרפסות": None,
++                  "חיפוי מטבח": 1.44,
++              })
+         after_settings_save = unit_document(db, unit_one_id)
+         emit_documents("settings save", legacy_before, after_settings_save)
+         check("V7 whole unit unchanged after settings/profile save",
+@@ -337,6 +347,24 @@ def main():
+               owner_saved["can_write"] is True and owner_saved["margin_pct"] == 11)
+         owner_version = owner_saved["updated_at"]
+
++        for invalid_per_carton in (0, -1, "x"):
++            invalid_payload = {
++                **profile_payload,
++                "categories": [
++                    {
++                        **profile_payload["categories"][0],
++                        "per_carton": invalid_per_carton,
++                    },
++                    *profile_payload["categories"][1:],
++                ],
++                "updated_at": owner_version,
++            }
++            invalid_response = call(
++                "PUT", settings_path, pm_headers, 422, json=invalid_payload
 +            )
-+        }
-+        check("V2 settings audit action recorded",
-+              "spare_settings_updated" in audit_actions)
-+        check("V2 assignment audit action recorded",
-+              "spare_profile_units_updated" in audit_actions)
-+        print(f"\nAll {len(RESULTS)} live HTTP checks passed.")
-+    finally:
-+        db.audit_events.delete_many({"entity_id": {"$in": project_ids}})
-+        db.tasks.delete_many({"id": task_id})
-+        db.units.delete_many({"id": {"$in": unit_ids}})
-+        db.floors.delete_many({"id": {"$in": floor_ids}})
-+        db.buildings.delete_many({"id": {"$in": building_ids}})
-+        db.project_memberships.delete_many({
-+            "$or": [{"project_id": {"$in": project_ids}}, {"user_id": {"$in": user_ids}}]
-+        })
-+        db.organization_memberships.delete_many({
-+            "$or": [{"org_id": org_id}, {"user_id": {"$in": user_ids}}]
-+        })
-+        db.subscriptions.delete_many({"org_id": org_id})
-+        db.projects.delete_many({"id": {"$in": project_ids}})
-+        db.users.delete_many({"id": {"$in": user_ids}})
-+        db.organizations.delete_many({"id": org_id})
-+        client.close()
++            check("V3 invalid per-carton has Hebrew error",
++                  invalid_response.json().get("detail") == "כמות בקרטון לא חוקית")
 +
+         stale_payload = {**profile_payload, "margin_pct": 12, "updated_at": pm_version}
+         call("PUT", settings_path, pm_headers, 409, json=stale_payload)
+
+@@ -397,6 +425,41 @@ def main():
+         check("V7 profile-aware unchanged save preserves whole unit",
+               unchanged_save_after == unchanged_save_before)
+
++        call("PATCH", f"{profile_base}/{profile_a}/units", pm_headers, 200,
++             json={"add": [unit_one_id], "remove": []})
++        confirmed_zero_payload = [
++            {"type": "ריצוף יבש", "count": 0, "notes": "", "entered": True},
++            {"type": "ריצוף מרפסות", "count": 3, "notes": "קרטון"},
++        ]
++        call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
++             json={"spare_tiles": confirmed_zero_payload})
++        confirmed_zero_doc = unit_document(db, unit_one_id)
++        emit_documents("explicit confirmed zero", unchanged_save_after, confirmed_zero_doc)
++        check("V1 confirmed zero stored exactly",
++              confirmed_zero_doc["spare_tiles"] == confirmed_zero_payload)
++        confirmed_response = call(
++            "GET", f"/api/units/{unit_one_id}", viewer_headers, 200
++        ).json()
++        confirmed_dry_row = next(
++            row for row in confirmed_response["spare_status"]["categories"]
++            if row["name"] == "ריצוף יבש"
++        )
++        check("V1 confirmed zero is short with full target missing",
++              confirmed_dry_row["actual"] == 0
++              and confirmed_dry_row["entered"] is True
++              and confirmed_dry_row["status"] == "short"
++              and confirmed_dry_row["missing"] == confirmed_dry_row["target"] == 10)
 +
-+if __name__ == "__main__":
-+    try:
-+        main()
-+    except Exception as exc:
-+        print(f"\n[FAIL] {type(exc).__name__}: {exc}", file=sys.stderr)
-+        raise
-\ No newline at end of file
++        call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
++             json={"spare_tiles": legacy_spare_tiles})
++        restored_legacy = unit_document(db, unit_one_id)
++        emit_documents("legacy array after confirmed zero", confirmed_zero_doc, restored_legacy)
++        check("V7 legacy array restored without entered keys",
++              restored_legacy["spare_tiles"] == legacy_spare_tiles
++              and all("entered" not in row for row in restored_legacy["spare_tiles"]))
++        call("PATCH", f"{profile_base}/{profile_a}/units", pm_headers, 200,
++             json={"add": [], "remove": [unit_one_id]})
++
+         category_delete_payload = {
+             **owner_payload,
+             "categories": [
 diff --git a/backend/tests/test_spare_tiles.py b/backend/tests/test_spare_tiles.py
-new file mode 100644
-index 0000000..f49b442
---- /dev/null
+index f49b442..82c6fa6 100644
+--- a/backend/tests/test_spare_tiles.py
 +++ b/backend/tests/test_spare_tiles.py
-@@ -0,0 +1,248 @@
-+import asyncio
-+import os
-+import sys
-+import uuid
-+
-+import pytest
-+from fastapi import HTTPException
-+
-+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-+
-+from contractor_ops.spare_tiles import (
-+    compute_spare_status,
-+    default_spare_settings,
-+    validate_spare_settings,
-+)
-+from contractor_ops import spare_tiles_router
-+
-+
-+PROFILE_ID = str(uuid.uuid4())
-+
-+
-+def settings(target=10, margin=10):
-+    return {
-+        'categories': [{'name': 'ריצוף יבש', 'measure': 'tiles'}],
-+        'profiles': [{'id': PROFILE_ID, 'name': '3 חדרים', 'targets': {'ריצוף יבש': target}}],
-+        'margin_pct': margin,
-+    }
-+
-+
-+def status(count=None, notes='', target=10, margin=10, profile_id=PROFILE_ID):
-+    unit = {'spare_profile_id': profile_id}
-+    if count is not None:
-+        unit['spare_tiles'] = [{'type': 'ריצוף יבש', 'count': count, 'notes': notes}]
-+    return compute_spare_status(unit, settings(target, margin))
-+
-+
-+def test_defaults_are_fresh():
-+    first = default_spare_settings()
-+    first['categories'][0]['name'] = 'changed'
-+    assert default_spare_settings()['categories'][0]['name'] == 'ריצוף יבש'
-+
-+
-+def test_short_borderline_and_ok():
-+    short = status(8)
-+    assert short['overall'] == 'short'
-+    assert short['categories'][0]['missing'] == 2
-+    assert status(3, target=3)['overall'] == 'borderline'
-+    assert status(7, target=5)['overall'] == 'ok'
-+
-+
-+def test_not_entered_and_zero_with_notes():
-+    assert status()['overall'] == 'not_entered'
-+    assert status(0)['overall'] == 'not_entered'
-+    entered = status(0, notes='נבדק')
-+    assert entered['categories'][0]['status'] == 'short'
-+    assert entered['categories'][0]['actual'] == 0
-+
-+
-+def test_no_target_and_no_profile():
-+    assert status(4, target=0)['overall'] == 'no_target'
-+    assert status(4, profile_id=None)['overall'] == 'no_profile'
-+    assert status(4, profile_id=str(uuid.uuid4()))['overall'] == 'no_profile'
-+
-+
-+def test_profile_with_empty_categories_has_no_target_overall():
-+    result = compute_spare_status(
-+        {'spare_profile_id': PROFILE_ID},
-+        {
-+            'categories': [],
-+            'profiles': [{'id': PROFILE_ID, 'name': 'פרופיל', 'targets': {}}],
-+            'margin_pct': 10,
-+        },
-+    )
-+    assert result['overall'] == 'no_target'
-+    assert result['categories'] == []
-+
-+
-+def test_custom_type_appended_and_overall_precedence():
-+    config = {
-+        'categories': [
-+            {'name': 'א', 'measure': 'tiles'},
-+            {'name': 'ב', 'measure': 'cartons'},
-+        ],
-+        'profiles': [{
-+            'id': PROFILE_ID,
-+            'name': 'פרופיל',
-+            'targets': {'א': 2, 'ב': 5},
-+        }],
-+        'margin_pct': 10,
-+    }
-+    result = compute_spare_status({
-+        'spare_profile_id': PROFILE_ID,
-+        'spare_tiles': [
-+            {'type': 'א', 'count': 2, 'notes': ''},
-+            {'type': 'מותאם', 'count': 4, 'notes': ''},
-+        ],
-+    }, config)
-+    assert [row['name'] for row in result['categories']] == ['א', 'ב', 'מותאם']
-+    assert result['categories'][-1]['status'] == 'no_target'
-+    assert result['overall'] == 'not_entered'
-+
-+    config['profiles'][0]['targets']['א'] = 3
-+    result = compute_spare_status({
-+        'spare_profile_id': PROFILE_ID,
-+        'spare_tiles': [{'type': 'א', 'count': 2, 'notes': ''}],
-+    }, config)
+@@ -27,10 +27,15 @@ def settings(target=10, margin=10):
+     }
+
+
+-def status(count=None, notes='', target=10, margin=10, profile_id=PROFILE_ID):
++def status(count=None, notes='', target=10, margin=10, profile_id=PROFILE_ID, entered=False):
+     unit = {'spare_profile_id': profile_id}
+     if count is not None:
+-        unit['spare_tiles'] = [{'type': 'ריצוף יבש', 'count': count, 'notes': notes}]
++        unit['spare_tiles'] = [{
++            'type': 'ריצוף יבש',
++            'count': count,
++            'notes': notes,
++            **({'entered': True} if entered else {}),
++        }]
+     return compute_spare_status(unit, settings(target, margin))
+
+
+@@ -56,6 +61,16 @@ def test_not_entered_and_zero_with_notes():
+     assert entered['categories'][0]['actual'] == 0
+
+
++def test_confirmed_zero_is_entered_and_short():
++    result = status(0, entered=True)
++    row = result['categories'][0]
 +    assert result['overall'] == 'short'
++    assert row['actual'] == 0
++    assert row['entered'] is True
++    assert row['missing'] == row['target'] == 10
++    assert status(0)['categories'][0]['entered'] is False
 +
 +
-+def test_margin_zero_still_has_one_item_band():
-+    assert status(5, target=5, margin=0)['overall'] == 'borderline'
-+
-+
-+def valid_body():
-+    return {
-+        'categories': [{'name': 'ריצוף', 'measure': 'tiles'}],
-+        'profiles': [{'name': '3 חדרים', 'targets': {'ריצוף': 4}}],
-+        'margin_pct': 10,
-+    }
-+
-+
-+@pytest.mark.parametrize('mutate', [
-+    lambda body: body.update(categories=[
-+        {'name': 'ריצוף', 'measure': 'tiles'},
-+        {'name': '  ריצוף  ', 'measure': 'cartons'},
-+    ]),
-+    lambda body: body.update(profiles=[
-+        {'name': str(index), 'targets': {}} for index in range(11)
-+    ]),
-+    lambda body: body['categories'][0].update(measure='units'),
-+    lambda body: body['profiles'][0]['targets'].update({'ריצוף': -1}),
-+    lambda body: body['categories'][0].update(name='א' * 51),
-+    lambda body: body['profiles'][0].update(name='א' * 41),
-+    lambda body: body['profiles'][0]['targets'].update({'ריצוף': 10001}),
-+])
-+def test_validation_rejections(mutate):
+ def test_no_target_and_no_profile():
+     assert status(4, target=0)['overall'] == 'no_target'
+     assert status(4, profile_id=None)['overall'] == 'no_profile'
+@@ -150,6 +165,33 @@ def test_validation_preserves_uuid_and_drops_deleted_category_targets():
+     assert result['profiles'][0]['targets'] == {'ריצוף': 4}
+
+
++def test_per_carton_validation_and_normalization():
 +    body = valid_body()
-+    mutate(body)
++    body['categories'] = [
++        {'name': 'אריחים', 'measure': 'tiles', 'per_carton': 4},
++        {'name': 'שטח', 'measure': 'sqm', 'per_carton': 1.44},
++        {'name': 'קרטונים', 'measure': 'cartons', 'per_carton': 8},
++        {'name': 'ישן', 'measure': 'tiles'},
++    ]
++    result = validate_spare_settings(body)
++    assert result['categories'] == [
++        {'name': 'אריחים', 'measure': 'tiles', 'per_carton': 4},
++        {'name': 'שטח', 'measure': 'sqm', 'per_carton': 1.44},
++        {'name': 'קרטונים', 'measure': 'cartons', 'per_carton': None},
++        {'name': 'ישן', 'measure': 'tiles', 'per_carton': None},
++    ]
++
++
++@pytest.mark.parametrize('value', [0, -1, 'x', True, 1.234])
++def test_per_carton_rejections(value):
++    body = valid_body()
++    body['categories'][0]['per_carton'] = value
 +    with pytest.raises(HTTPException) as error:
 +        validate_spare_settings(body)
 +    assert error.value.status_code == 422
++    assert error.value.detail == 'כמות בקרטון לא חוקית'
 +
 +
-+def test_validation_preserves_uuid_and_drops_deleted_category_targets():
-+    body = valid_body()
-+    body['profiles'][0]['id'] = PROFILE_ID
-+    body['profiles'][0]['targets']['קטגוריה שנמחקה'] = 8
-+    result = validate_spare_settings(body)
-+    assert result['profiles'][0]['id'] == PROFILE_ID
-+    assert result['profiles'][0]['targets'] == {'ריצוף': 4}
-+
-+
-+class _Result:
-+    def __init__(self, modified_count=1):
-+        self.modified_count = modified_count
-+
-+
-+class _Cursor:
-+    def __init__(self, values):
-+        self.values = values
-+
-+    async def to_list(self, _limit):
-+        return self.values
-+
-+
-+def test_profile_assignment_updates_matching_unit_without_lock(monkeypatch):
-+    settings = {
-+        'categories': [{'name': 'ריצוף', 'measure': 'tiles'}],
-+        'profiles': [{'id': PROFILE_ID, 'name': 'פרופיל', 'targets': {}}],
-+        'margin_pct': 10,
-+    }
-+    class Projects:
-+        async def find_one(self, *_args):
-+            return {'id': 'project', 'spare_settings': settings}
-+
-+    class Units:
-+        def __init__(self):
-+            self.calls = []
-+
-+        def find(self, *_args):
-+            return _Cursor([{'id': 'unit', 'spare_profile_id': None}])
-+
-+        async def update_many(self, query, update):
-+            self.calls.append((query, update))
-+            return _Result(1)
-+
-+    class Db:
-+        projects = Projects()
-+        units = Units()
-+
-+    async def allow_write(*_args):
-+        return None
-+
-+    async def no_audit(*_args):
-+        return None
-+
-+    monkeypatch.setattr(spare_tiles_router, 'get_db', lambda: Db())
-+    monkeypatch.setattr(spare_tiles_router, '_require_write', allow_write)
-+    monkeypatch.setattr(spare_tiles_router, '_audit', no_audit)
-+    result = asyncio.run(spare_tiles_router.patch_spare_profile_units(
-+        'project', PROFILE_ID, {'add': ['unit'], 'remove': []}, {'id': 'user'},
-+    ))
-+    assert result == {'added': 1, 'removed': 0}
-+    assert len(Db.units.calls) == 1
-+
-+
-+def test_stale_settings_editor_is_rejected(monkeypatch):
-+    current_settings = {
-+        'categories': [{'name': 'ריצוף', 'measure': 'tiles'}],
-+        'profiles': [],
-+        'margin_pct': 10,
-+        'updated_at': '2026-09-03T12:00:00+00:00',
-+        'updated_by': 'other',
-+    }
-+
-+    class Projects:
-+        def __init__(self):
-+            self.update_calls = []
-+
-+        async def find_one(self, *_args):
-+            return {'id': 'project', 'spare_settings': current_settings}
-+
-+        async def update_one(self, query, update):
-+            self.update_calls.append((query, update))
-+            return _Result(1)
-+
-+    class Db:
-+        projects = Projects()
-+
-+    async def allow_write(*_args):
-+        return None
-+
-+    db = Db()
-+    monkeypatch.setattr(spare_tiles_router, 'get_db', lambda: db)
-+    monkeypatch.setattr(spare_tiles_router, '_require_write', allow_write)
-+    with pytest.raises(HTTPException) as error:
-+        asyncio.run(spare_tiles_router.put_spare_settings(
-+            'project',
-+            {
-+                'categories': [{'name': 'ריצוף', 'measure': 'tiles'}],
-+                'profiles': [],
-+                'margin_pct': 10,
-+                'updated_at': '2026-09-03T11:00:00+00:00',
-+            },
-+            {'id': 'user'},
-+        ))
-+    assert error.value.status_code == 409
-+    assert db.projects.update_calls == []
-\ No newline at end of file
-diff --git a/frontend/src/App.js b/frontend/src/App.js
-index 3d81ba8..7d93aad 100644
---- a/frontend/src/App.js
-+++ b/frontend/src/App.js
-@@ -79,6 +79,7 @@ const HandoverSectionPage = React.lazy(() => import('./pages/HandoverSectionPage
- const SafetyHomePage = React.lazy(() => import('./pages/SafetyHomePage'));
- const SafetyProjectRegistrationPage = React.lazy(() => import('./pages/SafetyProjectRegistrationPage'));
- const WorkDiaryPage = React.lazy(() => import('./pages/WorkDiaryPage'));
-+const SpareTilesPage = React.lazy(() => import('./pages/SpareTilesPage'));
-
- const INTENDED_PATH_KEY = 'intendedPath';
-
-@@ -413,6 +414,10 @@ const AppRoutes = () => {
-             </ProtectedRoute>
-           }
-         />
-+        <Route
-+          path="/projects/:projectId/spare-tiles"
-+          element={<ProtectedRoute><SpareTilesPage /></ProtectedRoute>}
-+        />
-         <Route
-           path="/projects/:projectId/floors/:floorId"
-           element={
+ class _Result:
+     def __init__(self, modified_count=1):
+         self.modified_count = modified_count
 diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index 31205b3..bcba0f0 100644
+index bcba0f0..3c5aa6d 100644
 --- a/frontend/src/pages/ApartmentDashboardPage.js
 +++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -1,6 +1,6 @@
- import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
- import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
--import { unitService } from '../services/api';
-+import { unitService, spareTilesService } from '../services/api';
- import { useAuth } from '../contexts/AuthContext';
- import { toast } from 'sonner';
- import { formatUnitLabel } from '../utils/formatters';
-@@ -123,6 +123,7 @@ const ApartmentDashboardPage = () => {
-   const [spareTilesEntries, setSpareTilesEntries] = useState([]);
-   const [spareTilesSaving, setSpareTilesSaving] = useState(false);
-   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
-+  const spareCanWrite = unitData?.spare_can_write === true;
-   const flagChecked = !!features?.defects_v2;
-
-   useEffect(() => {
-@@ -214,26 +215,65 @@ const ApartmentDashboardPage = () => {
-   }, [flagChecked, loadUnit, loadTasks]);
-
-   const SPARE_TILES_BASE_TYPES = useMemo(() => [
--    'ריצוף יבש', 'ריצוף מרפסות', 'חיפוי אמבטיות', 'ריצוף אמבטיות', 'חיפוי מטבח',
--  ], []);
-+    ...(unitData?.spare_profiles_exist
-+      ? (unitData?.spare_settings?.categories || []).map(category => category.name)
-+      : ['ריצוף יבש', 'ריצוף מרפסות', 'חיפוי אמבטיות', 'ריצוף אמבטיות', 'חיפוי מטבח']),
-+  ], [unitData?.spare_profiles_exist, unitData?.spare_settings]);
-
-   const startSpareTilesEdit = useCallback(() => {
-     const u = unitData?.unit;
-     const saved = Array.isArray(u?.spare_tiles) ? u.spare_tiles : [];
--    const savedMap = {};
--    saved.forEach(e => { savedMap[e.type] = e; });
--    const merged = SPARE_TILES_BASE_TYPES.map(bt => ({
--      type: bt,
--      count: savedMap[bt] ? String(savedMap[bt].count) : '0',
--      notes: savedMap[bt]?.notes || '',
--      isBase: true,
--    }));
--    saved.forEach(e => {
--      if (!SPARE_TILES_BASE_TYPES.includes(e.type)) {
--        merged.push({ type: e.type, count: String(e.count), notes: e.notes || '', isBase: false });
--      }
--    });
--    setSpareTilesEntries(merged);
-+    if (unitData?.spare_profiles_exist) {
-+      const indexedSaved = saved.map((entry, originalIndex) => ({ entry, originalIndex }));
-+      const configuredEntries = SPARE_TILES_BASE_TYPES.map(type => {
-+        const savedEntry = indexedSaved.find(({ entry }) => entry.type === type);
-+        return {
-+          type,
-+          count: savedEntry ? String(savedEntry.entry.count) : '0',
-+          notes: savedEntry?.entry.notes ?? '',
-+          isConfigured: true,
-+          isPersisted: !!savedEntry,
-+          originalIndex: savedEntry?.originalIndex,
-+          shouldPersist: saved.length === 0,
-+        };
-+      });
-+      const customEntries = indexedSaved
-+        .filter(({ entry }) => !SPARE_TILES_BASE_TYPES.includes(entry.type))
-+        .map(({ entry, originalIndex }) => ({
-+          type: entry.type,
-+          count: String(entry.count),
-+          notes: entry.notes ?? '',
-+          isConfigured: false,
-+          isPersisted: true,
-+          originalIndex,
-+        }));
-+      setSpareTilesEntries([...configuredEntries, ...customEntries]);
-+    } else {
-+      const indexedSaved = saved.map((entry, originalIndex) => ({ entry, originalIndex }));
-+      const baseEntries = SPARE_TILES_BASE_TYPES.map(type => {
-+        const savedEntry = indexedSaved.find(({ entry }) => entry.type === type);
-+        return {
-+          type,
-+          count: savedEntry ? String(savedEntry.entry.count) : '0',
-+          notes: savedEntry?.entry.notes ?? '',
-+          isConfigured: true,
-+          isPersisted: !!savedEntry,
-+          originalIndex: savedEntry?.originalIndex,
-+          shouldPersist: saved.length === 0,
-+        };
-+      });
-+      const customEntries = indexedSaved
-+        .filter(({ entry }) => !SPARE_TILES_BASE_TYPES.includes(entry.type))
-+        .map(({ entry, originalIndex }) => ({
-+          type: entry.type,
-+          count: String(entry.count),
-+          notes: entry.notes ?? '',
-+          isConfigured: false,
-+          isPersisted: true,
-+          originalIndex,
-+        }));
-+      setSpareTilesEntries([...baseEntries, ...customEntries]);
-+    }
-     setSpareTilesEditing(true);
-   }, [unitData, SPARE_TILES_BASE_TYPES]);
-
-@@ -250,17 +290,27 @@ const ApartmentDashboardPage = () => {
-   const saveSpareTiles = useCallback(async () => {
-     try {
-       setSpareTilesSaving(true);
--      const payload = [];
-+      const persistedPayload = [];
-+      const newPayload = [];
-       for (const entry of spareTilesEntries) {
-         const count = parseInt(entry.count, 10);
-         if (isNaN(count) || count < 0) {
+@@ -231,6 +231,8 @@ const ApartmentDashboardPage = () => {
+           type,
+           count: savedEntry ? String(savedEntry.entry.count) : '0',
+           notes: savedEntry?.entry.notes ?? '',
++          entered: savedEntry?.entry.entered === true,
++          cartons: '',
+           isConfigured: true,
+           isPersisted: !!savedEntry,
+           originalIndex: savedEntry?.originalIndex,
+@@ -243,6 +245,8 @@ const ApartmentDashboardPage = () => {
+           type: entry.type,
+           count: String(entry.count),
+           notes: entry.notes ?? '',
++          entered: entry.entered === true,
++          cartons: '',
+           isConfigured: false,
+           isPersisted: true,
+           originalIndex,
+@@ -256,6 +260,8 @@ const ApartmentDashboardPage = () => {
+           type,
+           count: savedEntry ? String(savedEntry.entry.count) : '0',
+           notes: savedEntry?.entry.notes ?? '',
++          entered: savedEntry?.entry.entered === true,
++          cartons: '',
+           isConfigured: true,
+           isPersisted: !!savedEntry,
+           originalIndex: savedEntry?.originalIndex,
+@@ -268,6 +274,8 @@ const ApartmentDashboardPage = () => {
+           type: entry.type,
+           count: String(entry.count),
+           notes: entry.notes ?? '',
++          entered: entry.entered === true,
++          cartons: '',
+           isConfigured: false,
+           isPersisted: true,
+           originalIndex,
+@@ -298,10 +306,15 @@ const ApartmentDashboardPage = () => {
            toast.error('כמות חייבת להיות מספר חיובי');
            return;
          }
--        if (entry.isBase || count > 0 || entry.notes.trim()) {
--          payload.push({ type: entry.type, count: isNaN(count) ? 0 : count, notes: entry.notes.trim() });
-+        const serialized = { type: entry.type, count: isNaN(count) ? 0 : count, notes: entry.notes };
-+        if (entry.isPersisted) {
-+          persistedPayload.push({ ...serialized, originalIndex: entry.originalIndex });
-+        } else if (entry.shouldPersist || count > 0 || entry.notes.trim()) {
-+          newPayload.push(serialized);
+-        const serialized = { type: entry.type, count: isNaN(count) ? 0 : count, notes: entry.notes };
++        const serialized = {
++          type: entry.type,
++          count: isNaN(count) ? 0 : count,
++          notes: entry.notes,
++          ...(count === 0 && entry.entered ? { entered: true } : {}),
++        };
+         if (entry.isPersisted) {
+           persistedPayload.push({ ...serialized, originalIndex: entry.originalIndex });
+-        } else if (entry.shouldPersist || count > 0 || entry.notes.trim()) {
++        } else if (entry.shouldPersist || count > 0 || entry.notes.trim() || (count === 0 && entry.entered)) {
+           newPayload.push(serialized);
          }
        }
-+      const payload = [
-+        ...persistedPayload
-+          .sort((a, b) => a.originalIndex - b.originalIndex)
-+          .map(({ originalIndex, ...entry }) => entry),
-+        ...newPayload,
-+      ];
-       await unitService.updateSpareTiles(unitId, payload);
-       const refreshed = await unitService.get(unitId);
-       setUnitData(refreshed);
-@@ -274,6 +324,22 @@ const ApartmentDashboardPage = () => {
-     }
-   }, [unitId, spareTilesEntries]);
-
-+  const changeSpareProfile = useCallback(async (nextProfileId) => {
-+    const currentProfileId = unitData?.unit?.spare_profile_id;
-+    if (nextProfileId === (currentProfileId || '')) return;
-+    try {
-+      if (nextProfileId) {
-+        await spareTilesService.patchSpareProfileUnits(projectId, nextProfileId, { add: [unitId], remove: [] });
-+      } else if (currentProfileId) {
-+        await spareTilesService.patchSpareProfileUnits(projectId, currentProfileId, { add: [], remove: [unitId] });
-+      }
-+      await loadUnit();
-+      toast.success('פרופיל ריצוף הספייר עודכן');
-+    } catch (err) {
-+      toast.error(err.response?.data?.detail || 'עדכון הפרופיל נכשל');
-+    }
-+  }, [loadUnit, projectId, unitData, unitId]);
-+
-   useEffect(() => {
-     setFilters(prev => {
-       const next = { ...prev };
-@@ -624,6 +690,72 @@ const ApartmentDashboardPage = () => {
-         </div>
-       )}
-
-+      {unitData.spare_profiles_exist && (
-+        <div className="max-w-lg mx-auto px-4 mt-3">
-+          <div className="bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden">
-+            <button
-+              onClick={() => setSpareTilesOpen(!spareTilesOpen)}
-+              className="w-full flex items-center justify-between p-3 text-right"
-+            >
-+              <div className="flex items-center gap-2">
-+                <span className="text-sm font-semibold text-slate-700">ריצוף ספייר</span>
-+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-+                  unitData.spare_status?.overall === 'short' ? 'bg-red-500 text-white' :
-+                  unitData.spare_status?.overall === 'borderline' ? 'bg-amber-500 text-white' :
-+                  unitData.spare_status?.overall === 'ok' ? 'bg-green-500 text-white' : 'bg-slate-400 text-white'
-+                }`}>
-+                  {unitData.spare_status?.overall === 'short' ? 'חסר — להזמין' :
-+                    unitData.spare_status?.overall === 'borderline' ? 'גבולי' :
-+                    unitData.spare_status?.overall === 'ok' ? 'מספיק' :
-+                    unitData.spare_status?.overall === 'no_profile' ? 'אחר' :
-+                    unitData.spare_status?.overall === 'no_target' ? 'ללא יעד' : 'לא הוזן'}
-+                </span>
-+              </div>
-+              {spareTilesOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-+            </button>
-+            {spareTilesOpen && (
-+              <div className="px-4 pb-4">
-+                <div className="text-xs text-slate-500 mb-3 pb-2 border-b border-slate-100">
-+                  {spareCanWrite ? (
-+                    <label className="flex items-center gap-2">פרופיל:
-+                      <select value={unit.spare_profile_id || ''} onChange={e => changeSpareProfile(e.target.value)} className="border border-slate-200 rounded-md px-2 py-1 text-xs">
-+                        <option value="">אחר</option>
-+                        {(unitData.spare_settings?.profiles || []).map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-+                      </select>
-+                    </label>
-+                  ) : (unitData.spare_status?.profile?.name ? `פרופיל: ${unitData.spare_status.profile.name}` : 'דירה ללא פרופיל — ניתן לעדכן מלאי בלבד')}
-+                </div>
-+                {Array.isArray(unitData.spare_status?.categories) && (
-+                  <div className="space-y-1.5 mb-3">
-+                    {unitData.spare_status.categories.map((row, idx) => (
-+                      <div key={`${row.type}-${idx}`} className="flex items-center gap-2 text-xs">
-+                        <span className="flex-1 font-medium text-slate-700">{row.name || row.type}</span>
-+                        <span className="text-slate-500">{row.actual == null ? '—' : row.actual} / {row.target || '—'} {row.measure === 'tiles' ? 'אריחים' : row.measure === 'cartons' ? 'קרטונים' : row.measure === 'sqm' ? 'מ"ר' : ''}</span>
-+                        {row.actual != null && row.target > 0 && <span className="w-12 bg-slate-100 rounded-full h-1.5 overflow-hidden"><span className={`block h-full rounded-full ${row.status === 'short' ? 'bg-red-500' : row.status === 'borderline' ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${Math.min(100, (row.actual / row.target) * 100)}%` }} /></span>}
-+                        <span className={`w-2 h-2 rounded-full ${row.status === 'short' ? 'bg-red-500' : row.status === 'borderline' ? 'bg-amber-500' : row.status === 'ok' ? 'bg-green-500' : 'bg-slate-300'}`} />
-+                        <span className="w-14 text-[10px] text-slate-500">{row.status === 'short' ? `חסר ${row.missing || 0}` : row.status === 'borderline' ? 'גבולי' : row.status === 'ok' ? 'מספיק' : row.status === 'no_target' ? 'ללא יעד' : 'לא הוזן'}</span>
-+                      </div>
-+                    ))}
-+                  </div>
-+                )}
-+                {spareTilesEditing ? (
-+                  <div className="space-y-3">
-+                    {spareTilesEntries.map((entry, idx) => (
-+                      <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
-+                        <div className="flex items-center justify-between"><span className="text-xs font-semibold text-slate-700">{entry.type}</span>{!entry.isConfigured && <button type="button" onClick={() => setSpareTilesEntries(prev => prev.filter((_, i) => i !== idx))} className="p-1 text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>}</div>
-+                        <div className="flex gap-2 items-end"><label className="w-24 text-[10px] text-slate-500">כמות<input type="number" min="0" value={entry.count} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: e.target.value } : en))} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" />{(() => { const measure = (unitData.spare_settings?.categories || []).find(c => c.name === entry.type)?.measure; return <span className="block mt-0.5 text-[10px] text-slate-400">{measure === 'tiles' ? 'אריחים' : measure === 'cartons' ? 'קרטונים' : measure === 'sqm' ? 'מ"ר' : ''}</span>; })()}</label><label className="flex-1 text-[10px] text-slate-500">הערות<input type="text" value={entry.notes} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, notes: e.target.value } : en))} maxLength={500} placeholder="הערה..." className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /></label></div>
-+                      </div>
-+                    ))}
-+                    {spareTilesEntries.length < 20 && <button type="button" onClick={() => { const name = window.prompt('שם סוג ריצוף חדש:'); if (!name?.trim()) return; const trimmed = name.trim().slice(0, 50); if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) { toast.error('סוג ריצוף כבר קיים'); return; } setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', isConfigured: false }]); }} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Plus className="w-3.5 h-3.5" />הוסף סוג ריצוף</button>}
-+                    <div className="flex gap-2"><button onClick={saveSpareTiles} disabled={spareTilesSaving} className="flex-1 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium">{spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin inline" /> : 'שמור'}</button><button onClick={() => setSpareTilesEditing(false)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600">ביטול</button></div>
-+                  </div>
-+                ) : spareCanWrite && <button onClick={startSpareTilesEdit} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Pencil className="w-3.5 h-3.5" />עדכון מלאי</button>}
-+              </div>
-+            )}
-+          </div>
-+        </div>
-+      )}
-+      {!unitData.spare_profiles_exist && (
-       <div className="max-w-lg mx-auto px-4 mt-3">
-         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-           <button
-@@ -667,7 +799,7 @@ const ApartmentDashboardPage = () => {
-                     <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
-                       <div className="flex items-center justify-between">
-                         <span className="text-xs font-semibold text-slate-700">{entry.type}</span>
--                        {!entry.isBase && (
-+                        {!entry.isConfigured && (
-                           <button
-                             type="button"
-                             onClick={() => setSpareTilesEntries(prev => prev.filter((_, i) => i !== idx))}
-@@ -719,7 +851,7 @@ const ApartmentDashboardPage = () => {
+@@ -730,7 +743,7 @@ const ApartmentDashboardPage = () => {
+                     {unitData.spare_status.categories.map((row, idx) => (
+                       <div key={`${row.type}-${idx}`} className="flex items-center gap-2 text-xs">
+                         <span className="flex-1 font-medium text-slate-700">{row.name || row.type}</span>
+-                        <span className="text-slate-500">{row.actual == null ? '—' : row.actual} / {row.target || '—'} {row.measure === 'tiles' ? 'אריחים' : row.measure === 'cartons' ? 'קרטונים' : row.measure === 'sqm' ? 'מ"ר' : ''}</span>
++                        <span className="text-slate-500">{row.entered && row.actual === 0 ? 'אין ספייר' : row.actual == null ? '—' : row.actual} / {row.target || '—'} {row.measure === 'tiles' ? 'אריחים' : row.measure === 'cartons' ? 'קרטונים' : row.measure === 'sqm' ? 'מ"ר' : ''}</span>
+                         {row.actual != null && row.target > 0 && <span className="w-12 bg-slate-100 rounded-full h-1.5 overflow-hidden"><span className={`block h-full rounded-full ${row.status === 'short' ? 'bg-red-500' : row.status === 'borderline' ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${Math.min(100, (row.actual / row.target) * 100)}%` }} /></span>}
+                         <span className={`w-2 h-2 rounded-full ${row.status === 'short' ? 'bg-red-500' : row.status === 'borderline' ? 'bg-amber-500' : row.status === 'ok' ? 'bg-green-500' : 'bg-slate-300'}`} />
+                         <span className="w-14 text-[10px] text-slate-500">{row.status === 'short' ? `חסר ${row.missing || 0}` : row.status === 'borderline' ? 'גבולי' : row.status === 'ok' ? 'מספיק' : row.status === 'no_target' ? 'ללא יעד' : 'לא הוזן'}</span>
+@@ -743,10 +756,24 @@ const ApartmentDashboardPage = () => {
+                     {spareTilesEntries.map((entry, idx) => (
+                       <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
+                         <div className="flex items-center justify-between"><span className="text-xs font-semibold text-slate-700">{entry.type}</span>{!entry.isConfigured && <button type="button" onClick={() => setSpareTilesEntries(prev => prev.filter((_, i) => i !== idx))} className="p-1 text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>}</div>
+-                        <div className="flex gap-2 items-end"><label className="w-24 text-[10px] text-slate-500">כמות<input type="number" min="0" value={entry.count} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: e.target.value } : en))} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" />{(() => { const measure = (unitData.spare_settings?.categories || []).find(c => c.name === entry.type)?.measure; return <span className="block mt-0.5 text-[10px] text-slate-400">{measure === 'tiles' ? 'אריחים' : measure === 'cartons' ? 'קרטונים' : measure === 'sqm' ? 'מ"ר' : ''}</span>; })()}</label><label className="flex-1 text-[10px] text-slate-500">הערות<input type="text" value={entry.notes} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, notes: e.target.value } : en))} maxLength={500} placeholder="הערה..." className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /></label></div>
++                        <div className="flex gap-2 items-end flex-wrap">
++                          {(() => {
++                            const category = (unitData.spare_settings?.categories || []).find(c => c.name === entry.type);
++                            const measureLabel = category?.measure === 'tiles' ? 'אריחים' : category?.measure === 'cartons' ? 'קרטונים' : category?.measure === 'sqm' ? 'מ"ר' : '';
++                            return <>
++                              <label className="w-24 text-[10px] text-slate-500">כמות<input type="number" min="0" value={entry.count} onChange={e => { const count = e.target.value; setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count, cartons: '', entered: Number(count) > 0 ? false : en.entered } : en)); }} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /><span className="block mt-0.5 text-[10px] text-slate-400">{measureLabel}</span></label>
++                              <label className="flex items-center gap-1 pb-5 text-[10px] text-slate-600"><input type="checkbox" checked={String(entry.count) === '0' && entry.entered === true} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: '0', cartons: '', entered: e.target.checked } : en))} />אין</label>
++                              {category?.per_carton != null && <label className="w-24 text-[10px] text-slate-500">קרטונים<input type="number" min="0" step="0.01" value={entry.cartons || ''} onChange={e => { const cartons = e.target.value; setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, cartons, ...(cartons === '' ? {} : { count: String(Math.round(Number(cartons) * Number(category.per_carton))), entered: false }) } : en)); }} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" />{entry.cartons !== '' && <span className="block mt-0.5 text-[10px] text-slate-400">{entry.cartons} קרטונים × {category.per_carton} = {Math.round(Number(entry.cartons) * Number(category.per_carton))} {measureLabel}</span>}</label>}
++                            </>;
++                          })()}
++                          <label className="flex-1 min-w-[120px] text-[10px] text-slate-500">הערות<input type="text" value={entry.notes} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, notes: e.target.value } : en))} maxLength={500} placeholder="הערה..." className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /></label>
++                        </div>
+                       </div>
+                     ))}
+-                    {spareTilesEntries.length < 20 && <button type="button" onClick={() => { const name = window.prompt('שם סוג ריצוף חדש:'); if (!name?.trim()) return; const trimmed = name.trim().slice(0, 50); if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) { toast.error('סוג ריצוף כבר קיים'); return; } setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', isConfigured: false }]); }} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Plus className="w-3.5 h-3.5" />הוסף סוג ריצוף</button>}
++                    <div className="flex items-center gap-3 flex-wrap">
++                      {spareTilesEntries.length < 20 && <button type="button" onClick={() => { const name = window.prompt('שם סוג ריצוף חדש:'); if (!name?.trim()) return; const trimmed = name.trim().slice(0, 50); if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) { toast.error('סוג ריצוף כבר קיים'); return; } setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', entered: false, cartons: '', isConfigured: false }]); }} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Plus className="w-3.5 h-3.5" />הוסף סוג ריצוף</button>}
++                      <button type="button" onClick={() => setSpareTilesEntries(prev => prev.map(entry => entry.isConfigured ? { ...entry, count: '0', cartons: '', entered: true } : entry))} className="text-xs text-amber-700 font-medium">אין ספייר בדירה</button>
++                    </div>
+                     <div className="flex gap-2"><button onClick={saveSpareTiles} disabled={spareTilesSaving} className="flex-1 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium">{spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin inline" /> : 'שמור'}</button><button onClick={() => setSpareTilesEditing(false)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600">ביטול</button></div>
+                   </div>
+                 ) : spareCanWrite && <button onClick={startSpareTilesEdit} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Pencil className="w-3.5 h-3.5" />עדכון מלאי</button>}
+@@ -818,11 +845,19 @@ const ApartmentDashboardPage = () => {
+                             value={entry.count}
+                             onChange={e => {
+                               const val = e.target.value;
+-                              setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: val } : en));
++                              setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: val, cartons: '', entered: Number(val) > 0 ? false : en.entered } : en));
+                             }}
+                             className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                           />
+                         </div>
++                        <label className="flex items-center gap-1 pb-1 text-[10px] text-slate-600">
++                          <input
++                            type="checkbox"
++                            checked={String(entry.count) === '0' && entry.entered === true}
++                            onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: '0', cartons: '', entered: e.target.checked } : en))}
++                          />
++                          אין
++                        </label>
+                         <div className="flex-1">
+                           <label className="block text-[10px] text-slate-500 mb-0.5">הערות</label>
+                           <input
+@@ -851,7 +886,7 @@ const ApartmentDashboardPage = () => {
                            toast.error('סוג ריצוף כבר קיים');
                            return;
                          }
--                        setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', isBase: false }]);
-+                        setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', isConfigured: false }]);
+-                        setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', isConfigured: false }]);
++                        setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', entered: false, cartons: '', isConfigured: false }]);
                        }}
                        className="flex items-center gap-1.5 text-xs text-amber-600 font-medium hover:text-amber-700 transition-colors"
                      >
-@@ -772,6 +904,7 @@ const ApartmentDashboardPage = () => {
-           )}
-         </div>
-       </div>
-+      )}
-
-       <div className="max-w-lg mx-auto px-4 mt-4 space-y-2">
-         <div className="flex gap-2">
-diff --git a/frontend/src/pages/ProjectDashboardPage.js b/frontend/src/pages/ProjectDashboardPage.js
-index 27d3789..48dab7a 100644
---- a/frontend/src/pages/ProjectDashboardPage.js
-+++ b/frontend/src/pages/ProjectDashboardPage.js
-@@ -862,6 +862,24 @@ export default function ProjectDashboardPage() {
-         </div>
+@@ -880,10 +915,10 @@ const ApartmentDashboardPage = () => {
+                 <div className="space-y-2">
+                   {Array.isArray(unit?.spare_tiles) && unit.spare_tiles.length > 0 && (
+                     <div className="space-y-1.5">
+-                      {unit.spare_tiles.filter(e => e.count > 0 || e.notes).map((entry, idx) => (
++                      {unit.spare_tiles.filter(e => e.count > 0 || e.notes || e.entered).map((entry, idx) => (
+                         <div key={idx} className="flex items-center gap-2 text-sm text-slate-700">
+                           <span className="font-medium min-w-[100px]">{entry.type}:</span>
+-                          <span>{entry.count}</span>
++                          <span>{entry.entered && entry.count === 0 ? 'אין' : entry.count}</span>
+                           {entry.notes && <span className="text-slate-500 text-xs truncate">({entry.notes})</span>}
+                         </div>
+                       ))}
+@@ -1034,7 +1069,7 @@ const ApartmentDashboardPage = () => {
          )}
+       </div>
 
-+        <DashboardFoldSection
-+          id="spare-tiles"
-+          projectId={projectId}
-+          icon={Construction}
-+          iconColor="text-amber-600"
-+          title="ריצוף ספייר"
-+          summary="פרופילים ומלאי"
-+        >
-+          <button
-+            onClick={() => navigate(`/projects/${projectId}/spare-tiles`)}
-+            className="w-full bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 text-right hover:border-amber-300 hover:bg-amber-50/30 transition-all"
-+          >
-+            <span className="p-2.5 bg-amber-100 text-amber-700 rounded-xl"><Construction className="w-5 h-5" /></span>
-+            <span className="flex-1 min-w-0"><span className="block font-bold text-slate-800">ריצוף ספייר</span><span className="block text-xs text-slate-500 mt-0.5">הגדרת פרופילים, יעדים ושיוך דירות</span></span>
-+            <ChevronLeft className="w-5 h-5 text-slate-300" />
-+          </button>
-+        </DashboardFoldSection>
-+
-         {isPmOrOwner && (
-         <div ref={el => { foldRefs.current['team'] = el; }}>
-           <DashboardFoldSection
+-      {canCreateDefect && (
++      {canCreateDefect && !spareTilesEditing && (
+         <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur border-t border-slate-200 p-3 z-40">
+           <div className="max-w-lg mx-auto">
+             <button
 diff --git a/frontend/src/pages/SpareTilesPage.js b/frontend/src/pages/SpareTilesPage.js
-new file mode 100644
-index 0000000..0360910
---- /dev/null
+index 0360910..d584c9b 100644
+--- a/frontend/src/pages/SpareTilesPage.js
 +++ b/frontend/src/pages/SpareTilesPage.js
-@@ -0,0 +1,124 @@
-+import React, { useCallback, useEffect, useMemo, useState } from 'react';
-+import { useNavigate, useParams } from 'react-router-dom';
-+import { spareTilesService } from '../services/api';
-+import { toast } from 'sonner';
-+import { ArrowRight, Building2, Check, Loader2, Minus, Plus, Save, SlidersHorizontal, Tag, Users } from 'lucide-react';
-+
-+const MEASURES = { tiles: 'אריחים', cartons: 'קרטונים', sqm: 'מ"ר' };
-+const blankProfile = () => ({ clientKey: `profile-${Date.now()}-${Math.random()}`, name: '', targets: {}, assigned_units: 0 });
-+
-+export default function SpareTilesPage() {
-+  const { projectId } = useParams();
-+  const navigate = useNavigate();
-+  const [tab, setTab] = useState('settings');
-+  const [settings, setSettings] = useState(null);
-+  const [draft, setDraft] = useState(null);
-+  const [assignments, setAssignments] = useState(null);
-+  const [buildingId, setBuildingId] = useState('');
-+  const [profileId, setProfileId] = useState('');
-+  const [selected, setSelected] = useState(new Set());
-+  const [loading, setLoading] = useState(true);
-+  const [saving, setSaving] = useState(false);
-+  const [error, setError] = useState('');
-+  const canWrite = settings?.can_write === true;
-+  const loadSettings = useCallback(async () => {
-+    const data = await spareTilesService.getSpareSettings(projectId);
-+    setSettings(data);
-+    setDraft({ categories: data.categories || [], profiles: data.profiles || [], margin_pct: data.margin_pct ?? 10, updated_at: data.updated_at });
-+    setProfileId(current => current || data.profiles?.[0]?.id || '');
-+  }, [projectId]);
-+  const loadAssignments = useCallback(async (id) => {
-+    const data = await spareTilesService.getSpareAssignments(projectId, id || undefined);
-+    setAssignments(data);
-+    if (!id && data.buildings?.[0]) setBuildingId(data.buildings[0].id);
-+  }, [projectId]);
-+  const load = useCallback(async () => {
-+    try { setLoading(true); setError(''); await Promise.all([loadSettings(), loadAssignments()]); }
-+    catch (err) { setError(err.response?.data?.detail || 'לא ניתן לטעון את נתוני ריצוף הספייר'); }
-+    finally { setLoading(false); }
-+  }, [loadAssignments, loadSettings]);
-+  useEffect(() => { load(); }, [load]);
-+  useEffect(() => { if (buildingId) loadAssignments(buildingId).catch(() => toast.error('לא ניתן לטעון את הבניין')); }, [buildingId, loadAssignments]);
-+
-+  const profiles = draft?.profiles || [];
-+  const names = useMemo(() => Object.fromEntries((settings?.profiles || []).map(p => [p.id, p.name])), [settings]);
-+  const baseline = useMemo(() => new Set((assignments?.floors || []).flatMap(f => f.units || []).filter(u => u.spare_profile_id === profileId).map(u => u.id)), [assignments, profileId]);
-+  const addCount = [...selected].filter(id => !baseline.has(id)).length;
-+  const removeCount = [...baseline].filter(id => !selected.has(id)).length;
-+
-+  const updateDraft = (fn) => setDraft(prev => fn(prev));
-+  const saveSettings = async () => {
-+    if (!canWrite) return;
-+    const categories = draft.categories.filter(c => c.name.trim());
-+    if (!categories.length) return toast.error('נדרשת לפחות קטגוריה אחת');
-+    if (categories.length > 20 || draft.profiles.length > 10) return toast.error('חריגה ממספר הקטגוריות או הפרופילים המותר');
-+    try {
-+      setSaving(true);
-+      const payload = {
-+        categories,
-+        profiles: draft.profiles.map(({ assigned_units, clientKey, ...p }) => p),
-+        margin_pct: draft.margin_pct,
-+        ...(draft.updated_at ? { updated_at: draft.updated_at } : {}),
-+      };
-+      const saved = await spareTilesService.saveSpareSettings(projectId, payload);
-+      setSettings(saved); setDraft({ categories: saved.categories || [], profiles: saved.profiles || [], margin_pct: saved.margin_pct ?? 10, updated_at: saved.updated_at });
-+      toast.success('הגדרות ריצוף הספייר נשמרו');
-+    } catch (err) { toast.error(err.response?.data?.detail || 'השמירה נכשלה'); }
-+    finally { setSaving(false); }
-+  };
-+  const saveAssignments = async () => {
-+    if (!profileId || !canWrite) return;
-+    try {
-+      setSaving(true);
-+      await spareTilesService.patchSpareProfileUnits(projectId, profileId, { add: [...selected].filter(id => !baseline.has(id)), remove: [...baseline].filter(id => !selected.has(id)) });
-+      await Promise.all([loadAssignments(buildingId), loadSettings()]);
-+      toast.success('שיוך הדירות עודכן');
-+    } catch (err) { toast.error(err.response?.data?.detail || 'עדכון השיוך נכשל'); }
-+    finally { setSaving(false); }
-+  };
-+  const switchProfile = (id) => { setProfileId(id); setSelected(new Set()); };
-+  useEffect(() => { setSelected(new Set(baseline)); }, [baseline]);
-+  if (loading) return <div className="min-h-screen bg-slate-50 p-5" dir="rtl"><div className="max-w-5xl mx-auto space-y-3 animate-pulse"><div className="h-20 bg-slate-200 rounded-2xl" /><div className="h-64 bg-slate-200 rounded-2xl" /></div></div>;
-+  if (error) return <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6" dir="rtl"><div className="text-center bg-white p-7 rounded-2xl border border-amber-200"><p className="text-slate-700 mb-4">{error}</p><button onClick={load} className="px-4 py-2 bg-amber-500 text-white rounded-lg">נסה שוב</button></div></div>;
-+
-+  return <main className="min-h-screen bg-[#f4f5f3] pb-24" dir="rtl">
-+    <header className="bg-[#202d38] text-white border-b-4 border-amber-500">
-+      <div className="max-w-5xl mx-auto px-4 py-4 flex gap-3 items-center">
-+        <button onClick={() => navigate(`/projects/${projectId}/dashboard`)} className="p-2 rounded-lg bg-white/10 hover:bg-white/20"><ArrowRight className="w-5 h-5" /></button>
-+        <div className="flex-1"><p className="text-[11px] text-amber-300 tracking-wide">ניהול מלאי באתר</p><h1 className="text-xl font-bold">ריצוף ספייר</h1></div>
-+        <span className={`text-xs px-2.5 py-1 rounded-full ${canWrite ? 'bg-amber-400 text-slate-900' : 'bg-slate-600 text-slate-200'}`}>{canWrite ? 'עריכה פעילה' : 'צפייה בלבד'}</span>
-+      </div>
-+    </header>
-+    <div className="max-w-5xl mx-auto px-4 pt-5">
-+      <nav className="grid grid-cols-2 bg-[#e4e8e6] rounded-xl p-1 mb-5">
-+        <button onClick={() => setTab('settings')} className={`py-2.5 text-sm font-bold rounded-lg transition ${tab === 'settings' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}><SlidersHorizontal className="inline w-4 h-4 ml-1" />הגדרות</button>
-+        <button onClick={() => setTab('assignments')} className={`py-2.5 text-sm font-bold rounded-lg transition ${tab === 'assignments' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}><Users className="inline w-4 h-4 ml-1" />שיוך דירות</button>
-+      </nav>
-+      {tab === 'settings' ? <section className="space-y-4">
-+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-+          <div className="p-4 border-b border-slate-100"><h2 className="font-bold text-slate-800">קטגוריות מדידה</h2><p className="text-xs text-slate-500 mt-1">היעדים מוגדרים עבור כל פרופיל דירה.</p></div>
-+          <div className="p-3 space-y-2">{draft.categories.map((cat, i) => <div key={`${cat.name}-${i}`} className="flex gap-2 items-center bg-slate-50 p-2 rounded-xl">
-+            {cat.new ? <input disabled={!canWrite} value={cat.name} onChange={e => updateDraft(d => ({ ...d, categories: d.categories.map((c, x) => x === i ? { ...c, name: e.target.value } : c) }))} placeholder="שם קטגוריה" className="flex-1 min-w-0 border rounded-lg px-2 py-2 text-sm" /> : <span className="flex-1 text-sm font-semibold text-slate-700">{cat.name}</span>}
-+            <select disabled={!canWrite} value={cat.measure} onChange={e => updateDraft(d => ({ ...d, categories: d.categories.map((c, x) => x === i ? { ...c, measure: e.target.value } : c) }))} className="w-28 border rounded-lg py-2 text-xs"><option value="tiles">אריחים</option><option value="cartons">קרטונים</option><option value="sqm">מ"ר</option></select>
-+            <button disabled={!canWrite || draft.categories.length <= 1} onClick={() => updateDraft(d => ({ ...d, categories: d.categories.filter((_, x) => x !== i) }))} className="p-2 text-slate-400 disabled:opacity-30"><Minus className="w-4 h-4" /></button>
-+          </div>)}</div>
-+          <button disabled={!canWrite || draft.categories.length >= 20} onClick={() => updateDraft(d => ({ ...d, categories: [...d.categories, { name: '', measure: 'tiles', new: true }] }))} className="m-3 text-sm text-amber-700 font-bold disabled:opacity-40"><Plus className="inline w-4 h-4 ml-1" />הוסף קטגוריה</button>
-+        </div>
-+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-+          <div className="p-4 border-b border-slate-100 flex justify-between"><div><h2 className="font-bold text-slate-800">פרופילי דירות</h2><p className="text-xs text-slate-500 mt-1">הגדרה מפורשת של יעד לכל סוג דירה.</p></div><span className="text-xs bg-slate-100 text-slate-600 rounded-full px-2 py-1 h-fit">אחר: {settings?.unassigned_units || 0}</span></div>
-+          <div className="p-3 space-y-3">{profiles.map((profile, pi) => <article key={profile.id || profile.clientKey} className="border border-slate-200 rounded-xl overflow-hidden">
-+            <div className="p-3 bg-[#fbfcfa] flex gap-2 items-center"><Tag className="w-4 h-4 text-amber-600" /><input disabled={!canWrite} value={profile.name} onChange={e => updateDraft(d => ({ ...d, profiles: d.profiles.map((p, x) => x === pi ? { ...p, name: e.target.value } : p) }))} placeholder="שם הפרופיל" className="flex-1 font-bold bg-transparent min-w-0 outline-none" /><span className="text-[11px] text-slate-500">{profile.assigned_units || 0} דירות</span><button disabled={!canWrite} onClick={() => updateDraft(d => ({ ...d, profiles: d.profiles.filter((_, x) => x !== pi) }))} className="text-slate-400 disabled:opacity-30"><Minus className="w-4 h-4" /></button></div>
-+            <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">{draft.categories.map(cat => <label key={cat.name} className="flex items-center gap-2 text-xs bg-slate-50 p-2 rounded-lg"><span className="flex-1 text-slate-600">{cat.name}<small className="block text-slate-400">{MEASURES[cat.measure]}</small></span><input disabled={!canWrite} type="number" min="0" max="10000" value={profile.targets?.[cat.name] || ''} onChange={e => updateDraft(d => ({ ...d, profiles: d.profiles.map((p, x) => x === pi ? { ...p, targets: { ...p.targets, [cat.name]: e.target.value === '' ? 0 : Number(e.target.value) } } : p) }))} className="w-20 border rounded-md py-1 text-center" /></label>)}</div>
-+          </article>)}</div>
-+          <button disabled={!canWrite || profiles.length >= 10} onClick={() => updateDraft(d => ({ ...d, profiles: [...d.profiles, blankProfile()] }))} className="m-3 text-sm text-amber-700 font-bold disabled:opacity-40"><Plus className="inline w-4 h-4 ml-1" />הוסף פרופיל</button>
-+        </div>
-+        <div className="bg-white rounded-2xl border border-slate-200 p-4"><label className="font-bold text-slate-800">מרווח ביטחון</label><div className="flex items-center mt-2 gap-3"><input disabled={!canWrite} type="number" min="0" max="100" value={draft.margin_pct} onChange={e => updateDraft(d => ({ ...d, margin_pct: Math.min(100, Math.max(0, Number(e.target.value))) }))} className="w-24 border rounded-lg py-2 text-center" /><span className="text-sm text-slate-500">אחוז מעל היעד לאזור הגבולי</span></div><div className="mt-3 flex gap-3 text-[11px]"><span className="text-red-700">חסר — להזמין</span><span className="text-amber-700">גבולי</span><span className="text-emerald-700">מספיק</span><span className="text-slate-500">לא הוזן / ללא יעד</span></div></div>
-+        <button disabled={!canWrite || saving} onClick={saveSettings} className="w-full py-3 rounded-xl bg-[#d78b26] text-white font-bold disabled:opacity-40">{saving ? <Loader2 className="inline w-4 h-4 animate-spin ml-2" /> : <Save className="inline w-4 h-4 ml-2" />}שמור הגדרות</button>
-+      </section> : <section className="space-y-4">
-+        <div className="bg-white rounded-2xl border border-slate-200 p-4 grid gap-3 sm:grid-cols-2"><label className="text-xs font-bold text-slate-600">פרופיל<select value={profileId} onChange={e => switchProfile(e.target.value)} className="mt-1 block w-full border rounded-lg p-2.5"><option value="">בחר פרופיל</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name || 'פרופיל ללא שם'}</option>)}</select></label><label className="text-xs font-bold text-slate-600">בניין<select value={buildingId} onChange={e => setBuildingId(e.target.value)} className="mt-1 block w-full border rounded-lg p-2.5">{assignments?.buildings?.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label></div>
-+        {!profileId ? <div className="text-center p-10 bg-white border rounded-2xl text-slate-500">יש ליצור ולבחור פרופיל לפני שיוך דירות.</div> : (assignments?.floors || []).map(floor => <article key={floor.id} className="bg-white rounded-2xl border border-slate-200 overflow-hidden"><div className="p-3 flex justify-between border-b"><div><h2 className="font-bold text-slate-800">{floor.name}</h2><p className="text-xs text-slate-500">{floor.units?.length || 0} דירות</p></div><button disabled={!canWrite} onClick={() => { const ids = floor.units.map(u => u.id); const all = ids.every(id => selected.has(id)); setSelected(prev => { const next = new Set(prev); ids.forEach(id => all ? next.delete(id) : next.add(id)); return next; }); }} className="text-xs font-bold text-amber-700 disabled:opacity-40">בחר הכל בקומה</button></div><div className="p-3 flex flex-wrap gap-2">{floor.units?.map(unit => { const active = selected.has(unit.id); const label = unit.display_label || unit.unit_no; const assigned = unit.spare_profile_id ? names[unit.spare_profile_id] : null; return <button key={unit.id} disabled={!canWrite} onClick={() => setSelected(prev => { const next = new Set(prev); active ? next.delete(unit.id) : next.add(unit.id); return next; })} className={`min-w-[78px] p-2 rounded-lg border text-right transition ${active ? 'bg-amber-50 border-amber-400 text-amber-900' : 'bg-slate-50 border-slate-200 text-slate-600'} disabled:opacity-70`}><span className="block text-sm font-bold">{active && <Check className="inline w-3.5 h-3.5 ml-1" />}{label}</span><span className="block text-[10px] mt-1 text-slate-500">{assigned || 'אחר'}</span></button>; })}</div></article>)}
-+        <div className="sticky bottom-3 bg-[#202d38] text-white rounded-xl p-3 flex items-center gap-3 shadow-lg"><Building2 className="w-5 h-5 text-amber-300" /><div className="flex-1 text-xs"><b>{selected.size} נבחרו</b><span className="mr-2 text-emerald-300">+{addCount}</span><span className="mr-2 text-rose-300">−{removeCount}</span></div><button disabled={!canWrite || saving || (!addCount && !removeCount)} onClick={saveAssignments} className="bg-amber-400 text-slate-900 px-3 py-2 rounded-lg text-sm font-bold disabled:opacity-40">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'שמור שיוך'}</button></div>
-+      </section>}
-+    </div>
-+  </main>;
-+}
-\ No newline at end of file
-diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
-index dcd3f4a..425e940 100644
---- a/frontend/src/services/api.js
-+++ b/frontend/src/services/api.js
-@@ -1067,6 +1067,25 @@ export const unitService = {
-   },
- };
+@@ -6,6 +6,10 @@ import { ArrowRight, Building2, Check, Loader2, Minus, Plus, Save, SlidersHorizo
 
-+export const spareTilesService = {
-+  async getSpareSettings(projectId) {
-+    const response = await axios.get(`${API}/projects/${projectId}/spare-settings`, { headers: getAuthHeader() });
-+    return response.data;
-+  },
-+  async saveSpareSettings(projectId, settings) {
-+    const response = await axios.put(`${API}/projects/${projectId}/spare-settings`, settings, { headers: getAuthHeader() });
-+    return response.data;
-+  },
-+  async getSpareAssignments(projectId, buildingId) {
-+    const response = await axios.get(`${API}/projects/${projectId}/spare-assignments`, { headers: getAuthHeader(), params: buildingId ? { building_id: buildingId } : {} });
-+    return response.data;
-+  },
-+  async patchSpareProfileUnits(projectId, profileId, body) {
-+    const response = await axios.patch(`${API}/projects/${projectId}/spare-profiles/${profileId}/units`, body, { headers: getAuthHeader() });
-+    return response.data;
-+  },
-+};
-+
- export const archiveService = {
-   async archiveBuilding(buildingId, reason) {
-     const response = await axios.post(`${API}/buildings/${buildingId}/archive`, { reason }, { headers: getAuthHeader() });
+ const MEASURES = { tiles: 'אריחים', cartons: 'קרטונים', sqm: 'מ"ר' };
+ const blankProfile = () => ({ clientKey: `profile-${Date.now()}-${Math.random()}`, name: '', targets: {}, assigned_units: 0 });
++const categoriesWithClientKeys = (categories) => (categories || []).map((category, index) => ({
++  ...category,
++  clientKey: `cat-${index}-${category.name}`,
++}));
+
+ export default function SpareTilesPage() {
+   const { projectId } = useParams();
+@@ -24,7 +28,7 @@ export default function SpareTilesPage() {
+   const loadSettings = useCallback(async () => {
+     const data = await spareTilesService.getSpareSettings(projectId);
+     setSettings(data);
+-    setDraft({ categories: data.categories || [], profiles: data.profiles || [], margin_pct: data.margin_pct ?? 10, updated_at: data.updated_at });
++    setDraft({ categories: categoriesWithClientKeys(data.categories), profiles: data.profiles || [], margin_pct: data.margin_pct ?? 10, updated_at: data.updated_at });
+     setProfileId(current => current || data.profiles?.[0]?.id || '');
+   }, [projectId]);
+   const loadAssignments = useCallback(async (id) => {
+@@ -49,7 +53,13 @@ export default function SpareTilesPage() {
+   const updateDraft = (fn) => setDraft(prev => fn(prev));
+   const saveSettings = async () => {
+     if (!canWrite) return;
+-    const categories = draft.categories.filter(c => c.name.trim());
++    const categories = draft.categories
++      .filter(c => c.name.trim())
++      .map(({ name, measure, per_carton }) => ({
++        name: name.trim(),
++        measure,
++        per_carton: per_carton || null,
++      }));
+     if (!categories.length) return toast.error('נדרשת לפחות קטגוריה אחת');
+     if (categories.length > 20 || draft.profiles.length > 10) return toast.error('חריגה ממספר הקטגוריות או הפרופילים המותר');
+     try {
+@@ -61,7 +71,7 @@ export default function SpareTilesPage() {
+         ...(draft.updated_at ? { updated_at: draft.updated_at } : {}),
+       };
+       const saved = await spareTilesService.saveSpareSettings(projectId, payload);
+-      setSettings(saved); setDraft({ categories: saved.categories || [], profiles: saved.profiles || [], margin_pct: saved.margin_pct ?? 10, updated_at: saved.updated_at });
++      setSettings(saved); setDraft({ categories: categoriesWithClientKeys(saved.categories), profiles: saved.profiles || [], margin_pct: saved.margin_pct ?? 10, updated_at: saved.updated_at });
+       toast.success('הגדרות ריצוף הספייר נשמרו');
+     } catch (err) { toast.error(err.response?.data?.detail || 'השמירה נכשלה'); }
+     finally { setSaving(false); }
+@@ -96,19 +106,20 @@ export default function SpareTilesPage() {
+       </nav>
+       {tab === 'settings' ? <section className="space-y-4">
+         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+-          <div className="p-4 border-b border-slate-100"><h2 className="font-bold text-slate-800">קטגוריות מדידה</h2><p className="text-xs text-slate-500 mt-1">היעדים מוגדרים עבור כל פרופיל דירה.</p></div>
+-          <div className="p-3 space-y-2">{draft.categories.map((cat, i) => <div key={`${cat.name}-${i}`} className="flex gap-2 items-center bg-slate-50 p-2 rounded-xl">
++          <div className="p-4 border-b border-slate-100"><h2 className="font-bold text-slate-800">קטגוריות מדידה</h2><p className="text-xs text-slate-500 mt-1">היעדים מוגדרים עבור כל פרופיל דירה.</p><p className="text-xs text-slate-500 mt-1">כמות בקרטון (רשות): מאפשרת להזין בשטח קרטונים ולקבל המרה אוטומטית</p></div>
++          <div className="p-3 space-y-2">{draft.categories.map((cat, i) => <div key={cat.clientKey || `cat-${i}`} className="flex gap-2 items-center bg-slate-50 p-2 rounded-xl">
+             {cat.new ? <input disabled={!canWrite} value={cat.name} onChange={e => updateDraft(d => ({ ...d, categories: d.categories.map((c, x) => x === i ? { ...c, name: e.target.value } : c) }))} placeholder="שם קטגוריה" className="flex-1 min-w-0 border rounded-lg px-2 py-2 text-sm" /> : <span className="flex-1 text-sm font-semibold text-slate-700">{cat.name}</span>}
+-            <select disabled={!canWrite} value={cat.measure} onChange={e => updateDraft(d => ({ ...d, categories: d.categories.map((c, x) => x === i ? { ...c, measure: e.target.value } : c) }))} className="w-28 border rounded-lg py-2 text-xs"><option value="tiles">אריחים</option><option value="cartons">קרטונים</option><option value="sqm">מ"ר</option></select>
++            <select disabled={!canWrite} value={cat.measure} onChange={e => updateDraft(d => ({ ...d, categories: d.categories.map((c, x) => x === i ? { ...c, measure: e.target.value, per_carton: e.target.value === 'cartons' ? null : c.per_carton } : c) }))} className="w-28 border rounded-lg py-2 text-xs"><option value="tiles">אריחים</option><option value="cartons">קרטונים</option><option value="sqm">מ"ר</option></select>
++            {cat.measure !== 'cartons' && <input disabled={!canWrite} type="number" min="0.01" step="0.01" value={cat.per_carton ?? ''} onChange={e => updateDraft(d => ({ ...d, categories: d.categories.map((c, x) => x === i ? { ...c, per_carton: e.target.value } : c) }))} placeholder="בקרטון" title={`כמות ${cat.measure === 'sqm' ? 'מ"ר' : 'אריחים'} בקרטון אחד — רשות`} className="w-24 border rounded-lg px-2 py-2 text-xs" />}
+             <button disabled={!canWrite || draft.categories.length <= 1} onClick={() => updateDraft(d => ({ ...d, categories: d.categories.filter((_, x) => x !== i) }))} className="p-2 text-slate-400 disabled:opacity-30"><Minus className="w-4 h-4" /></button>
+           </div>)}</div>
+-          <button disabled={!canWrite || draft.categories.length >= 20} onClick={() => updateDraft(d => ({ ...d, categories: [...d.categories, { name: '', measure: 'tiles', new: true }] }))} className="m-3 text-sm text-amber-700 font-bold disabled:opacity-40"><Plus className="inline w-4 h-4 ml-1" />הוסף קטגוריה</button>
++          <button disabled={!canWrite || draft.categories.length >= 20} onClick={() => updateDraft(d => ({ ...d, categories: [...d.categories, { name: '', measure: 'tiles', per_carton: null, new: true, clientKey: `cat-${Date.now()}-${Math.random()}` }] }))} className="m-3 text-sm text-amber-700 font-bold disabled:opacity-40"><Plus className="inline w-4 h-4 ml-1" />הוסף קטגוריה</button>
+         </div>
+         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+           <div className="p-4 border-b border-slate-100 flex justify-between"><div><h2 className="font-bold text-slate-800">פרופילי דירות</h2><p className="text-xs text-slate-500 mt-1">הגדרה מפורשת של יעד לכל סוג דירה.</p></div><span className="text-xs bg-slate-100 text-slate-600 rounded-full px-2 py-1 h-fit">אחר: {settings?.unassigned_units || 0}</span></div>
+           <div className="p-3 space-y-3">{profiles.map((profile, pi) => <article key={profile.id || profile.clientKey} className="border border-slate-200 rounded-xl overflow-hidden">
+             <div className="p-3 bg-[#fbfcfa] flex gap-2 items-center"><Tag className="w-4 h-4 text-amber-600" /><input disabled={!canWrite} value={profile.name} onChange={e => updateDraft(d => ({ ...d, profiles: d.profiles.map((p, x) => x === pi ? { ...p, name: e.target.value } : p) }))} placeholder="שם הפרופיל" className="flex-1 font-bold bg-transparent min-w-0 outline-none" /><span className="text-[11px] text-slate-500">{profile.assigned_units || 0} דירות</span><button disabled={!canWrite} onClick={() => updateDraft(d => ({ ...d, profiles: d.profiles.filter((_, x) => x !== pi) }))} className="text-slate-400 disabled:opacity-30"><Minus className="w-4 h-4" /></button></div>
+-            <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">{draft.categories.map(cat => <label key={cat.name} className="flex items-center gap-2 text-xs bg-slate-50 p-2 rounded-lg"><span className="flex-1 text-slate-600">{cat.name}<small className="block text-slate-400">{MEASURES[cat.measure]}</small></span><input disabled={!canWrite} type="number" min="0" max="10000" value={profile.targets?.[cat.name] || ''} onChange={e => updateDraft(d => ({ ...d, profiles: d.profiles.map((p, x) => x === pi ? { ...p, targets: { ...p.targets, [cat.name]: e.target.value === '' ? 0 : Number(e.target.value) } } : p) }))} className="w-20 border rounded-md py-1 text-center" /></label>)}</div>
++            <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">{draft.categories.map(cat => <label key={cat.clientKey || cat.name} className="flex items-center gap-2 text-xs bg-slate-50 p-2 rounded-lg"><span className="flex-1 text-slate-600">{cat.name}<small className="block text-slate-400">{MEASURES[cat.measure]}</small></span><input disabled={!canWrite || !cat.name.trim()} type="number" min="0" max="10000" value={profile.targets?.[cat.name] || ''} onChange={e => updateDraft(d => ({ ...d, profiles: d.profiles.map((p, x) => x === pi ? { ...p, targets: { ...p.targets, [cat.name]: e.target.value === '' ? 0 : Number(e.target.value) } } : p) }))} className="w-20 border rounded-md py-1 text-center" /></label>)}</div>
+           </article>)}</div>
+           <button disabled={!canWrite || profiles.length >= 10} onClick={() => updateDraft(d => ({ ...d, profiles: [...d.profiles, blankProfile()] }))} className="m-3 text-sm text-amber-700 font-bold disabled:opacity-40"><Plus className="inline w-4 h-4 ml-1" />הוסף פרופיל</button>
+         </div>
 
 
 FINAL SCOPE CONFIRMATION
 ========================
-- Required base used: d0eeeae.
-- Embedded diff header count: 12.
-- Embedded diff contains only the twelve approved product/test paths enumerated above.
-- No metadata, memory, delivery, plan, or attachment file is in the embedded diff.
-- .local/.commit_message was preserved exactly.
-- No commit was made. No deployment was made.
+- Product/test diff contains exactly the six approved files.
+- review.txt and .local/.commit_message are delivery files for BATCH #587.
+- Frozen NewDefectModal.js and defect prefillData are unchanged.
+- No dependency or lockfile changes.
+- No manual commit was made. No deployment was made.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

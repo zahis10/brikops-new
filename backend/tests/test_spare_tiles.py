@@ -27,10 +27,15 @@ def settings(target=10, margin=10):
     }
 
 
-def status(count=None, notes='', target=10, margin=10, profile_id=PROFILE_ID):
+def status(count=None, notes='', target=10, margin=10, profile_id=PROFILE_ID, entered=False):
     unit = {'spare_profile_id': profile_id}
     if count is not None:
-        unit['spare_tiles'] = [{'type': 'ריצוף יבש', 'count': count, 'notes': notes}]
+        unit['spare_tiles'] = [{
+            'type': 'ריצוף יבש',
+            'count': count,
+            'notes': notes,
+            **({'entered': True} if entered else {}),
+        }]
     return compute_spare_status(unit, settings(target, margin))
 
 
@@ -54,6 +59,16 @@ def test_not_entered_and_zero_with_notes():
     entered = status(0, notes='נבדק')
     assert entered['categories'][0]['status'] == 'short'
     assert entered['categories'][0]['actual'] == 0
+
+
+def test_confirmed_zero_is_entered_and_short():
+    result = status(0, entered=True)
+    row = result['categories'][0]
+    assert result['overall'] == 'short'
+    assert row['actual'] == 0
+    assert row['entered'] is True
+    assert row['missing'] == row['target'] == 10
+    assert status(0)['categories'][0]['entered'] is False
 
 
 def test_no_target_and_no_profile():
@@ -148,6 +163,33 @@ def test_validation_preserves_uuid_and_drops_deleted_category_targets():
     result = validate_spare_settings(body)
     assert result['profiles'][0]['id'] == PROFILE_ID
     assert result['profiles'][0]['targets'] == {'ריצוף': 4}
+
+
+def test_per_carton_validation_and_normalization():
+    body = valid_body()
+    body['categories'] = [
+        {'name': 'אריחים', 'measure': 'tiles', 'per_carton': 4},
+        {'name': 'שטח', 'measure': 'sqm', 'per_carton': 1.44},
+        {'name': 'קרטונים', 'measure': 'cartons', 'per_carton': 8},
+        {'name': 'ישן', 'measure': 'tiles'},
+    ]
+    result = validate_spare_settings(body)
+    assert result['categories'] == [
+        {'name': 'אריחים', 'measure': 'tiles', 'per_carton': 4},
+        {'name': 'שטח', 'measure': 'sqm', 'per_carton': 1.44},
+        {'name': 'קרטונים', 'measure': 'cartons', 'per_carton': None},
+        {'name': 'ישן', 'measure': 'tiles', 'per_carton': None},
+    ]
+
+
+@pytest.mark.parametrize('value', [0, -1, 'x', True, 1.234])
+def test_per_carton_rejections(value):
+    body = valid_body()
+    body['categories'][0]['per_carton'] = value
+    with pytest.raises(HTTPException) as error:
+        validate_spare_settings(body)
+    assert error.value.status_code == 422
+    assert error.value.detail == 'כמות בקרטון לא חוקית'
 
 
 class _Result:

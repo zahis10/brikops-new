@@ -1,4 +1,4 @@
-"""Live HTTP + local Mongo probe for BATCH #585 spare-tile profiles.
+"""Live HTTP + local Mongo probe for BATCH #587 spare-tile enhancements.
 
 This intentionally targets the already-running development server. It does not
 use ASGITransport and never prints minted bearer tokens.
@@ -297,9 +297,9 @@ def main():
         assignments_path = f"/api/projects/{project_id}/spare-assignments"
         profile_payload = {
             "categories": [
-                {"name": "ריצוף יבש", "measure": "tiles"},
-                {"name": "ריצוף מרפסות", "measure": "cartons"},
-                {"name": "חיפוי מטבח", "measure": "cartons"},
+                {"name": "ריצוף יבש", "measure": "tiles", "per_carton": 4},
+                {"name": "ריצוף מרפסות", "measure": "cartons", "per_carton": 9},
+                {"name": "חיפוי מטבח", "measure": "sqm", "per_carton": 1.44},
             ],
             "profiles": [
                 {"id": profile_a, "name": "3 חדרים",
@@ -321,6 +321,16 @@ def main():
         pm_saved = call("PUT", settings_path, pm_headers, 200, json=profile_payload).json()
         check("V2 PM saved two profiles",
               [p["id"] for p in pm_saved["profiles"]] == [profile_a, profile_b])
+        per_carton_by_name = {
+            category["name"]: category.get("per_carton")
+            for category in pm_saved["categories"]
+        }
+        check("V3 per-carton values normalize by measure",
+              per_carton_by_name == {
+                  "ריצוף יבש": 4,
+                  "ריצוף מרפסות": None,
+                  "חיפוי מטבח": 1.44,
+              })
         after_settings_save = unit_document(db, unit_one_id)
         emit_documents("settings save", legacy_before, after_settings_save)
         check("V7 whole unit unchanged after settings/profile save",
@@ -336,6 +346,24 @@ def main():
         check("V2 owner project-scoped write allowed",
               owner_saved["can_write"] is True and owner_saved["margin_pct"] == 11)
         owner_version = owner_saved["updated_at"]
+
+        for invalid_per_carton in (0, -1, "x"):
+            invalid_payload = {
+                **profile_payload,
+                "categories": [
+                    {
+                        **profile_payload["categories"][0],
+                        "per_carton": invalid_per_carton,
+                    },
+                    *profile_payload["categories"][1:],
+                ],
+                "updated_at": owner_version,
+            }
+            invalid_response = call(
+                "PUT", settings_path, pm_headers, 422, json=invalid_payload
+            )
+            check("V3 invalid per-carton has Hebrew error",
+                  invalid_response.json().get("detail") == "כמות בקרטון לא חוקית")
 
         stale_payload = {**profile_payload, "margin_pct": 12, "updated_at": pm_version}
         call("PUT", settings_path, pm_headers, 409, json=stale_payload)
@@ -396,6 +424,41 @@ def main():
                        unchanged_save_before, unchanged_save_after)
         check("V7 profile-aware unchanged save preserves whole unit",
               unchanged_save_after == unchanged_save_before)
+
+        call("PATCH", f"{profile_base}/{profile_a}/units", pm_headers, 200,
+             json={"add": [unit_one_id], "remove": []})
+        confirmed_zero_payload = [
+            {"type": "ריצוף יבש", "count": 0, "notes": "", "entered": True},
+            {"type": "ריצוף מרפסות", "count": 3, "notes": "קרטון"},
+        ]
+        call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
+             json={"spare_tiles": confirmed_zero_payload})
+        confirmed_zero_doc = unit_document(db, unit_one_id)
+        emit_documents("explicit confirmed zero", unchanged_save_after, confirmed_zero_doc)
+        check("V1 confirmed zero stored exactly",
+              confirmed_zero_doc["spare_tiles"] == confirmed_zero_payload)
+        confirmed_response = call(
+            "GET", f"/api/units/{unit_one_id}", viewer_headers, 200
+        ).json()
+        confirmed_dry_row = next(
+            row for row in confirmed_response["spare_status"]["categories"]
+            if row["name"] == "ריצוף יבש"
+        )
+        check("V1 confirmed zero is short with full target missing",
+              confirmed_dry_row["actual"] == 0
+              and confirmed_dry_row["entered"] is True
+              and confirmed_dry_row["status"] == "short"
+              and confirmed_dry_row["missing"] == confirmed_dry_row["target"] == 10)
+
+        call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
+             json={"spare_tiles": legacy_spare_tiles})
+        restored_legacy = unit_document(db, unit_one_id)
+        emit_documents("legacy array after confirmed zero", confirmed_zero_doc, restored_legacy)
+        check("V7 legacy array restored without entered keys",
+              restored_legacy["spare_tiles"] == legacy_spare_tiles
+              and all("entered" not in row for row in restored_legacy["spare_tiles"]))
+        call("PATCH", f"{profile_base}/{profile_a}/units", pm_headers, 200,
+             json={"add": [], "remove": [unit_one_id]})
 
         category_delete_payload = {
             **owner_payload,
