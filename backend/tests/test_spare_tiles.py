@@ -62,6 +62,19 @@ def test_no_target_and_no_profile():
     assert status(4, profile_id=str(uuid.uuid4()))['overall'] == 'no_profile'
 
 
+def test_profile_with_empty_categories_has_no_target_overall():
+    result = compute_spare_status(
+        {'spare_profile_id': PROFILE_ID},
+        {
+            'categories': [],
+            'profiles': [{'id': PROFILE_ID, 'name': 'פרופיל', 'targets': {}}],
+            'margin_pct': 10,
+        },
+    )
+    assert result['overall'] == 'no_target'
+    assert result['categories'] == []
+
+
 def test_custom_type_appended_and_overall_precedence():
     config = {
         'categories': [
@@ -150,108 +163,12 @@ class _Cursor:
         return self.values
 
 
-class _Locks:
-    def __init__(self, responses):
-        self.responses = iter(responses)
-        self.acquire_calls = []
-        self.release_calls = []
-        self.current = None
-
-    async def insert_one(self, document):
-        self.acquire_calls.append(document)
-        if self.current is not None:
-            raise spare_tiles_router.DuplicateKeyError('busy')
-        response = next(self.responses)
-        if response == 'owner':
-            self.current = dict(document)
-            return _Result()
-        if isinstance(response, dict):
-            raise spare_tiles_router.DuplicateKeyError('busy')
-
-    async def find_one(self, query, _projection):
-        if self.current and self.current.get('token') == query.get('token'):
-            return {'_id': query['_id']}
-        return None
-
-    async def delete_one(self, query):
-        self.release_calls.append(query)
-        if self.current and self.current.get('token') == query.get('token'):
-            self.current = None
-
-
-def test_project_lock_releases_token_when_the_protected_work_raises():
-    locks = _Locks(['owner'])
-
-    class Db:
-        spare_tile_locks = locks
-
-    async def protected():
-        with pytest.raises(RuntimeError):
-            async with spare_tiles_router._project_write_lock(Db(), 'project'):
-                raise RuntimeError('boom')
-
-    asyncio.run(protected())
-    assert len(locks.acquire_calls) == 1
-    assert locks.release_calls[0]['_id'] == 'project'
-    assert locks.release_calls[0]['token'] == locks.acquire_calls[0]['token']
-
-
-def test_project_lock_retries_after_another_writer_then_acquires(monkeypatch):
-    locks = _Locks([{'token': 'other-writer'}, 'owner'])
-
-    class Db:
-        spare_tile_locks = locks
-
-    async def no_wait(_seconds):
-        return None
-
-    monkeypatch.setattr(spare_tiles_router.asyncio, 'sleep', no_wait)
-
-    async def protected():
-        async with spare_tiles_router._project_write_lock(Db(), 'project'):
-            pass
-
-    asyncio.run(protected())
-    assert len(locks.acquire_calls) == 2
-    assert locks.acquire_calls[0]['_id'] == 'project'
-    assert len(locks.release_calls) == 1
-
-
-def test_mutex_is_not_stolen_after_simulated_time_passage(monkeypatch):
-    locks = _Locks(['owner', 'owner'])
-
-    class Db:
-        spare_tile_locks = locks
-
-    async def no_wait(_seconds):
-        return None
-
-    monkeypatch.setattr(spare_tiles_router.asyncio, 'sleep', no_wait)
-
-    async def protected():
-        async with spare_tiles_router._project_write_lock(Db(), 'project') as first:
-            assert 'expires_at' not in locks.current
-            await spare_tiles_router.asyncio.sleep(60 * 60 * 24)
-            with pytest.raises(HTTPException) as error:
-                async with spare_tiles_router._project_write_lock(Db(), 'project'):
-                    pass
-            assert error.value.status_code == 409
-            await first.assert_owned()
-        async with spare_tiles_router._project_write_lock(Db(), 'project'):
-            pass
-
-    asyncio.run(protected())
-    assert len(locks.release_calls) == 2
-
-
-def test_profile_assignment_holds_the_project_lease_for_its_write(monkeypatch):
+def test_profile_assignment_updates_matching_unit_without_lock(monkeypatch):
     settings = {
         'categories': [{'name': 'ריצוף', 'measure': 'tiles'}],
         'profiles': [{'id': PROFILE_ID, 'name': 'פרופיל', 'targets': {}}],
         'margin_pct': 10,
     }
-    locks = _Locks(['owner'])
-
     class Projects:
         async def find_one(self, *_args):
             return {'id': 'project', 'spare_settings': settings}
@@ -270,7 +187,6 @@ def test_profile_assignment_holds_the_project_lease_for_its_write(monkeypatch):
     class Db:
         projects = Projects()
         units = Units()
-        spare_tile_locks = locks
 
     async def allow_write(*_args):
         return None
@@ -285,12 +201,10 @@ def test_profile_assignment_holds_the_project_lease_for_its_write(monkeypatch):
         'project', PROFILE_ID, {'add': ['unit'], 'remove': []}, {'id': 'user'},
     ))
     assert result == {'added': 1, 'removed': 0}
-    assert len(locks.acquire_calls) == 1
-    assert len(locks.release_calls) == 1
+    assert len(Db.units.calls) == 1
 
 
-def test_stale_settings_editor_is_rejected_after_lock_reload(monkeypatch):
-    locks = _Locks(['owner'])
+def test_stale_settings_editor_is_rejected(monkeypatch):
     current_settings = {
         'categories': [{'name': 'ריצוף', 'measure': 'tiles'}],
         'profiles': [],
@@ -312,7 +226,6 @@ def test_stale_settings_editor_is_rejected_after_lock_reload(monkeypatch):
 
     class Db:
         projects = Projects()
-        spare_tile_locks = locks
 
     async def allow_write(*_args):
         return None
@@ -333,5 +246,3 @@ def test_stale_settings_editor_is_rejected_after_lock_reload(monkeypatch):
         ))
     assert error.value.status_code == 409
     assert db.projects.update_calls == []
-    assert len(locks.acquire_calls) == 1
-    assert len(locks.release_calls) == 1

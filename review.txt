@@ -1,4 +1,15 @@
 BATCH #585 — SPARE TILES PROJECT PROFILES
+FINAL DELIVERY REVIEW — MUTEX-FREE CONSOLIDATED TREE
+
+Required comparison base: d0eeeae733b87923cd954e301f90e2ce7542b725
+
+This report compares the final working tree directly with required base d0eeeae. Replit automatic checkpoint commits advanced HEAD after that base; they are not the comparison base for this review. The embedded unified diff below is restricted to the exact twelve approved product/test paths. No metadata, memory, delivery, plan, or attachment file is included in that embedded diff.
+
+STEP 0 AND ORIGINAL PLAN CONTEXT
+================================
+The following is the original STEP 0 findings and implementation-plan context, preserved verbatim as the historical planning record. Its original CURRENT STATUS section is historical only and is superseded by the final implementation/evidence sections below.
+
+BATCH #585 — SPARE TILES PROJECT PROFILES
 FULL STEP 0 FINDINGS + IMPLEMENTATION PLAN
 Date: 2026-09-03
 Branch: staging
@@ -522,40 +533,1424 @@ Neither ApartmentDashboardPage's prefillData block nor NewDefectModal's
 categoryMatchedCompanies flow will be modified.
 
 ================================================================================
-APPROVAL NOTE
+8. PROPOSED DATA MODEL
 ================================================================================
 
-Zahi explicitly accepted the STEP 0 location finding: categoryMatchedCompanies
-is in the frozen frontend/src/components/NewDefectModal.js child component rather
-than ApartmentDashboardPage.js. Both that flow and the prefillData invocation
-remained frozen and unchanged.
+No migration or backfill.
+
+Optional project field:
+
+projects.spare_settings = {
+  'categories': [
+    {'name': 'ריצוף יבש', 'measure': 'tiles'},
+  ],
+  'profiles': [
+    {
+      'id': '<uuid>',
+      'name': '3 חדרים',
+      'targets': {
+        'ריצוף יבש': 8,
+      },
+    },
+  ],
+  'margin_pct': 10,
+  'updated_at': '<UTC ISO timestamp>',
+  'updated_by': '<user id>',
+}
+
+Optional unit field:
+
+units.spare_profile_id = None
+
+Absence behavior:
+
+- Missing spare_settings returns defaults without writing them.
+- Missing or null spare_profile_id means "אחר".
+- A dangling profile id is treated as unassigned/no profile.
+- Existing spare_tiles documents remain unchanged.
+
+Default categories returned when settings are absent:
+
+1. ריצוף יבש — tiles
+2. ריצוף מרפסות — cartons
+3. חיפוי אמבטיות — cartons
+4. ריצוף אמבטיות — cartons
+5. חיפוי מטבח — cartons
+
+Default margin:
+
+10%
+
+Default profiles:
+
+[]
 
 ================================================================================
-IMPLEMENTED FILE INVENTORY
+9. IMPLEMENTATION PLAN — BACKEND PURE HELPERS
 ================================================================================
 
-The complete tracked and untracked source/test scope included in the unified diff
-below is:
+New file:
 
-- backend/contractor_ops/projects_router.py
-- backend/contractor_ops/schemas.py
+backend/contractor_ops/spare_tiles.py
+
+Contents:
+
+1. DEFAULT_SPARE_CATEGORIES
+   - Five approved default category names.
+   - Structured measure values.
+
+2. MEASURES
+   - tiles
+   - cartons
+   - sqm
+
+3. default_spare_settings helper
+   - Return a new default object on every call.
+   - Never mutate or persist defaults implicitly.
+
+4. validate_spare_settings(body)
+   - Require an object.
+   - Validate 1-20 categories.
+   - Trim category names.
+   - Enforce category name length <= 50.
+   - Enforce category uniqueness case-insensitively.
+   - Enforce measure membership in MEASURES.
+   - Validate 0-10 profiles.
+   - Preserve an existing valid string UUID id.
+   - Generate a string UUID only for a new profile without an id.
+   - Trim profile names.
+   - Enforce profile name length <= 40.
+   - Enforce profile name uniqueness.
+   - Validate every target against an existing category name.
+   - Normalize targets to integers from 0 through 10000.
+   - Drop targets for deleted categories.
+   - Validate margin_pct as an integer from 0 through 100.
+   - Raise HTTPException(422) with Hebrew messages for invalid input.
+   - Return a normalized settings object.
+
+5. compute_spare_status(unit_doc, spare_settings)
+   - Find the assigned profile by exact string id.
+   - Treat missing and dangling ids as no profile.
+   - Index existing spare entries by exact type name.
+   - Emit configured categories in settings order.
+   - Append custom unit-only types after configured categories.
+   - Calculate entered, actual, target, missing, and status.
+   - Use max(1, ceil(target * margin_pct / 100)) for the borderline band.
+   - Apply the required overall precedence:
+     short
+     not_entered
+     borderline
+     ok
+     no_target
+   - Return no_profile when there is no valid profile.
+   - Return only JSON-serializable values.
+
+The helper will perform no database I/O.
+
+================================================================================
+10. IMPLEMENTATION PLAN — BACKEND ROUTER
+================================================================================
+
+New file:
+
+backend/contractor_ops/spare_tiles_router.py
+
+Router:
+
+APIRouter(prefix="/api")
+
+Shared rules:
+
+- Every endpoint requires get_current_user.
+- Read endpoints call _check_project_read_access.
+- Write endpoints call _get_project_role.
+- Write roles are project_manager, owner, and management_team.
+- Unauthorized writes return 403 with a Hebrew error.
+- IDs remain string UUIDs.
+- Datetimes use datetime.now(timezone.utc).isoformat().
+- No ObjectId.
+
+Endpoint 1:
+
+GET /api/projects/{project_id}/spare-settings
+
+Plan:
+
+- Verify project existence and read access.
+- Load settings or construct defaults without persisting.
+- Count active/non-archived units assigned to each existing profile.
+- Count active/non-archived units with null, missing, or dangling profile ids.
+- Return normalized settings.
+- Add assigned_units to each returned profile.
+- Add unassigned_units at the top level.
+
+Endpoint 2:
+
+PUT /api/projects/{project_id}/spare-settings
+
+Plan:
+
+- Verify project existence and write role.
+- Validate and normalize the request through validate_spare_settings.
+- Compare existing profile ids with retained profile ids.
+- For every deleted profile, count active units assigned to it.
+- If any deleted profile has assigned units, return 409:
+
+  יש להסיר תחילה N דירות מהפרופיל
+
+- Allow category deletion.
+- Drop deleted-category targets during normalization.
+- Add updated_at and updated_by.
+- Persist only projects.spare_settings.
+- Write one audit_events record:
+  entity_type = project
+  action = spare_settings_updated
+  payload contains counts only and no PII.
+- Return the saved normalized settings with assignment counts.
+
+Endpoint 3:
+
+GET /api/projects/{project_id}/spare-assignments?building_id=...
+
+Plan:
+
+- Verify project existence and read access.
+- Return all active buildings as selector options.
+- If building_id is supplied, verify that it belongs to the project and is
+  non-archived.
+- Load active floors and units for the selected building.
+- Sort floors and units by sort_index, matching the structure hierarchy.
+- Return:
+
+  {
+    'buildings': [{'id', 'name'}],
+    'floors': [{
+      'id',
+      'name',
+      'sort',
+      'units': [{
+        'id',
+        'unit_no',
+        'display_label',
+        'spare_profile_id',
+      }],
+    }],
+  }
+
+- Do not infer or assign a profile.
+
+Endpoint 4:
+
+PATCH /api/projects/{project_id}/spare-profiles/{profile_id}/units
+
+Body:
+
+{
+  'add': ['unit-id'],
+  'remove': ['unit-id'],
+}
+
+Plan:
+
+- Verify project existence and write role.
+- Require a valid current profile id.
+- Require add and remove to be arrays.
+- Enforce at most 2000 total ids.
+- Normalize ids and reject duplicates/overlap where needed.
+- Verify every supplied unit belongs to the project and is non-archived.
+- If not, return 422 with the offending ids.
+- Add:
+  set spare_profile_id to the selected profile.
+  Moving from another profile is allowed.
+- Remove:
+  set spare_profile_id to None only if its current value equals profile_id.
+- Return actual added and removed counts.
+- Write one audit_events record:
+  entity_type = project
+  action = spare_profile_units_updated
+  payload contains profile id and counts, with no PII.
+
+Single-unit "אחר" behavior:
+
+Because the specified endpoint identifies the source profile in its path,
+changing a unit to "אחר" will call remove against its current assigned profile.
+The frontend must not send a removal against an unrelated profile.
+
+================================================================================
+11. IMPLEMENTATION PLAN — BACKEND TOUCH POINTS
+================================================================================
+
+File:
+
+backend/contractor_ops/schemas.py
+
+Change:
+
+Add exactly one optional Unit field:
+
+spare_profile_id: Optional[str] = None
+
+File:
+
+backend/contractor_ops/projects_router.py
+
+Change:
+
+Modify only GET /units/{unit_id}.
+
+Plan:
+
+- Import the pure default/status helpers.
+- Read project.spare_settings.
+- Use defaults when absent.
+- Calculate spare_status from the unit and effective settings.
+- Add to the response:
+
+  spare_settings
+  spare_profiles_exist
+  spare_status
+
+- spare_profiles_exist is true only when the effective project settings contain
+  at least one profile.
+- Preserve every existing response key.
+
+Forbidden in this file:
+
+- No changes to patch_unit_spare_tiles.
+- No changes to PATCH /units/{unit_id}.
+- No changes to structure editing.
+- No migration or backfill.
+
+File:
+
+backend/server.py
+
+Change:
+
+- Import spare_tiles_router.
+- Register it once with app.include_router.
+- No other server changes.
+
+================================================================================
+12. IMPLEMENTATION PLAN — FRONTEND API AND ROUTE
+================================================================================
+
+File:
+
+frontend/src/services/api.js
+
+Add four methods:
+
+1. getSpareSettings(projectId)
+   GET /api/projects/{projectId}/spare-settings
+
+2. saveSpareSettings(projectId, settings)
+   PUT /api/projects/{projectId}/spare-settings
+
+3. getSpareAssignments(projectId, buildingId)
+   GET /api/projects/{projectId}/spare-assignments?building_id=...
+
+4. patchSpareProfileUnits(projectId, profileId, body)
+   PATCH /api/projects/{projectId}/spare-profiles/{profileId}/units
+
+Use the existing axios instance and authentication-header pattern.
+No new dependency.
+
+File:
+
+frontend/src/App.js
+
+Plan:
+
+- Lazy-load SpareTilesPage.
+- Register:
+
+  /projects/:projectId/spare-tiles
+
+- Wrap with ProtectedRoute.
+- Make no unrelated route changes.
+
+================================================================================
+13. IMPLEMENTATION PLAN — NEW SPARE-TILES PAGE
+================================================================================
+
+New file:
+
+frontend/src/pages/SpareTilesPage.js
+
+General:
+
+- Mobile-first.
+- RTL.
+- Amber/slate visual language.
+- Existing Lucide icon package only.
+- No new dependencies.
+- Read access for all project members.
+- Read-only controls for roles outside project_manager, owner, and
+  management_team.
+- Clear loading, empty, save, and error states.
+- No horizontal page scrolling.
+
+TAB 1 — הגדרות
+
+Categories:
+
+- Display ordered category rows.
+- Show category name.
+- Show measure select:
+  אריחים
+  קרטונים
+  מ"ר
+- Add category.
+- Remove category.
+- Existing category names are not editable in v1.
+- Newly added unsaved category names can be entered before first save.
+- Enforce 1-20 categories in the UI in addition to backend validation.
+
+Profiles:
+
+- Display 0-10 profiles.
+- Add profile.
+- Rename profile.
+- Remove profile.
+- Display a targets grid:
+  profile rows or cards × category targets.
+- Use mobile cards/stacks where a wide table would overflow.
+- Use integer inputs.
+- Treat blank/0 as no target.
+- Display assigned unit count on each profile.
+- Display the "אחר" unassigned count.
+
+Margin:
+
+- Integer margin_pct input from 0 through 100.
+- Explain that it controls the orange borderline band above the target.
+
+Legend:
+
+- Red: חסר — להזמין
+- Orange: גבולי
+- Green: מספיק
+- Grey: לא הוזן / ללא יעד
+
+Save:
+
+- PUT the full normalized settings object.
+- Show backend Hebrew errors.
+- Reload returned counts after save.
+- Disable all mutations for read-only roles.
+
+TAB 2 — שיוך
+
+Selectors:
+
+- Profile selector.
+- Building selector.
+- Do not select or assign units automatically.
+
+Floor sections:
+
+- Load the selected building only.
+- Render floors in sort_index order.
+- Render unit chips in sort_index order.
+- Each chip displays the unit label.
+- If assigned to another profile, show that current profile name as a small tag.
+- If unassigned or dangling, show "אחר".
+
+Explicit selection:
+
+- Tapping a chip toggles its pending selected state.
+- "בחר הכל בקומה" explicitly selects/deselects units in that floor.
+- No assignment based on unit number, floor position, pattern, type, or any
+  other inferred rule.
+
+Save:
+
+- Retain the loaded baseline.
+- Compute an explicit add/remove diff relative to the selected profile.
+- Units moved from another profile are included in add.
+- Units removed from the selected profile are included in remove.
+- PATCH the endpoint once.
+- Reload assignments and settings counts after success.
+- Show live selected/add/remove counters.
+
+================================================================================
+14. IMPLEMENTATION PLAN — PROJECT ENTRY POINT
+================================================================================
+
+File:
+
+frontend/src/pages/ProjectDashboardPage.js
+
+Plan:
+
+- Add one "ריצוף ספייר" project-tool entry using the established dashboard
+  section/card navigation pattern.
+- Navigate to /projects/${projectId}/spare-tiles.
+- Make it visible to every project member.
+- Do not gate navigation by write role.
+- The destination page itself controls read-only/write behavior.
+- Do not alter existing QC, execution, handover, safety, team, or KPI sections.
+
+================================================================================
+15. IMPLEMENTATION PLAN — UNIT SPARE CARD
+================================================================================
+
+File:
+
+frontend/src/pages/ApartmentDashboardPage.js
+
+Permitted scope:
+
+- Existing spare row-model preparation around lines 216-238.
+- Existing spare status calculation only as required.
+- Existing spare card block around lines 627-774.
+
+Safety branch:
+
+If response.spare_profiles_exist is false:
+
+- Execute the current rendering branch.
+- Preserve the current card DOM.
+- Do not show profile selector.
+- Do not show target/status rows.
+- Keep current badges, rows, edit action, and modal behavior.
+
+Profile-aware branch:
+
+If response.spare_profiles_exist is true:
+
+Header:
+
+- Show overall status chip.
+- Use required labels and colors.
+- Show profile selector for write roles.
+- Read-only roles see the assigned profile label without a mutation control.
+- Options are current profiles plus "אחר".
+
+Profile changes:
+
+- Selecting a profile calls PATCH with add: [unitId].
+- Moving directly from another profile is allowed.
+- Selecting "אחר" calls remove against the unit's current profile.
+- Reload the unit response after success.
+
+Rows:
+
+- Render response.spare_status.categories.
+- Show:
+  colored status dot
+  category name
+  compact progress bar where a target exists
+  actual / target with translated measure
+  status chip
+- short: red, "חסר N"
+- borderline: orange, "גבולי"
+- ok: green, "מספיק"
+- not_entered: grey, "לא הוזן"
+- no_target: grey, "ללא יעד"
+- Preserve custom unit-only types as no_target rows.
+
+Existing edit mode:
+
+- Keep the existing update action and spare_tiles endpoint.
+- Build base rows from spare_settings.categories when profiles/settings are
+  active.
+- Fall back to SPARE_TILES_BASE_TYPES when settings are absent.
+- Show the translated measure next to the count input.
+- Keep notes unchanged.
+- Keep custom type behavior.
+
+Explicit frozen areas:
+
+- NewDefectModal invocation.
+- prefillData.
+- categoryMatchedCompanies in NewDefectModal.
+- Defect creation.
+- QC links.
+- Header.
+- Summary cards.
+- Task filters and task list.
+
+================================================================================
+16. FILE SCOPE
+================================================================================
+
+Allowed source files:
+
+NEW:
 - backend/contractor_ops/spare_tiles.py
 - backend/contractor_ops/spare_tiles_router.py
+- frontend/src/pages/SpareTilesPage.js
+
+MODIFIED:
 - backend/server.py
-- backend/tests/probe_spare_tiles_http.py
-- backend/tests/test_spare_tiles.py
+- backend/contractor_ops/schemas.py
+- backend/contractor_ops/projects_router.py
 - frontend/src/App.js
+- frontend/src/services/api.js
 - frontend/src/pages/ApartmentDashboardPage.js
 - frontend/src/pages/ProjectDashboardPage.js
-- frontend/src/pages/SpareTilesPage.js
-- frontend/src/services/api.js
 
-Excluded from the diff exactly as required: plan_batch_585.txt, review.txt, and
-.local/.commit_message.
+TEST FILES:
+
+- Add focused backend unit tests for spare_tiles.py.
+- Add or use focused endpoint probes/tests without broad unrelated edits.
+
+DELIVERABLE FILES:
+
+- review.txt
+- .local/.commit_message
+
+Explicitly forbidden:
+
+- backend/contractor_ops/export_router.py
+- backend/contractor_ops/execution_matrix_router.py
+- frontend/src/pages/HandoverOverviewPage.js
+- frontend/src/components/NewDefectModal.js
+- Existing PATCH /units/{unit_id}/spare-tiles block
+- Existing PATCH /units/{unit_id} guard or behavior
+- Structure editing behavior
+- Automatic profile assignment
+- New dependencies
+- ObjectId
+- Migration or backfill
 
 ================================================================================
-COMPLETE FINAL UNIFIED DIFF — ALL CHANGED/NEW SOURCE AND TEST FILES
+17. VERIFICATION PLAN
 ================================================================================
+
+V1 — PURE HELPER TESTS
+
+Run focused direct tests covering:
+
+- short: actual 8, target 10, missing 2.
+- borderline: actual 3, target 3, margin 10; band remains at least 1.
+- ok: actual 7, target 5.
+- not_entered for absent entry.
+- not_entered for count 0 with no notes.
+- Entered behavior for count 0 with notes.
+- no_target for missing or zero target.
+- no_profile for unset profile id.
+- no_profile for dangling profile id.
+- Custom unit type appended as no_target.
+- Overall precedence.
+- Margin 0 still produces a band of 1.
+- Duplicate category names rejected case-insensitively.
+- More than 10 profiles rejected.
+- Invalid measure rejected.
+- Negative target rejected.
+- Oversized values and names rejected.
+
+V2 — ENDPOINT TESTS ON DEV SERVER
+
+Verify:
+
+- Viewer can GET settings and assignments.
+- Viewer receives 403 for PUT and PATCH.
+- PM can save valid settings.
+- Defaults are returned but not persisted before first save.
+- Deleting an assigned profile returns 409.
+- Assignment add works.
+- Assignment move works.
+- Assignment remove works.
+- Returned counts are accurate.
+- A unit from another project in add returns 422 with its id.
+- Archived units cannot be assigned.
+- Audit records contain counts and no PII.
+
+V3 — GET UNIT COMPATIBILITY
+
+Project without spare_settings:
+
+- spare_profiles_exist is false.
+- spare_status.overall is no_profile.
+- Existing top-level JSON keys remain present and unchanged.
+- Existing nested unit, floor, building, project, and kpi values remain
+  compatible.
+
+Project with profiles:
+
+- Effective defaults/settings are returned.
+- Assigned profile and category statuses are correct.
+- Dangling profile id is handled safely.
+
+V4 — FRONTEND BUILD
+
+Run exactly:
+
+CI=true
+
+Then run the existing frontend build command.
+
+Required result:
+
+EXIT 0
+
+Warnings count as failures under the standing CI=true rule.
+
+V5 — MOBILE PLAYWRIGHT AT 390PX
+
+One focused verification pass covering:
+
+A. Settings tab:
+- Three profiles.
+- Categories and structured measures.
+- Responsive targets UI.
+- Margin input and legend.
+- Assigned and "אחר" counts.
+
+B. Assignment tab:
+- One selected building.
+- At least one floor.
+- One unit currently assigned to another profile.
+- One "אחר" unit.
+- "בחר הכל בקומה".
+- Explicit selection counters.
+
+C. Profile-aware unit card:
+- Red row.
+- Orange row.
+- Green row.
+- Grey row.
+- Overall chip.
+- Profile selector.
+- No horizontal scroll.
+
+D. Project without profiles:
+- Compare the spare-card DOM to base.
+- Confirm it is identical.
+- Confirm no new profile/status UI is present.
+
+V6 — DIFF SCOPE
+
+Confirm source diff contains only:
+
+- spare_tiles.py
+- spare_tiles_router.py
+- server.py registration only
+- schemas.py one field
+- projects_router.py additive GET-unit block only
+- SpareTilesPage.js
+- App.js route only
+- api.js four methods
+- ApartmentDashboardPage.js spare block/model only
+- ProjectDashboardPage.js entry point only
+
+Confirm no diff in:
+
+- patch_unit_spare_tiles
+- export_router.py
+- execution_matrix_router.py
+- HandoverOverviewPage.js
+- NewDefectModal.js
+- structure editing
+- PATCH /units/{unit_id}
+
+Additional checks:
+
+- Python syntax compilation for changed backend modules.
+- git diff --check.
+- No new dependency or lockfile changes.
+- No automatic assignment logic.
+- No ObjectId usage.
+
+================================================================================
+18. DELIVERY PLAN
+================================================================================
+
+After implementation and verification:
+
+1. Write review.txt containing:
+   - STEP 0 findings and quotes.
+   - The complete final diff.
+   - V1-V6 commands and evidence.
+   - Any base-versus-branch comparison needed to distinguish existing failures.
+   - Exact scope confirmation.
+
+2. Ensure review.txt ends exactly with:
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+3. Prepare .local/.commit_message with:
+
+feat(spare-tiles): project profiles with targets, explicit unit
+assignment, and color status on the unit card
+
+Adds project-level spare-tile settings (categories with a structured
+unit of measure, up to 10 profiles with per-category targets, a
+"borderline" margin), explicit assignment of units to a profile (pick a
+building, tick units — no automatic assignment; unassigned = "אחר"), and
+a unit-card status view: red short with the quantity to order, orange
+borderline, green ok, grey not entered / no target. Fully additive:
+projects without settings behave exactly as before; spare_tiles data and
+its endpoint are unchanged.
+
+4. Do not commit.
+5. Do not deploy.
+6. Wait for Zahi's explicit approval.
+
+================================================================================
+CURRENT STATUS
+================================================================================
+
+- STEP 0 completed.
+- Full implementation plan prepared.
+- One specification-location mismatch reported:
+  categoryMatchedCompanies is in NewDefectModal.js, not directly in
+  ApartmentDashboardPage.js.
+- No product code changed.
+- Implementation is blocked until Zahi writes:
+
+תתחיל
+
+FINAL CONSOLIDATED FIXES
+========================
+
+FIX-1 — Removed the project write serialization implementation completely. The final tree contains no project write mutex/lease implementation, retry constants, lock collection access, or related cleanup path. Settings and explicit assignment writes use the final direct implementation with the existing optimistic settings-version comparison where applicable.
+
+FIX-2 — Made overall spare-status computation total for a valid profile with zero emitted category rows: it now resolves to no_target rather than exhausting the precedence iterator.
+
+FIX-3 — Corrected profile-aware unit-card rendering for missing inventory: a not_entered row shows an em dash for actual quantity and does not render progress; no_target is labeled ללא יעד.
+
+FIX-4 — Reconciled legacy editor parity with mandatory inventory preservation. The no-profile branch retains unchanged legacy presentation: the five original fixed base categories appear in their original order and custom inventory types remain visible. To preserve existing spare_tiles exactly, untouched synthetic zero rows are omitted from the save payload; this prevents their introduction into legacy inventory while retaining the original array order, notes, counts, and aggregate fields. In profile-aware editing, configured categories remain distinguished from custom entries so a deleted configured category reopens as a custom entry.
+
+CODE ARCHITECTURE REVIEW
+========================
+PASS — Final architect review found no correctness or security blocker; no security issue was observed. Legacy branch separation restores the original five-category presentation while persisted metadata preserves the exact original spare_tiles array and order. Profile-aware preservation remains correct. The mutex-free backend, 17 tests, and complete V1-V7 evidence were accepted.
+
+VERIFICATION EVIDENCE
+=====================
+
+V1 — Focused pure-helper tests: PASS — 17 tests passed. Coverage includes status precedence/bands, absent and dangling profiles, validation boundaries, custom types, and the empty-category no_target result.
+
+V2/V3 — Live real HTTP probe: PASS — 60/60 checks passed. The probe exercised viewer/PM/owner RBAC, defaults, settings save/conflict/deletion guard, explicit add/move/remove, ordering, audit actions, unit-detail compatibility and profile-aware status.
+
+V4 — Final frontend build: PASS — CI=true build completed successfully. The only output warnings were the pre-existing Apple source-map warnings.
+
+V5 — Mobile acceptance: PASS — prior acceptance remains valid.
+
+V6 — Final scope and integrity: PASS — no lock symbols remain in final implementation paths; legacy PATCH /api/units/{unit_id}/spare-tiles is byte-identical; frozen/forbidden and dependency files are untouched; git diff --check and Python py_compile are clean. The final embedded diff is limited to the twelve approved product/test files listed below.
+
+V7 — SYNTHETIC DATA-PRESERVATION AND COMPATIBILITY PROBE
+=========================================================
+The following latest successful tester output is included verbatim. It contains every PASS line and the full exact BEFORE/AFTER JSON blocks for settings save, assignment, removal, profile-aware unchanged save, category-deletion save, legacy no-profile save, and handover/export comparison.
+
+[SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****0001,****9991
+[PASS] live server reachable without ASGITransport — status=200
+[PASS] GET /api/units/probe-spare-unit-1-5559894ef4 -> 200 — status=200
+[PASS] V3 absent settings has no profiles
+[PASS] V3 absent settings status is no_profile
+[PASS] V3 baseline existing top-level keys captured
+[PASS] V3 baseline existing unit keys captured
+[PASS] V7 seeded legacy spare_tiles exact array
+[PASS] V7 seeded legacy aggregate fields exact
+[PASS] GET /api/projects/probe-spare-project-5559894ef4/handover/overview -> 200 — status=200
+[PASS] POST /api/defects/export -> 200 — status=200
+[PASS] GET /api/projects/probe-spare-project-5559894ef4/spare-settings -> 200 — status=200
+[PASS] V2 viewer GET settings allowed and read-only
+[PASS] GET /api/projects/probe-spare-project-5559894ef4/spare-assignments -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-5559894ef4/spare-settings -> 403 — status=403
+[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0abd3ced-459f-43c2-9a89-862b0fd2c99d/units -> 403 — status=403
+[PASS] PUT /api/projects/probe-spare-project-5559894ef4/spare-settings -> 200 — status=200
+[PASS] V2 PM saved two profiles
+
+[V7 JSON] settings save BEFORE
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-5559894ef4",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-5559894ef4",
+  "id": "probe-spare-unit-1-5559894ef4",
+  "project_id": "probe-spare-project-5559894ef4",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[V7 JSON] settings save AFTER
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-5559894ef4",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-5559894ef4",
+  "id": "probe-spare-unit-1-5559894ef4",
+  "project_id": "probe-spare-project-5559894ef4",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[PASS] V7 whole unit unchanged after settings/profile save
+[PASS] PUT /api/projects/probe-spare-project-5559894ef4/spare-settings -> 200 — status=200
+[PASS] V2 owner project-scoped write allowed
+[PASS] PUT /api/projects/probe-spare-project-5559894ef4/spare-settings -> 409 — status=409
+[PASS] GET /api/projects/probe-spare-project-5559894ef4/spare-assignments?building_id=probe-spare-building-main-5559894ef4 -> 200 — status=200
+[PASS] V2 buildings preserve structure ordering
+[PASS] V2 floors preserve sort_index ordering
+[PASS] V2 units preserve sort_index ordering
+[PASS] V2 assignment unit payload is exact
+[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0abd3ced-459f-43c2-9a89-862b0fd2c99d/units -> 200 — status=200
+[PASS] V2 assignment add exact count
+
+[V7 JSON] profile assignment BEFORE
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-5559894ef4",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-5559894ef4",
+  "id": "probe-spare-unit-1-5559894ef4",
+  "project_id": "probe-spare-project-5559894ef4",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[V7 JSON] profile assignment AFTER
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-5559894ef4",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-5559894ef4",
+  "id": "probe-spare-unit-1-5559894ef4",
+  "project_id": "probe-spare-project-5559894ef4",
+  "sort_index": 10,
+  "spare_profile_id": "0abd3ced-459f-43c2-9a89-862b0fd2c99d",
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[PASS] V7 assignment changes only spare_profile_id
+[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0c3e6a83-1ac5-4f2c-82b6-5e778797ac69/units -> 200 — status=200
+[PASS] V2 assignment move exact count
+[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0c3e6a83-1ac5-4f2c-82b6-5e778797ac69/units -> 200 — status=200
+[PASS] V2 assignment remove exact count
+
+[V7 JSON] profile removal BEFORE
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-5559894ef4",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-5559894ef4",
+  "id": "probe-spare-unit-1-5559894ef4",
+  "project_id": "probe-spare-project-5559894ef4",
+  "sort_index": 10,
+  "spare_profile_id": "0abd3ced-459f-43c2-9a89-862b0fd2c99d",
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[V7 JSON] profile removal AFTER
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-5559894ef4",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-5559894ef4",
+  "id": "probe-spare-unit-1-5559894ef4",
+  "project_id": "probe-spare-project-5559894ef4",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[PASS] V7 removal restores whole unit with spare_profile_id None
+[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0c3e6a83-1ac5-4f2c-82b6-5e778797ac69/units -> 200 — status=200
+[PASS] V2 no-op removal reports zero
+[PASS] PUT /api/projects/probe-spare-project-5559894ef4/spare-settings -> 409 — status=409
+[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0c3e6a83-1ac5-4f2c-82b6-5e778797ac69/units -> 422 — status=422
+[PASS] PATCH /api/units/probe-spare-unit-1-5559894ef4/spare-tiles -> 200 — status=200
+
+[V7 JSON] profile-aware unchanged inventory save BEFORE
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-5559894ef4",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-5559894ef4",
+  "id": "probe-spare-unit-1-5559894ef4",
+  "project_id": "probe-spare-project-5559894ef4",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[V7 JSON] profile-aware unchanged inventory save AFTER
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-5559894ef4",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-5559894ef4",
+  "id": "probe-spare-unit-1-5559894ef4",
+  "project_id": "probe-spare-project-5559894ef4",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[PASS] V7 profile-aware unchanged save preserves whole unit
+[PASS] PUT /api/projects/probe-spare-project-5559894ef4/spare-settings -> 200 — status=200
+[PASS] V7 category deletion persisted
+[PASS] PATCH /api/units/probe-spare-unit-1-5559894ef4/spare-tiles -> 200 — status=200
+
+[V7 JSON] save after category deletion BEFORE
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-5559894ef4",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-5559894ef4",
+  "id": "probe-spare-unit-1-5559894ef4",
+  "project_id": "probe-spare-project-5559894ef4",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[V7 JSON] save after category deletion AFTER
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-5559894ef4",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-5559894ef4",
+  "id": "probe-spare-unit-1-5559894ef4",
+  "project_id": "probe-spare-project-5559894ef4",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[PASS] V7 deleted configured category remains exact custom entry
+[PASS] PATCH /api/units/probe-spare-cross-unit-5559894ef4/spare-tiles -> 200 — status=200
+
+[V7 JSON] legacy no-profile unchanged save BEFORE
+{
+  "archived": false,
+  "building_id": "probe-cross-building-5559894ef4",
+  "floor_id": "probe-cross-floor-5559894ef4",
+  "id": "probe-spare-cross-unit-5559894ef4",
+  "project_id": "probe-spare-other-project-5559894ef4",
+  "sort_index": 1,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "X1"
+}
+[V7 JSON] legacy no-profile unchanged save AFTER
+{
+  "archived": false,
+  "building_id": "probe-cross-building-5559894ef4",
+  "floor_id": "probe-cross-floor-5559894ef4",
+  "id": "probe-spare-cross-unit-5559894ef4",
+  "project_id": "probe-spare-other-project-5559894ef4",
+  "sort_index": 1,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "X1"
+}
+[PASS] V7 no-profile legacy branch preserves whole unit
+[PASS] PATCH /api/projects/probe-spare-project-5559894ef4/spare-profiles/0abd3ced-459f-43c2-9a89-862b0fd2c99d/units -> 200 — status=200
+[PASS] V3 final profile assignment exact count
+[PASS] GET /api/units/probe-spare-unit-1-5559894ef4 -> 200 — status=200
+[PASS] V3 existing top-level keys unchanged
+[PASS] V3 existing nested unit keys unchanged
+[PASS] V3 assigned profile returned
+[PASS] V3 status reflects actual 8 against target 10
+[PASS] V3 viewer unit capability is false
+[PASS] GET /api/projects/probe-spare-project-5559894ef4/handover/overview -> 200 — status=200
+[PASS] POST /api/defects/export -> 200 — status=200
+
+[V7 JSON] handover/export BEFORE
+{
+  "export": {
+    "ספייר: הערות": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+    "ספייר: חיפוי אמבטיות": null,
+    "ספייר: חיפוי מטבח": 0,
+    "ספייר: סוגים נוספים": "סוג מותאם: 2",
+    "ספייר: ריצוף אמבטיות": null,
+    "ספייר: ריצוף יבש": 8,
+    "ספייר: ריצוף מרפסות": 3
+  },
+  "handover": {
+    "spare_tiles": [
+      {
+        "count": 8,
+        "notes": "אריחים",
+        "type": "ריצוף יבש"
+      },
+      {
+        "count": 3,
+        "notes": "קרטון",
+        "type": "ריצוף מרפסות"
+      },
+      {
+        "count": 2,
+        "notes": "",
+        "type": "סוג מותאם"
+      },
+      {
+        "count": 0,
+        "notes": "נבדק",
+        "type": "חיפוי מטבח"
+      }
+    ],
+    "spare_tiles_count": 13
+  }
+}
+[V7 JSON] handover/export AFTER
+{
+  "export": {
+    "ספייר: הערות": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+    "ספייר: חיפוי אמבטיות": null,
+    "ספייר: חיפוי מטבח": 0,
+    "ספייר: סוגים נוספים": "סוג מותאם: 2",
+    "ספייר: ריצוף אמבטיות": null,
+    "ספייר: ריצוף יבש": 8,
+    "ספייר: ריצוף מרפסות": 3
+  },
+  "handover": {
+    "spare_tiles": [
+      {
+        "count": 8,
+        "notes": "אריחים",
+        "type": "ריצוף יבש"
+      },
+      {
+        "count": 3,
+        "notes": "קרטון",
+        "type": "ריצוף מרפסות"
+      },
+      {
+        "count": 2,
+        "notes": "",
+        "type": "סוג מותאם"
+      },
+      {
+        "count": 0,
+        "notes": "נבדק",
+        "type": "חיפוי מטבח"
+      }
+    ],
+    "spare_tiles_count": 13
+  }
+}
+[PASS] V7 handover overview spare values unchanged
+[PASS] V7 export spare columns unchanged
+[PASS] V2 settings audit action recorded
+[PASS] V2 assignment audit action recorded
+
+All 60 live HTTP checks passed.
+
+V7 — FINAL BROWSER REGRESSION EVIDENCE
+=======================================
+PASS — No-profile editor visibly showed the five original fixed base categories in their original order, plus the custom type סוג מותאם.
+PASS — No-profile save without changes kept spare_tiles deep-equal, including original order, notes, and legacy aggregate fields.
+PASS — Profile-aware unchanged save was deep-equal.
+PASS — After deleting חיפוי מטבח from configured categories, it reopened as custom with count 0 and note נבדק.
+PASS — no_target label is ללא יעד.
+PASS — not_entered row shows an em dash and no progress bar.
+PASS — At 390px width there was no horizontal overflow.
+PASS — Tester cleanup completed.
+PASS — A setup-only invalid UUID was corrected; this was test setup correction, not an application bug.
+
+Reconciliation result: legacy presentation is unchanged while mandatory data preservation is honored. The editor may show fixed zero-value base rows, but it omits untouched synthetic zero rows when saving so it does not alter a legacy unit's persisted spare_tiles array.
+
+COMPLETE UNIFIED DIFF AGAINST d0eeeae
+=====================================
+The following complete unified diff is exactly for these twelve files and no other path:
+
+1. backend/contractor_ops/projects_router.py
+2. backend/contractor_ops/schemas.py
+3. backend/contractor_ops/spare_tiles.py
+4. backend/contractor_ops/spare_tiles_router.py
+5. backend/server.py
+6. backend/tests/probe_spare_tiles_http.py
+7. backend/tests/test_spare_tiles.py
+8. frontend/src/App.js
+9. frontend/src/pages/ApartmentDashboardPage.js
+10. frontend/src/pages/ProjectDashboardPage.js
+11. frontend/src/pages/SpareTilesPage.js
+12. frontend/src/services/api.js
 
 diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
 index f1540d6..56d7417 100644
@@ -610,244 +2005,12 @@ index ddafa05..c363a8b 100644
      created_at: Optional[str] = None
 
 
-diff --git a/backend/server.py b/backend/server.py
-index 1efca9d..fef4a86 100644
---- a/backend/server.py
-+++ b/backend/server.py
-@@ -533,6 +533,9 @@ app.include_router(auth_router)
- from contractor_ops.projects_router import router as projects_router
- app.include_router(projects_router)
-
-+from contractor_ops.spare_tiles_router import router as spare_tiles_router
-+app.include_router(spare_tiles_router)
-+
- from contractor_ops.tasks_router import router as tasks_router
- app.include_router(tasks_router)
-
-diff --git a/frontend/src/App.js b/frontend/src/App.js
-index 3d81ba8..7d93aad 100644
---- a/frontend/src/App.js
-+++ b/frontend/src/App.js
-@@ -79,6 +79,7 @@ const HandoverSectionPage = React.lazy(() => import('./pages/HandoverSectionPage
- const SafetyHomePage = React.lazy(() => import('./pages/SafetyHomePage'));
- const SafetyProjectRegistrationPage = React.lazy(() => import('./pages/SafetyProjectRegistrationPage'));
- const WorkDiaryPage = React.lazy(() => import('./pages/WorkDiaryPage'));
-+const SpareTilesPage = React.lazy(() => import('./pages/SpareTilesPage'));
-
- const INTENDED_PATH_KEY = 'intendedPath';
-
-@@ -413,6 +414,10 @@ const AppRoutes = () => {
-             </ProtectedRoute>
-           }
-         />
-+        <Route
-+          path="/projects/:projectId/spare-tiles"
-+          element={<ProtectedRoute><SpareTilesPage /></ProtectedRoute>}
-+        />
-         <Route
-           path="/projects/:projectId/floors/:floorId"
-           element={
-diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index 31205b3..14e3af1 100644
---- a/frontend/src/pages/ApartmentDashboardPage.js
-+++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -1,6 +1,6 @@
- import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
- import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
--import { unitService } from '../services/api';
-+import { unitService, spareTilesService } from '../services/api';
- import { useAuth } from '../contexts/AuthContext';
- import { toast } from 'sonner';
- import { formatUnitLabel } from '../utils/formatters';
-@@ -123,6 +123,7 @@ const ApartmentDashboardPage = () => {
-   const [spareTilesEntries, setSpareTilesEntries] = useState([]);
-   const [spareTilesSaving, setSpareTilesSaving] = useState(false);
-   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
-+  const spareCanWrite = unitData?.spare_can_write === true;
-   const flagChecked = !!features?.defects_v2;
-
-   useEffect(() => {
-@@ -214,8 +215,10 @@ const ApartmentDashboardPage = () => {
-   }, [flagChecked, loadUnit, loadTasks]);
-
-   const SPARE_TILES_BASE_TYPES = useMemo(() => [
--    'ריצוף יבש', 'ריצוף מרפסות', 'חיפוי אמבטיות', 'ריצוף אמבטיות', 'חיפוי מטבח',
--  ], []);
-+    ...(unitData?.spare_profiles_exist
-+      ? (unitData?.spare_settings?.categories || []).map(category => category.name)
-+      : ['ריצוף יבש', 'ריצוף מרפסות', 'חיפוי אמבטיות', 'ריצוף אמבטיות', 'חיפוי מטבח']),
-+  ], [unitData?.spare_profiles_exist, unitData?.spare_settings]);
-
-   const startSpareTilesEdit = useCallback(() => {
-     const u = unitData?.unit;
-@@ -274,6 +277,22 @@ const ApartmentDashboardPage = () => {
-     }
-   }, [unitId, spareTilesEntries]);
-
-+  const changeSpareProfile = useCallback(async (nextProfileId) => {
-+    const currentProfileId = unitData?.unit?.spare_profile_id;
-+    if (nextProfileId === (currentProfileId || '')) return;
-+    try {
-+      if (nextProfileId) {
-+        await spareTilesService.patchSpareProfileUnits(projectId, nextProfileId, { add: [unitId], remove: [] });
-+      } else if (currentProfileId) {
-+        await spareTilesService.patchSpareProfileUnits(projectId, currentProfileId, { add: [], remove: [unitId] });
-+      }
-+      await loadUnit();
-+      toast.success('פרופיל ריצוף הספייר עודכן');
-+    } catch (err) {
-+      toast.error(err.response?.data?.detail || 'עדכון הפרופיל נכשל');
-+    }
-+  }, [loadUnit, projectId, unitData, unitId]);
-+
-   useEffect(() => {
-     setFilters(prev => {
-       const next = { ...prev };
-@@ -624,6 +643,71 @@ const ApartmentDashboardPage = () => {
-         </div>
-       )}
-
-+      {unitData.spare_profiles_exist && (
-+        <div className="max-w-lg mx-auto px-4 mt-3">
-+          <div className="bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden">
-+            <button
-+              onClick={() => setSpareTilesOpen(!spareTilesOpen)}
-+              className="w-full flex items-center justify-between p-3 text-right"
-+            >
-+              <div className="flex items-center gap-2">
-+                <span className="text-sm font-semibold text-slate-700">ריצוף ספייר</span>
-+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-+                  unitData.spare_status?.overall === 'short' ? 'bg-red-500 text-white' :
-+                  unitData.spare_status?.overall === 'borderline' ? 'bg-amber-500 text-white' :
-+                  unitData.spare_status?.overall === 'ok' ? 'bg-green-500 text-white' : 'bg-slate-400 text-white'
-+                }`}>
-+                  {unitData.spare_status?.overall === 'short' ? 'חסר — להזמין' :
-+                    unitData.spare_status?.overall === 'borderline' ? 'גבולי' :
-+                    unitData.spare_status?.overall === 'ok' ? 'מספיק' :
-+                    unitData.spare_status?.overall === 'no_profile' ? 'אחר' : 'לא הוזן'}
-+                </span>
-+              </div>
-+              {spareTilesOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-+            </button>
-+            {spareTilesOpen && (
-+              <div className="px-4 pb-4">
-+                <div className="text-xs text-slate-500 mb-3 pb-2 border-b border-slate-100">
-+                  {spareCanWrite ? (
-+                    <label className="flex items-center gap-2">פרופיל:
-+                      <select value={unit.spare_profile_id || ''} onChange={e => changeSpareProfile(e.target.value)} className="border border-slate-200 rounded-md px-2 py-1 text-xs">
-+                        <option value="">אחר</option>
-+                        {(unitData.spare_settings?.profiles || []).map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-+                      </select>
-+                    </label>
-+                  ) : (unitData.spare_status?.profile?.name ? `פרופיל: ${unitData.spare_status.profile.name}` : 'דירה ללא פרופיל — ניתן לעדכן מלאי בלבד')}
-+                </div>
-+                {Array.isArray(unitData.spare_status?.categories) && (
-+                  <div className="space-y-1.5 mb-3">
-+                    {unitData.spare_status.categories.map((row, idx) => (
-+                      <div key={`${row.type}-${idx}`} className="flex items-center gap-2 text-xs">
-+                        <span className="flex-1 font-medium text-slate-700">{row.name || row.type}</span>
-+                        <span className="text-slate-500">{row.actual ?? row.entered ?? 0} / {row.target || '—'} {row.measure === 'tiles' ? 'אריחים' : row.measure === 'cartons' ? 'קרטונים' : row.measure === 'sqm' ? 'מ"ר' : ''}</span>
-+                        {row.target > 0 && <span className="w-12 bg-slate-100 rounded-full h-1.5 overflow-hidden"><span className={`block h-full rounded-full ${row.status === 'short' ? 'bg-red-500' : row.status === 'borderline' ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${Math.min(100, ((row.actual ?? row.entered ?? 0) / row.target) * 100)}%` }} /></span>}
-+                        <span className={`w-2 h-2 rounded-full ${row.status === 'short' ? 'bg-red-500' : row.status === 'borderline' ? 'bg-amber-500' : row.status === 'ok' ? 'bg-green-500' : 'bg-slate-300'}`} />
-+                        <span className="w-14 text-[10px] text-slate-500">{row.status === 'short' ? `חסר ${row.missing || 0}` : row.status === 'borderline' ? 'גבולי' : row.status === 'ok' ? 'מספיק' : row.status === 'no_target' ? 'ללא יעד' : 'לא הוזן'}</span>
-+                      </div>
-+                    ))}
-+                  </div>
-+                )}
-+                {spareTilesEditing ? (
-+                  <div className="space-y-3">
-+                    {spareTilesEntries.map((entry, idx) => (
-+                      <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
-+                        <div className="flex items-center justify-between"><span className="text-xs font-semibold text-slate-700">{entry.type}</span>{!entry.isBase && <button type="button" onClick={() => setSpareTilesEntries(prev => prev.filter((_, i) => i !== idx))} className="p-1 text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>}</div>
-+                        <div className="flex gap-2 items-end"><label className="w-24 text-[10px] text-slate-500">כמות<input type="number" min="0" value={entry.count} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: e.target.value } : en))} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" />{(() => { const measure = (unitData.spare_settings?.categories || []).find(c => c.name === entry.type)?.measure; return <span className="block mt-0.5 text-[10px] text-slate-400">{measure === 'tiles' ? 'אריחים' : measure === 'cartons' ? 'קרטונים' : measure === 'sqm' ? 'מ"ר' : ''}</span>; })()}</label><label className="flex-1 text-[10px] text-slate-500">הערות<input type="text" value={entry.notes} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, notes: e.target.value } : en))} maxLength={500} placeholder="הערה..." className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /></label></div>
-+                      </div>
-+                    ))}
-+                    {spareTilesEntries.length < 20 && <button type="button" onClick={() => { const name = window.prompt('שם סוג ריצוף חדש:'); if (!name?.trim()) return; const trimmed = name.trim().slice(0, 50); if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) { toast.error('סוג ריצוף כבר קיים'); return; } setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', isBase: false }]); }} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Plus className="w-3.5 h-3.5" />הוסף סוג ריצוף</button>}
-+                    <div className="flex gap-2"><button onClick={saveSpareTiles} disabled={spareTilesSaving} className="flex-1 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium">{spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin inline" /> : 'שמור'}</button><button onClick={() => setSpareTilesEditing(false)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600">ביטול</button></div>
-+                  </div>
-+                ) : spareCanWrite && <button onClick={startSpareTilesEdit} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Pencil className="w-3.5 h-3.5" />עדכון מלאי</button>}
-+              </div>
-+            )}
-+          </div>
-+        </div>
-+      )}
-+      {!unitData.spare_profiles_exist && (
-       <div className="max-w-lg mx-auto px-4 mt-3">
-         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-           <button
-@@ -772,6 +856,7 @@ const ApartmentDashboardPage = () => {
-           )}
-         </div>
-       </div>
-+      )}
-
-       <div className="max-w-lg mx-auto px-4 mt-4 space-y-2">
-         <div className="flex gap-2">
-diff --git a/frontend/src/pages/ProjectDashboardPage.js b/frontend/src/pages/ProjectDashboardPage.js
-index 27d3789..48dab7a 100644
---- a/frontend/src/pages/ProjectDashboardPage.js
-+++ b/frontend/src/pages/ProjectDashboardPage.js
-@@ -862,6 +862,24 @@ export default function ProjectDashboardPage() {
-         </div>
-         )}
-
-+        <DashboardFoldSection
-+          id="spare-tiles"
-+          projectId={projectId}
-+          icon={Construction}
-+          iconColor="text-amber-600"
-+          title="ריצוף ספייר"
-+          summary="פרופילים ומלאי"
-+        >
-+          <button
-+            onClick={() => navigate(`/projects/${projectId}/spare-tiles`)}
-+            className="w-full bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 text-right hover:border-amber-300 hover:bg-amber-50/30 transition-all"
-+          >
-+            <span className="p-2.5 bg-amber-100 text-amber-700 rounded-xl"><Construction className="w-5 h-5" /></span>
-+            <span className="flex-1 min-w-0"><span className="block font-bold text-slate-800">ריצוף ספייר</span><span className="block text-xs text-slate-500 mt-0.5">הגדרת פרופילים, יעדים ושיוך דירות</span></span>
-+            <ChevronLeft className="w-5 h-5 text-slate-300" />
-+          </button>
-+        </DashboardFoldSection>
-+
-         {isPmOrOwner && (
-         <div ref={el => { foldRefs.current['team'] = el; }}>
-           <DashboardFoldSection
-diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
-index dcd3f4a..425e940 100644
---- a/frontend/src/services/api.js
-+++ b/frontend/src/services/api.js
-@@ -1067,6 +1067,25 @@ export const unitService = {
-   },
- };
-
-+export const spareTilesService = {
-+  async getSpareSettings(projectId) {
-+    const response = await axios.get(`${API}/projects/${projectId}/spare-settings`, { headers: getAuthHeader() });
-+    return response.data;
-+  },
-+  async saveSpareSettings(projectId, settings) {
-+    const response = await axios.put(`${API}/projects/${projectId}/spare-settings`, settings, { headers: getAuthHeader() });
-+    return response.data;
-+  },
-+  async getSpareAssignments(projectId, buildingId) {
-+    const response = await axios.get(`${API}/projects/${projectId}/spare-assignments`, { headers: getAuthHeader(), params: buildingId ? { building_id: buildingId } : {} });
-+    return response.data;
-+  },
-+  async patchSpareProfileUnits(projectId, profileId, body) {
-+    const response = await axios.patch(`${API}/projects/${projectId}/spare-profiles/${profileId}/units`, body, { headers: getAuthHeader() });
-+    return response.data;
-+  },
-+};
-+
- export const archiveService = {
-   async archiveBuilding(buildingId, reason) {
-     const response = await axios.post(`${API}/buildings/${buildingId}/archive`, { reason }, { headers: getAuthHeader() });
 diff --git a/backend/contractor_ops/spare_tiles.py b/backend/contractor_ops/spare_tiles.py
 new file mode 100644
-index 0000000..e3980ca
+index 0000000..c5f7a7d
 --- /dev/null
 +++ b/backend/contractor_ops/spare_tiles.py
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,204 @@
 +import math
 +import uuid
 +from copy import deepcopy
@@ -1041,8 +2204,11 @@ index 0000000..e3980ca
 +    else:
 +        statuses = {row['status'] for row in rows}
 +        overall = next(
-+            status for status in ('short', 'not_entered', 'borderline', 'ok', 'no_target')
-+            if status in statuses
++            (
++                status for status in ('short', 'not_entered', 'borderline', 'ok', 'no_target')
++                if status in statuses
++            ),
++            'no_target',
 +        )
 +    return {
 +        'profile': {'id': profile['id'], 'name': profile['name']} if profile else None,
@@ -1052,19 +2218,15 @@ index 0000000..e3980ca
 \ No newline at end of file
 diff --git a/backend/contractor_ops/spare_tiles_router.py b/backend/contractor_ops/spare_tiles_router.py
 new file mode 100644
-index 0000000..75b70f1
+index 0000000..39dc346
 --- /dev/null
 +++ b/backend/contractor_ops/spare_tiles_router.py
-@@ -0,0 +1,366 @@
-+import asyncio
+@@ -0,0 +1,308 @@
 +import re
-+import uuid
 +from copy import deepcopy
-+from contextlib import asynccontextmanager
 +from datetime import datetime, timezone
 +
 +from fastapi import APIRouter, Depends, HTTPException, Query
-+from pymongo.errors import DuplicateKeyError
 +
 +from contractor_ops.router import (
 +    _audit,
@@ -1078,8 +2240,6 @@ index 0000000..75b70f1
 +
 +router = APIRouter(prefix='/api')
 +WRITE_ROLES = ('project_manager', 'owner', 'management_team')
-+LOCK_RETRY_COUNT = 20
-+LOCK_RETRY_SECONDS = 0.05
 +
 +
 +async def _project_or_404(db, project_id):
@@ -1097,49 +2257,6 @@ index 0000000..75b70f1
 +
 +async def _can_write(user, project_id):
 +    return await _get_project_role(user, project_id) in WRITE_ROLES
-+
-+
-+class _ProjectMutex:
-+    def __init__(self, lock_collection, project_id, token):
-+        self.lock_collection = lock_collection
-+        self.project_id = project_id
-+        self.token = token
-+
-+    async def assert_owned(self):
-+        lock = await self.lock_collection.find_one({
-+            '_id': self.project_id,
-+            'token': self.token,
-+        }, {'_id': 1})
-+        if not lock:
-+            raise HTTPException(status_code=409, detail='נעילת הפרויקט אבדה, יש לנסות שוב')
-+
-+
-+@asynccontextmanager
-+async def _project_write_lock(db, project_id):
-+    """Strict cross-process mutex shared by both spare-settings write paths.
-+
-+    Abandoned locks are intentionally not auto-stolen. Without transactions,
-+    time-based stale recovery can let a paused former owner resume and corrupt
-+    project/profile integrity after a successor starts writing.
-+    """
-+    token = str(uuid.uuid4())
-+    lock_collection = db.spare_tile_locks
-+    acquired = False
-+    for _attempt in range(LOCK_RETRY_COUNT):
-+        try:
-+            await lock_collection.insert_one({'_id': project_id, 'token': token})
-+            acquired = True
-+            break
-+        except DuplicateKeyError:
-+            pass
-+        await asyncio.sleep(LOCK_RETRY_SECONDS)
-+    if not acquired:
-+        raise HTTPException(status_code=409, detail='הפרויקט נעול לעדכון ריצוף ספייר, יש לנסות שוב')
-+    mutex = _ProjectMutex(lock_collection, project_id, token)
-+    try:
-+        yield mutex
-+    finally:
-+        await lock_collection.delete_one({'_id': project_id, 'token': token})
 +
 +
 +async def _settings_with_counts(db, project_id, settings):
@@ -1181,69 +2298,64 @@ index 0000000..75b70f1
 +    await _require_write(user, project_id)
 +    expected_updated_at = body.get('updated_at') if isinstance(body, dict) else None
 +    settings = validate_spare_settings(body)
-+    async with _project_write_lock(db, project_id) as lease:
-+        # Reload only after acquiring the lease; stale pre-lock settings must
-+        # never be used to decide whether a profile can be deleted.
-+        project = await _project_or_404(db, project_id)
-+        stored_settings = project.get('spare_settings')
-+        had_settings_field = 'spare_settings' in project
-+        has_stored_settings = isinstance(stored_settings, dict)
-+        current_updated_at = stored_settings.get('updated_at') if has_stored_settings else None
-+        if has_stored_settings and expected_updated_at != current_updated_at:
-+            raise HTTPException(
-+                status_code=409,
-+                detail='הגדרות ריצוף הספייר השתנו, יש לטעון מחדש',
-+            )
-+        old_profile_ids = {
-+            profile.get('id')
-+            for profile in (stored_settings or {}).get('profiles', [])
-+            if isinstance(profile, dict) and profile.get('id')
-+        }
-+        retained_ids = {profile['id'] for profile in settings['profiles']}
-+        deleted_ids = old_profile_ids - retained_ids
-+        if deleted_ids:
-+            assigned_count = await db.units.count_documents({
-+                'project_id': project_id,
-+                'archived': {'$ne': True},
-+                'spare_profile_id': {'$in': list(deleted_ids)},
-+            })
-+            if assigned_count:
-+                raise HTTPException(
-+                    status_code=409,
-+                    detail=f'יש להסיר תחילה {assigned_count} דירות מהפרופיל',
-+                )
-+
-+        settings['updated_at'] = datetime.now(timezone.utc).isoformat()
-+        settings['updated_by'] = user['id']
-+        if has_stored_settings:
-+            update_filter = {
-+                'id': project_id,
-+                'spare_settings.updated_at': current_updated_at,
-+            }
-+        else:
-+            update_filter = {'id': project_id}
-+            if had_settings_field:
-+                update_filter['spare_settings'] = stored_settings
-+            else:
-+                update_filter['spare_settings'] = {'$exists': False}
-+        await lease.assert_owned()
-+        update_result = await db.projects.update_one(
-+            update_filter,
-+            {'$set': {'spare_settings': settings}},
++    project = await _project_or_404(db, project_id)
++    stored_settings = project.get('spare_settings')
++    had_settings_field = 'spare_settings' in project
++    has_stored_settings = isinstance(stored_settings, dict)
++    current_updated_at = stored_settings.get('updated_at') if has_stored_settings else None
++    if has_stored_settings and expected_updated_at != current_updated_at:
++        raise HTTPException(
++            status_code=409,
++            detail='הגדרות ריצוף הספייר השתנו, יש לטעון מחדש',
 +        )
-+        if update_result.modified_count != 1:
++    old_profile_ids = {
++        profile.get('id')
++        for profile in (stored_settings or {}).get('profiles', [])
++        if isinstance(profile, dict) and profile.get('id')
++    }
++    retained_ids = {profile['id'] for profile in settings['profiles']}
++    deleted_ids = old_profile_ids - retained_ids
++    if deleted_ids:
++        assigned_count = await db.units.count_documents({
++            'project_id': project_id,
++            'archived': {'$ne': True},
++            'spare_profile_id': {'$in': list(deleted_ids)},
++        })
++        if assigned_count:
 +            raise HTTPException(
 +                status_code=409,
-+                detail='הגדרות ריצוף הספייר השתנו, יש לטעון מחדש',
++                detail=f'יש להסיר תחילה {assigned_count} דירות מהפרופיל',
 +            )
-+        await lease.assert_owned()
-+        await _audit('project', project_id, 'spare_settings_updated', user['id'], {
-+            'categories_count': len(settings['categories']),
-+            'profiles_count': len(settings['profiles']),
-+        })
-+        response = await _settings_with_counts(db, project_id, settings)
-+        response['can_write'] = True
-+        return response
++
++    settings['updated_at'] = datetime.now(timezone.utc).isoformat()
++    settings['updated_by'] = user['id']
++    if has_stored_settings:
++        update_filter = {
++            'id': project_id,
++            'spare_settings.updated_at': current_updated_at,
++        }
++    else:
++        update_filter = {'id': project_id}
++        if had_settings_field:
++            update_filter['spare_settings'] = stored_settings
++        else:
++            update_filter['spare_settings'] = {'$exists': False}
++    update_result = await db.projects.update_one(
++        update_filter,
++        {'$set': {'spare_settings': settings}},
++    )
++    if update_result.modified_count != 1:
++        raise HTTPException(
++            status_code=409,
++            detail='הגדרות ריצוף הספייר השתנו, יש לטעון מחדש',
++        )
++    await _audit('project', project_id, 'spare_settings_updated', user['id'], {
++        'categories_count': len(settings['categories']),
++        'profiles_count': len(settings['profiles']),
++    })
++    response = await _settings_with_counts(db, project_id, settings)
++    response['can_write'] = True
++    return response
 +
 +
 +def _natural_name_key(document):
@@ -1355,92 +2467,105 @@ index 0000000..75b70f1
 +    if overlap:
 +        raise HTTPException(status_code=422, detail='לא ניתן להוסיף ולהסיר אותה דירה')
 +
-+    async with _project_write_lock(db, project_id) as lease:
-+        project = await _project_or_404(db, project_id)
-+        profiles = (project.get('spare_settings') or {}).get('profiles', [])
-+        if not any(isinstance(profile, dict) and profile.get('id') == profile_id for profile in profiles):
-+            raise HTTPException(status_code=404, detail='פרופיל ריצוף ספייר לא נמצא')
++    project = await _project_or_404(db, project_id)
++    profiles = (project.get('spare_settings') or {}).get('profiles', [])
++    if not any(isinstance(profile, dict) and profile.get('id') == profile_id for profile in profiles):
++        raise HTTPException(status_code=404, detail='פרופיל ריצוף ספייר לא נמצא')
 +
-+        requested_ids = add_ids + remove_ids
-+        units = []
-+        if requested_ids:
-+            units = await db.units.find(
-+                {
-+                    'id': {'$in': requested_ids},
-+                    'project_id': project_id,
-+                    'archived': {'$ne': True},
-+                },
-+                {'_id': 0, 'id': 1, 'spare_profile_id': 1},
-+            ).to_list(2000)
-+        units_by_id = {unit['id']: unit for unit in units}
-+        offending = [unit_id for unit_id in requested_ids if unit_id not in units_by_id]
-+        if offending:
-+            raise HTTPException(
-+                status_code=422,
-+                detail=f"מזהי דירות לא חוקיים: {', '.join(offending)}",
-+            )
++    requested_ids = add_ids + remove_ids
++    units = []
++    if requested_ids:
++        units = await db.units.find(
++            {
++                'id': {'$in': requested_ids},
++                'project_id': project_id,
++                'archived': {'$ne': True},
++            },
++            {'_id': 0, 'id': 1, 'spare_profile_id': 1},
++        ).to_list(2000)
++    units_by_id = {unit['id']: unit for unit in units}
++    offending = [unit_id for unit_id in requested_ids if unit_id not in units_by_id]
++    if offending:
++        raise HTTPException(
++            status_code=422,
++            detail=f"מזהי דירות לא חוקיים: {', '.join(offending)}",
++        )
 +
-+        actual_add_ids = [
-+            unit_id for unit_id in add_ids
-+            if units_by_id[unit_id].get('spare_profile_id') != profile_id
-+        ]
-+        actual_remove_ids = [
-+            unit_id for unit_id in remove_ids
-+            if units_by_id[unit_id].get('spare_profile_id') == profile_id
-+        ]
-+        added = 0
-+        removed = 0
-+        if actual_add_ids:
-+            await lease.assert_owned()
-+            add_result = await db.units.update_many(
-+                {
-+                    'id': {'$in': actual_add_ids},
-+                    'project_id': project_id,
-+                    'archived': {'$ne': True},
-+                    'spare_profile_id': {'$ne': profile_id},
-+                },
-+                {'$set': {'spare_profile_id': profile_id}},
-+            )
-+            added = add_result.modified_count
-+        if actual_remove_ids:
-+            await lease.assert_owned()
-+            remove_result = await db.units.update_many(
-+                {
-+                    'id': {'$in': actual_remove_ids},
-+                    'project_id': project_id,
-+                    'archived': {'$ne': True},
-+                    'spare_profile_id': profile_id,
-+                },
-+                {'$set': {'spare_profile_id': None}},
-+            )
-+            removed = remove_result.modified_count
++    actual_add_ids = [
++        unit_id for unit_id in add_ids
++        if units_by_id[unit_id].get('spare_profile_id') != profile_id
++    ]
++    actual_remove_ids = [
++        unit_id for unit_id in remove_ids
++        if units_by_id[unit_id].get('spare_profile_id') == profile_id
++    ]
++    added = 0
++    removed = 0
++    if actual_add_ids:
++        add_result = await db.units.update_many(
++            {
++                'id': {'$in': actual_add_ids},
++                'project_id': project_id,
++                'archived': {'$ne': True},
++                'spare_profile_id': {'$ne': profile_id},
++            },
++            {'$set': {'spare_profile_id': profile_id}},
++        )
++        added = add_result.modified_count
++    if actual_remove_ids:
++        remove_result = await db.units.update_many(
++            {
++                'id': {'$in': actual_remove_ids},
++                'project_id': project_id,
++                'archived': {'$ne': True},
++                'spare_profile_id': profile_id,
++            },
++            {'$set': {'spare_profile_id': None}},
++        )
++        removed = remove_result.modified_count
 +
-+        result = {'added': added, 'removed': removed}
-+        await lease.assert_owned()
-+        await _audit('project', project_id, 'spare_profile_units_updated', user['id'], {
-+            'profile_id': profile_id,
-+            **result,
-+        })
-+        return result
++    result = {'added': added, 'removed': removed}
++    await _audit('project', project_id, 'spare_profile_units_updated', user['id'], {
++        'profile_id': profile_id,
++        **result,
++    })
++    return result
 \ No newline at end of file
+diff --git a/backend/server.py b/backend/server.py
+index 1efca9d..fef4a86 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -533,6 +533,9 @@ app.include_router(auth_router)
+ from contractor_ops.projects_router import router as projects_router
+ app.include_router(projects_router)
+
++from contractor_ops.spare_tiles_router import router as spare_tiles_router
++app.include_router(spare_tiles_router)
++
+ from contractor_ops.tasks_router import router as tasks_router
+ app.include_router(tasks_router)
+
 diff --git a/backend/tests/probe_spare_tiles_http.py b/backend/tests/probe_spare_tiles_http.py
 new file mode 100644
-index 0000000..f97d353
+index 0000000..1d35f63
 --- /dev/null
 +++ b/backend/tests/probe_spare_tiles_http.py
-@@ -0,0 +1,338 @@
+@@ -0,0 +1,503 @@
 +"""Live HTTP + local Mongo probe for BATCH #585 spare-tile profiles.
 +
 +This intentionally targets the already-running development server. It does not
 +use ASGITransport and never prints minted bearer tokens.
 +"""
 +
++import json
 +import os
 +import sys
 +import uuid
++from io import BytesIO
 +from datetime import datetime, timedelta, timezone
 +
 +import requests
++from openpyxl import load_workbook
 +from pymongo import MongoClient
 +
 +
@@ -1478,6 +2603,45 @@ index 0000000..f97d353
 +    return response
 +
 +
++def unit_document(db, unit_id):
++    return db.units.find_one({"id": unit_id}, {"_id": 0})
++
++
++def emit_documents(label, before, after):
++    """Print review-ready, synthetic probe documents without auth headers."""
++    print(f"\n[V7 JSON] {label} BEFORE")
++    print(json.dumps(before, ensure_ascii=False, sort_keys=True, indent=2))
++    print(f"[V7 JSON] {label} AFTER")
++    print(json.dumps(after, ensure_ascii=False, sort_keys=True, indent=2))
++
++
++def only_profile_changed(before, after, expected_profile_id):
++    expected = dict(before)
++    expected["spare_profile_id"] = expected_profile_id
++    return after == expected
++
++
++def overview_spare_values(payload, unit_id):
++    for building in payload["buildings"]:
++        for floor in building["floors"]:
++            for unit in floor["units"]:
++                if unit["unit_id"] == unit_id:
++                    return {
++                        "spare_tiles_count": unit["spare_tiles_count"],
++                        "spare_tiles": unit["spare_tiles"],
++                    }
++    raise AssertionError(f"unit missing from handover overview: {unit_id}")
++
++
++def exported_spare_values(content):
++    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
++    sheet = workbook["ליקויים"]
++    headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
++    values = [cell.value for cell in next(sheet.iter_rows(min_row=2, max_row=2))]
++    spare_headers = [header for header in headers if str(header).startswith("ספייר:")]
++    return {header: values[headers.index(header)] for header in spare_headers}
++
++
 +def main():
 +    client = MongoClient(os.environ["MONGO_URL"], serverSelectionTimeoutMS=3000)
 +    db = client[os.environ["DB_NAME"]]
@@ -1498,6 +2662,15 @@ index 0000000..f97d353
 +    cross_unit_id = f"probe-spare-cross-unit-{tag}"
 +    profile_a = str(uuid.uuid4())
 +    profile_b = str(uuid.uuid4())
++    task_id = f"probe-spare-task-{tag}"
++    legacy_spare_tiles = [
++        {"type": "ריצוף יבש", "count": 8, "notes": "אריחים"},
++        {"type": "ריצוף מרפסות", "count": 3, "notes": "קרטון"},
++        {"type": "סוג מותאם", "count": 2, "notes": ""},
++        {"type": "חיפוי מטבח", "count": 0, "notes": "נבדק"},
++    ]
++    legacy_count = 13
++    legacy_notes = "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק"
 +
 +    user_ids = [pm_id, owner_id, viewer_id]
 +    project_ids = [project_id, other_project_id]
@@ -1575,6 +2748,8 @@ index 0000000..f97d353
 +             "role": "owner"},
 +            {"id": f"probe-pm-view-{tag}", "project_id": project_id, "user_id": viewer_id,
 +             "role": "viewer"},
++            {"id": f"probe-pm-other-{tag}", "project_id": other_project_id, "user_id": pm_id,
++             "role": "project_manager"},
 +        ])
 +        # Insert deliberately out of display order.
 +        db.buildings.insert_many([
@@ -1599,7 +2774,10 @@ index 0000000..f97d353
 +                "id": unit_one_id, "project_id": project_id, "building_id": building_id,
 +                "floor_id": floor_low_id, "unit_no": "101", "display_label": "דירה 101",
 +                "sort_index": 10, "status": "available", "archived": False,
-+                "spare_tiles": [{"type": "ריצוף יבש", "count": 8, "notes": ""}],
++                "spare_profile_id": None,
++                "spare_tiles": legacy_spare_tiles,
++                "spare_tiles_count": legacy_count,
++                "spare_tiles_notes": legacy_notes,
 +            },
 +            {
 +                "id": unit_three_id, "project_id": project_id, "building_id": building_id,
@@ -1611,8 +2789,26 @@ index 0000000..f97d353
 +                "building_id": f"probe-cross-building-{tag}",
 +                "floor_id": f"probe-cross-floor-{tag}", "unit_no": "X1",
 +                "sort_index": 1, "status": "available", "archived": False,
++                "spare_tiles": legacy_spare_tiles,
++                "spare_tiles_count": legacy_count,
++                "spare_tiles_notes": legacy_notes,
 +            },
 +        ])
++        db.tasks.insert_one({
++            "id": task_id,
++            "project_id": project_id,
++            "building_id": building_id,
++            "floor_id": floor_low_id,
++            "unit_id": unit_one_id,
++            "display_number": f"SPARE-{tag}",
++            "title": "בדיקת שימור ספייר",
++            "description": "",
++            "category": "tiling",
++            "status": "open",
++            "created_at": now.isoformat(),
++            "updated_at": now.isoformat(),
++            "archived": False,
++        })
 +
 +        pm_headers = {"Authorization": f"Bearer {_create_token(pm_id, 'project_manager')}"}
 +        owner_headers = {"Authorization": f"Bearer {_create_token(owner_id, 'owner')}"}
@@ -1629,6 +2825,26 @@ index 0000000..f97d353
 +        baseline_unit_keys = set(baseline["unit"]) - {"spare_profile_id"}
 +        check("V3 baseline existing top-level keys captured", bool(baseline_top_keys))
 +        check("V3 baseline existing unit keys captured", bool(baseline_unit_keys))
++        legacy_before = unit_document(db, unit_one_id)
++        check("V7 seeded legacy spare_tiles exact array",
++              legacy_before["spare_tiles"] == legacy_spare_tiles)
++        check("V7 seeded legacy aggregate fields exact",
++              legacy_before["spare_tiles_count"] == legacy_count
++              and legacy_before["spare_tiles_notes"] == legacy_notes)
++
++        overview_path = f"/api/projects/{project_id}/handover/overview"
++        overview_before = overview_spare_values(
++            call("GET", overview_path, pm_headers, 200).json(), unit_one_id
++        )
++        export_request = {
++            "scope": "unit",
++            "unit_id": unit_one_id,
++            "format": "excel",
++            "filters": {},
++        }
++        export_before = exported_spare_values(
++            call("POST", "/api/defects/export", pm_headers, 200, json=export_request).content
++        )
 +
 +        settings_path = f"/api/projects/{project_id}/spare-settings"
 +        assignments_path = f"/api/projects/{project_id}/spare-assignments"
@@ -1636,6 +2852,7 @@ index 0000000..f97d353
 +            "categories": [
 +                {"name": "ריצוף יבש", "measure": "tiles"},
 +                {"name": "ריצוף מרפסות", "measure": "cartons"},
++                {"name": "חיפוי מטבח", "measure": "cartons"},
 +            ],
 +            "profiles": [
 +                {"id": profile_a, "name": "3 חדרים",
@@ -1657,6 +2874,10 @@ index 0000000..f97d353
 +        pm_saved = call("PUT", settings_path, pm_headers, 200, json=profile_payload).json()
 +        check("V2 PM saved two profiles",
 +              [p["id"] for p in pm_saved["profiles"]] == [profile_a, profile_b])
++        after_settings_save = unit_document(db, unit_one_id)
++        emit_documents("settings save", legacy_before, after_settings_save)
++        check("V7 whole unit unchanged after settings/profile save",
++              after_settings_save == legacy_before)
 +        pm_version = pm_saved["updated_at"]
 +
 +        owner_payload = {
@@ -1692,12 +2913,20 @@ index 0000000..f97d353
 +        added = call("PATCH", f"{profile_base}/{profile_a}/units", pm_headers, 200,
 +                     json={"add": [unit_one_id, unit_two_id], "remove": []}).json()
 +        check("V2 assignment add exact count", added == {"added": 2, "removed": 0})
++        after_assign = unit_document(db, unit_one_id)
++        emit_documents("profile assignment", legacy_before, after_assign)
++        check("V7 assignment changes only spare_profile_id",
++              only_profile_changed(legacy_before, after_assign, profile_a))
 +        moved = call("PATCH", f"{profile_base}/{profile_b}/units", owner_headers, 200,
 +                     json={"add": [unit_one_id], "remove": []}).json()
 +        check("V2 assignment move exact count", moved == {"added": 1, "removed": 0})
 +        removed = call("PATCH", f"{profile_base}/{profile_b}/units", pm_headers, 200,
 +                       json={"add": [], "remove": [unit_one_id]}).json()
 +        check("V2 assignment remove exact count", removed == {"added": 0, "removed": 1})
++        after_remove = unit_document(db, unit_one_id)
++        emit_documents("profile removal", after_assign, after_remove)
++        check("V7 removal restores whole unit with spare_profile_id None",
++              after_remove == legacy_before)
 +        removed_again = call("PATCH", f"{profile_base}/{profile_b}/units", pm_headers, 200,
 +                             json={"add": [], "remove": [unit_one_id]}).json()
 +        check("V2 no-op removal reports zero", removed_again == {"added": 0, "removed": 0})
@@ -1711,6 +2940,48 @@ index 0000000..f97d353
 +        call("PUT", settings_path, pm_headers, 409, json=delete_assigned)
 +        call("PATCH", f"{profile_base}/{profile_b}/units", pm_headers, 422,
 +             json={"add": [cross_unit_id], "remove": []})
++
++        unchanged_save_before = unit_document(db, unit_one_id)
++        call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
++             json={"spare_tiles": legacy_spare_tiles})
++        unchanged_save_after = unit_document(db, unit_one_id)
++        emit_documents("profile-aware unchanged inventory save",
++                       unchanged_save_before, unchanged_save_after)
++        check("V7 profile-aware unchanged save preserves whole unit",
++              unchanged_save_after == unchanged_save_before)
++
++        category_delete_payload = {
++            **owner_payload,
++            "categories": [
++                category for category in owner_saved["categories"]
++                if category["name"] != "חיפוי מטבח"
++            ],
++            "updated_at": owner_version,
++        }
++        category_saved = call(
++            "PUT", settings_path, owner_headers, 200, json=category_delete_payload
++        ).json()
++        check("V7 category deletion persisted",
++              all(item["name"] != "חיפוי מטבח" for item in category_saved["categories"]))
++        category_save_before = unit_document(db, unit_one_id)
++        call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
++             json={"spare_tiles": legacy_spare_tiles})
++        category_save_after = unit_document(db, unit_one_id)
++        emit_documents("save after category deletion",
++                       category_save_before, category_save_after)
++        check("V7 deleted configured category remains exact custom entry",
++              category_save_after == category_save_before
++              and category_save_after["spare_tiles"][-1]
++              == {"type": "חיפוי מטבח", "count": 0, "notes": "נבדק"})
++
++        legacy_branch_before = unit_document(db, cross_unit_id)
++        call("PATCH", f"/api/units/{cross_unit_id}/spare-tiles", pm_headers, 200,
++             json={"spare_tiles": legacy_spare_tiles})
++        legacy_branch_after = unit_document(db, cross_unit_id)
++        emit_documents("legacy no-profile unchanged save",
++                       legacy_branch_before, legacy_branch_after)
++        check("V7 no-profile legacy branch preserves whole unit",
++              legacy_branch_after == legacy_branch_before)
 +
 +        final_add = call("PATCH", f"{profile_base}/{profile_a}/units", pm_headers, 200,
 +                         json={"add": [unit_one_id], "remove": []}).json()
@@ -1731,6 +3002,22 @@ index 0000000..f97d353
 +              and dry_row["missing"] == 2)
 +        check("V3 viewer unit capability is false", after["spare_can_write"] is False)
 +
++        overview_after = overview_spare_values(
++            call("GET", overview_path, pm_headers, 200).json(), unit_one_id
++        )
++        export_after = exported_spare_values(
++            call("POST", "/api/defects/export", pm_headers, 200, json=export_request).content
++        )
++        print("\n[V7 JSON] handover/export BEFORE")
++        print(json.dumps({"handover": overview_before, "export": export_before},
++                         ensure_ascii=False, sort_keys=True, indent=2))
++        print("[V7 JSON] handover/export AFTER")
++        print(json.dumps({"handover": overview_after, "export": export_after},
++                         ensure_ascii=False, sort_keys=True, indent=2))
++        check("V7 handover overview spare values unchanged",
++              overview_after == overview_before)
++        check("V7 export spare columns unchanged", export_after == export_before)
++
 +        audit_actions = {
 +            row["action"] for row in db.audit_events.find(
 +                {"entity_type": "project", "entity_id": project_id},
@@ -1744,7 +3031,7 @@ index 0000000..f97d353
 +        print(f"\nAll {len(RESULTS)} live HTTP checks passed.")
 +    finally:
 +        db.audit_events.delete_many({"entity_id": {"$in": project_ids}})
-+        db.spare_tile_locks.delete_many({"_id": {"$in": project_ids}})
++        db.tasks.delete_many({"id": task_id})
 +        db.units.delete_many({"id": {"$in": unit_ids}})
 +        db.floors.delete_many({"id": {"$in": floor_ids}})
 +        db.buildings.delete_many({"id": {"$in": building_ids}})
@@ -1770,10 +3057,10 @@ index 0000000..f97d353
 \ No newline at end of file
 diff --git a/backend/tests/test_spare_tiles.py b/backend/tests/test_spare_tiles.py
 new file mode 100644
-index 0000000..bf92c34
+index 0000000..f49b442
 --- /dev/null
 +++ b/backend/tests/test_spare_tiles.py
-@@ -0,0 +1,337 @@
+@@ -0,0 +1,248 @@
 +import asyncio
 +import os
 +import sys
@@ -1836,6 +3123,19 @@ index 0000000..bf92c34
 +    assert status(4, target=0)['overall'] == 'no_target'
 +    assert status(4, profile_id=None)['overall'] == 'no_profile'
 +    assert status(4, profile_id=str(uuid.uuid4()))['overall'] == 'no_profile'
++
++
++def test_profile_with_empty_categories_has_no_target_overall():
++    result = compute_spare_status(
++        {'spare_profile_id': PROFILE_ID},
++        {
++            'categories': [],
++            'profiles': [{'id': PROFILE_ID, 'name': 'פרופיל', 'targets': {}}],
++            'margin_pct': 10,
++        },
++    )
++    assert result['overall'] == 'no_target'
++    assert result['categories'] == []
 +
 +
 +def test_custom_type_appended_and_overall_precedence():
@@ -1926,108 +3226,12 @@ index 0000000..bf92c34
 +        return self.values
 +
 +
-+class _Locks:
-+    def __init__(self, responses):
-+        self.responses = iter(responses)
-+        self.acquire_calls = []
-+        self.release_calls = []
-+        self.current = None
-+
-+    async def insert_one(self, document):
-+        self.acquire_calls.append(document)
-+        if self.current is not None:
-+            raise spare_tiles_router.DuplicateKeyError('busy')
-+        response = next(self.responses)
-+        if response == 'owner':
-+            self.current = dict(document)
-+            return _Result()
-+        if isinstance(response, dict):
-+            raise spare_tiles_router.DuplicateKeyError('busy')
-+
-+    async def find_one(self, query, _projection):
-+        if self.current and self.current.get('token') == query.get('token'):
-+            return {'_id': query['_id']}
-+        return None
-+
-+    async def delete_one(self, query):
-+        self.release_calls.append(query)
-+        if self.current and self.current.get('token') == query.get('token'):
-+            self.current = None
-+
-+
-+def test_project_lock_releases_token_when_the_protected_work_raises():
-+    locks = _Locks(['owner'])
-+
-+    class Db:
-+        spare_tile_locks = locks
-+
-+    async def protected():
-+        with pytest.raises(RuntimeError):
-+            async with spare_tiles_router._project_write_lock(Db(), 'project'):
-+                raise RuntimeError('boom')
-+
-+    asyncio.run(protected())
-+    assert len(locks.acquire_calls) == 1
-+    assert locks.release_calls[0]['_id'] == 'project'
-+    assert locks.release_calls[0]['token'] == locks.acquire_calls[0]['token']
-+
-+
-+def test_project_lock_retries_after_another_writer_then_acquires(monkeypatch):
-+    locks = _Locks([{'token': 'other-writer'}, 'owner'])
-+
-+    class Db:
-+        spare_tile_locks = locks
-+
-+    async def no_wait(_seconds):
-+        return None
-+
-+    monkeypatch.setattr(spare_tiles_router.asyncio, 'sleep', no_wait)
-+
-+    async def protected():
-+        async with spare_tiles_router._project_write_lock(Db(), 'project'):
-+            pass
-+
-+    asyncio.run(protected())
-+    assert len(locks.acquire_calls) == 2
-+    assert locks.acquire_calls[0]['_id'] == 'project'
-+    assert len(locks.release_calls) == 1
-+
-+
-+def test_mutex_is_not_stolen_after_simulated_time_passage(monkeypatch):
-+    locks = _Locks(['owner', 'owner'])
-+
-+    class Db:
-+        spare_tile_locks = locks
-+
-+    async def no_wait(_seconds):
-+        return None
-+
-+    monkeypatch.setattr(spare_tiles_router.asyncio, 'sleep', no_wait)
-+
-+    async def protected():
-+        async with spare_tiles_router._project_write_lock(Db(), 'project') as first:
-+            assert 'expires_at' not in locks.current
-+            await spare_tiles_router.asyncio.sleep(60 * 60 * 24)
-+            with pytest.raises(HTTPException) as error:
-+                async with spare_tiles_router._project_write_lock(Db(), 'project'):
-+                    pass
-+            assert error.value.status_code == 409
-+            await first.assert_owned()
-+        async with spare_tiles_router._project_write_lock(Db(), 'project'):
-+            pass
-+
-+    asyncio.run(protected())
-+    assert len(locks.release_calls) == 2
-+
-+
-+def test_profile_assignment_holds_the_project_lease_for_its_write(monkeypatch):
++def test_profile_assignment_updates_matching_unit_without_lock(monkeypatch):
 +    settings = {
 +        'categories': [{'name': 'ריצוף', 'measure': 'tiles'}],
 +        'profiles': [{'id': PROFILE_ID, 'name': 'פרופיל', 'targets': {}}],
 +        'margin_pct': 10,
 +    }
-+    locks = _Locks(['owner'])
-+
 +    class Projects:
 +        async def find_one(self, *_args):
 +            return {'id': 'project', 'spare_settings': settings}
@@ -2046,7 +3250,6 @@ index 0000000..bf92c34
 +    class Db:
 +        projects = Projects()
 +        units = Units()
-+        spare_tile_locks = locks
 +
 +    async def allow_write(*_args):
 +        return None
@@ -2061,12 +3264,10 @@ index 0000000..bf92c34
 +        'project', PROFILE_ID, {'add': ['unit'], 'remove': []}, {'id': 'user'},
 +    ))
 +    assert result == {'added': 1, 'removed': 0}
-+    assert len(locks.acquire_calls) == 1
-+    assert len(locks.release_calls) == 1
++    assert len(Db.units.calls) == 1
 +
 +
-+def test_stale_settings_editor_is_rejected_after_lock_reload(monkeypatch):
-+    locks = _Locks(['owner'])
++def test_stale_settings_editor_is_rejected(monkeypatch):
 +    current_settings = {
 +        'categories': [{'name': 'ריצוף', 'measure': 'tiles'}],
 +        'profiles': [],
@@ -2088,7 +3289,6 @@ index 0000000..bf92c34
 +
 +    class Db:
 +        projects = Projects()
-+        spare_tile_locks = locks
 +
 +    async def allow_write(*_args):
 +        return None
@@ -2109,9 +3309,308 @@ index 0000000..bf92c34
 +        ))
 +    assert error.value.status_code == 409
 +    assert db.projects.update_calls == []
-+    assert len(locks.acquire_calls) == 1
-+    assert len(locks.release_calls) == 1
 \ No newline at end of file
+diff --git a/frontend/src/App.js b/frontend/src/App.js
+index 3d81ba8..7d93aad 100644
+--- a/frontend/src/App.js
++++ b/frontend/src/App.js
+@@ -79,6 +79,7 @@ const HandoverSectionPage = React.lazy(() => import('./pages/HandoverSectionPage
+ const SafetyHomePage = React.lazy(() => import('./pages/SafetyHomePage'));
+ const SafetyProjectRegistrationPage = React.lazy(() => import('./pages/SafetyProjectRegistrationPage'));
+ const WorkDiaryPage = React.lazy(() => import('./pages/WorkDiaryPage'));
++const SpareTilesPage = React.lazy(() => import('./pages/SpareTilesPage'));
+
+ const INTENDED_PATH_KEY = 'intendedPath';
+
+@@ -413,6 +414,10 @@ const AppRoutes = () => {
+             </ProtectedRoute>
+           }
+         />
++        <Route
++          path="/projects/:projectId/spare-tiles"
++          element={<ProtectedRoute><SpareTilesPage /></ProtectedRoute>}
++        />
+         <Route
+           path="/projects/:projectId/floors/:floorId"
+           element={
+diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
+index 31205b3..8b82703 100644
+--- a/frontend/src/pages/ApartmentDashboardPage.js
++++ b/frontend/src/pages/ApartmentDashboardPage.js
+@@ -1,6 +1,6 @@
+ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+ import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+-import { unitService } from '../services/api';
++import { unitService, spareTilesService } from '../services/api';
+ import { useAuth } from '../contexts/AuthContext';
+ import { toast } from 'sonner';
+ import { formatUnitLabel } from '../utils/formatters';
+@@ -123,6 +123,7 @@ const ApartmentDashboardPage = () => {
+   const [spareTilesEntries, setSpareTilesEntries] = useState([]);
+   const [spareTilesSaving, setSpareTilesSaving] = useState(false);
+   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
++  const spareCanWrite = unitData?.spare_can_write === true;
+   const flagChecked = !!features?.defects_v2;
+
+   useEffect(() => {
+@@ -214,26 +215,60 @@ const ApartmentDashboardPage = () => {
+   }, [flagChecked, loadUnit, loadTasks]);
+
+   const SPARE_TILES_BASE_TYPES = useMemo(() => [
+-    'ריצוף יבש', 'ריצוף מרפסות', 'חיפוי אמבטיות', 'ריצוף אמבטיות', 'חיפוי מטבח',
+-  ], []);
++    ...(unitData?.spare_profiles_exist
++      ? (unitData?.spare_settings?.categories || []).map(category => category.name)
++      : ['ריצוף יבש', 'ריצוף מרפסות', 'חיפוי אמבטיות', 'ריצוף אמבטיות', 'חיפוי מטבח']),
++  ], [unitData?.spare_profiles_exist, unitData?.spare_settings]);
+
+   const startSpareTilesEdit = useCallback(() => {
+     const u = unitData?.unit;
+     const saved = Array.isArray(u?.spare_tiles) ? u.spare_tiles : [];
+-    const savedMap = {};
+-    saved.forEach(e => { savedMap[e.type] = e; });
+-    const merged = SPARE_TILES_BASE_TYPES.map(bt => ({
+-      type: bt,
+-      count: savedMap[bt] ? String(savedMap[bt].count) : '0',
+-      notes: savedMap[bt]?.notes || '',
+-      isBase: true,
+-    }));
+-    saved.forEach(e => {
+-      if (!SPARE_TILES_BASE_TYPES.includes(e.type)) {
+-        merged.push({ type: e.type, count: String(e.count), notes: e.notes || '', isBase: false });
++    if (unitData?.spare_profiles_exist) {
++      if (saved.length > 0) {
++        setSpareTilesEntries(saved.map((entry, originalIndex) => ({
++          type: entry.type,
++          count: String(entry.count),
++          notes: entry.notes ?? '',
++          isConfigured: SPARE_TILES_BASE_TYPES.includes(entry.type),
++          isPersisted: true,
++          originalIndex,
++        })));
++      } else {
++        setSpareTilesEntries(SPARE_TILES_BASE_TYPES.map(type => ({
++          type,
++          count: '0',
++          notes: '',
++          isConfigured: true,
++          isPersisted: false,
++          shouldPersist: true,
++        })));
+       }
+-    });
+-    setSpareTilesEntries(merged);
++    } else {
++      const indexedSaved = saved.map((entry, originalIndex) => ({ entry, originalIndex }));
++      const baseEntries = SPARE_TILES_BASE_TYPES.map(type => {
++        const savedEntry = indexedSaved.find(({ entry }) => entry.type === type);
++        return {
++          type,
++          count: savedEntry ? String(savedEntry.entry.count) : '0',
++          notes: savedEntry?.entry.notes ?? '',
++          isConfigured: true,
++          isPersisted: !!savedEntry,
++          originalIndex: savedEntry?.originalIndex,
++          shouldPersist: saved.length === 0,
++        };
++      });
++      const customEntries = indexedSaved
++        .filter(({ entry }) => !SPARE_TILES_BASE_TYPES.includes(entry.type))
++        .map(({ entry, originalIndex }) => ({
++          type: entry.type,
++          count: String(entry.count),
++          notes: entry.notes ?? '',
++          isConfigured: false,
++          isPersisted: true,
++          originalIndex,
++        }));
++      setSpareTilesEntries([...baseEntries, ...customEntries]);
++    }
+     setSpareTilesEditing(true);
+   }, [unitData, SPARE_TILES_BASE_TYPES]);
+
+@@ -250,17 +285,27 @@ const ApartmentDashboardPage = () => {
+   const saveSpareTiles = useCallback(async () => {
+     try {
+       setSpareTilesSaving(true);
+-      const payload = [];
++      const persistedPayload = [];
++      const newPayload = [];
+       for (const entry of spareTilesEntries) {
+         const count = parseInt(entry.count, 10);
+         if (isNaN(count) || count < 0) {
+           toast.error('כמות חייבת להיות מספר חיובי');
+           return;
+         }
+-        if (entry.isBase || count > 0 || entry.notes.trim()) {
+-          payload.push({ type: entry.type, count: isNaN(count) ? 0 : count, notes: entry.notes.trim() });
++        const serialized = { type: entry.type, count: isNaN(count) ? 0 : count, notes: entry.notes };
++        if (entry.isPersisted) {
++          persistedPayload.push({ ...serialized, originalIndex: entry.originalIndex });
++        } else if (entry.shouldPersist || count > 0 || entry.notes.trim()) {
++          newPayload.push(serialized);
+         }
+       }
++      const payload = [
++        ...persistedPayload
++          .sort((a, b) => a.originalIndex - b.originalIndex)
++          .map(({ originalIndex, ...entry }) => entry),
++        ...newPayload,
++      ];
+       await unitService.updateSpareTiles(unitId, payload);
+       const refreshed = await unitService.get(unitId);
+       setUnitData(refreshed);
+@@ -274,6 +319,22 @@ const ApartmentDashboardPage = () => {
+     }
+   }, [unitId, spareTilesEntries]);
+
++  const changeSpareProfile = useCallback(async (nextProfileId) => {
++    const currentProfileId = unitData?.unit?.spare_profile_id;
++    if (nextProfileId === (currentProfileId || '')) return;
++    try {
++      if (nextProfileId) {
++        await spareTilesService.patchSpareProfileUnits(projectId, nextProfileId, { add: [unitId], remove: [] });
++      } else if (currentProfileId) {
++        await spareTilesService.patchSpareProfileUnits(projectId, currentProfileId, { add: [], remove: [unitId] });
++      }
++      await loadUnit();
++      toast.success('פרופיל ריצוף הספייר עודכן');
++    } catch (err) {
++      toast.error(err.response?.data?.detail || 'עדכון הפרופיל נכשל');
++    }
++  }, [loadUnit, projectId, unitData, unitId]);
++
+   useEffect(() => {
+     setFilters(prev => {
+       const next = { ...prev };
+@@ -624,6 +685,72 @@ const ApartmentDashboardPage = () => {
+         </div>
+       )}
+
++      {unitData.spare_profiles_exist && (
++        <div className="max-w-lg mx-auto px-4 mt-3">
++          <div className="bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden">
++            <button
++              onClick={() => setSpareTilesOpen(!spareTilesOpen)}
++              className="w-full flex items-center justify-between p-3 text-right"
++            >
++              <div className="flex items-center gap-2">
++                <span className="text-sm font-semibold text-slate-700">ריצוף ספייר</span>
++                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
++                  unitData.spare_status?.overall === 'short' ? 'bg-red-500 text-white' :
++                  unitData.spare_status?.overall === 'borderline' ? 'bg-amber-500 text-white' :
++                  unitData.spare_status?.overall === 'ok' ? 'bg-green-500 text-white' : 'bg-slate-400 text-white'
++                }`}>
++                  {unitData.spare_status?.overall === 'short' ? 'חסר — להזמין' :
++                    unitData.spare_status?.overall === 'borderline' ? 'גבולי' :
++                    unitData.spare_status?.overall === 'ok' ? 'מספיק' :
++                    unitData.spare_status?.overall === 'no_profile' ? 'אחר' :
++                    unitData.spare_status?.overall === 'no_target' ? 'ללא יעד' : 'לא הוזן'}
++                </span>
++              </div>
++              {spareTilesOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
++            </button>
++            {spareTilesOpen && (
++              <div className="px-4 pb-4">
++                <div className="text-xs text-slate-500 mb-3 pb-2 border-b border-slate-100">
++                  {spareCanWrite ? (
++                    <label className="flex items-center gap-2">פרופיל:
++                      <select value={unit.spare_profile_id || ''} onChange={e => changeSpareProfile(e.target.value)} className="border border-slate-200 rounded-md px-2 py-1 text-xs">
++                        <option value="">אחר</option>
++                        {(unitData.spare_settings?.profiles || []).map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
++                      </select>
++                    </label>
++                  ) : (unitData.spare_status?.profile?.name ? `פרופיל: ${unitData.spare_status.profile.name}` : 'דירה ללא פרופיל — ניתן לעדכן מלאי בלבד')}
++                </div>
++                {Array.isArray(unitData.spare_status?.categories) && (
++                  <div className="space-y-1.5 mb-3">
++                    {unitData.spare_status.categories.map((row, idx) => (
++                      <div key={`${row.type}-${idx}`} className="flex items-center gap-2 text-xs">
++                        <span className="flex-1 font-medium text-slate-700">{row.name || row.type}</span>
++                        <span className="text-slate-500">{row.actual == null ? '—' : row.actual} / {row.target || '—'} {row.measure === 'tiles' ? 'אריחים' : row.measure === 'cartons' ? 'קרטונים' : row.measure === 'sqm' ? 'מ"ר' : ''}</span>
++                        {row.actual != null && row.target > 0 && <span className="w-12 bg-slate-100 rounded-full h-1.5 overflow-hidden"><span className={`block h-full rounded-full ${row.status === 'short' ? 'bg-red-500' : row.status === 'borderline' ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${Math.min(100, (row.actual / row.target) * 100)}%` }} /></span>}
++                        <span className={`w-2 h-2 rounded-full ${row.status === 'short' ? 'bg-red-500' : row.status === 'borderline' ? 'bg-amber-500' : row.status === 'ok' ? 'bg-green-500' : 'bg-slate-300'}`} />
++                        <span className="w-14 text-[10px] text-slate-500">{row.status === 'short' ? `חסר ${row.missing || 0}` : row.status === 'borderline' ? 'גבולי' : row.status === 'ok' ? 'מספיק' : row.status === 'no_target' ? 'ללא יעד' : 'לא הוזן'}</span>
++                      </div>
++                    ))}
++                  </div>
++                )}
++                {spareTilesEditing ? (
++                  <div className="space-y-3">
++                    {spareTilesEntries.map((entry, idx) => (
++                      <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
++                        <div className="flex items-center justify-between"><span className="text-xs font-semibold text-slate-700">{entry.type}</span>{!entry.isConfigured && <button type="button" onClick={() => setSpareTilesEntries(prev => prev.filter((_, i) => i !== idx))} className="p-1 text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>}</div>
++                        <div className="flex gap-2 items-end"><label className="w-24 text-[10px] text-slate-500">כמות<input type="number" min="0" value={entry.count} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: e.target.value } : en))} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" />{(() => { const measure = (unitData.spare_settings?.categories || []).find(c => c.name === entry.type)?.measure; return <span className="block mt-0.5 text-[10px] text-slate-400">{measure === 'tiles' ? 'אריחים' : measure === 'cartons' ? 'קרטונים' : measure === 'sqm' ? 'מ"ר' : ''}</span>; })()}</label><label className="flex-1 text-[10px] text-slate-500">הערות<input type="text" value={entry.notes} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, notes: e.target.value } : en))} maxLength={500} placeholder="הערה..." className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /></label></div>
++                      </div>
++                    ))}
++                    {spareTilesEntries.length < 20 && <button type="button" onClick={() => { const name = window.prompt('שם סוג ריצוף חדש:'); if (!name?.trim()) return; const trimmed = name.trim().slice(0, 50); if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) { toast.error('סוג ריצוף כבר קיים'); return; } setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', isConfigured: false }]); }} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Plus className="w-3.5 h-3.5" />הוסף סוג ריצוף</button>}
++                    <div className="flex gap-2"><button onClick={saveSpareTiles} disabled={spareTilesSaving} className="flex-1 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium">{spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin inline" /> : 'שמור'}</button><button onClick={() => setSpareTilesEditing(false)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600">ביטול</button></div>
++                  </div>
++                ) : spareCanWrite && <button onClick={startSpareTilesEdit} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Pencil className="w-3.5 h-3.5" />עדכון מלאי</button>}
++              </div>
++            )}
++          </div>
++        </div>
++      )}
++      {!unitData.spare_profiles_exist && (
+       <div className="max-w-lg mx-auto px-4 mt-3">
+         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+           <button
+@@ -667,7 +794,7 @@ const ApartmentDashboardPage = () => {
+                     <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
+                       <div className="flex items-center justify-between">
+                         <span className="text-xs font-semibold text-slate-700">{entry.type}</span>
+-                        {!entry.isBase && (
++                        {!entry.isConfigured && (
+                           <button
+                             type="button"
+                             onClick={() => setSpareTilesEntries(prev => prev.filter((_, i) => i !== idx))}
+@@ -719,7 +846,7 @@ const ApartmentDashboardPage = () => {
+                           toast.error('סוג ריצוף כבר קיים');
+                           return;
+                         }
+-                        setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', isBase: false }]);
++                        setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', isConfigured: false }]);
+                       }}
+                       className="flex items-center gap-1.5 text-xs text-amber-600 font-medium hover:text-amber-700 transition-colors"
+                     >
+@@ -772,6 +899,7 @@ const ApartmentDashboardPage = () => {
+           )}
+         </div>
+       </div>
++      )}
+
+       <div className="max-w-lg mx-auto px-4 mt-4 space-y-2">
+         <div className="flex gap-2">
+diff --git a/frontend/src/pages/ProjectDashboardPage.js b/frontend/src/pages/ProjectDashboardPage.js
+index 27d3789..48dab7a 100644
+--- a/frontend/src/pages/ProjectDashboardPage.js
++++ b/frontend/src/pages/ProjectDashboardPage.js
+@@ -862,6 +862,24 @@ export default function ProjectDashboardPage() {
+         </div>
+         )}
+
++        <DashboardFoldSection
++          id="spare-tiles"
++          projectId={projectId}
++          icon={Construction}
++          iconColor="text-amber-600"
++          title="ריצוף ספייר"
++          summary="פרופילים ומלאי"
++        >
++          <button
++            onClick={() => navigate(`/projects/${projectId}/spare-tiles`)}
++            className="w-full bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 text-right hover:border-amber-300 hover:bg-amber-50/30 transition-all"
++          >
++            <span className="p-2.5 bg-amber-100 text-amber-700 rounded-xl"><Construction className="w-5 h-5" /></span>
++            <span className="flex-1 min-w-0"><span className="block font-bold text-slate-800">ריצוף ספייר</span><span className="block text-xs text-slate-500 mt-0.5">הגדרת פרופילים, יעדים ושיוך דירות</span></span>
++            <ChevronLeft className="w-5 h-5 text-slate-300" />
++          </button>
++        </DashboardFoldSection>
++
+         {isPmOrOwner && (
+         <div ref={el => { foldRefs.current['team'] = el; }}>
+           <DashboardFoldSection
 diff --git a/frontend/src/pages/SpareTilesPage.js b/frontend/src/pages/SpareTilesPage.js
 new file mode 100644
 index 0000000..0360910
@@ -2243,102 +3742,45 @@ index 0000000..0360910
 +  </main>;
 +}
 \ No newline at end of file
+diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+index dcd3f4a..425e940 100644
+--- a/frontend/src/services/api.js
++++ b/frontend/src/services/api.js
+@@ -1067,6 +1067,25 @@ export const unitService = {
+   },
+ };
 
-================================================================================
-VERIFICATION EVIDENCE
-================================================================================
++export const spareTilesService = {
++  async getSpareSettings(projectId) {
++    const response = await axios.get(`${API}/projects/${projectId}/spare-settings`, { headers: getAuthHeader() });
++    return response.data;
++  },
++  async saveSpareSettings(projectId, settings) {
++    const response = await axios.put(`${API}/projects/${projectId}/spare-settings`, settings, { headers: getAuthHeader() });
++    return response.data;
++  },
++  async getSpareAssignments(projectId, buildingId) {
++    const response = await axios.get(`${API}/projects/${projectId}/spare-assignments`, { headers: getAuthHeader(), params: buildingId ? { building_id: buildingId } : {} });
++    return response.data;
++  },
++  async patchSpareProfileUnits(projectId, profileId, body) {
++    const response = await axios.patch(`${API}/projects/${projectId}/spare-profiles/${profileId}/units`, body, { headers: getAuthHeader() });
++    return response.data;
++  },
++};
++
+ export const archiveService = {
+   async archiveBuilding(buildingId, reason) {
+     const response = await axios.post(`${API}/buildings/${buildingId}/archive`, { reason }, { headers: getAuthHeader() });
 
-V1 — FOCUSED TESTS: PASS
 
-- 19 focused tests passed.
-- Coverage included fresh defaults; short 8/10 with missing 2; borderline;
-  sufficient; absent and zero-without-notes not-entered states; zero-with-notes
-  entered behavior; no-target; unset/dangling no-profile; custom type append;
-  overall precedence; margin-zero minimum band; validation failures; UUID
-  preservation; deleted-target cleanup; mutex release/retry/non-steal behavior;
-  assignment lease ownership; and stale settings rejection.
-
-V2 / V3 — LIVE HTTP PROBE: PASS
-
-- 41/41 live HTTP checks passed against the running HTTP server, with probe data
-  cleanup completed in finally. No bearer tokens or credentials were printed or
-  retained.
-- RBAC: viewer reads were allowed in read-only mode; viewer PUT/PATCH writes were
-  rejected with 403; project manager settings/profile writes passed; owner
-  project-scoped writes passed.
-- Settings: default settings remained non-persistent until save; PM save passed;
-  owner update passed; stale-version write returned 409; deleting an assigned
-  profile returned 409; settings and assignment audit actions were recorded.
-- Assignment ordering/payload: building, floor, and unit ordering matched the
-  structure sort rules; assignment payload keys matched the specified contract.
-- Add/move/remove: exact counts passed for add, direct cross-profile move,
-  matching-profile removal, and no-op repeated removal.
-- Isolation: an active unit from another project in add was rejected with 422.
-- V3 compatibility: a project without spare_settings returned
-  spare_profiles_exist=false and spare_status.overall=no_profile; all prior
-  top-level and nested unit keys remained unchanged apart from the approved
-  additive keys. An assigned unit returned the selected profile and the expected
-  short status (actual 8, target 10, missing 2). Viewer capability was false.
-- Probe-created audit events, locks, units, floors, buildings, memberships,
-  subscription, projects, users, and organization records were cleaned up.
-
-V4 — PRODUCTION BUILD: PASS
-
-- CI=true frontend build exited 0.
-- Output contained only pre-existing source-map warnings; no new build error or
-  warning attributable to BATCH #585 was introduced.
-
-V5 — BROWSER / MOBILE: PASS
-
-- One browser session at a 390px viewport completed the settings and assignment
-  scenarios.
-- The corrected /defects route completed both the profile-aware spare card and
-  the legacy no-profile card.
-- Profile-aware coverage included status rows/chips and profile selection;
-  assignment coverage included floor units, a unit assigned to another profile,
-  an unassigned “אחר” unit, and “בחר הכל בקומה”.
-- Legacy coverage confirmed projects without profiles preserve the prior card
-  path.
-- No horizontal scroll was present in the settings, assignment, profile-aware,
-  or legacy card scenarios.
-- Browser-created records and assignments were cleaned up.
-
-V6 — STATIC / SCOPE / COMPATIBILITY: PASS
-
-- Exact file-scope check passed: only the 12 source/test files listed in the
-  implemented file inventory changed or were added.
-- Frozen files passed unchanged checks: export_router.py,
-  execution_matrix_router.py, HandoverOverviewPage.js, and NewDefectModal.js.
-- ApartmentDashboardPage.js changes were confined to the approved spare row
-  model/card integration; defect creation, prefillData, QC links, page header,
-  summary cards, filters, and task list remained frozen.
-- Existing PATCH /api/units/{unit_id}/spare-tiles endpoint block was verified
-  byte-identical to base, including validation, persistence, audit, and response.
-- Existing generic PATCH /api/units/{unit_id} guard/behavior was unchanged.
-- No ObjectId usage was introduced.
-- No dependency or lockfile changes were made.
-- No migration, backfill, or automatic profile assignment was introduced.
-- Key-compatibility checks passed for the additive GET unit response and exact
-  assignment-unit payload.
-- git diff --check passed.
-- py_compile passed for all changed/new Python source and test/probe files.
-
-================================================================================
-FINAL ARCHITECT REVIEW
-================================================================================
-
-PASS.
-
-The implementation is additive and project-scoped, preserves the legacy spare
-write endpoint and no-profile behavior, enforces the required RBAC and
-cross-project validation, and keeps the approved frozen surfaces unchanged.
-
-Non-blocking availability caveat: the cross-process per-project mutex is
-intentionally non-expiring to prevent a paused former owner from resuming after
-a successor and corrupting project/profile integrity. If a process suffers a
-hard crash after acquiring that mutex, the abandoned spare_tile_locks record is
-not auto-stolen and requires operational cleanup before writes for that project
-can resume. This is an availability/operations tradeoff, not a correctness or
-data-integrity failure, and does not block architect approval.
+FINAL SCOPE CONFIRMATION
+========================
+- Required base used: d0eeeae.
+- Embedded diff header count: 12.
+- Embedded diff contains only the twelve approved product/test paths enumerated above.
+- No metadata, memory, delivery, plan, or attachment file is in the embedded diff.
+- .local/.commit_message was preserved exactly.
+- No commit was made. No deployment was made.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

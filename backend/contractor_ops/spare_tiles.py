@@ -191,8 +191,11 @@ def compute_spare_status(unit_doc, spare_settings):
     else:
         statuses = {row['status'] for row in rows}
         overall = next(
-            status for status in ('short', 'not_entered', 'borderline', 'ok', 'no_target')
-            if status in statuses
+            (
+                status for status in ('short', 'not_entered', 'borderline', 'ok', 'no_target')
+                if status in statuses
+            ),
+            'no_target',
         )
     return {
         'profile': {'id': profile['id'], 'name': profile['name']} if profile else None,

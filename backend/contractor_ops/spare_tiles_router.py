@@ -1,12 +1,8 @@
-import asyncio
 import re
-import uuid
 from copy import deepcopy
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pymongo.errors import DuplicateKeyError
 
 from contractor_ops.router import (
     _audit,
@@ -20,8 +16,6 @@ from contractor_ops.spare_tiles import default_spare_settings, validate_spare_se
 
 router = APIRouter(prefix='/api')
 WRITE_ROLES = ('project_manager', 'owner', 'management_team')
-LOCK_RETRY_COUNT = 20
-LOCK_RETRY_SECONDS = 0.05
 
 
 async def _project_or_404(db, project_id):
@@ -39,49 +33,6 @@ async def _require_write(user, project_id):
 
 async def _can_write(user, project_id):
     return await _get_project_role(user, project_id) in WRITE_ROLES
-
-
-class _ProjectMutex:
-    def __init__(self, lock_collection, project_id, token):
-        self.lock_collection = lock_collection
-        self.project_id = project_id
-        self.token = token
-
-    async def assert_owned(self):
-        lock = await self.lock_collection.find_one({
-            '_id': self.project_id,
-            'token': self.token,
-        }, {'_id': 1})
-        if not lock:
-            raise HTTPException(status_code=409, detail='נעילת הפרויקט אבדה, יש לנסות שוב')
-
-
-@asynccontextmanager
-async def _project_write_lock(db, project_id):
-    """Strict cross-process mutex shared by both spare-settings write paths.
-
-    Abandoned locks are intentionally not auto-stolen. Without transactions,
-    time-based stale recovery can let a paused former owner resume and corrupt
-    project/profile integrity after a successor starts writing.
-    """
-    token = str(uuid.uuid4())
-    lock_collection = db.spare_tile_locks
-    acquired = False
-    for _attempt in range(LOCK_RETRY_COUNT):
-        try:
-            await lock_collection.insert_one({'_id': project_id, 'token': token})
-            acquired = True
-            break
-        except DuplicateKeyError:
-            pass
-        await asyncio.sleep(LOCK_RETRY_SECONDS)
-    if not acquired:
-        raise HTTPException(status_code=409, detail='הפרויקט נעול לעדכון ריצוף ספייר, יש לנסות שוב')
-    mutex = _ProjectMutex(lock_collection, project_id, token)
-    try:
-        yield mutex
-    finally:
-        await lock_collection.delete_one({'_id': project_id, 'token': token})
 
 
 async def _settings_with_counts(db, project_id, settings):
@@ -123,69 +74,64 @@ async def put_spare_settings(project_id: str, body: dict, user: dict = Depends(g
     await _require_write(user, project_id)
     expected_updated_at = body.get('updated_at') if isinstance(body, dict) else None
     settings = validate_spare_settings(body)
-    async with _project_write_lock(db, project_id) as lease:
-        # Reload only after acquiring the lease; stale pre-lock settings must
-        # never be used to decide whether a profile can be deleted.
-        project = await _project_or_404(db, project_id)
-        stored_settings = project.get('spare_settings')
-        had_settings_field = 'spare_settings' in project
-        has_stored_settings = isinstance(stored_settings, dict)
-        current_updated_at = stored_settings.get('updated_at') if has_stored_settings else None
-        if has_stored_settings and expected_updated_at != current_updated_at:
-            raise HTTPException(
-                status_code=409,
-                detail='הגדרות ריצוף הספייר השתנו, יש לטעון מחדש',
-            )
-        old_profile_ids = {
-            profile.get('id')
-            for profile in (stored_settings or {}).get('profiles', [])
-            if isinstance(profile, dict) and profile.get('id')
-        }
-        retained_ids = {profile['id'] for profile in settings['profiles']}
-        deleted_ids = old_profile_ids - retained_ids
-        if deleted_ids:
-            assigned_count = await db.units.count_documents({
-                'project_id': project_id,
-                'archived': {'$ne': True},
-                'spare_profile_id': {'$in': list(deleted_ids)},
-            })
-            if assigned_count:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f'יש להסיר תחילה {assigned_count} דירות מהפרופיל',
-                )
-
-        settings['updated_at'] = datetime.now(timezone.utc).isoformat()
-        settings['updated_by'] = user['id']
-        if has_stored_settings:
-            update_filter = {
-                'id': project_id,
-                'spare_settings.updated_at': current_updated_at,
-            }
-        else:
-            update_filter = {'id': project_id}
-            if had_settings_field:
-                update_filter['spare_settings'] = stored_settings
-            else:
-                update_filter['spare_settings'] = {'$exists': False}
-        await lease.assert_owned()
-        update_result = await db.projects.update_one(
-            update_filter,
-            {'$set': {'spare_settings': settings}},
+    project = await _project_or_404(db, project_id)
+    stored_settings = project.get('spare_settings')
+    had_settings_field = 'spare_settings' in project
+    has_stored_settings = isinstance(stored_settings, dict)
+    current_updated_at = stored_settings.get('updated_at') if has_stored_settings else None
+    if has_stored_settings and expected_updated_at != current_updated_at:
+        raise HTTPException(
+            status_code=409,
+            detail='הגדרות ריצוף הספייר השתנו, יש לטעון מחדש',
         )
-        if update_result.modified_count != 1:
+    old_profile_ids = {
+        profile.get('id')
+        for profile in (stored_settings or {}).get('profiles', [])
+        if isinstance(profile, dict) and profile.get('id')
+    }
+    retained_ids = {profile['id'] for profile in settings['profiles']}
+    deleted_ids = old_profile_ids - retained_ids
+    if deleted_ids:
+        assigned_count = await db.units.count_documents({
+            'project_id': project_id,
+            'archived': {'$ne': True},
+            'spare_profile_id': {'$in': list(deleted_ids)},
+        })
+        if assigned_count:
             raise HTTPException(
                 status_code=409,
-                detail='הגדרות ריצוף הספייר השתנו, יש לטעון מחדש',
+                detail=f'יש להסיר תחילה {assigned_count} דירות מהפרופיל',
             )
-        await lease.assert_owned()
-        await _audit('project', project_id, 'spare_settings_updated', user['id'], {
-            'categories_count': len(settings['categories']),
-            'profiles_count': len(settings['profiles']),
-        })
-        response = await _settings_with_counts(db, project_id, settings)
-        response['can_write'] = True
-        return response
+
+    settings['updated_at'] = datetime.now(timezone.utc).isoformat()
+    settings['updated_by'] = user['id']
+    if has_stored_settings:
+        update_filter = {
+            'id': project_id,
+            'spare_settings.updated_at': current_updated_at,
+        }
+    else:
+        update_filter = {'id': project_id}
+        if had_settings_field:
+            update_filter['spare_settings'] = stored_settings
+        else:
+            update_filter['spare_settings'] = {'$exists': False}
+    update_result = await db.projects.update_one(
+        update_filter,
+        {'$set': {'spare_settings': settings}},
+    )
+    if update_result.modified_count != 1:
+        raise HTTPException(
+            status_code=409,
+            detail='הגדרות ריצוף הספייר השתנו, יש לטעון מחדש',
+        )
+    await _audit('project', project_id, 'spare_settings_updated', user['id'], {
+        'categories_count': len(settings['categories']),
+        'profiles_count': len(settings['profiles']),
+    })
+    response = await _settings_with_counts(db, project_id, settings)
+    response['can_write'] = True
+    return response
 
 
 def _natural_name_key(document):
@@ -297,70 +243,66 @@ async def patch_spare_profile_units(
     if overlap:
         raise HTTPException(status_code=422, detail='לא ניתן להוסיף ולהסיר אותה דירה')
 
-    async with _project_write_lock(db, project_id) as lease:
-        project = await _project_or_404(db, project_id)
-        profiles = (project.get('spare_settings') or {}).get('profiles', [])
-        if not any(isinstance(profile, dict) and profile.get('id') == profile_id for profile in profiles):
-            raise HTTPException(status_code=404, detail='פרופיל ריצוף ספייר לא נמצא')
+    project = await _project_or_404(db, project_id)
+    profiles = (project.get('spare_settings') or {}).get('profiles', [])
+    if not any(isinstance(profile, dict) and profile.get('id') == profile_id for profile in profiles):
+        raise HTTPException(status_code=404, detail='פרופיל ריצוף ספייר לא נמצא')
 
-        requested_ids = add_ids + remove_ids
-        units = []
-        if requested_ids:
-            units = await db.units.find(
-                {
-                    'id': {'$in': requested_ids},
-                    'project_id': project_id,
-                    'archived': {'$ne': True},
-                },
-                {'_id': 0, 'id': 1, 'spare_profile_id': 1},
-            ).to_list(2000)
-        units_by_id = {unit['id']: unit for unit in units}
-        offending = [unit_id for unit_id in requested_ids if unit_id not in units_by_id]
-        if offending:
-            raise HTTPException(
-                status_code=422,
-                detail=f"מזהי דירות לא חוקיים: {', '.join(offending)}",
-            )
+    requested_ids = add_ids + remove_ids
+    units = []
+    if requested_ids:
+        units = await db.units.find(
+            {
+                'id': {'$in': requested_ids},
+                'project_id': project_id,
+                'archived': {'$ne': True},
+            },
+            {'_id': 0, 'id': 1, 'spare_profile_id': 1},
+        ).to_list(2000)
+    units_by_id = {unit['id']: unit for unit in units}
+    offending = [unit_id for unit_id in requested_ids if unit_id not in units_by_id]
+    if offending:
+        raise HTTPException(
+            status_code=422,
+            detail=f"מזהי דירות לא חוקיים: {', '.join(offending)}",
+        )
 
-        actual_add_ids = [
-            unit_id for unit_id in add_ids
-            if units_by_id[unit_id].get('spare_profile_id') != profile_id
-        ]
-        actual_remove_ids = [
-            unit_id for unit_id in remove_ids
-            if units_by_id[unit_id].get('spare_profile_id') == profile_id
-        ]
-        added = 0
-        removed = 0
-        if actual_add_ids:
-            await lease.assert_owned()
-            add_result = await db.units.update_many(
-                {
-                    'id': {'$in': actual_add_ids},
-                    'project_id': project_id,
-                    'archived': {'$ne': True},
-                    'spare_profile_id': {'$ne': profile_id},
-                },
-                {'$set': {'spare_profile_id': profile_id}},
-            )
-            added = add_result.modified_count
-        if actual_remove_ids:
-            await lease.assert_owned()
-            remove_result = await db.units.update_many(
-                {
-                    'id': {'$in': actual_remove_ids},
-                    'project_id': project_id,
-                    'archived': {'$ne': True},
-                    'spare_profile_id': profile_id,
-                },
-                {'$set': {'spare_profile_id': None}},
-            )
-            removed = remove_result.modified_count
+    actual_add_ids = [
+        unit_id for unit_id in add_ids
+        if units_by_id[unit_id].get('spare_profile_id') != profile_id
+    ]
+    actual_remove_ids = [
+        unit_id for unit_id in remove_ids
+        if units_by_id[unit_id].get('spare_profile_id') == profile_id
+    ]
+    added = 0
+    removed = 0
+    if actual_add_ids:
+        add_result = await db.units.update_many(
+            {
+                'id': {'$in': actual_add_ids},
+                'project_id': project_id,
+                'archived': {'$ne': True},
+                'spare_profile_id': {'$ne': profile_id},
+            },
+            {'$set': {'spare_profile_id': profile_id}},
+        )
+        added = add_result.modified_count
+    if actual_remove_ids:
+        remove_result = await db.units.update_many(
+            {
+                'id': {'$in': actual_remove_ids},
+                'project_id': project_id,
+                'archived': {'$ne': True},
+                'spare_profile_id': profile_id,
+            },
+            {'$set': {'spare_profile_id': None}},
+        )
+        removed = remove_result.modified_count
 
-        result = {'added': added, 'removed': removed}
-        await lease.assert_owned()
-        await _audit('project', project_id, 'spare_profile_units_updated', user['id'], {
-            'profile_id': profile_id,
-            **result,
-        })
-        return result
+    result = {'added': added, 'removed': removed}
+    await _audit('project', project_id, 'spare_profile_units_updated', user['id'], {
+        'profile_id': profile_id,
+        **result,
+    })
+    return result

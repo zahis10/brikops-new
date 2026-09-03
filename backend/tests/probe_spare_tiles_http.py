@@ -4,12 +4,15 @@ This intentionally targets the already-running development server. It does not
 use ASGITransport and never prints minted bearer tokens.
 """
 
+import json
 import os
 import sys
 import uuid
+from io import BytesIO
 from datetime import datetime, timedelta, timezone
 
 import requests
+from openpyxl import load_workbook
 from pymongo import MongoClient
 
 
@@ -47,6 +50,45 @@ def call(method, path, headers, expected, **kwargs):
     return response
 
 
+def unit_document(db, unit_id):
+    return db.units.find_one({"id": unit_id}, {"_id": 0})
+
+
+def emit_documents(label, before, after):
+    """Print review-ready, synthetic probe documents without auth headers."""
+    print(f"\n[V7 JSON] {label} BEFORE")
+    print(json.dumps(before, ensure_ascii=False, sort_keys=True, indent=2))
+    print(f"[V7 JSON] {label} AFTER")
+    print(json.dumps(after, ensure_ascii=False, sort_keys=True, indent=2))
+
+
+def only_profile_changed(before, after, expected_profile_id):
+    expected = dict(before)
+    expected["spare_profile_id"] = expected_profile_id
+    return after == expected
+
+
+def overview_spare_values(payload, unit_id):
+    for building in payload["buildings"]:
+        for floor in building["floors"]:
+            for unit in floor["units"]:
+                if unit["unit_id"] == unit_id:
+                    return {
+                        "spare_tiles_count": unit["spare_tiles_count"],
+                        "spare_tiles": unit["spare_tiles"],
+                    }
+    raise AssertionError(f"unit missing from handover overview: {unit_id}")
+
+
+def exported_spare_values(content):
+    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    sheet = workbook["ליקויים"]
+    headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
+    values = [cell.value for cell in next(sheet.iter_rows(min_row=2, max_row=2))]
+    spare_headers = [header for header in headers if str(header).startswith("ספייר:")]
+    return {header: values[headers.index(header)] for header in spare_headers}
+
+
 def main():
     client = MongoClient(os.environ["MONGO_URL"], serverSelectionTimeoutMS=3000)
     db = client[os.environ["DB_NAME"]]
@@ -67,6 +109,15 @@ def main():
     cross_unit_id = f"probe-spare-cross-unit-{tag}"
     profile_a = str(uuid.uuid4())
     profile_b = str(uuid.uuid4())
+    task_id = f"probe-spare-task-{tag}"
+    legacy_spare_tiles = [
+        {"type": "ריצוף יבש", "count": 8, "notes": "אריחים"},
+        {"type": "ריצוף מרפסות", "count": 3, "notes": "קרטון"},
+        {"type": "סוג מותאם", "count": 2, "notes": ""},
+        {"type": "חיפוי מטבח", "count": 0, "notes": "נבדק"},
+    ]
+    legacy_count = 13
+    legacy_notes = "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק"
 
     user_ids = [pm_id, owner_id, viewer_id]
     project_ids = [project_id, other_project_id]
@@ -144,6 +195,8 @@ def main():
              "role": "owner"},
             {"id": f"probe-pm-view-{tag}", "project_id": project_id, "user_id": viewer_id,
              "role": "viewer"},
+            {"id": f"probe-pm-other-{tag}", "project_id": other_project_id, "user_id": pm_id,
+             "role": "project_manager"},
         ])
         # Insert deliberately out of display order.
         db.buildings.insert_many([
@@ -168,7 +221,10 @@ def main():
                 "id": unit_one_id, "project_id": project_id, "building_id": building_id,
                 "floor_id": floor_low_id, "unit_no": "101", "display_label": "דירה 101",
                 "sort_index": 10, "status": "available", "archived": False,
-                "spare_tiles": [{"type": "ריצוף יבש", "count": 8, "notes": ""}],
+                "spare_profile_id": None,
+                "spare_tiles": legacy_spare_tiles,
+                "spare_tiles_count": legacy_count,
+                "spare_tiles_notes": legacy_notes,
             },
             {
                 "id": unit_three_id, "project_id": project_id, "building_id": building_id,
@@ -180,8 +236,26 @@ def main():
                 "building_id": f"probe-cross-building-{tag}",
                 "floor_id": f"probe-cross-floor-{tag}", "unit_no": "X1",
                 "sort_index": 1, "status": "available", "archived": False,
+                "spare_tiles": legacy_spare_tiles,
+                "spare_tiles_count": legacy_count,
+                "spare_tiles_notes": legacy_notes,
             },
         ])
+        db.tasks.insert_one({
+            "id": task_id,
+            "project_id": project_id,
+            "building_id": building_id,
+            "floor_id": floor_low_id,
+            "unit_id": unit_one_id,
+            "display_number": f"SPARE-{tag}",
+            "title": "בדיקת שימור ספייר",
+            "description": "",
+            "category": "tiling",
+            "status": "open",
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+            "archived": False,
+        })
 
         pm_headers = {"Authorization": f"Bearer {_create_token(pm_id, 'project_manager')}"}
         owner_headers = {"Authorization": f"Bearer {_create_token(owner_id, 'owner')}"}
@@ -198,6 +272,26 @@ def main():
         baseline_unit_keys = set(baseline["unit"]) - {"spare_profile_id"}
         check("V3 baseline existing top-level keys captured", bool(baseline_top_keys))
         check("V3 baseline existing unit keys captured", bool(baseline_unit_keys))
+        legacy_before = unit_document(db, unit_one_id)
+        check("V7 seeded legacy spare_tiles exact array",
+              legacy_before["spare_tiles"] == legacy_spare_tiles)
+        check("V7 seeded legacy aggregate fields exact",
+              legacy_before["spare_tiles_count"] == legacy_count
+              and legacy_before["spare_tiles_notes"] == legacy_notes)
+
+        overview_path = f"/api/projects/{project_id}/handover/overview"
+        overview_before = overview_spare_values(
+            call("GET", overview_path, pm_headers, 200).json(), unit_one_id
+        )
+        export_request = {
+            "scope": "unit",
+            "unit_id": unit_one_id,
+            "format": "excel",
+            "filters": {},
+        }
+        export_before = exported_spare_values(
+            call("POST", "/api/defects/export", pm_headers, 200, json=export_request).content
+        )
 
         settings_path = f"/api/projects/{project_id}/spare-settings"
         assignments_path = f"/api/projects/{project_id}/spare-assignments"
@@ -205,6 +299,7 @@ def main():
             "categories": [
                 {"name": "ריצוף יבש", "measure": "tiles"},
                 {"name": "ריצוף מרפסות", "measure": "cartons"},
+                {"name": "חיפוי מטבח", "measure": "cartons"},
             ],
             "profiles": [
                 {"id": profile_a, "name": "3 חדרים",
@@ -226,6 +321,10 @@ def main():
         pm_saved = call("PUT", settings_path, pm_headers, 200, json=profile_payload).json()
         check("V2 PM saved two profiles",
               [p["id"] for p in pm_saved["profiles"]] == [profile_a, profile_b])
+        after_settings_save = unit_document(db, unit_one_id)
+        emit_documents("settings save", legacy_before, after_settings_save)
+        check("V7 whole unit unchanged after settings/profile save",
+              after_settings_save == legacy_before)
         pm_version = pm_saved["updated_at"]
 
         owner_payload = {
@@ -261,12 +360,20 @@ def main():
         added = call("PATCH", f"{profile_base}/{profile_a}/units", pm_headers, 200,
                      json={"add": [unit_one_id, unit_two_id], "remove": []}).json()
         check("V2 assignment add exact count", added == {"added": 2, "removed": 0})
+        after_assign = unit_document(db, unit_one_id)
+        emit_documents("profile assignment", legacy_before, after_assign)
+        check("V7 assignment changes only spare_profile_id",
+              only_profile_changed(legacy_before, after_assign, profile_a))
         moved = call("PATCH", f"{profile_base}/{profile_b}/units", owner_headers, 200,
                      json={"add": [unit_one_id], "remove": []}).json()
         check("V2 assignment move exact count", moved == {"added": 1, "removed": 0})
         removed = call("PATCH", f"{profile_base}/{profile_b}/units", pm_headers, 200,
                        json={"add": [], "remove": [unit_one_id]}).json()
         check("V2 assignment remove exact count", removed == {"added": 0, "removed": 1})
+        after_remove = unit_document(db, unit_one_id)
+        emit_documents("profile removal", after_assign, after_remove)
+        check("V7 removal restores whole unit with spare_profile_id None",
+              after_remove == legacy_before)
         removed_again = call("PATCH", f"{profile_base}/{profile_b}/units", pm_headers, 200,
                              json={"add": [], "remove": [unit_one_id]}).json()
         check("V2 no-op removal reports zero", removed_again == {"added": 0, "removed": 0})
@@ -280,6 +387,48 @@ def main():
         call("PUT", settings_path, pm_headers, 409, json=delete_assigned)
         call("PATCH", f"{profile_base}/{profile_b}/units", pm_headers, 422,
              json={"add": [cross_unit_id], "remove": []})
+
+        unchanged_save_before = unit_document(db, unit_one_id)
+        call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
+             json={"spare_tiles": legacy_spare_tiles})
+        unchanged_save_after = unit_document(db, unit_one_id)
+        emit_documents("profile-aware unchanged inventory save",
+                       unchanged_save_before, unchanged_save_after)
+        check("V7 profile-aware unchanged save preserves whole unit",
+              unchanged_save_after == unchanged_save_before)
+
+        category_delete_payload = {
+            **owner_payload,
+            "categories": [
+                category for category in owner_saved["categories"]
+                if category["name"] != "חיפוי מטבח"
+            ],
+            "updated_at": owner_version,
+        }
+        category_saved = call(
+            "PUT", settings_path, owner_headers, 200, json=category_delete_payload
+        ).json()
+        check("V7 category deletion persisted",
+              all(item["name"] != "חיפוי מטבח" for item in category_saved["categories"]))
+        category_save_before = unit_document(db, unit_one_id)
+        call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
+             json={"spare_tiles": legacy_spare_tiles})
+        category_save_after = unit_document(db, unit_one_id)
+        emit_documents("save after category deletion",
+                       category_save_before, category_save_after)
+        check("V7 deleted configured category remains exact custom entry",
+              category_save_after == category_save_before
+              and category_save_after["spare_tiles"][-1]
+              == {"type": "חיפוי מטבח", "count": 0, "notes": "נבדק"})
+
+        legacy_branch_before = unit_document(db, cross_unit_id)
+        call("PATCH", f"/api/units/{cross_unit_id}/spare-tiles", pm_headers, 200,
+             json={"spare_tiles": legacy_spare_tiles})
+        legacy_branch_after = unit_document(db, cross_unit_id)
+        emit_documents("legacy no-profile unchanged save",
+                       legacy_branch_before, legacy_branch_after)
+        check("V7 no-profile legacy branch preserves whole unit",
+              legacy_branch_after == legacy_branch_before)
 
         final_add = call("PATCH", f"{profile_base}/{profile_a}/units", pm_headers, 200,
                          json={"add": [unit_one_id], "remove": []}).json()
@@ -300,6 +449,22 @@ def main():
               and dry_row["missing"] == 2)
         check("V3 viewer unit capability is false", after["spare_can_write"] is False)
 
+        overview_after = overview_spare_values(
+            call("GET", overview_path, pm_headers, 200).json(), unit_one_id
+        )
+        export_after = exported_spare_values(
+            call("POST", "/api/defects/export", pm_headers, 200, json=export_request).content
+        )
+        print("\n[V7 JSON] handover/export BEFORE")
+        print(json.dumps({"handover": overview_before, "export": export_before},
+                         ensure_ascii=False, sort_keys=True, indent=2))
+        print("[V7 JSON] handover/export AFTER")
+        print(json.dumps({"handover": overview_after, "export": export_after},
+                         ensure_ascii=False, sort_keys=True, indent=2))
+        check("V7 handover overview spare values unchanged",
+              overview_after == overview_before)
+        check("V7 export spare columns unchanged", export_after == export_before)
+
         audit_actions = {
             row["action"] for row in db.audit_events.find(
                 {"entity_type": "project", "entity_id": project_id},
@@ -313,7 +478,7 @@ def main():
         print(f"\nAll {len(RESULTS)} live HTTP checks passed.")
     finally:
         db.audit_events.delete_many({"entity_id": {"$in": project_ids}})
-        db.spare_tile_locks.delete_many({"_id": {"$in": project_ids}})
+        db.tasks.delete_many({"id": task_id})
         db.units.delete_many({"id": {"$in": unit_ids}})
         db.floors.delete_many({"id": {"$in": floor_ids}})
         db.buildings.delete_many({"id": {"$in": building_ids}})
