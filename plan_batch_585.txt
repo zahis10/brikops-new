@@ -1,0 +1,1294 @@
+BATCH #585 — SPARE TILES PROJECT PROFILES
+FULL STEP 0 FINDINGS + IMPLEMENTATION PLAN
+Date: 2026-09-03
+Branch: staging
+Required base: d0eeeae
+
+================================================================================
+MANDATORY STOP
+================================================================================
+
+This document contains STEP 0 findings and the proposed implementation plan only.
+No product code may be changed until Zahi explicitly writes:
+
+תתחיל
+
+================================================================================
+1. BASELINE CONFIRMATION
+================================================================================
+
+Verified current branch:
+
+staging
+
+Verified current HEAD:
+
+d0eeeae
+
+The required base exists and is the current HEAD.
+
+The working tree was clean at the start of STEP 0.
+
+Search performed:
+
+grep -rn "spare_settings\|spare_profile_id" backend/ frontend/src
+
+Result:
+
+0 hits.
+
+Neither projects.spare_settings nor units.spare_profile_id currently exists in
+the backend or frontend.
+
+================================================================================
+2. EXISTING SPARE-TILES WRITE ENDPOINT
+================================================================================
+
+File:
+
+backend/contractor_ops/projects_router.py
+
+Current block, lines 691-751:
+
+@router.patch("/units/{unit_id}/spare-tiles")
+async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(get_current_user)):
+    db = get_db()
+    unit_doc = await db.units.find_one({'id': unit_id, 'archived': {'$ne': True}}, {'_id': 0})
+    if not unit_doc:
+        raise HTTPException(status_code=404, detail='Unit not found')
+    role = await _get_project_role(user, unit_doc['project_id'])
+    if role not in ('project_manager', 'owner', 'management_team'):
+        raise HTTPException(status_code=403, detail='אין הרשאה לעדכן ריצוף ספייר')
+
+    if 'spare_tiles' not in body:
+        raise HTTPException(status_code=400, detail='spare_tiles field is required')
+
+    raw = body['spare_tiles']
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=422, detail='spare_tiles must be an array')
+    if len(raw) > 20:
+        raise HTTPException(status_code=422, detail='מקסימום 20 סוגי ריצוף')
+
+    validated = []
+    seen_types = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise HTTPException(status_code=422, detail='Each spare tile entry must be an object')
+        tile_type = entry.get('type', '')
+        if not isinstance(tile_type, str) or not tile_type.strip():
+            raise HTTPException(status_code=422, detail='type is required for each tile entry')
+        tile_type = tile_type.strip()
+        if len(tile_type) > 50:
+            raise HTTPException(status_code=422, detail='שם סוג ריצוף ארוך מדי (מקסימום 50 תווים)')
+        if tile_type.lower() in seen_types:
+            raise HTTPException(status_code=422, detail=f'סוג ריצוף כפול: {tile_type}')
+        seen_types.add(tile_type.lower())
+
+        count = entry.get('count', 0)
+        try:
+            count = int(count)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail='count must be an integer')
+        if count < 0:
+            raise HTTPException(status_code=422, detail='count must be >= 0')
+
+        notes = entry.get('notes', '') or ''
+        if not isinstance(notes, str):
+            notes = str(notes)
+        notes = notes.strip()
+        if len(notes) > 500:
+            raise HTTPException(status_code=422, detail='הערה ארוכה מדי (מקסימום 500 תווים)')
+
+        validated.append({'type': tile_type, 'count': count, 'notes': notes})
+
+    total_count = sum(e['count'] for e in validated)
+    all_notes = ', '.join(f"{e['type']}: {e['notes']}" for e in validated if e['notes'])
+    await db.units.update_one({'id': unit_id}, {'$set': {
+        'spare_tiles': validated,
+        'spare_tiles_count': total_count if validated else None,
+        'spare_tiles_notes': all_notes[:500] if all_notes else None,
+    }})
+    await _audit('unit', unit_id, 'update_spare_tiles', user['id'], {'spare_tiles': validated})
+    updated = await db.units.find_one({'id': unit_id}, {'_id': 0})
+    return Unit(**updated)
+
+Confirmed behavior:
+
+- The endpoint is PATCH /api/units/{unit_id}/spare-tiles.
+- It requires an authenticated user.
+- It loads a non-archived unit.
+- It permits project_manager, owner, and management_team.
+- It accepts up to 20 entries.
+- Tile type is required, trimmed, limited to 50 characters, and unique
+  case-insensitively.
+- Count is normalized to an integer and must be non-negative.
+- Notes are normalized to text, trimmed, and limited to 500 characters.
+- It writes the existing spare_tiles list and maintains the legacy summary
+  fields spare_tiles_count and spare_tiles_notes.
+- It writes an audit event.
+- It returns the updated Unit.
+
+Implementation constraint:
+
+This endpoint, its request/response shape, validation, persistence behavior, and
+audit behavior must remain byte-identical.
+
+================================================================================
+3. EXISTING GET /UNITS/{UNIT_ID} RESPONSE
+================================================================================
+
+File:
+
+backend/contractor_ops/projects_router.py
+
+Current endpoint starts at line 1192. Current return block, lines 1218-1232:
+
+return {
+    'unit': {
+        **unit,
+        'effective_label': effective_label,
+    },
+    'floor': {'id': floor['id'], 'name': floor.get('name', '')} if floor else None,
+    'building': {'id': building['id'], 'name': building.get('name', '')} if building else None,
+    'project': {'id': project['id'], 'name': project.get('name', ''), 'code': project.get('code', '')} if project else None,
+    'kpi': {
+        'total': len(tasks),
+        'open': by_status.get('open', 0) + by_status.get('assigned', 0) + by_status.get('reopened', 0),
+        'in_progress': by_status.get('in_progress', 0) + by_status.get('waiting_verify', 0) + by_status.get('pending_contractor_proof', 0) + by_status.get('pending_manager_approval', 0),
+        'closed': by_status.get('closed', 0) + by_status.get('approved', 0),
+    },
+}
+
+Confirmed behavior:
+
+- The endpoint loads the unit, floor, building, and project documents.
+- Project read access is checked through _check_project_read_access.
+- Existing response keys are unit, floor, building, project, and kpi.
+- The implementation for this batch must only add the requested spare fields.
+- No existing key or value may be removed or renamed.
+
+================================================================================
+4. CURRENT FRONTEND SPARE CARD
+================================================================================
+
+File:
+
+frontend/src/pages/ApartmentDashboardPage.js
+
+Exact areas:
+
+- Existing row-model preparation: lines 216-238.
+- Existing status summary calculation: lines 240-248.
+- Existing spare-card DOM: lines 627-774.
+- Existing summary badge: lines 635-645.
+- Existing edit rows: lines 664-746.
+- Existing display rows: lines 749-759.
+- Existing edit button and permission gate: lines 760-768.
+
+Current base types and row model, lines 216-238:
+
+const SPARE_TILES_BASE_TYPES = useMemo(() => [
+  'ריצוף יבש', 'ריצוף מרפסות', 'חיפוי אמבטיות', 'ריצוף אמבטיות', 'חיפוי מטבח',
+], []);
+
+const startSpareTilesEdit = useCallback(() => {
+  const u = unitData?.unit;
+  const saved = Array.isArray(u?.spare_tiles) ? u.spare_tiles : [];
+  const savedMap = {};
+  saved.forEach(e => { savedMap[e.type] = e; });
+  const merged = SPARE_TILES_BASE_TYPES.map(bt => ({
+    type: bt,
+    count: savedMap[bt] ? String(savedMap[bt].count) : '0',
+    notes: savedMap[bt]?.notes || '',
+    isBase: true,
+  }));
+  saved.forEach(e => {
+    if (!SPARE_TILES_BASE_TYPES.includes(e.type)) {
+      merged.push({ type: e.type, count: String(e.count), notes: e.notes || '', isBase: false });
+    }
+  });
+  setSpareTilesEntries(merged);
+  setSpareTilesEditing(true);
+}, [unitData, SPARE_TILES_BASE_TYPES]);
+
+Current card block, lines 627-774:
+
+<div className="max-w-lg mx-auto px-4 mt-3">
+  <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+    <button
+      onClick={() => setSpareTilesOpen(!spareTilesOpen)}
+      className="w-full flex items-center justify-between p-3 text-right"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-semibold text-slate-700">ריצוף ספייר</span>
+        {spareTilesStatus === 'not_updated' && (
+          <span className="text-[10px] bg-blue-400 text-white px-2 py-0.5 rounded-full font-bold">לא עודכן</span>
+        )}
+        {spareTilesStatus === 'none' && (
+          <span className="text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">אין ספייר</span>
+        )}
+        {typeof spareTilesStatus === 'object' && spareTilesStatus.status === 'has_tiles' && (
+          <span className="text-[10px] bg-green-500 text-white px-2 py-0.5 rounded-full font-bold">
+            {spareTilesStatus.totalCount} אריחים ב-{spareTilesStatus.typesWithCount} סוגים
+          </span>
+        )}
+      </div>
+      {spareTilesOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+    </button>
+    {spareTilesOpen && (
+      <div className="px-4 pb-4">
+        {spareTilesStatus === 'none' && !spareTilesEditing && (
+          <div className="flex items-center gap-2 p-2 mb-3 rounded-lg bg-amber-50 border border-amber-200">
+            <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <span className="text-xs text-amber-700 font-medium">אין ריצוף ספייר</span>
+          </div>
+        )}
+        {spareTilesStatus === 'not_updated' && !spareTilesEditing && (
+          <div className="flex items-center gap-2 p-2 mb-3 rounded-lg bg-blue-50 border border-blue-200">
+            <Info className="w-4 h-4 text-blue-500 flex-shrink-0" />
+            <span className="text-xs text-blue-600 font-medium">לא עודכן מצב ריצוף ספייר</span>
+          </div>
+        )}
+
+        {spareTilesEditing ? (
+          <div className="space-y-3">
+            {spareTilesEntries.map((entry, idx) => (
+              <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-700">{entry.type}</span>
+                  {!entry.isBase && (
+                    <button
+                      type="button"
+                      onClick={() => setSpareTilesEntries(prev => prev.filter((_, i) => i !== idx))}
+                      className="p-1 text-red-400 hover:text-red-600 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <div className="w-20">
+                    <label className="block text-[10px] text-slate-500 mb-0.5">כמות</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={entry.count}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: val } : en));
+                      }}
+                      className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-[10px] text-slate-500 mb-0.5">הערות</label>
+                    <input
+                      type="text"
+                      value={entry.notes}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, notes: val } : en));
+                      }}
+                      maxLength={500}
+                      placeholder="הערה..."
+                      className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+            {spareTilesEntries.length < 20 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const name = prompt('שם סוג ריצוף חדש:');
+                  if (!name || !name.trim()) return;
+                  const trimmed = name.trim().slice(0, 50);
+                  if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) {
+                    toast.error('סוג ריצוף כבר קיים');
+                    return;
+                  }
+                  setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', isBase: false }]);
+                }}
+                className="flex items-center gap-1.5 text-xs text-amber-600 font-medium hover:text-amber-700 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                הוסף סוג ריצוף
+              </button>
+            )}
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={saveSpareTiles}
+                disabled={spareTilesSaving}
+                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 disabled:opacity-50 transition-colors"
+              >
+                {spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                שמור
+              </button>
+              <button
+                onClick={() => setSpareTilesEditing(false)}
+                className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                ביטול
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {Array.isArray(unit?.spare_tiles) && unit.spare_tiles.length > 0 && (
+              <div className="space-y-1.5">
+                {unit.spare_tiles.filter(e => e.count > 0 || e.notes).map((entry, idx) => (
+                  <div key={idx} className="flex items-center gap-2 text-sm text-slate-700">
+                    <span className="font-medium min-w-[100px]">{entry.type}:</span>
+                    <span>{entry.count}</span>
+                    {entry.notes && <span className="text-slate-500 text-xs truncate">({entry.notes})</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {canCreateDefect && (
+              <button
+                onClick={startSpareTilesEdit}
+                className="flex items-center gap-1.5 text-xs text-amber-600 font-medium hover:text-amber-700 transition-colors mt-1"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                עריכה
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+</div>
+
+Implementation constraint:
+
+- For a project with no profiles, the existing card DOM must remain unchanged.
+- Only the row model and the card block identified above may be changed.
+- The existing edit action, notes field, custom types, and spare_tiles payload
+  must continue to work.
+
+================================================================================
+5. STRUCTURE ENDPOINTS AND SORTING
+================================================================================
+
+Floors-per-building endpoint:
+
+GET /api/buildings/{building_id}/floors
+
+File:
+
+backend/contractor_ops/projects_router.py:537-541
+
+It filters archived floors and sorts by:
+
+sort_index ascending
+
+Units-per-floor endpoint:
+
+GET /api/floors/{floor_id}/units
+
+File:
+
+backend/contractor_ops/projects_router.py:638-642
+
+It filters archived units and sorts by:
+
+sort_index ascending
+
+The current structure page, frontend/src/pages/InnerBuildingPage.js, loads:
+
+GET /api/projects/{project_id}/hierarchy
+
+The hierarchy endpoint sorts:
+
+- Buildings by sort_index and then natural name order.
+- Floors by sort_index.
+- Units by sort_index.
+
+The relevant hierarchy fields are:
+
+Floors:
+- id
+- name
+- floor_number
+- sort_index
+- display_label
+- kind
+
+Units:
+- id
+- unit_no
+- unit_type
+- status
+- sort_index
+- display_label
+- effective_label
+
+Display fallbacks:
+
+- Floor display: display_label or name.
+- Unit display: display_label or unit_no.
+
+Plan for E2.3:
+
+Reuse these fields and ordering rules exactly. Do not introduce automatic,
+numeric, alphabetical, or profile-based sorting.
+
+================================================================================
+6. ROUTER REGISTRATION AND PROJECT TOOL ENTRY POINT
+================================================================================
+
+Current registration pattern in backend/server.py:
+
+from contractor_ops.projects_router import router as projects_router
+app.include_router(projects_router)
+
+Comparable feature routers use an APIRouter and are imported into server.py,
+then registered once with app.include_router.
+
+The new spare router will follow the same pattern:
+
+from contractor_ops.spare_tiles_router import router as spare_tiles_router
+app.include_router(spare_tiles_router)
+
+The intended prefix is:
+
+APIRouter(prefix="/api")
+
+Current project-dashboard tool pattern:
+
+- ProjectDashboardPage uses DashboardFoldSection for project-level feature
+  entry points.
+- The current "בקרת ביצוע" section includes a button navigating to:
+
+  /projects/${projectId}/qc
+
+- App.js lazy-loads the page and registers the route under ProtectedRoute.
+
+Plan for E3.4:
+
+- Add a visible "ריצוף ספייר" entry point using the same project-tool visual
+  and navigation pattern.
+- Navigate to /projects/${projectId}/spare-tiles.
+- Make the entry visible to all project members.
+- Keep write controls disabled for roles without write permission rather than
+  hiding the page.
+
+================================================================================
+7. DO-NOT-TOUCH DEFECT-CREATION FLOW
+================================================================================
+
+ApartmentDashboardPage.js passes prefillData to NewDefectModal at lines
+918-936:
+
+<NewDefectModal
+  isOpen={showDefectModal}
+  onClose={() => setShowDefectModal(false)}
+  onSuccess={() => {
+    loadUnit();
+    loadTasks();
+  }}
+  prefillData={{
+    project_id: project?.id || unit?.project_id || projectId,
+    building_id: building?.id || unit?.building_id || '',
+    floor_id: floor?.id || unit?.floor_id || '',
+    unit_id: unitId,
+    project_name: project?.name || '',
+    building_name: building?.name || '',
+    floor_name: floor?.name || '',
+    unit_label: effectiveLabel,
+  }}
+/>
+
+Detected mismatch in the written specification:
+
+- prefillData is present directly in ApartmentDashboardPage.js.
+- categoryMatchedCompanies is not declared in ApartmentDashboardPage.js.
+- categoryMatchedCompanies is declared and used in the imported
+  frontend/src/components/NewDefectModal.js at lines 408-426.
+
+Interpretation:
+
+The frozen defect-creation flow exists and is connected to
+ApartmentDashboardPage, but one identifier named by the specification lives in
+the child modal rather than directly in the page.
+
+Required approval:
+
+Zahi must confirm that this location mismatch is accepted before implementation.
+Neither ApartmentDashboardPage's prefillData block nor NewDefectModal's
+categoryMatchedCompanies flow will be modified.
+
+================================================================================
+8. PROPOSED DATA MODEL
+================================================================================
+
+No migration or backfill.
+
+Optional project field:
+
+projects.spare_settings = {
+  'categories': [
+    {'name': 'ריצוף יבש', 'measure': 'tiles'},
+  ],
+  'profiles': [
+    {
+      'id': '<uuid>',
+      'name': '3 חדרים',
+      'targets': {
+        'ריצוף יבש': 8,
+      },
+    },
+  ],
+  'margin_pct': 10,
+  'updated_at': '<UTC ISO timestamp>',
+  'updated_by': '<user id>',
+}
+
+Optional unit field:
+
+units.spare_profile_id = None
+
+Absence behavior:
+
+- Missing spare_settings returns defaults without writing them.
+- Missing or null spare_profile_id means "אחר".
+- A dangling profile id is treated as unassigned/no profile.
+- Existing spare_tiles documents remain unchanged.
+
+Default categories returned when settings are absent:
+
+1. ריצוף יבש — tiles
+2. ריצוף מרפסות — cartons
+3. חיפוי אמבטיות — cartons
+4. ריצוף אמבטיות — cartons
+5. חיפוי מטבח — cartons
+
+Default margin:
+
+10%
+
+Default profiles:
+
+[]
+
+================================================================================
+9. IMPLEMENTATION PLAN — BACKEND PURE HELPERS
+================================================================================
+
+New file:
+
+backend/contractor_ops/spare_tiles.py
+
+Contents:
+
+1. DEFAULT_SPARE_CATEGORIES
+   - Five approved default category names.
+   - Structured measure values.
+
+2. MEASURES
+   - tiles
+   - cartons
+   - sqm
+
+3. default_spare_settings helper
+   - Return a new default object on every call.
+   - Never mutate or persist defaults implicitly.
+
+4. validate_spare_settings(body)
+   - Require an object.
+   - Validate 1-20 categories.
+   - Trim category names.
+   - Enforce category name length <= 50.
+   - Enforce category uniqueness case-insensitively.
+   - Enforce measure membership in MEASURES.
+   - Validate 0-10 profiles.
+   - Preserve an existing valid string UUID id.
+   - Generate a string UUID only for a new profile without an id.
+   - Trim profile names.
+   - Enforce profile name length <= 40.
+   - Enforce profile name uniqueness.
+   - Validate every target against an existing category name.
+   - Normalize targets to integers from 0 through 10000.
+   - Drop targets for deleted categories.
+   - Validate margin_pct as an integer from 0 through 100.
+   - Raise HTTPException(422) with Hebrew messages for invalid input.
+   - Return a normalized settings object.
+
+5. compute_spare_status(unit_doc, spare_settings)
+   - Find the assigned profile by exact string id.
+   - Treat missing and dangling ids as no profile.
+   - Index existing spare entries by exact type name.
+   - Emit configured categories in settings order.
+   - Append custom unit-only types after configured categories.
+   - Calculate entered, actual, target, missing, and status.
+   - Use max(1, ceil(target * margin_pct / 100)) for the borderline band.
+   - Apply the required overall precedence:
+     short
+     not_entered
+     borderline
+     ok
+     no_target
+   - Return no_profile when there is no valid profile.
+   - Return only JSON-serializable values.
+
+The helper will perform no database I/O.
+
+================================================================================
+10. IMPLEMENTATION PLAN — BACKEND ROUTER
+================================================================================
+
+New file:
+
+backend/contractor_ops/spare_tiles_router.py
+
+Router:
+
+APIRouter(prefix="/api")
+
+Shared rules:
+
+- Every endpoint requires get_current_user.
+- Read endpoints call _check_project_read_access.
+- Write endpoints call _get_project_role.
+- Write roles are project_manager, owner, and management_team.
+- Unauthorized writes return 403 with a Hebrew error.
+- IDs remain string UUIDs.
+- Datetimes use datetime.now(timezone.utc).isoformat().
+- No ObjectId.
+
+Endpoint 1:
+
+GET /api/projects/{project_id}/spare-settings
+
+Plan:
+
+- Verify project existence and read access.
+- Load settings or construct defaults without persisting.
+- Count active/non-archived units assigned to each existing profile.
+- Count active/non-archived units with null, missing, or dangling profile ids.
+- Return normalized settings.
+- Add assigned_units to each returned profile.
+- Add unassigned_units at the top level.
+
+Endpoint 2:
+
+PUT /api/projects/{project_id}/spare-settings
+
+Plan:
+
+- Verify project existence and write role.
+- Validate and normalize the request through validate_spare_settings.
+- Compare existing profile ids with retained profile ids.
+- For every deleted profile, count active units assigned to it.
+- If any deleted profile has assigned units, return 409:
+
+  יש להסיר תחילה N דירות מהפרופיל
+
+- Allow category deletion.
+- Drop deleted-category targets during normalization.
+- Add updated_at and updated_by.
+- Persist only projects.spare_settings.
+- Write one audit_events record:
+  entity_type = project
+  action = spare_settings_updated
+  payload contains counts only and no PII.
+- Return the saved normalized settings with assignment counts.
+
+Endpoint 3:
+
+GET /api/projects/{project_id}/spare-assignments?building_id=...
+
+Plan:
+
+- Verify project existence and read access.
+- Return all active buildings as selector options.
+- If building_id is supplied, verify that it belongs to the project and is
+  non-archived.
+- Load active floors and units for the selected building.
+- Sort floors and units by sort_index, matching the structure hierarchy.
+- Return:
+
+  {
+    'buildings': [{'id', 'name'}],
+    'floors': [{
+      'id',
+      'name',
+      'sort',
+      'units': [{
+        'id',
+        'unit_no',
+        'display_label',
+        'spare_profile_id',
+      }],
+    }],
+  }
+
+- Do not infer or assign a profile.
+
+Endpoint 4:
+
+PATCH /api/projects/{project_id}/spare-profiles/{profile_id}/units
+
+Body:
+
+{
+  'add': ['unit-id'],
+  'remove': ['unit-id'],
+}
+
+Plan:
+
+- Verify project existence and write role.
+- Require a valid current profile id.
+- Require add and remove to be arrays.
+- Enforce at most 2000 total ids.
+- Normalize ids and reject duplicates/overlap where needed.
+- Verify every supplied unit belongs to the project and is non-archived.
+- If not, return 422 with the offending ids.
+- Add:
+  set spare_profile_id to the selected profile.
+  Moving from another profile is allowed.
+- Remove:
+  set spare_profile_id to None only if its current value equals profile_id.
+- Return actual added and removed counts.
+- Write one audit_events record:
+  entity_type = project
+  action = spare_profile_units_updated
+  payload contains profile id and counts, with no PII.
+
+Single-unit "אחר" behavior:
+
+Because the specified endpoint identifies the source profile in its path,
+changing a unit to "אחר" will call remove against its current assigned profile.
+The frontend must not send a removal against an unrelated profile.
+
+================================================================================
+11. IMPLEMENTATION PLAN — BACKEND TOUCH POINTS
+================================================================================
+
+File:
+
+backend/contractor_ops/schemas.py
+
+Change:
+
+Add exactly one optional Unit field:
+
+spare_profile_id: Optional[str] = None
+
+File:
+
+backend/contractor_ops/projects_router.py
+
+Change:
+
+Modify only GET /units/{unit_id}.
+
+Plan:
+
+- Import the pure default/status helpers.
+- Read project.spare_settings.
+- Use defaults when absent.
+- Calculate spare_status from the unit and effective settings.
+- Add to the response:
+
+  spare_settings
+  spare_profiles_exist
+  spare_status
+
+- spare_profiles_exist is true only when the effective project settings contain
+  at least one profile.
+- Preserve every existing response key.
+
+Forbidden in this file:
+
+- No changes to patch_unit_spare_tiles.
+- No changes to PATCH /units/{unit_id}.
+- No changes to structure editing.
+- No migration or backfill.
+
+File:
+
+backend/server.py
+
+Change:
+
+- Import spare_tiles_router.
+- Register it once with app.include_router.
+- No other server changes.
+
+================================================================================
+12. IMPLEMENTATION PLAN — FRONTEND API AND ROUTE
+================================================================================
+
+File:
+
+frontend/src/services/api.js
+
+Add four methods:
+
+1. getSpareSettings(projectId)
+   GET /api/projects/{projectId}/spare-settings
+
+2. saveSpareSettings(projectId, settings)
+   PUT /api/projects/{projectId}/spare-settings
+
+3. getSpareAssignments(projectId, buildingId)
+   GET /api/projects/{projectId}/spare-assignments?building_id=...
+
+4. patchSpareProfileUnits(projectId, profileId, body)
+   PATCH /api/projects/{projectId}/spare-profiles/{profileId}/units
+
+Use the existing axios instance and authentication-header pattern.
+No new dependency.
+
+File:
+
+frontend/src/App.js
+
+Plan:
+
+- Lazy-load SpareTilesPage.
+- Register:
+
+  /projects/:projectId/spare-tiles
+
+- Wrap with ProtectedRoute.
+- Make no unrelated route changes.
+
+================================================================================
+13. IMPLEMENTATION PLAN — NEW SPARE-TILES PAGE
+================================================================================
+
+New file:
+
+frontend/src/pages/SpareTilesPage.js
+
+General:
+
+- Mobile-first.
+- RTL.
+- Amber/slate visual language.
+- Existing Lucide icon package only.
+- No new dependencies.
+- Read access for all project members.
+- Read-only controls for roles outside project_manager, owner, and
+  management_team.
+- Clear loading, empty, save, and error states.
+- No horizontal page scrolling.
+
+TAB 1 — הגדרות
+
+Categories:
+
+- Display ordered category rows.
+- Show category name.
+- Show measure select:
+  אריחים
+  קרטונים
+  מ"ר
+- Add category.
+- Remove category.
+- Existing category names are not editable in v1.
+- Newly added unsaved category names can be entered before first save.
+- Enforce 1-20 categories in the UI in addition to backend validation.
+
+Profiles:
+
+- Display 0-10 profiles.
+- Add profile.
+- Rename profile.
+- Remove profile.
+- Display a targets grid:
+  profile rows or cards × category targets.
+- Use mobile cards/stacks where a wide table would overflow.
+- Use integer inputs.
+- Treat blank/0 as no target.
+- Display assigned unit count on each profile.
+- Display the "אחר" unassigned count.
+
+Margin:
+
+- Integer margin_pct input from 0 through 100.
+- Explain that it controls the orange borderline band above the target.
+
+Legend:
+
+- Red: חסר — להזמין
+- Orange: גבולי
+- Green: מספיק
+- Grey: לא הוזן / ללא יעד
+
+Save:
+
+- PUT the full normalized settings object.
+- Show backend Hebrew errors.
+- Reload returned counts after save.
+- Disable all mutations for read-only roles.
+
+TAB 2 — שיוך
+
+Selectors:
+
+- Profile selector.
+- Building selector.
+- Do not select or assign units automatically.
+
+Floor sections:
+
+- Load the selected building only.
+- Render floors in sort_index order.
+- Render unit chips in sort_index order.
+- Each chip displays the unit label.
+- If assigned to another profile, show that current profile name as a small tag.
+- If unassigned or dangling, show "אחר".
+
+Explicit selection:
+
+- Tapping a chip toggles its pending selected state.
+- "בחר הכל בקומה" explicitly selects/deselects units in that floor.
+- No assignment based on unit number, floor position, pattern, type, or any
+  other inferred rule.
+
+Save:
+
+- Retain the loaded baseline.
+- Compute an explicit add/remove diff relative to the selected profile.
+- Units moved from another profile are included in add.
+- Units removed from the selected profile are included in remove.
+- PATCH the endpoint once.
+- Reload assignments and settings counts after success.
+- Show live selected/add/remove counters.
+
+================================================================================
+14. IMPLEMENTATION PLAN — PROJECT ENTRY POINT
+================================================================================
+
+File:
+
+frontend/src/pages/ProjectDashboardPage.js
+
+Plan:
+
+- Add one "ריצוף ספייר" project-tool entry using the established dashboard
+  section/card navigation pattern.
+- Navigate to /projects/${projectId}/spare-tiles.
+- Make it visible to every project member.
+- Do not gate navigation by write role.
+- The destination page itself controls read-only/write behavior.
+- Do not alter existing QC, execution, handover, safety, team, or KPI sections.
+
+================================================================================
+15. IMPLEMENTATION PLAN — UNIT SPARE CARD
+================================================================================
+
+File:
+
+frontend/src/pages/ApartmentDashboardPage.js
+
+Permitted scope:
+
+- Existing spare row-model preparation around lines 216-238.
+- Existing spare status calculation only as required.
+- Existing spare card block around lines 627-774.
+
+Safety branch:
+
+If response.spare_profiles_exist is false:
+
+- Execute the current rendering branch.
+- Preserve the current card DOM.
+- Do not show profile selector.
+- Do not show target/status rows.
+- Keep current badges, rows, edit action, and modal behavior.
+
+Profile-aware branch:
+
+If response.spare_profiles_exist is true:
+
+Header:
+
+- Show overall status chip.
+- Use required labels and colors.
+- Show profile selector for write roles.
+- Read-only roles see the assigned profile label without a mutation control.
+- Options are current profiles plus "אחר".
+
+Profile changes:
+
+- Selecting a profile calls PATCH with add: [unitId].
+- Moving directly from another profile is allowed.
+- Selecting "אחר" calls remove against the unit's current profile.
+- Reload the unit response after success.
+
+Rows:
+
+- Render response.spare_status.categories.
+- Show:
+  colored status dot
+  category name
+  compact progress bar where a target exists
+  actual / target with translated measure
+  status chip
+- short: red, "חסר N"
+- borderline: orange, "גבולי"
+- ok: green, "מספיק"
+- not_entered: grey, "לא הוזן"
+- no_target: grey, "ללא יעד"
+- Preserve custom unit-only types as no_target rows.
+
+Existing edit mode:
+
+- Keep the existing update action and spare_tiles endpoint.
+- Build base rows from spare_settings.categories when profiles/settings are
+  active.
+- Fall back to SPARE_TILES_BASE_TYPES when settings are absent.
+- Show the translated measure next to the count input.
+- Keep notes unchanged.
+- Keep custom type behavior.
+
+Explicit frozen areas:
+
+- NewDefectModal invocation.
+- prefillData.
+- categoryMatchedCompanies in NewDefectModal.
+- Defect creation.
+- QC links.
+- Header.
+- Summary cards.
+- Task filters and task list.
+
+================================================================================
+16. FILE SCOPE
+================================================================================
+
+Allowed source files:
+
+NEW:
+- backend/contractor_ops/spare_tiles.py
+- backend/contractor_ops/spare_tiles_router.py
+- frontend/src/pages/SpareTilesPage.js
+
+MODIFIED:
+- backend/server.py
+- backend/contractor_ops/schemas.py
+- backend/contractor_ops/projects_router.py
+- frontend/src/App.js
+- frontend/src/services/api.js
+- frontend/src/pages/ApartmentDashboardPage.js
+- frontend/src/pages/ProjectDashboardPage.js
+
+TEST FILES:
+
+- Add focused backend unit tests for spare_tiles.py.
+- Add or use focused endpoint probes/tests without broad unrelated edits.
+
+DELIVERABLE FILES:
+
+- review.txt
+- .local/.commit_message
+
+Explicitly forbidden:
+
+- backend/contractor_ops/export_router.py
+- backend/contractor_ops/execution_matrix_router.py
+- frontend/src/pages/HandoverOverviewPage.js
+- frontend/src/components/NewDefectModal.js
+- Existing PATCH /units/{unit_id}/spare-tiles block
+- Existing PATCH /units/{unit_id} guard or behavior
+- Structure editing behavior
+- Automatic profile assignment
+- New dependencies
+- ObjectId
+- Migration or backfill
+
+================================================================================
+17. VERIFICATION PLAN
+================================================================================
+
+V1 — PURE HELPER TESTS
+
+Run focused direct tests covering:
+
+- short: actual 8, target 10, missing 2.
+- borderline: actual 3, target 3, margin 10; band remains at least 1.
+- ok: actual 7, target 5.
+- not_entered for absent entry.
+- not_entered for count 0 with no notes.
+- Entered behavior for count 0 with notes.
+- no_target for missing or zero target.
+- no_profile for unset profile id.
+- no_profile for dangling profile id.
+- Custom unit type appended as no_target.
+- Overall precedence.
+- Margin 0 still produces a band of 1.
+- Duplicate category names rejected case-insensitively.
+- More than 10 profiles rejected.
+- Invalid measure rejected.
+- Negative target rejected.
+- Oversized values and names rejected.
+
+V2 — ENDPOINT TESTS ON DEV SERVER
+
+Verify:
+
+- Viewer can GET settings and assignments.
+- Viewer receives 403 for PUT and PATCH.
+- PM can save valid settings.
+- Defaults are returned but not persisted before first save.
+- Deleting an assigned profile returns 409.
+- Assignment add works.
+- Assignment move works.
+- Assignment remove works.
+- Returned counts are accurate.
+- A unit from another project in add returns 422 with its id.
+- Archived units cannot be assigned.
+- Audit records contain counts and no PII.
+
+V3 — GET UNIT COMPATIBILITY
+
+Project without spare_settings:
+
+- spare_profiles_exist is false.
+- spare_status.overall is no_profile.
+- Existing top-level JSON keys remain present and unchanged.
+- Existing nested unit, floor, building, project, and kpi values remain
+  compatible.
+
+Project with profiles:
+
+- Effective defaults/settings are returned.
+- Assigned profile and category statuses are correct.
+- Dangling profile id is handled safely.
+
+V4 — FRONTEND BUILD
+
+Run exactly:
+
+CI=true
+
+Then run the existing frontend build command.
+
+Required result:
+
+EXIT 0
+
+Warnings count as failures under the standing CI=true rule.
+
+V5 — MOBILE PLAYWRIGHT AT 390PX
+
+One focused verification pass covering:
+
+A. Settings tab:
+- Three profiles.
+- Categories and structured measures.
+- Responsive targets UI.
+- Margin input and legend.
+- Assigned and "אחר" counts.
+
+B. Assignment tab:
+- One selected building.
+- At least one floor.
+- One unit currently assigned to another profile.
+- One "אחר" unit.
+- "בחר הכל בקומה".
+- Explicit selection counters.
+
+C. Profile-aware unit card:
+- Red row.
+- Orange row.
+- Green row.
+- Grey row.
+- Overall chip.
+- Profile selector.
+- No horizontal scroll.
+
+D. Project without profiles:
+- Compare the spare-card DOM to base.
+- Confirm it is identical.
+- Confirm no new profile/status UI is present.
+
+V6 — DIFF SCOPE
+
+Confirm source diff contains only:
+
+- spare_tiles.py
+- spare_tiles_router.py
+- server.py registration only
+- schemas.py one field
+- projects_router.py additive GET-unit block only
+- SpareTilesPage.js
+- App.js route only
+- api.js four methods
+- ApartmentDashboardPage.js spare block/model only
+- ProjectDashboardPage.js entry point only
+
+Confirm no diff in:
+
+- patch_unit_spare_tiles
+- export_router.py
+- execution_matrix_router.py
+- HandoverOverviewPage.js
+- NewDefectModal.js
+- structure editing
+- PATCH /units/{unit_id}
+
+Additional checks:
+
+- Python syntax compilation for changed backend modules.
+- git diff --check.
+- No new dependency or lockfile changes.
+- No automatic assignment logic.
+- No ObjectId usage.
+
+================================================================================
+18. DELIVERY PLAN
+================================================================================
+
+After implementation and verification:
+
+1. Write review.txt containing:
+   - STEP 0 findings and quotes.
+   - The complete final diff.
+   - V1-V6 commands and evidence.
+   - Any base-versus-branch comparison needed to distinguish existing failures.
+   - Exact scope confirmation.
+
+2. Ensure review.txt ends exactly with:
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+3. Prepare .local/.commit_message with:
+
+feat(spare-tiles): project profiles with targets, explicit unit
+assignment, and color status on the unit card
+
+Adds project-level spare-tile settings (categories with a structured
+unit of measure, up to 10 profiles with per-category targets, a
+"borderline" margin), explicit assignment of units to a profile (pick a
+building, tick units — no automatic assignment; unassigned = "אחר"), and
+a unit-card status view: red short with the quantity to order, orange
+borderline, green ok, grey not entered / no target. Fully additive:
+projects without settings behave exactly as before; spare_tiles data and
+its endpoint are unchanged.
+
+4. Do not commit.
+5. Do not deploy.
+6. Wait for Zahi's explicit approval.
+
+================================================================================
+CURRENT STATUS
+================================================================================
+
+- STEP 0 completed.
+- Full implementation plan prepared.
+- One specification-location mismatch reported:
+  categoryMatchedCompanies is in NewDefectModal.js, not directly in
+  ApartmentDashboardPage.js.
+- No product code changed.
+- Implementation is blocked until Zahi writes:
+
+תתחיל

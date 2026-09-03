@@ -1061,3 +1061,17 @@ mtime_ms = 1788276586417
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/a4752527-251a-494f-9d74-a771b5abe93c/16dea409-6ade-456a-80d4-6f8e47250889"
 storage_version_token = "1788276595308957"
 content_type = "text/plain"
+
+[[outputs]]
+id = "B1Jhio2BLNTle-iaesqLm"
+uri = "file://plan_batch_585.txt"
+type = "text"
+title = "BATCH #585 — Full Implementation Plan"
+description = "Full STEP 0 findings and implementation plan. No product code was changed; implementation remains blocked until Zahi writes תתחיל."
+logical_id = "34cee2bd-54bc-425e-a436-cf8cde8a3b31"
+content_hash = "sha256:89c10b832647a71564200a9b5a10cf04b23d4f77024a9ee3f3c56753fcbe8ba2"
+size = 41245
+mtime_ms = 1788438694223
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/34cee2bd-54bc-425e-a436-cf8cde8a3b31/811211c4-07b5-400f-86a9-6169c760e567"
+storage_version_token = "1788438709515524"
+content_type = "text/plain"
