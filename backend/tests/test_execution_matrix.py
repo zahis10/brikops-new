@@ -62,6 +62,8 @@ def _mk_db(
     db.execution_matrix.insert_one = AsyncMock()
     db.execution_matrix.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
 
+    db.projects.find_one = AsyncMock(return_value={"id": "p1"})
+
     db.units.find = MagicMock(return_value=_AsyncCursor(units or []))
     db.units.find_one = AsyncMock(return_value=({"id": "u1", "project_id": "p1"} if units is None else (units[0] if units else None)))
 

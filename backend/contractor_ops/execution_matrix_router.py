@@ -364,16 +364,10 @@ async def get_matrix(
 
     cells_summary = [_summarize_cell(c) for c in cells_docs]
 
-    project_result = db.projects.find_one(
+    project = await db.projects.find_one(
         {"id": project_id},
         {"_id": 0, "spare_settings": 1},
     )
-    # Some direct unit tests use a loose MagicMock for collections that were
-    # previously untouched by this endpoint.
-    if hasattr(project_result, "__await__"):
-        project = await project_result
-    else:
-        project = project_result if isinstance(project_result, dict) else None
     spare_settings = (
         project.get("spare_settings")
         if project and project.get("spare_settings")

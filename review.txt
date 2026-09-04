@@ -1,5 +1,5 @@
 BATCH #586 (FINAL) — CARTONS AS PACKAGING + SPARE STATUS IN EXECUTION MATRIX
-Base: fe167f9 | Branch: staging | Scope: explicit 17-file list
+Base: fe167f9 | Branch: staging | Scope: explicit 18-file list after FIX-1
 
 STEP 0 — VERBATIM BASELINE EVIDENCE
 ===================================
@@ -471,11 +471,40 @@ PART A: categories now normalize to tiles/sqm only; cartons is staging-compatibl
 PART B: the matrix receives an additive read-only spare summary, conditional desktop/mobile pills, quick and drawer filters with saved views, unit deep links, and a conditional Excel column.
 Explicit entered semantics, unit PATCH behavior, legacy row ordering, RBAC, matrix writes, handover and general export remain unchanged.
 
+FIX-1 (BLOCKING)
+================
+Applied exactly as requested: get_matrix now directly awaits db.projects.find_one with the spare_settings projection; the test DB builder adds db.projects.find_one = AsyncMock(return_value={"id": "p1"}). No awaitability special-case remains.
+
 V1 — FOCUSED BACKEND TESTS
 ==========================
 Command: cd backend && pytest -q tests/test_spare_tiles.py tests/test_execution_matrix.py tests/test_execution_matrix_export.py
-Result: 49 passed, 8 existing Pydantic deprecation warnings.
-Python compile checks passed for all seven backend files.
+Result after FIX-1: 49 passed, 8 existing Pydantic deprecation warnings.
+
+FULL V1 OUTPUT AFTER FIX-1:
+.................................................                        [100%]
+=============================== warnings summary ===============================
+contractor_ops/schemas.py:209
+  /home/runner/workspace/backend/tests/../contractor_ops/schemas.py:209: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    @validator('trade', pre=True, always=True)
+
+contractor_ops/schemas.py:612
+  /home/runner/workspace/backend/tests/../contractor_ops/schemas.py:612: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    @validator('trade', pre=True, always=True)
+
+backend/tests/test_execution_matrix.py::test_update_stages_adds_custom
+backend/tests/test_execution_matrix.py::test_update_stages_removes_base
+backend/tests/test_execution_matrix.py::test_update_stages_preserves_existing_custom_ids
+backend/tests/test_execution_matrix.py::test_hide_then_unhide_template_stage_preserves_cells
+backend/tests/test_execution_matrix.py::test_hide_then_unhide_template_stage_preserves_cells
+  /home/runner/workspace/backend/tests/../contractor_ops/execution_matrix_router.py:421: PydanticDeprecatedSince20: The `dict` method is deprecated; use `model_dump` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    updates_in = payload.dict(exclude_unset=True)
+
+backend/tests/test_execution_matrix.py::test_saved_view_create_list_delete_per_user
+  /home/runner/workspace/backend/tests/../contractor_ops/execution_matrix_router.py:637: PydanticDeprecatedSince20: The `dict` method is deprecated; use `model_dump` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    "filters": payload.filters.dict(exclude_none=True),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+49 passed, 8 warnings in 4.66s
 
 V2 — LIVE HTTP + MONGO + XLSX PROBE
 ===================================
@@ -567,38 +596,38 @@ PASS LIST:
 [PASS] V2 settings audit action recorded
 [PASS] V2 assignment audit action recorded
 
-FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
+FULL PROBE OUTPUT INCLUDING V2/V7 JSON AFTER FIX-1:
 [SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****0001,****9991
 [PASS] live server reachable without ASGITransport — status=200
-[PASS] GET /api/units/probe-spare-unit-1-f1995c42c2 -> 200 — status=200
+[PASS] GET /api/units/probe-spare-unit-1-487f6e9fe7 -> 200 — status=200
 [PASS] V3 absent settings has no profiles
 [PASS] V3 absent settings status is no_profile
 [PASS] V3 baseline existing top-level keys captured
 [PASS] V3 baseline existing unit keys captured
-[PASS] GET /api/execution-matrix/probe-spare-project-f1995c42c2 -> 200 — status=200
+[PASS] GET /api/execution-matrix/probe-spare-project-487f6e9fe7 -> 200 — status=200
 [PASS] V2 matrix without settings disables spare
-[PASS] POST /api/execution-matrix/probe-spare-project-f1995c42c2/export.xlsx -> 200 — status=200
+[PASS] POST /api/execution-matrix/probe-spare-project-487f6e9fe7/export.xlsx -> 200 — status=200
 [PASS] V2 matrix export without settings has no spare header
 [PASS] V7 seeded legacy spare_tiles exact array
 [PASS] V7 seeded legacy aggregate fields exact
-[PASS] GET /api/projects/probe-spare-project-f1995c42c2/handover/overview -> 200 — status=200
+[PASS] GET /api/projects/probe-spare-project-487f6e9fe7/handover/overview -> 200 — status=200
 [PASS] POST /api/defects/export -> 200 — status=200
-[PASS] GET /api/projects/probe-spare-project-f1995c42c2/spare-settings -> 200 — status=200
+[PASS] GET /api/projects/probe-spare-project-487f6e9fe7/spare-settings -> 200 — status=200
 [PASS] V2 viewer GET settings allowed and read-only
-[PASS] GET /api/projects/probe-spare-project-f1995c42c2/spare-assignments -> 200 — status=200
-[PASS] PUT /api/projects/probe-spare-project-f1995c42c2/spare-settings -> 403 — status=403
-[PASS] PATCH /api/projects/probe-spare-project-f1995c42c2/spare-profiles/32d8308f-d18f-423a-9f52-e349e37e1546/units -> 403 — status=403
-[PASS] PUT /api/projects/probe-spare-project-f1995c42c2/spare-settings -> 200 — status=200
+[PASS] GET /api/projects/probe-spare-project-487f6e9fe7/spare-assignments -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-487f6e9fe7/spare-settings -> 403 — status=403
+[PASS] PATCH /api/projects/probe-spare-project-487f6e9fe7/spare-profiles/767cafb7-c61f-4dcb-9108-96b79ba9e347/units -> 403 — status=403
+[PASS] PUT /api/projects/probe-spare-project-487f6e9fe7/spare-settings -> 200 — status=200
 [PASS] V2 PM saved two profiles
 
 [V7 JSON] settings save BEFORE
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
   "spare_profile_id": null,
   "spare_tiles": [
@@ -631,11 +660,11 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
 [V7 JSON] settings save AFTER
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
   "spare_profile_id": null,
   "spare_tiles": [
@@ -666,27 +695,27 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
   "unit_no": "101"
 }
 [PASS] V7 whole unit unchanged after settings/profile save
-[PASS] PUT /api/projects/probe-spare-project-f1995c42c2/spare-settings -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-487f6e9fe7/spare-settings -> 200 — status=200
 [PASS] V2 owner project-scoped write allowed
-[PASS] PUT /api/projects/probe-spare-project-f1995c42c2/spare-settings -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-487f6e9fe7/spare-settings -> 200 — status=200
 [PASS] V3 cartons measure coerced to tiles
-[PASS] PUT /api/projects/probe-spare-project-f1995c42c2/spare-settings -> 409 — status=409
-[PASS] GET /api/projects/probe-spare-project-f1995c42c2/spare-assignments?building_id=probe-spare-building-main-f1995c42c2 -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-487f6e9fe7/spare-settings -> 409 — status=409
+[PASS] GET /api/projects/probe-spare-project-487f6e9fe7/spare-assignments?building_id=probe-spare-building-main-487f6e9fe7 -> 200 — status=200
 [PASS] V2 buildings preserve structure ordering
 [PASS] V2 floors preserve sort_index ordering
 [PASS] V2 units preserve sort_index ordering
 [PASS] V2 assignment unit payload is exact
-[PASS] PATCH /api/projects/probe-spare-project-f1995c42c2/spare-profiles/32d8308f-d18f-423a-9f52-e349e37e1546/units -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-487f6e9fe7/spare-profiles/767cafb7-c61f-4dcb-9108-96b79ba9e347/units -> 200 — status=200
 [PASS] V2 assignment add exact count
 
 [V7 JSON] profile assignment BEFORE
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
   "spare_profile_id": null,
   "spare_tiles": [
@@ -719,13 +748,13 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
 [V7 JSON] profile assignment AFTER
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
-  "spare_profile_id": "32d8308f-d18f-423a-9f52-e349e37e1546",
+  "spare_profile_id": "767cafb7-c61f-4dcb-9108-96b79ba9e347",
   "spare_tiles": [
     {
       "count": 8,
@@ -754,21 +783,21 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
   "unit_no": "101"
 }
 [PASS] V7 assignment changes only spare_profile_id
-[PASS] PATCH /api/projects/probe-spare-project-f1995c42c2/spare-profiles/36c49b77-33c2-47f7-a751-2431ba41feb1/units -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-487f6e9fe7/spare-profiles/ed7912fd-43fa-451c-96d4-c22f9552df9e/units -> 200 — status=200
 [PASS] V2 assignment move exact count
-[PASS] PATCH /api/projects/probe-spare-project-f1995c42c2/spare-profiles/36c49b77-33c2-47f7-a751-2431ba41feb1/units -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-487f6e9fe7/spare-profiles/ed7912fd-43fa-451c-96d4-c22f9552df9e/units -> 200 — status=200
 [PASS] V2 assignment remove exact count
 
 [V7 JSON] profile removal BEFORE
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
-  "spare_profile_id": "32d8308f-d18f-423a-9f52-e349e37e1546",
+  "spare_profile_id": "767cafb7-c61f-4dcb-9108-96b79ba9e347",
   "spare_tiles": [
     {
       "count": 8,
@@ -799,11 +828,11 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
 [V7 JSON] profile removal AFTER
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
   "spare_profile_id": null,
   "spare_tiles": [
@@ -834,20 +863,20 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
   "unit_no": "101"
 }
 [PASS] V7 removal restores whole unit with spare_profile_id None
-[PASS] PATCH /api/projects/probe-spare-project-f1995c42c2/spare-profiles/36c49b77-33c2-47f7-a751-2431ba41feb1/units -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-487f6e9fe7/spare-profiles/ed7912fd-43fa-451c-96d4-c22f9552df9e/units -> 200 — status=200
 [PASS] V2 no-op removal reports zero
-[PASS] PUT /api/projects/probe-spare-project-f1995c42c2/spare-settings -> 409 — status=409
-[PASS] PATCH /api/projects/probe-spare-project-f1995c42c2/spare-profiles/36c49b77-33c2-47f7-a751-2431ba41feb1/units -> 422 — status=422
-[PASS] PATCH /api/units/probe-spare-unit-1-f1995c42c2/spare-tiles -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-487f6e9fe7/spare-settings -> 409 — status=409
+[PASS] PATCH /api/projects/probe-spare-project-487f6e9fe7/spare-profiles/ed7912fd-43fa-451c-96d4-c22f9552df9e/units -> 422 — status=422
+[PASS] PATCH /api/units/probe-spare-unit-1-487f6e9fe7/spare-tiles -> 200 — status=200
 
 [V7 JSON] profile-aware unchanged inventory save BEFORE
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
   "spare_profile_id": null,
   "spare_tiles": [
@@ -880,11 +909,11 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
 [V7 JSON] profile-aware unchanged inventory save AFTER
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
   "spare_profile_id": null,
   "spare_tiles": [
@@ -915,17 +944,17 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
   "unit_no": "101"
 }
 [PASS] V7 profile-aware unchanged save preserves whole unit
-[PASS] PATCH /api/projects/probe-spare-project-f1995c42c2/spare-profiles/32d8308f-d18f-423a-9f52-e349e37e1546/units -> 200 — status=200
-[PASS] PATCH /api/units/probe-spare-unit-1-f1995c42c2/spare-tiles -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-487f6e9fe7/spare-profiles/767cafb7-c61f-4dcb-9108-96b79ba9e347/units -> 200 — status=200
+[PASS] PATCH /api/units/probe-spare-unit-1-487f6e9fe7/spare-tiles -> 200 — status=200
 
 [V7 JSON] explicit confirmed zero BEFORE
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
   "spare_profile_id": null,
   "spare_tiles": [
@@ -958,13 +987,13 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
 [V7 JSON] explicit confirmed zero AFTER
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
-  "spare_profile_id": "32d8308f-d18f-423a-9f52-e349e37e1546",
+  "spare_profile_id": "767cafb7-c61f-4dcb-9108-96b79ba9e347",
   "spare_tiles": [
     {
       "count": 0,
@@ -984,20 +1013,20 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
   "unit_no": "101"
 }
 [PASS] V1 confirmed zero stored exactly
-[PASS] GET /api/units/probe-spare-unit-1-f1995c42c2 -> 200 — status=200
+[PASS] GET /api/units/probe-spare-unit-1-487f6e9fe7 -> 200 — status=200
 [PASS] V1 confirmed zero is short with full target missing
-[PASS] PATCH /api/units/probe-spare-unit-1-f1995c42c2/spare-tiles -> 200 — status=200
+[PASS] PATCH /api/units/probe-spare-unit-1-487f6e9fe7/spare-tiles -> 200 — status=200
 
 [V7 JSON] legacy array after confirmed zero BEFORE
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
-  "spare_profile_id": "32d8308f-d18f-423a-9f52-e349e37e1546",
+  "spare_profile_id": "767cafb7-c61f-4dcb-9108-96b79ba9e347",
   "spare_tiles": [
     {
       "count": 0,
@@ -1019,13 +1048,13 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
 [V7 JSON] legacy array after confirmed zero AFTER
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
-  "spare_profile_id": "32d8308f-d18f-423a-9f52-e349e37e1546",
+  "spare_profile_id": "767cafb7-c61f-4dcb-9108-96b79ba9e347",
   "spare_tiles": [
     {
       "count": 8,
@@ -1054,19 +1083,19 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
   "unit_no": "101"
 }
 [PASS] V7 legacy array restored without entered keys
-[PASS] PATCH /api/projects/probe-spare-project-f1995c42c2/spare-profiles/32d8308f-d18f-423a-9f52-e349e37e1546/units -> 200 — status=200
-[PASS] PUT /api/projects/probe-spare-project-f1995c42c2/spare-settings -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-487f6e9fe7/spare-profiles/767cafb7-c61f-4dcb-9108-96b79ba9e347/units -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-487f6e9fe7/spare-settings -> 200 — status=200
 [PASS] V7 category deletion persisted
-[PASS] PATCH /api/units/probe-spare-unit-1-f1995c42c2/spare-tiles -> 200 — status=200
+[PASS] PATCH /api/units/probe-spare-unit-1-487f6e9fe7/spare-tiles -> 200 — status=200
 
 [V7 JSON] save after category deletion BEFORE
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
   "spare_profile_id": null,
   "spare_tiles": [
@@ -1099,11 +1128,11 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
 [V7 JSON] save after category deletion AFTER
 {
   "archived": false,
-  "building_id": "probe-spare-building-main-f1995c42c2",
+  "building_id": "probe-spare-building-main-487f6e9fe7",
   "display_label": "דירה 101",
-  "floor_id": "probe-spare-floor-low-f1995c42c2",
-  "id": "probe-spare-unit-1-f1995c42c2",
-  "project_id": "probe-spare-project-f1995c42c2",
+  "floor_id": "probe-spare-floor-low-487f6e9fe7",
+  "id": "probe-spare-unit-1-487f6e9fe7",
+  "project_id": "probe-spare-project-487f6e9fe7",
   "sort_index": 10,
   "spare_profile_id": null,
   "spare_tiles": [
@@ -1134,15 +1163,15 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
   "unit_no": "101"
 }
 [PASS] V7 deleted configured category remains exact custom entry
-[PASS] PATCH /api/units/probe-spare-cross-unit-f1995c42c2/spare-tiles -> 200 — status=200
+[PASS] PATCH /api/units/probe-spare-cross-unit-487f6e9fe7/spare-tiles -> 200 — status=200
 
 [V7 JSON] legacy no-profile unchanged save BEFORE
 {
   "archived": false,
-  "building_id": "probe-cross-building-f1995c42c2",
-  "floor_id": "probe-cross-floor-f1995c42c2",
-  "id": "probe-spare-cross-unit-f1995c42c2",
-  "project_id": "probe-spare-other-project-f1995c42c2",
+  "building_id": "probe-cross-building-487f6e9fe7",
+  "floor_id": "probe-cross-floor-487f6e9fe7",
+  "id": "probe-spare-cross-unit-487f6e9fe7",
+  "project_id": "probe-spare-other-project-487f6e9fe7",
   "sort_index": 1,
   "spare_tiles": [
     {
@@ -1174,10 +1203,10 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
 [V7 JSON] legacy no-profile unchanged save AFTER
 {
   "archived": false,
-  "building_id": "probe-cross-building-f1995c42c2",
-  "floor_id": "probe-cross-floor-f1995c42c2",
-  "id": "probe-spare-cross-unit-f1995c42c2",
-  "project_id": "probe-spare-other-project-f1995c42c2",
+  "building_id": "probe-cross-building-487f6e9fe7",
+  "floor_id": "probe-cross-floor-487f6e9fe7",
+  "id": "probe-spare-cross-unit-487f6e9fe7",
+  "project_id": "probe-spare-other-project-487f6e9fe7",
   "sort_index": 1,
   "spare_tiles": [
     {
@@ -1207,20 +1236,20 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
   "unit_no": "X1"
 }
 [PASS] V7 no-profile legacy branch preserves whole unit
-[PASS] PATCH /api/projects/probe-spare-project-f1995c42c2/spare-profiles/32d8308f-d18f-423a-9f52-e349e37e1546/units -> 200 — status=200
+[PASS] PATCH /api/projects/probe-spare-project-487f6e9fe7/spare-profiles/767cafb7-c61f-4dcb-9108-96b79ba9e347/units -> 200 — status=200
 [PASS] V3 final profile assignment exact count
-[PASS] GET /api/units/probe-spare-unit-1-f1995c42c2 -> 200 — status=200
+[PASS] GET /api/units/probe-spare-unit-1-487f6e9fe7 -> 200 — status=200
 [PASS] V3 existing top-level keys unchanged
 [PASS] V3 existing nested unit keys unchanged
 [PASS] V3 assigned profile returned
 [PASS] V3 status reflects actual 8 against target 10
 [PASS] V3 viewer unit capability is false
-[PASS] GET /api/execution-matrix/probe-spare-project-f1995c42c2 -> 200 — status=200
+[PASS] GET /api/execution-matrix/probe-spare-project-487f6e9fe7 -> 200 — status=200
 [PASS] V2 matrix existing key set unchanged
 [PASS] V2 matrix unit A short summary
 [PASS] V2 matrix unit B not entered
 [PASS] V2 matrix unit C no profile
-[PASS] POST /api/execution-matrix/probe-spare-project-f1995c42c2/export.xlsx -> 200 — status=200
+[PASS] POST /api/execution-matrix/probe-spare-project-487f6e9fe7/export.xlsx -> 200 — status=200
 [PASS] V2 matrix export spare header is last
 [PASS] V2 matrix export short text and fill
 [PASS] V2 matrix export not-entered and no-profile values
@@ -1228,7 +1257,7 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
 [V2 JSON] execution matrix spare
 {
   "by_unit": {
-    "probe-spare-unit-1-f1995c42c2": {
+    "probe-spare-unit-1-487f6e9fe7": {
       "missing_total": 2,
       "not_entered": [],
       "overall": "short",
@@ -1241,7 +1270,7 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
         }
       ]
     },
-    "probe-spare-unit-2-f1995c42c2": {
+    "probe-spare-unit-2-487f6e9fe7": {
       "missing_total": 0,
       "not_entered": [
         "ריצוף יבש",
@@ -1251,7 +1280,7 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
       "profile": "3 חדרים",
       "short": []
     },
-    "probe-spare-unit-3-f1995c42c2": {
+    "probe-spare-unit-3-487f6e9fe7": {
       "missing_total": 0,
       "not_entered": [],
       "overall": "no_profile",
@@ -1261,7 +1290,7 @@ FULL PROBE OUTPUT INCLUDING V2/V7 JSON:
   },
   "enabled": true
 }
-[PASS] GET /api/projects/probe-spare-project-f1995c42c2/handover/overview -> 200 — status=200
+[PASS] GET /api/projects/probe-spare-project-487f6e9fe7/handover/overview -> 200 — status=200
 [PASS] POST /api/defects/export -> 200 — status=200
 
 [V7 JSON] handover/export BEFORE
@@ -1360,8 +1389,8 @@ PASS. Saved view persisted and restored spare filter: screenshots s1efyi and 37f
 
 V5 — DIFF SCOPE
 ================
-Clarification from Zahi: explicit 17-file list is authoritative; “15” was a miscount.
-Complete embedded diff below has exactly 17 diff headers. Frozen files are unchanged. No lockfile/dependency changes. git diff --check is clean.
+Scope after FIX-1: 18 product/test files, adding backend/tests/test_execution_matrix.py with the requested DB-mock line only.
+Complete embedded diff below has exactly 18 diff headers. Frozen files are unchanged. No lockfile/dependency changes. git diff --check is clean.
 
 V6 — PLAYWRIGHT MOBILE 390 + MEASURE MODEL
 ================================================
@@ -1379,7 +1408,7 @@ PASS. Handover and general defect-export spare values remained byte-for-byte equ
 
 ARCHITECT REVIEW
 ================
-PASS — no correctness, authorization, serialization, data-loss, React, compatibility or security blocker across the authoritative 17-file diff.
+Previous full implementation review: PASS. FIX-1 removes the awaitability special-case and restores a normal async DB contract; V1 and the live probe both pass afterward.
 
 RUNTIME / BROWSER NOTES
 =======================
@@ -1389,34 +1418,11 @@ The standard dev startup warning about the missing configured super-admin seed p
 
 FINAL STATE
 ===========
-CURRENT_HEAD=423b51a
+FIX-1 tests: 49 passed. Live probe: 83/83 passed. Workflow restarted and running.
+Product/test scope: exactly 18 files against fe167f9, including the new SparePill.js.
+git diff --check: clean. Frozen files: unchanged. No dependency/lockfile changes.
 
-DIFF_BASE=fe167f9
-PRODUCT_DIFF_HEADERS=17
-
-PRODUCT_PATHS_BEGIN
-backend/contractor_ops/execution_matrix_export.py
-backend/contractor_ops/execution_matrix_router.py
-backend/contractor_ops/schemas.py
-backend/contractor_ops/spare_tiles.py
-backend/tests/probe_spare_tiles_http.py
-backend/tests/test_execution_matrix_export.py
-backend/tests/test_spare_tiles.py
-frontend/src/components/matrix/MatrixFilterDrawer.js
-frontend/src/components/matrix/MatrixFilterSection.js
-frontend/src/components/matrix/MatrixGridView.js
-frontend/src/components/matrix/MatrixListView.js
-frontend/src/hooks/__tests__/useMatrixFilters.test.js
-frontend/src/hooks/useMatrixFilters.js
-frontend/src/pages/ApartmentDashboardPage.js
-frontend/src/pages/ExecutionMatrixPage.js
-frontend/src/pages/SpareTilesPage.js
-PRODUCT_PATHS_END
-UNTRACKED_BEGIN
-frontend/src/components/matrix/SparePill.js
-UNTRACKED_END
-
-COMPLETE 17-FILE DIFF AGAINST fe167f9
+COMPLETE 18-FILE DIFF AGAINST fe167f9
 =====================================
 diff --git a/backend/contractor_ops/spare_tiles.py b/backend/contractor_ops/spare_tiles.py
 index 23ea3b9..c927263 100644
@@ -1518,7 +1524,7 @@ index 23ea3b9..c927263 100644
      }
 \ No newline at end of file
 diff --git a/backend/contractor_ops/execution_matrix_router.py b/backend/contractor_ops/execution_matrix_router.py
-index ceaf486..4f436be 100644
+index ceaf486..6a1392c 100644
 --- a/backend/contractor_ops/execution_matrix_router.py
 +++ b/backend/contractor_ops/execution_matrix_router.py
 @@ -50,6 +50,10 @@ from fastapi import APIRouter, Depends, HTTPException
@@ -1532,20 +1538,14 @@ index ceaf486..4f436be 100644
  from contractor_ops.router import (
      _now,
      _audit,
-@@ -360,6 +364,27 @@ async def get_matrix(
+@@ -360,6 +364,21 @@ async def get_matrix(
 
      cells_summary = [_summarize_cell(c) for c in cells_docs]
 
-+    project_result = db.projects.find_one(
++    project = await db.projects.find_one(
 +        {"id": project_id},
 +        {"_id": 0, "spare_settings": 1},
 +    )
-+    # Some direct unit tests use a loose MagicMock for collections that were
-+    # previously untouched by this endpoint.
-+    if hasattr(project_result, "__await__"):
-+        project = await project_result
-+    else:
-+        project = project_result if isinstance(project_result, dict) else None
 +    spare_settings = (
 +        project.get("spare_settings")
 +        if project and project.get("spare_settings")
@@ -1560,7 +1560,7 @@ index ceaf486..4f436be 100644
      return {
          "project_id": project_id,
          "stages": stages,
-@@ -380,6 +405,7 @@ async def get_matrix(
+@@ -380,6 +399,7 @@ async def get_matrix(
              "can_edit": can_edit,
          },
          "matrix_config_id": matrix_config["id"],
@@ -1568,7 +1568,7 @@ index ceaf486..4f436be 100644
      }
 
 
-@@ -760,7 +786,25 @@ async def export_matrix_xlsx(
+@@ -760,7 +780,25 @@ async def export_matrix_xlsx(
      # module-level _unit_sort_key (#485+#486+#489 6-tuple).
      units = sorted(units, key=lambda u: _unit_sort_key(u, buildings, floors))
 
@@ -2087,6 +2087,19 @@ index ecf3c56..f911903 100644
  # =====================================================================
  # T2 — status label translation + fills
  # =====================================================================
+diff --git a/backend/tests/test_execution_matrix.py b/backend/tests/test_execution_matrix.py
+index 4914598..91f03a3 100644
+--- a/backend/tests/test_execution_matrix.py
++++ b/backend/tests/test_execution_matrix.py
+@@ -62,6 +62,8 @@ def _mk_db(
+     db.execution_matrix.insert_one = AsyncMock()
+     db.execution_matrix.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
+
++    db.projects.find_one = AsyncMock(return_value={"id": "p1"})
++
+     db.units.find = MagicMock(return_value=_AsyncCursor(units or []))
+     db.units.find_one = AsyncMock(return_value=({"id": "u1", "project_id": "p1"} if units is None else (units[0] if units else None)))
+
 diff --git a/frontend/src/components/matrix/SparePill.js b/frontend/src/components/matrix/SparePill.js
 new file mode 100644
 index 0000000..7ef5fcb
@@ -2806,7 +2819,8 @@ index 3c5aa6d..fc5c5a1 100644
 
 FINAL SCOPE CONFIRMATION
 ========================
-- Exactly 17 product/test files from the explicit list are changed against fe167f9.
+- Exactly 18 product/test files are changed against fe167f9 after FIX-1.
+- FIX-1 adds backend/tests/test_execution_matrix.py with one DB-mock assignment and simplifies get_matrix to a direct await.
 - Delivery files are review.txt and .local/.commit_message.
 - BATCH_586_PLAN.txt is absent from the final tree; its automatic checkpoint does not appear in the approved-base diff.
 - Frozen files are unchanged.
