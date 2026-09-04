@@ -54,6 +54,7 @@ SPARE_FILLS = {
     "short": PatternFill("solid", fgColor="FEE2E2"),
     "borderline": PatternFill("solid", fgColor="FEF3C7"),
     "ok": PatternFill("solid", fgColor="D1FAE5"),
+    "recorded": PatternFill("solid", fgColor="D1FAE5"),
     "not_entered": PatternFill("solid", fgColor="F1F5F9"),
     "no_target": PatternFill("solid", fgColor="F1F5F9"),
     "no_profile": PatternFill("solid", fgColor="F1F5F9"),
@@ -161,6 +162,17 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
                     label = f"{label}: {details}"
             elif overall == "borderline" and borderline:
                 label = f"{label}: {', '.join(borderline)}"
+            elif overall == "recorded":
+                recorded = spare_summary.get("recorded") or []
+                total = spare_summary.get("categories_total") or len(recorded)
+                label = f"{label} {len(recorded)}/{total}"
+                unfilled = spare_summary.get("unfilled") or []
+                if unfilled:
+                    label = f"{label} · לא הוזן: {', '.join(unfilled)}"
+            elif overall == "no_target":
+                unfilled = spare_summary.get("unfilled") or []
+                if unfilled:
+                    label = f"{label}: {', '.join(unfilled)}"
             if overall in {"short", "not_entered"} and borderline:
                 label = f"{label} · גבולי: {', '.join(borderline)}"
             spare_cell = ws.cell(row=row_idx, column=spare_col, value=label)

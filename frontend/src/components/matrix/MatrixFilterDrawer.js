@@ -221,8 +221,8 @@ export default function MatrixFilterDrawer({
                       { value: 'short', label: 'חסר — להזמין' },
                       { value: 'borderline', label: 'גבולי' },
                       { value: 'ok', label: 'מספיק' },
+                      { value: 'recorded', label: 'הוזן (פרופיל ללא יעדים)' },
                       { value: 'not_entered', label: 'לא הוזן' },
-                      { value: 'no_target', label: 'ללא יעד' },
                       { value: 'no_profile', label: 'אחר (ללא פרופיל)' },
                     ]}
                     selectedValues={filters.spare_status || []}

@@ -18,8 +18,9 @@ SPARE_OVERALL_LABELS = {
     'short': 'חסר — להזמין',
     'borderline': 'גבולי',
     'ok': 'מספיק',
+    'recorded': 'הוזן',
     'not_entered': 'לא הוזן',
-    'no_target': 'ללא יעד',
+    'no_target': 'לא הוזן',
     'no_profile': 'אחר',
 }
 
@@ -180,13 +181,16 @@ def compute_spare_status(unit_doc, spare_settings):
         target = targets.get(name) if profile else None
         missing = None
         if not target or target <= 0:
-            # A confirmed "אין ספייר" is a shortage even without a target
-            # (order quantity unknown → missing stays None).
-            status = (
-                'short'
-                if (entry and entry.get('entered') is True and actual == 0)
-                else 'no_target'
-            )
+            if entry and entry.get('entered') is True and actual == 0:
+                # A confirmed "אין ספייר" is a shortage even without a
+                # target (order quantity unknown → missing stays None).
+                status = 'short'
+            elif entered and actual > 0:
+                # Inventory recorded for a category without a target:
+                # tracking only — cannot say "enough", but it was filled.
+                status = 'recorded'
+            else:
+                status = 'no_target'
         elif not entered:
             status = 'not_entered'
         elif actual < target:
@@ -212,7 +216,9 @@ def compute_spare_status(unit_doc, spare_settings):
         statuses = {row['status'] for row in rows}
         overall = next(
             (
-                status for status in ('short', 'not_entered', 'borderline', 'ok', 'no_target')
+                status for status in (
+                    'short', 'not_entered', 'borderline', 'ok', 'recorded', 'no_target'
+                )
                 if status in statuses
             ),
             'no_target',
@@ -235,6 +241,10 @@ def matrix_spare_summary(unit_doc, spare_settings):
         for row in st['categories']
         if row['status'] == 'short'
     ]
+    tracking_only = (
+        st['profile'] is not None
+        and not any((row['target'] or 0) > 0 for row in st['categories'])
+    )
     return {
         'overall': st['overall'],
         'profile': st['profile']['name'] if st['profile'] else None,
@@ -249,5 +259,18 @@ def matrix_spare_summary(unit_doc, spare_settings):
             for row in st['categories']
             if row['status'] == 'borderline'
         ],
+        'recorded': [
+            row['name']
+            for row in st['categories']
+            if row['status'] == 'recorded'
+        ],
+        # In a tracking-only profile, no-target rows are categories without
+        # an entry. With any configured targets they are not applicable.
+        'unfilled': [
+            row['name']
+            for row in st['categories']
+            if tracking_only and row['status'] == 'no_target'
+        ],
+        'categories_total': len(st['categories']),
         'missing_total': sum((row['missing'] or 0) for row in short),
     }

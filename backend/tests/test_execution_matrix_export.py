@@ -148,6 +148,9 @@ def test_spare_enabled_appends_status_column_with_fills_and_profile_comments():
     units = [
         {"id": "u-short", "unit_no": "1"},
         {"id": "u-ok", "unit_no": "2"},
+        {"id": "u-recorded", "unit_no": "3"},
+        {"id": "u-empty", "unit_no": "4"},
+        {"id": "u-legacy-no-target", "unit_no": "5"},
     ]
     spare = {
         "enabled": True,
@@ -168,6 +171,24 @@ def test_spare_enabled_appends_status_column_with_fills_and_profile_comments():
                 "not_entered": [],
                 "missing_total": 0,
             },
+            "u-recorded": {
+                "overall": "recorded",
+                "recorded": ["א", "ב", "ג", "ד"],
+                "unfilled": ["חיפוי מטבח"],
+                "categories_total": 5,
+                "short": [],
+                "borderline": [],
+                "not_entered": [],
+            },
+            "u-empty": {
+                "overall": "no_target",
+                "recorded": [],
+                "unfilled": ["ריצוף יבש", "ריצוף מרפסות"],
+                "categories_total": 2,
+            },
+            "u-legacy-no-target": {
+                "overall": "no_target",
+            },
         },
     }
     buf = build_matrix_xlsx(
@@ -184,6 +205,14 @@ def test_spare_enabled_appends_status_column_with_fills_and_profile_comments():
     ok_cell = ws.cell(row=3, column=5)
     assert ok_cell.value == "מספיק"
     assert ok_cell.fill.fgColor.rgb.upper().endswith("D1FAE5")
+    recorded_cell = ws.cell(row=4, column=5)
+    assert recorded_cell.value == "הוזן 4/5 · לא הוזן: חיפוי מטבח"
+    assert recorded_cell.fill.fgColor.rgb.upper().endswith("D1FAE5")
+    empty_cell = ws.cell(row=5, column=5)
+    assert empty_cell.value == "לא הוזן: ריצוף יבש, ריצוף מרפסות"
+    assert empty_cell.fill.fgColor.rgb.upper().endswith("F1F5F9")
+    legacy_cell = ws.cell(row=6, column=5)
+    assert legacy_cell.value == "לא הוזן"
 
 
 def test_spare_export_formats_unknown_and_known_shortage_quantities():

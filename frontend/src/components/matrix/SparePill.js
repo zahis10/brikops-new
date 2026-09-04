@@ -13,12 +13,16 @@ const STATUS_CONFIG = {
     label: 'מספיק',
     classes: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   },
+  recorded: {
+    label: 'הוזן',
+    classes: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  },
   not_entered: {
     label: 'לא הוזן',
     classes: 'bg-slate-100 text-slate-600 border-slate-200',
   },
   no_target: {
-    label: 'ללא יעד',
+    label: 'לא הוזן',
     classes: 'bg-slate-100 text-slate-500 border-slate-200',
   },
   no_profile: {
@@ -43,15 +47,22 @@ export default function SparePill({
   const shortRows = Array.isArray(summary?.short) ? summary.short : [];
   const notEntered = Array.isArray(summary?.not_entered) ? summary.not_entered : [];
   const borderline = Array.isArray(summary?.borderline) ? summary.borderline : [];
+  const recorded = Array.isArray(summary?.recorded) ? summary.recorded : [];
+  const unfilled = Array.isArray(summary?.unfilled) ? summary.unfilled : [];
+  const total = summary?.categories_total ?? (recorded.length + unfilled.length);
   const nShort = shortRows.length;
   const nBorder = borderline.length;
   const nNotEntered = notEntered.length;
   const labelOnly = !summary || ['ok', 'no_target', 'no_profile'].includes(summary.overall);
-  const segments = labelOnly ? [] : [
-    ...(nShort > 0 ? [`חסר ${nShort}`] : []),
-    ...(nBorder > 0 ? [`גבולי ${nBorder}`] : []),
-    ...(nShort === 0 && nNotEntered > 0 ? ['לא הוזן'] : []),
-  ];
+  const segments = labelOnly
+    ? []
+    : summary.overall === 'recorded'
+      ? [`הוזן ${recorded.length}/${total}`]
+      : [
+          ...(nShort > 0 ? [`חסר ${nShort}`] : []),
+          ...(nBorder > 0 ? [`גבולי ${nBorder}`] : []),
+          ...(nShort === 0 && nNotEntered > 0 ? [`לא הוזן ${nNotEntered}`] : []),
+        ];
   const text = config ? (segments.join(' · ') || config.label) : '—';
   const titleParts = [
     summary?.profile ? `פרופיל: ${summary.profile}` : 'ללא פרופיל',
@@ -64,6 +75,7 @@ export default function SparePill({
   ];
   if (borderline.length) titleParts.push(`גבולי: ${borderline.join(', ')}`);
   if (notEntered.length) titleParts.push(`לא הוזן: ${notEntered.join(', ')}`);
+  if (unfilled.length) titleParts.push(`לא הוזן: ${unfilled.join(', ')}`);
 
   const inner = (
     <span

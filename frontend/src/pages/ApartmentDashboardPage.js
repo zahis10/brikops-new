@@ -125,6 +125,11 @@ const ApartmentDashboardPage = () => {
   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
   const spareCanWrite = unitData?.spare_can_write === true;
   const spareCanAssign = unitData?.spare_can_assign === true;
+  const spareRows = unitData?.spare_status?.categories || [];
+  const spareRecorded = spareRows.filter(row => row.status === 'recorded').length;
+  const spareNoTargets = !!unitData?.spare_status?.profile
+    && spareRows.length > 0
+    && spareRows.every(row => !(row.target > 0));
   const formatSpareQty = (row) => row.measure === 'sqm'
     ? `${row.actual} מ"ר`
     : row.actual === 1 ? 'אריח אחד' : `${row.actual} אריחים`;
@@ -723,13 +728,15 @@ const ApartmentDashboardPage = () => {
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
                   unitData.spare_status?.overall === 'short' ? 'bg-red-500 text-white' :
                   unitData.spare_status?.overall === 'borderline' ? 'bg-amber-500 text-white' :
-                  unitData.spare_status?.overall === 'ok' ? 'bg-green-500 text-white' : 'bg-slate-400 text-white'
+                  unitData.spare_status?.overall === 'ok' ? 'bg-green-500 text-white' :
+                  unitData.spare_status?.overall === 'recorded' ? 'bg-green-500 text-white' : 'bg-slate-400 text-white'
                 }`}>
                   {unitData.spare_status?.overall === 'short' ? 'חסר — להזמין' :
                     unitData.spare_status?.overall === 'borderline' ? 'גבולי' :
                     unitData.spare_status?.overall === 'ok' ? 'מספיק' :
+                    unitData.spare_status?.overall === 'recorded' ? `הוזן ${spareRecorded}/${spareRows.length}` :
                     unitData.spare_status?.overall === 'no_profile' ? 'אחר' :
-                    unitData.spare_status?.overall === 'no_target' ? 'ללא יעד' : 'לא הוזן'}
+                    'לא הוזן'}
                 </span>
               </div>
               {spareTilesOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
@@ -743,10 +750,13 @@ const ApartmentDashboardPage = () => {
                         <option value="">אחר</option>
                         {(unitData.spare_settings?.profiles || []).map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
                       </select>
+                      {spareNoTargets && <span className="text-slate-400"> · ללא יעדים</span>}
                     </label>
                   ) : (
                     <>
-                      {unitData.spare_status?.profile?.name ? `פרופיל: ${unitData.spare_status.profile.name}` : 'דירה ללא פרופיל — ניתן לעדכן מלאי בלבד'}
+                      {unitData.spare_status?.profile?.name
+                        ? `פרופיל: ${unitData.spare_status.profile.name}${spareNoTargets ? ' · ללא יעדים' : ''}`
+                        : 'דירה ללא פרופיל — ניתן לעדכן מלאי בלבד'}
                       {spareCanWrite && !spareCanAssign ? ' · שינוי סיווג — דרך מנהל הפרויקט' : ''}
                     </>
                   )}

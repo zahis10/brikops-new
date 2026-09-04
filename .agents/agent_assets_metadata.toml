@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH #591 — review.txt"
-description = "הדוח המלא מול 565cdb4: diff של ששת הקבצים, pytest, 99 בדיקות HTTP, CI build, Playwright desktop/mobile וראיות MD5."
+title = "BATCH #592 — review.txt"
+description = "STEP 0, full 10-file diff vs cee3871, V1–V4 evidence, exact preservation hashes, and approval gate."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:8c6f0caddb503d5cffca8b1bdf4e7db5a86723f9ecfcacbeaec9bede68e113a9"
-size = 17265
-mtime_ms = 1788535011385
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/1c10ddf2-c9fc-4a84-bcb6-4240e03b9f6f"
-storage_version_token = "1788535025850806"
+content_hash = "sha256:32139f1cfa7a43d5c4abdcd4b6ee3e56bf15d4a56800fc934a663ad7e0a414d8"
+size = 32392
+mtime_ms = 1788553389801
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/a15050ca-13cc-44c6-8dbf-11a771d14c1e"
+storage_version_token = "1788553471660471"
 content_type = "text/plain"
 
 [[outputs]]

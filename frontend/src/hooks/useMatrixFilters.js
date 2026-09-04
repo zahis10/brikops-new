@@ -49,7 +49,12 @@ export function spareStatusMatches(summary, value) {
   const overall = s.overall ?? 'no_profile';
   if (value === 'short') return (s.short?.length ?? 0) > 0 || overall === 'short';
   if (value === 'borderline') return (s.borderline?.length ?? 0) > 0 || overall === 'borderline';
-  if (value === 'not_entered') return (s.not_entered?.length ?? 0) > 0 || overall === 'not_entered';
+  if (value === 'not_entered') {
+    return (s.not_entered?.length ?? 0) > 0
+      || (s.unfilled?.length ?? 0) > 0
+      || overall === 'not_entered'
+      || overall === 'no_target';
+  }
   return overall === value;
 }
 

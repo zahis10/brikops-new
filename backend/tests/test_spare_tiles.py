@@ -9,6 +9,7 @@ from fastapi import HTTPException
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from contractor_ops.spare_tiles import (
+    SPARE_OVERALL_LABELS,
     compute_spare_status,
     default_spare_settings,
     matrix_spare_summary,
@@ -104,7 +105,17 @@ def test_no_target_and_no_profile():
     }
     assert status(0, target=0)['overall'] == 'no_target'
     assert status(0, notes='legacy note', target=0)['overall'] == 'no_target'
-    assert status(4, target=0)['overall'] == 'no_target'
+    recorded = status(4, target=0)
+    assert recorded['overall'] == 'recorded'
+    assert recorded['categories'][0] == {
+        'name': 'ריצוף יבש',
+        'measure': 'tiles',
+        'target': None,
+        'actual': 4,
+        'status': 'recorded',
+        'missing': None,
+        'entered': True,
+    }
     assert status(4, profile_id=None)['overall'] == 'no_profile'
     assert status(4, profile_id=str(uuid.uuid4()))['overall'] == 'no_profile'
 
@@ -143,7 +154,7 @@ def test_custom_type_appended_and_overall_precedence():
         ],
     }, config)
     assert [row['name'] for row in result['categories']] == ['א', 'ב', 'מותאם']
-    assert result['categories'][-1]['status'] == 'no_target'
+    assert result['categories'][-1]['status'] == 'recorded'
     assert result['overall'] == 'not_entered'
 
     config['profiles'][0]['targets']['א'] = 3
@@ -156,6 +167,40 @@ def test_custom_type_appended_and_overall_precedence():
 
 def test_margin_zero_still_has_one_item_band():
     assert status(5, target=5, margin=0)['overall'] == 'borderline'
+
+
+def test_tracking_only_overall_precedence():
+    config = {
+        'categories': [
+            {'name': 'א', 'measure': 'tiles'},
+            {'name': 'ב', 'measure': 'tiles'},
+            {'name': 'ג', 'measure': 'tiles'},
+        ],
+        'profiles': [{'id': PROFILE_ID, 'name': 'מעקב', 'targets': {}}],
+        'margin_pct': 10,
+    }
+    with_short = compute_spare_status({
+        'spare_profile_id': PROFILE_ID,
+        'spare_tiles': [
+            {'type': 'א', 'count': 3},
+            {'type': 'ג', 'count': 0, 'entered': True},
+        ],
+    }, config)
+    assert with_short['overall'] == 'short'
+
+    recorded = compute_spare_status({
+        'spare_profile_id': PROFILE_ID,
+        'spare_tiles': [{'type': 'א', 'count': 3}],
+    }, config)
+    assert recorded['overall'] == 'recorded'
+
+    empty = compute_spare_status({'spare_profile_id': PROFILE_ID}, config)
+    assert empty['overall'] == 'no_target'
+
+
+def test_spare_overall_labels_for_tracking_only_profiles():
+    assert SPARE_OVERALL_LABELS['recorded'] == 'הוזן'
+    assert SPARE_OVERALL_LABELS['no_target'] == 'לא הוזן'
 
 
 def valid_body():
@@ -245,6 +290,9 @@ def test_matrix_spare_summary_short_categories_and_missing_total():
         ],
         'not_entered': [],
         'borderline': [],
+        'recorded': [],
+        'unfilled': [],
+        'categories_total': 2,
         'missing_total': 12,
     }
 
@@ -269,6 +317,58 @@ def test_matrix_spare_summary_confirmed_zero_without_target():
         'measure': 'tiles',
     }]
     assert result['missing_total'] == 0
+
+
+def test_matrix_spare_summary_tracking_only_and_not_applicable_categories():
+    tracking_config = {
+        'categories': [
+            {'name': 'א', 'measure': 'tiles'},
+            {'name': 'ב', 'measure': 'tiles'},
+            {'name': 'ג', 'measure': 'tiles'},
+        ],
+        'profiles': [{'id': PROFILE_ID, 'name': 'מעקב', 'targets': {}}],
+        'margin_pct': 10,
+    }
+    tracking = matrix_spare_summary({
+        'spare_profile_id': PROFILE_ID,
+        'spare_tiles': [
+            {'type': 'א', 'count': 3},
+            {'type': 'ב', 'count': 2},
+        ],
+    }, tracking_config)
+    assert tracking['overall'] == 'recorded'
+    assert tracking['recorded'] == ['א', 'ב']
+    assert tracking['unfilled'] == ['ג']
+    assert tracking['categories_total'] == 3
+
+    targets_config = {
+        **tracking_config,
+        'profiles': [{
+            'id': PROFILE_ID,
+            'name': 'יעדים',
+            'targets': {'א': 1, 'ב': 1},
+        }],
+    }
+    with_targets = matrix_spare_summary({
+        'spare_profile_id': PROFILE_ID,
+        'spare_tiles': [
+            {'type': 'א', 'count': 3},
+            {'type': 'ב', 'count': 3},
+        ],
+    }, targets_config)
+    assert with_targets['overall'] == 'ok'
+    assert with_targets['recorded'] == []
+    assert with_targets['unfilled'] == []
+
+    unassigned = matrix_spare_summary({
+        'spare_tiles': [
+            {'type': 'א', 'count': 3},
+            {'type': 'ב', 'count': 2},
+        ],
+    }, tracking_config)
+    assert unassigned['overall'] == 'no_profile'
+    assert unassigned['recorded'] == ['א', 'ב']
+    assert unassigned['unfilled'] == []
 
 
 def test_matrix_spare_summary_short_also_surfaces_borderline_categories():

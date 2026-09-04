@@ -104,8 +104,8 @@ export default function ExecutionMatrixPage() {
       short: 0,
       borderline: 0,
       ok: 0,
+      recorded: 0,
       not_entered: 0,
-      no_target: 0,
       no_profile: 0,
     };
     for (const unit of units) {
@@ -296,8 +296,8 @@ export default function ExecutionMatrixPage() {
               { value: 'short', label: 'חסר' },
               { value: 'borderline', label: 'גבולי' },
               { value: 'ok', label: 'מספיק' },
+              { value: 'recorded', label: 'הוזן' },
               { value: 'not_entered', label: 'לא הוזן' },
-              { value: 'no_target', label: 'ללא יעד' },
               { value: 'no_profile', label: 'אחר' },
             ].map(option => {
               const count = spareCounts[option.value];
