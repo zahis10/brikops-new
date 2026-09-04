@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH #588 — Final Review"
-description = "Full one-file diff against d1763f7, CI=true build evidence, 390px Playwright screenshots, legacy compatibility, and final approval gate."
+title = "BATCH #589 — review.txt"
+description = "הדוח המלא: STEP 0, בדיקות V1–V5, ראיות Playwright, Mongo BEFORE/AFTER וה-diff המלא מול 95d626c."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:67c9e26918be0b47b62cd3803d6d9d4ed476037d7e85ea455d233a3a2fce0ea0"
-size = 15724
-mtime_ms = 1788509757396
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/6de15201-864e-4963-9fb3-3e69c8f161dc"
-storage_version_token = "1788509777028966"
+content_hash = "sha256:678881aa0a1db7d6a2cc53ad9bb53588c965e71fe0014dd749b75d568686adba"
+size = 78990
+mtime_ms = 1788523500249
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/d2f0783f-f358-417c-a5ec-3a2a22bc4623"
+storage_version_token = "1788523719881185"
 content_type = "text/plain"
 
 [[outputs]]
