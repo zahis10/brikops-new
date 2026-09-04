@@ -44,6 +44,15 @@ export function toggleInDict(dict, key, value) {
   return next;
 }
 
+export function spareStatusMatches(summary, value) {
+  const s = summary || {};
+  const overall = s.overall ?? 'no_profile';
+  if (value === 'short') return (s.short?.length ?? 0) > 0 || overall === 'short';
+  if (value === 'borderline') return (s.borderline?.length ?? 0) > 0 || overall === 'borderline';
+  if (value === 'not_entered') return (s.not_entered?.length ?? 0) > 0 || overall === 'not_entered';
+  return overall === value;
+}
+
 /** Excel-pattern filtering: AND across, OR within. */
 export function computeFilteredUnits(units, cellsByUnitStage, stages, filters, spareByUnit = {}) {
   if (!Array.isArray(units)) return [];
@@ -96,8 +105,9 @@ export function computeFilteredUnits(units, cellsByUnitStage, stages, filters, s
 
     // 6. Spare inventory status
     if (f.spare_status?.length) {
-      const overall = spareByUnit?.[u.id]?.overall ?? 'no_profile';
-      if (!f.spare_status.includes(overall)) return false;
+      if (!f.spare_status.some(value => spareStatusMatches(spareByUnit?.[u.id], value))) {
+        return false;
+      }
     }
 
     return true;

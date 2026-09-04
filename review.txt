@@ -1,691 +1,370 @@
-BATCH #589 — FIX-1: READ-ONLY ASSIGNMENT BROWSING
-Base: 95d626c | Branch: staging | Product scope: same 11 files
+BATCH #590 — EXECUTION MATRIX SPARE COUNTS + ANY-CATEGORY FILTERS
+Base: af36779 | Branch: staging | Scope: frontend only, exactly 4 files
 
-FIX-1 REQUEST
-=============
-Regression: BATCH #589 added disabled={!canWrite} to the assignment-tab browse selectors פרופיל and בניין. This blocked viewer/management_team users from browsing profile assignments even though only write controls were meant to be disabled.
+BASE GATE
+=========
+branch=staging
+HEAD=af36779febd5a7f4daa9f34752e91f1b0ef51f94
+origin/staging=af36779febd5a7f4daa9f34752e91f1b0ef51f94
+Working tree before implementation: clean.
+All four target files present.
 
-FIX-1 IMPLEMENTATION
-====================
-File changed in FIX-1: frontend/src/pages/SpareTilesPage.js only.
-- Removed disabled={!canWrite} from the assignment-tab פרופיל selector.
-- Removed disabled={!canWrite} from the assignment-tab בניין selector.
-- Preserved savedProfiles filtering and invalid-ID reset effect.
-- Preserved disabled write controls: unit buttons, בחר הכל בקומה, and שמור שיוך.
-- Preserved header chip, legend, settings controls, margin_pct behavior, and every other BATCH #589 change.
+IMPLEMENTATION
+==============
+E1 — SparePill.js
+- Problem-state pills are now assembled from ordered segments.
+- short categories: חסר N.
+- borderline categories: גבולי N.
+- not-entered appears when there are no short rows.
+- ok / no_target / no_profile / missing summary retain their prior labels.
+- Colors, overall state, tooltip, size and click behavior are unchanged.
 
-CI=true BUILD
-=============
+E2 — useMatrixFilters.js
+- Added exported pure helper spareStatusMatches(summary, value).
+- חסר / גבולי / לא הוזן match when any category has that state, with overall fallback.
+- מספיק / ללא יעד / אחר retain overall-only matching.
+- Multiple selected spare statuses remain OR semantics.
+- Serialization, saved views, active counts and toggles are unchanged.
+
+E3 — useMatrixFilters.test.js
+- Kept every existing test, including the baseline T11 four-argument compatibility regression.
+- Added T12 for any-category short/borderline/not-entered matching, OR semantics, ok and missing-summary/no-profile behavior.
+- The uploaded spec called this new case T11, but af36779 already contains an existing T11; it was preserved rather than renamed or removed.
+
+E4 — ExecutionMatrixPage.js
+- Spare counter chips use spareStatusMatches for the same semantics as filtering.
+- A filter miss in a non-empty project replaces the views with:
+  אין דירות שמתאימות לסינון הנוכחי
+  נקה סינון
+- The reset button calls filterAPI.reset.
+- The counters strip, header, filter drawer and already-disabled zero-result export remain present.
+- MatrixGridView and MatrixListView were not edited; their true-empty-project text is unchanged.
+
+V1 — JEST
+=========
+Command: cd frontend && CI=true yarn test --watchAll=false --runTestsByPath src/hooks/__tests__/useMatrixFilters.test.js
+Result: PASS.
+
+PASS src/hooks/__tests__/useMatrixFilters.test.js
+  useMatrixFilters pure helpers
+    ✓ T1 — building + tag AND combination filters correctly
+    ✓ T2 — status filter OR within: multiple statuses keep unit if ANY match
+    ✓ T3 — global search_text matches in cell.text_value AND cell.note
+    ✓ T4 — activeCount counts every active section correctly
+    ✓ T5 — loadSavedView replaces state atomically (no leak between switches)
+    ✓ T6 — sentinel boundary: __empty__ ↔ "" round-trips correctly
+    ✓ T7 — reset semantics: applying ≥4 sections then resetting → all empty + activeCount.total===0
+    ✓ T8 — spare status filters short and defaults missing summaries to no_profile
+    ✓ T9 — activeCount includes each selected spare status
+    ✓ T10 — spare_status survives saved-view serialization round-trip
+    ✓ T11 — old four-argument helper calls retain existing results
+    ✓ T12 — spare problem statuses match any category while non-problem statuses use overall
+
+Test Suites: 1 passed, 1 total
+Tests: 12 passed, 12 total
+Snapshots: 0 total
+
+Environment note:
+- The first Jest launch was blocked before loading tests because canvas could not find libuuid.so.1.
+- libuuid was added temporarily through Replit system-package management, the suite passed, and it was then removed.
+- replit.nix is byte-clean against af36779; no dependency or environment file remains changed.
+
+V2 — CI=true BUILD
+==================
 Command: cd frontend && REACT_APP_BACKEND_URL=/ CI=true yarn build
 Result: EXIT 0.
-Output bundle: build/static/js/main.c6281090.js.
-No new ESLint warnings. Existing-only warnings:
-- Browserslist database age notice.
+Bundle: build/static/js/main.946fb05f.js.
+No new ESLint warnings.
+Existing-only warnings:
+- Browserslist data age notice.
 - @capacitor-community/apple-sign-in source-map files absent from node_modules.
 
-LIVE AUTHORIZATION PROBE
-========================
-Command: cd backend && MONGO_URL=mongodb://localhost:27017 DB_NAME=contractor_ops python tests/probe_spare_tiles_http.py
-Result: PASS — All 94 live HTTP checks passed.
-Required FIX-1 preservation evidence:
-- management_team GET spare settings: 200, can_write=false.
-- management_team GET spare assignments: 200.
-- management_team PUT spare settings: 403.
-- management_team PATCH spare-profile units: 403.
-- Exact rejection message preserved: רק מנהל הפרויקט יכול לשנות הגדרות ושיוך ריצוף ספייר.
-- PM settings/profile write flow remains 200.
-- Legacy unit, handover and export preservation checks remain green.
+V3 — PLAYWRIGHT DESKTOP + 390PX
+================================
+Tester: batch590-ui-verification
+Authenticated pass verdict: SUCCESS.
+Fixture: five isolated units with exact requested summary combinations; removed after testing.
+Temporary managed-secret token: stored only in /tmp, never printed, removed after testing.
+No data mutation, save or export action was performed.
 
-PLAYWRIGHT — MANAGEMENT_TEAM
-============================
-Route: /projects/batch589-fix1-project/spare-tiles
-Viewport: 390px
-Result: PASS.
-- Opened שיוך דירות.
-- פרופיל selector: disabled=false.
-- בניין selector: disabled=false.
-- Selected saved פרופיל 4 חדרים and בניין ב׳.
-- קומה 2, דירה 202, and unit label פרופיל 4 חדרים rendered.
-- בחר הכל בקומה: disabled=true.
-- דירה 202 unit button: disabled=true.
-- שמור שיוך: disabled=true.
-- Screenshot: xplwra.
-- No mutation or save was performed.
+Desktop pills and colors:
+- Unit A: חסר 2 · גבולי 1 — red.
+- Unit B: גבולי 1 — amber.
+- Unit C: גבולי 1 · לא הוזן — slate.
+- Unit D: מספיק — green.
+- Unit E: אחר — neutral/gray.
 
-PLAYWRIGHT — PROJECT_MANAGER PRESERVATION
-=========================================
-Route: /projects/batch589-fix1-project/spare-tiles
-Viewport: 390px
-Result: PASS.
-- Fresh PM authentication/context.
-- פרופיל selector: disabled=false.
-- בניין selector: disabled=false.
-- Selected פרופיל 4 חדרים and בניין ב׳.
-- קומה 2, דירה 202, and unit label פרופיל 4 חדרים rendered.
-- בחר הכל בקומה: disabled=false.
-- דירה 202 unit button: disabled=false.
-- שמור שיוך: disabled=true because no assignment change was made — expected.
-- Screenshot: pjpcp1.
-- No mutation or save was performed.
+Counter strip:
+- חסר 1
+- גבולי 3
+- מספיק 1
+- לא הוזן 1
+- אחר 1
+- ללא יעד hidden at zero.
 
-WORKFLOW / LOG EVIDENCE
-=======================
-- Start application restarted once after the build; workflow is RUNNING.
-- main.c6281090.js served successfully.
-- management_team and PM auth/settings/assignments requests returned 200.
-- No functional backend or browser interaction error observed.
-- Existing CSP refusals for external fonts/inline resources on stale parallel pages did not block this flow.
-- Isolated batch589-fix1 fixture was removed after verification.
+Filter behavior:
+- Quick גבולי chip listed exactly units A, B and C.
+- Drawer גבולי alone listed exactly A, B and C.
+- Drawer גבולי + מספיק listed exactly A, B, C and D.
+- A guaranteed nonexistent free-search filter produced zero results.
+- Exact honest empty text rendered: אין דירות שמתאימות לסינון הנוכחי.
+- Exact reset action rendered: נקה סינון.
+- Excel export was disabled with title אין דירות לייצוא בסינון הנוכחי.
+- Clicking נקה סינון restored all five units and re-enabled export.
 
-FINAL PRODUCT SCOPE CHECK
+Mobile @390px:
+- All five rows displayed the same exact pill texts as desktop.
+- document scrollWidth=375 and body scrollWidth=375 at a 390px viewport; no page-level horizontal overflow.
+
+Screenshots:
+- stwlbz — initial desktop five pills and counter strip.
+- e4sv7t — quick גבולי result with A/B/C only.
+- 0qmrs2 — drawer גבולי-only result.
+- ubsk22 — drawer גבולי + מספיק selection state.
+- omrkfm — honest empty state and disabled export.
+- pxkyrx — empty-state filter drawer context.
+- wyui1v — reset restored all five desktop units.
+- ts9m39 — 390px five-row mobile view without overflow.
+
+Runtime/log evidence:
+- Start application is RUNNING and served main.946fb05f.js.
+- Authenticated /api/auth/me and execution-matrix requests returned 200.
+- No application/API failure occurred in the completed pass.
+- Existing external-font/inline-resource CSP noise and a non-blocking dialog aria-describedby warning did not affect the flow.
+
+V4 — SCOPE + PRESERVATION
 =========================
-Command: git diff --name-only 95d626c -- backend frontend
-Result: exactly the same 11 product files; no new product file.
+Command: git diff --name-only af36779 -- backend frontend
+Result: exactly 4 files:
+- frontend/src/components/matrix/SparePill.js
+- frontend/src/hooks/__tests__/useMatrixFilters.test.js
+- frontend/src/hooks/useMatrixFilters.js
+- frontend/src/pages/ExecutionMatrixPage.js
 
-1. backend/contractor_ops/execution_matrix_export.py
-2. backend/contractor_ops/projects_router.py
-3. backend/contractor_ops/spare_tiles.py
-4. backend/contractor_ops/spare_tiles_router.py
-5. backend/tests/probe_spare_tiles_http.py
-6. backend/tests/test_execution_matrix_export.py
-7. backend/tests/test_spare_tiles.py
-8. frontend/src/components/matrix/SparePill.js
-9. frontend/src/pages/ApartmentDashboardPage.js
-10. frontend/src/pages/ExecutionMatrixPage.js
-11. frontend/src/pages/SpareTilesPage.js
-
-git diff --check 95d626c -- backend frontend: PASS.
-Forbidden/out-of-scope product files changed: none.
-Dependencies/migrations: none.
+git diff --check af36779 for the four files: PASS.
+replit.nix diff vs af36779: CLEAN.
+Backend files changed: none.
+MatrixGridView/ListView/FilterDrawer/FilterSection changed: none.
+SparePill colors/tooltip/click/size changed: none.
+Saved-view payloads changed: none.
+Unit page / SpareTilesPage changed: none.
+Schema / Excel changed: none.
+Dependencies or migrations retained: none.
 Manual commit: none.
 Deployment: none.
 
-COMPLETE 11-FILE PRODUCT DIFF VS 95d626c
-========================================
-diff --git a/backend/contractor_ops/execution_matrix_export.py b/backend/contractor_ops/execution_matrix_export.py
-index 69a98ad..0854706 100644
---- a/backend/contractor_ops/execution_matrix_export.py
-+++ b/backend/contractor_ops/execution_matrix_export.py
-@@ -145,6 +145,7 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
-             spare_summary = (spare.get("by_unit") or {}).get(unit["id"]) or {}
-             overall = spare_summary.get("overall", "no_profile")
-             label = SPARE_OVERALL_LABELS.get(overall, overall)
-+            borderline = spare_summary.get("borderline") or []
-             if overall == "short":
-                 details = ", ".join(
-                     f"{row['name']} {row['missing']}"
-@@ -152,6 +153,14 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
-                 )
-                 if details:
-                     label = f"{label}: {details}"
-+            elif overall == "not_entered":
-+                details = ", ".join(spare_summary.get("not_entered") or [])
-+                if details:
-+                    label = f"{label}: {details}"
-+            elif overall == "borderline" and borderline:
-+                label = f"{label}: {', '.join(borderline)}"
-+            if overall in {"short", "not_entered"} and borderline:
-+                label = f"{label} · גבולי: {', '.join(borderline)}"
-             spare_cell = ws.cell(row=row_idx, column=spare_col, value=label)
-             fill = SPARE_FILLS.get(overall)
-             if fill is not None:
-diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
-index 66dbc4b..c26a108 100644
---- a/backend/contractor_ops/projects_router.py
-+++ b/backend/contractor_ops/projects_router.py
-@@ -1228,10 +1228,9 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
-         else default_spare_settings()
-     )
-     spare_status = compute_spare_status(unit, spare_settings)
--    spare_can_write = (
--        await _get_project_role(user, project_id) in ('project_manager', 'owner', 'management_team')
--        if project_id else False
--    )
-+    spare_role = await _get_project_role(user, project_id) if project_id else None
-+    spare_can_write = spare_role in ('project_manager', 'owner', 'management_team')
-+    spare_can_assign = spare_role in ('project_manager', 'owner')
- 
-     return {
-         'unit': {
-@@ -1245,6 +1244,7 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
-         'spare_profiles_exist': bool(spare_settings.get('profiles')),
-         'spare_status': spare_status,
-         'spare_can_write': spare_can_write,
-+        'spare_can_assign': spare_can_assign,
-         'kpi': {
-             'total': len(tasks),
-             'open': by_status.get('open', 0) + by_status.get('assigned', 0) + by_status.get('reopened', 0),
-diff --git a/backend/contractor_ops/spare_tiles.py b/backend/contractor_ops/spare_tiles.py
-index c927263..369ee11 100644
---- a/backend/contractor_ops/spare_tiles.py
-+++ b/backend/contractor_ops/spare_tiles.py
-@@ -238,5 +238,10 @@ def matrix_spare_summary(unit_doc, spare_settings):
-             for row in st['categories']
-             if row['status'] == 'not_entered'
-         ],
-+        'borderline': [
-+            row['name']
-+            for row in st['categories']
-+            if row['status'] == 'borderline'
-+        ],
-         'missing_total': sum((row['missing'] or 0) for row in short),
-     }
-\ No newline at end of file
-diff --git a/backend/contractor_ops/spare_tiles_router.py b/backend/contractor_ops/spare_tiles_router.py
-index 39dc346..aaaa3cc 100644
---- a/backend/contractor_ops/spare_tiles_router.py
-+++ b/backend/contractor_ops/spare_tiles_router.py
-@@ -15,7 +15,7 @@ from contractor_ops.spare_tiles import default_spare_settings, validate_spare_se
- 
- 
- router = APIRouter(prefix='/api')
--WRITE_ROLES = ('project_manager', 'owner', 'management_team')
-+WRITE_ROLES = ('project_manager', 'owner')
- 
- 
- async def _project_or_404(db, project_id):
-@@ -28,7 +28,7 @@ async def _project_or_404(db, project_id):
- async def _require_write(user, project_id):
-     role = await _get_project_role(user, project_id)
-     if role not in WRITE_ROLES:
--        raise HTTPException(status_code=403, detail='אין הרשאה לעדכן הגדרות ריצוף ספייר')
-+        raise HTTPException(status_code=403, detail='רק מנהל הפרויקט יכול לשנות הגדרות ושיוך ריצוף ספייר')
- 
- 
- async def _can_write(user, project_id):
-diff --git a/backend/tests/probe_spare_tiles_http.py b/backend/tests/probe_spare_tiles_http.py
-index 694fc4f..871d7d0 100644
---- a/backend/tests/probe_spare_tiles_http.py
-+++ b/backend/tests/probe_spare_tiles_http.py
-@@ -119,6 +119,7 @@ def main():
-     other_project_id = f"probe-spare-other-project-{tag}"
-     pm_id = f"probe-spare-pm-{tag}"
-     owner_id = f"probe-spare-owner-{tag}"
-+    management_id = f"probe-spare-management-{tag}"
-     viewer_id = f"probe-spare-viewer-{tag}"
-     building_id = f"probe-spare-building-main-{tag}"
-     other_building_id = f"probe-spare-building-first-{tag}"
-@@ -140,7 +141,7 @@ def main():
-     legacy_count = 13
-     legacy_notes = "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק"
- 
--    user_ids = [pm_id, owner_id, viewer_id]
-+    user_ids = [pm_id, owner_id, management_id, viewer_id]
-     project_ids = [project_id, other_project_id]
-     building_ids = [building_id, other_building_id]
-     floor_ids = [floor_low_id, floor_high_id]
-@@ -203,10 +204,19 @@ def main():
-                 "user_status": "active",
-                 "session_version": 0,
-             },
-+            {
-+                "id": management_id,
-+                "role": "management_team",
-+                "full_name": "צוות ניהול בדיקת ספייר",
-+                "user_status": "active",
-+                "session_version": 0,
-+            },
-         ])
-         db.organization_memberships.insert_many([
-             {"id": f"probe-om-pm-{tag}", "org_id": org_id, "user_id": pm_id, "role": "member"},
-             {"id": f"probe-om-owner-{tag}", "org_id": org_id, "user_id": owner_id, "role": "owner"},
-+            {"id": f"probe-om-management-{tag}", "org_id": org_id,
-+             "user_id": management_id, "role": "member"},
-             {"id": f"probe-om-view-{tag}", "org_id": org_id, "user_id": viewer_id, "role": "member"},
-         ])
-         db.project_memberships.insert_many([
-@@ -214,6 +224,8 @@ def main():
-              "role": "project_manager"},
-             {"id": f"probe-pm-owner-{tag}", "project_id": project_id, "user_id": owner_id,
-              "role": "owner"},
-+            {"id": f"probe-pm-management-{tag}", "project_id": project_id,
-+             "user_id": management_id, "role": "management_team"},
-             {"id": f"probe-pm-view-{tag}", "project_id": project_id, "user_id": viewer_id,
-              "role": "viewer"},
-             {"id": f"probe-pm-other-{tag}", "project_id": other_project_id, "user_id": pm_id,
-@@ -280,6 +292,9 @@ def main():
- 
-         pm_headers = {"Authorization": f"Bearer {_create_token(pm_id, 'project_manager')}"}
-         owner_headers = {"Authorization": f"Bearer {_create_token(owner_id, 'owner')}"}
-+        management_headers = {
-+            "Authorization": f"Bearer {_create_token(management_id, 'management_team')}"
-+        }
-         viewer_headers = {"Authorization": f"Bearer {_create_token(viewer_id, 'viewer')}"}
- 
-         # V3 baseline before any project settings are persisted.
-@@ -288,7 +303,13 @@ def main():
-         check("V3 absent settings has no profiles", baseline["spare_profiles_exist"] is False)
-         check("V3 absent settings status is no_profile",
-               baseline["spare_status"]["overall"] == "no_profile")
--        additive_top = {"spare_settings", "spare_profiles_exist", "spare_status", "spare_can_write"}
-+        additive_top = {
-+            "spare_settings",
-+            "spare_profiles_exist",
-+            "spare_status",
-+            "spare_can_write",
-+            "spare_can_assign",
-+        }
-         baseline_top_keys = set(baseline) - additive_top
-         baseline_unit_keys = set(baseline["unit"]) - {"spare_profile_id"}
-         check("V3 baseline existing top-level keys captured", bool(baseline_top_keys))
-@@ -335,7 +356,7 @@ def main():
-             ],
-             "profiles": [
-                 {"id": profile_a, "name": "3 חדרים",
--                 "targets": {"ריצוף יבש": 10, "ריצוף מרפסות": 2}},
-+                 "targets": {"ריצוף יבש": 10, "ריצוף מרפסות": 3}},
-                 {"id": profile_b, "name": "4 חדרים",
-                  "targets": {"ריצוף יבש": 12, "ריצוף מרפסות": 3}},
-             ],
-@@ -345,10 +366,21 @@ def main():
-         viewer_get = call("GET", settings_path, viewer_headers, 200).json()
-         check("V2 viewer GET settings allowed and read-only",
-               viewer_get["can_write"] is False)
-+        management_get = call("GET", settings_path, management_headers, 200).json()
-+        check("V2 management team GET settings is read-only",
-+              management_get["can_write"] is False)
-         call("GET", assignments_path, viewer_headers, 200)
-         call("PUT", settings_path, viewer_headers, 403, json=profile_payload)
-+        management_put = call(
-+            "PUT", settings_path, management_headers, 403, json=profile_payload
-+        ).json()
-+        check("V2 management team settings rejection message is exact",
-+              management_put["detail"]
-+              == "רק מנהל הפרויקט יכול לשנות הגדרות ושיוך ריצוף ספייר")
-         call("PATCH", f"{settings_path.rsplit('/', 1)[0]}/spare-profiles/{profile_a}/units",
-              viewer_headers, 403, json={"add": [unit_one_id], "remove": []})
-+        call("PATCH", f"{settings_path.rsplit('/', 1)[0]}/spare-profiles/{profile_a}/units",
-+             management_headers, 403, json={"add": [unit_one_id], "remove": []})
- 
-         pm_saved = call("PUT", settings_path, pm_headers, 200, json=profile_payload).json()
-         check("V2 PM saved two profiles",
-@@ -406,6 +438,24 @@ def main():
-         check("V2 assignment unit payload is exact",
-               set(assignment_payload["floors"][0]["units"][0]) == expected_unit_keys)
- 
-+        management_unit = call(
-+            "GET", f"/api/units/{unit_one_id}", management_headers, 200
-+        ).json()
-+        check("V3 management team can update inventory but cannot assign profiles",
-+              management_unit["spare_can_write"] is True
-+              and management_unit["spare_can_assign"] is False)
-+        pm_unit = call("GET", f"/api/units/{unit_one_id}", pm_headers, 200).json()
-+        check("V3 PM can update inventory and assign profiles",
-+              pm_unit["spare_can_write"] is True
-+              and pm_unit["spare_can_assign"] is True)
-+
-+        management_inventory_before = unit_document(db, unit_one_id)
-+        call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", management_headers, 200,
-+             json={"spare_tiles": legacy_spare_tiles})
-+        management_inventory_after = unit_document(db, unit_one_id)
-+        check("V3 management team inventory no-op preserves whole unit",
-+              management_inventory_after == management_inventory_before)
-+
-         profile_base = f"/api/projects/{project_id}/spare-profiles"
-         added = call("PATCH", f"{profile_base}/{profile_a}/units", pm_headers, 200,
-                      json={"add": [unit_one_id, unit_two_id], "remove": []}).json()
-@@ -532,7 +582,9 @@ def main():
-               after["spare_status"]["overall"] == "short"
-               and dry_row["actual"] == 8 and dry_row["target"] == 10
-               and dry_row["missing"] == 2)
--        check("V3 viewer unit capability is false", after["spare_can_write"] is False)
-+        check("V3 viewer unit capabilities are false",
-+              after["spare_can_write"] is False
-+              and after["spare_can_assign"] is False)
- 
-         matrix_after = call("GET", matrix_path, pm_headers, 200).json()
-         check("V2 matrix existing key set unchanged",
-@@ -547,6 +599,8 @@ def main():
-               matrix_spare["enabled"] is True
-               and matrix_spare["by_unit"][unit_one_id]["overall"] == "short"
-               and matrix_spare["by_unit"][unit_one_id]["short"] == expected_short
-+              and matrix_spare["by_unit"][unit_one_id]["borderline"]
-+              == ["ריצוף מרפסות"]
-               and matrix_spare["by_unit"][unit_one_id]["missing_total"] == 2)
-         check("V2 matrix unit B not entered",
-               matrix_spare["by_unit"][unit_two_id]["overall"] == "not_entered")
-@@ -559,10 +613,11 @@ def main():
-               matrix_export_after["headers"][-1] == "ריצוף ספייר")
-         check("V2 matrix export short text and fill",
-               matrix_export_after["rows"]["101"]["value"]
--              == "חסר — להזמין: ריצוף יבש 2"
-+              == "חסר — להזמין: ריצוף יבש 2 · גבולי: ריצוף מרפסות"
-               and matrix_export_after["rows"]["101"]["fill"] == "FEE2E2")
-         check("V2 matrix export not-entered and no-profile values",
--              matrix_export_after["rows"]["102"]["value"] == "לא הוזן"
-+              matrix_export_after["rows"]["102"]["value"]
-+              == "לא הוזן: ריצוף יבש, ריצוף מרפסות"
-               and matrix_export_after["rows"]["801"]["value"] == "אחר")
-         print("\n[V2 JSON] execution matrix spare")
-         print(json.dumps(matrix_spare, ensure_ascii=False, sort_keys=True, indent=2))
-diff --git a/backend/tests/test_execution_matrix_export.py b/backend/tests/test_execution_matrix_export.py
-index f911903..57b2605 100644
---- a/backend/tests/test_execution_matrix_export.py
-+++ b/backend/tests/test_execution_matrix_export.py
-@@ -186,6 +186,53 @@ def test_spare_enabled_appends_status_column_with_fills_and_profile_comments():
-     assert ok_cell.fill.fgColor.rgb.upper().endswith("D1FAE5")
- 
- 
-+def test_spare_export_includes_borderline_and_not_entered_details():
-+    project = {"id": "p1", "name": "Demo"}
-+    units = [
-+        {"id": "u-short", "unit_no": "1"},
-+        {"id": "u-borderline", "unit_no": "2"},
-+        {"id": "u-not-entered", "unit_no": "3"},
-+    ]
-+    spare = {
-+        "enabled": True,
-+        "by_unit": {
-+            "u-short": {
-+                "overall": "short",
-+                "short": [{"name": "ריצוף יבש", "missing": 2, "measure": "tiles"}],
-+                "borderline": ["חיפוי מטבח"],
-+                "not_entered": [],
-+            },
-+            "u-borderline": {
-+                "overall": "borderline",
-+                "short": [],
-+                "borderline": ["ריצוף יבש"],
-+                "not_entered": [],
-+            },
-+            "u-not-entered": {
-+                "overall": "not_entered",
-+                "short": [],
-+                "borderline": ["ריצוף יבש"],
-+                "not_entered": ["חיפוי מטבח"],
-+            },
-+        },
-+    }
-+    ws = _read_workbook(
-+        build_matrix_xlsx(project, units, [], [], {}, {}, spare=spare)
-+    ).active
-+
-+    short_cell = ws.cell(row=2, column=5)
-+    assert short_cell.value == "חסר — להזמין: ריצוף יבש 2 · גבולי: חיפוי מטבח"
-+    assert short_cell.fill.fgColor.rgb.upper().endswith("FEE2E2")
-+
-+    borderline_cell = ws.cell(row=3, column=5)
-+    assert borderline_cell.value == "גבולי: ריצוף יבש"
-+    assert borderline_cell.fill.fgColor.rgb.upper().endswith("FEF3C7")
-+
-+    not_entered_cell = ws.cell(row=4, column=5)
-+    assert not_entered_cell.value == "לא הוזן: חיפוי מטבח · גבולי: ריצוף יבש"
-+    assert not_entered_cell.fill.fgColor.rgb.upper().endswith("F1F5F9")
-+
-+
- # =====================================================================
- # T2 — status label translation + fills
- # =====================================================================
-diff --git a/backend/tests/test_spare_tiles.py b/backend/tests/test_spare_tiles.py
-index 57bd29a..336d1be 100644
---- a/backend/tests/test_spare_tiles.py
-+++ b/backend/tests/test_spare_tiles.py
-@@ -226,10 +226,41 @@ def test_matrix_spare_summary_short_categories_and_missing_total():
-             {'name': 'חיפוי מטבח', 'missing': 2, 'measure': 'sqm'},
-         ],
-         'not_entered': [],
-+        'borderline': [],
-         'missing_total': 12,
-     }
- 
- 
-+def test_matrix_spare_summary_short_also_surfaces_borderline_categories():
-+    config = {
-+        'categories': [
-+            {'name': 'ריצוף יבש', 'measure': 'tiles'},
-+            {'name': 'חיפוי מטבח', 'measure': 'sqm'},
-+        ],
-+        'profiles': [{
-+            'id': PROFILE_ID,
-+            'name': 'פרופיל א',
-+            'targets': {'ריצוף יבש': 10, 'חיפוי מטבח': 5},
-+        }],
-+        'margin_pct': 10,
-+    }
-+    result = matrix_spare_summary(
-+        {
-+            'spare_profile_id': PROFILE_ID,
-+            'spare_tiles': [
-+                {'type': 'ריצוף יבש', 'count': 8},
-+                {'type': 'חיפוי מטבח', 'count': 5},
-+            ],
-+        },
-+        config,
-+    )
-+    assert result['overall'] == 'short'
-+    assert result['short'] == [
-+        {'name': 'ריצוף יבש', 'missing': 2, 'measure': 'tiles'},
-+    ]
-+    assert result['borderline'] == ['חיפוי מטבח']
-+
-+
- def test_matrix_spare_summary_ok():
-     result = matrix_spare_summary(
-         {
-@@ -241,6 +272,7 @@ def test_matrix_spare_summary_ok():
-     assert result['overall'] == 'ok'
-     assert result['profile'] == '3 חדרים'
-     assert result['short'] == []
-+    assert result['borderline'] == []
-     assert result['missing_total'] == 0
- 
- 
+COMPLETE 4-FILE DIFF VS af36779
+================================
 diff --git a/frontend/src/components/matrix/SparePill.js b/frontend/src/components/matrix/SparePill.js
-index 7ef5fcb..8a6b656 100644
+index 8a6b656..6464c37 100644
 --- a/frontend/src/components/matrix/SparePill.js
 +++ b/frontend/src/components/matrix/SparePill.js
-@@ -42,9 +42,11 @@ export default function SparePill({
-   const config = summary ? STATUS_CONFIG[summary.overall] || STATUS_CONFIG.no_profile : null;
+@@ -43,10 +43,16 @@ export default function SparePill({
    const shortRows = Array.isArray(summary?.short) ? summary.short : [];
    const notEntered = Array.isArray(summary?.not_entered) ? summary.not_entered : [];
--  const text = config
-+  const borderline = Array.isArray(summary?.borderline) ? summary.borderline : [];
-+  const baseText = config
-     ? `${config.label}${summary?.overall === 'short' && shortRows.length > 1 ? ` (${shortRows.length})` : ''}`
-     : '—';
-+  const text = `${baseText}${['short', 'not_entered'].includes(summary?.overall) && borderline.length ? ' · גבולי' : ''}`;
+   const borderline = Array.isArray(summary?.borderline) ? summary.borderline : [];
+-  const baseText = config
+-    ? `${config.label}${summary?.overall === 'short' && shortRows.length > 1 ? ` (${shortRows.length})` : ''}`
+-    : '—';
+-  const text = `${baseText}${['short', 'not_entered'].includes(summary?.overall) && borderline.length ? ' · גבולי' : ''}`;
++  const nShort = shortRows.length;
++  const nBorder = borderline.length;
++  const nNotEntered = notEntered.length;
++  const labelOnly = !summary || ['ok', 'no_target', 'no_profile'].includes(summary.overall);
++  const segments = labelOnly ? [] : [
++    ...(nShort > 0 ? [`חסר ${nShort}`] : []),
++    ...(nBorder > 0 ? [`גבולי ${nBorder}`] : []),
++    ...(nShort === 0 && nNotEntered > 0 ? ['לא הוזן'] : []),
++  ];
++  const text = config ? (segments.join(' · ') || config.label) : '—';
    const titleParts = [
      summary?.profile ? `פרופיל: ${summary.profile}` : 'ללא פרופיל',
      ...shortRows.map(row => {
-@@ -52,6 +54,7 @@ export default function SparePill({
-       return `${row.name}: חסר ${row.missing}${measure ? ` ${measure}` : ''}`;
-     }),
-   ];
-+  if (borderline.length) titleParts.push(`גבולי: ${borderline.join(', ')}`);
-   if (notEntered.length) titleParts.push(`לא הוזן: ${notEntered.join(', ')}`);
+diff --git a/frontend/src/hooks/__tests__/useMatrixFilters.test.js b/frontend/src/hooks/__tests__/useMatrixFilters.test.js
+index 8921069..7a5b962 100644
+--- a/frontend/src/hooks/__tests__/useMatrixFilters.test.js
++++ b/frontend/src/hooks/__tests__/useMatrixFilters.test.js
+@@ -6,6 +6,7 @@ import {
+   initialFilters,
+   toggleInArray,
+   toggleInDict,
++  spareStatusMatches,
+ } from '../useMatrixFilters';
  
-   const inner = (
-diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index a6f053f..f5b8ffa 100644
---- a/frontend/src/pages/ApartmentDashboardPage.js
-+++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -122,9 +122,12 @@ const ApartmentDashboardPage = () => {
-   const [spareTilesEditing, setSpareTilesEditing] = useState(false);
-   const [spareTilesEntries, setSpareTilesEntries] = useState([]);
-   const [spareTilesSaving, setSpareTilesSaving] = useState(false);
--  const [showNoTargetRows, setShowNoTargetRows] = useState(false);
-   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
-   const spareCanWrite = unitData?.spare_can_write === true;
-+  const spareCanAssign = unitData?.spare_can_assign === true;
-+  const formatSpareQty = (row) => row.measure === 'sqm'
-+    ? `${row.actual} מ"ר`
-+    : row.actual === 1 ? 'אריח אחד' : `${row.actual} אריחים`;
-   const flagChecked = !!features?.defects_v2;
+ const mkCells = (entries) => {
+@@ -207,4 +208,36 @@ describe('useMatrixFilters pure helpers', () => {
+     };
+     expect(computeFilteredUnits(units, cells, stages, filters).map(u => u.id)).toEqual(['u1']);
+   });
++
++  test('T12 — spare problem statuses match any category while non-problem statuses use overall', () => {
++    const extendedUnits = [
++      ...units,
++      { id: 'u5', unit_no: '301', building_id: 'C' },
++    ];
++    const spareByUnit = {
++      u1: {
++        overall: 'short',
++        short: [{ name: 'a', missing: 1, measure: 'tiles' }],
++        borderline: ['b'],
++      },
++      u2: { overall: 'borderline', borderline: ['b'] },
++      u3: { overall: 'not_entered', not_entered: ['n'], borderline: ['b'] },
++      u4: { overall: 'ok' },
++    };
++    const idsFor = (spareStatus) => computeFilteredUnits(
++      extendedUnits,
++      {},
++      stages,
++      { ...initialFilters(), spare_status: spareStatus },
++      spareByUnit
++    ).map(unit => unit.id);
++
++    expect(idsFor(['borderline'])).toEqual(['u1', 'u2', 'u3']);
++    expect(idsFor(['short'])).toEqual(['u1']);
++    expect(idsFor(['not_entered'])).toEqual(['u3']);
++    expect(idsFor(['ok'])).toEqual(['u4']);
++    expect(idsFor(['short', 'ok'])).toEqual(['u1', 'u4']);
++    expect(idsFor(['no_profile'])).toEqual(['u5']);
++    expect(spareStatusMatches(undefined, 'no_profile')).toBe(true);
++  });
+ });
+diff --git a/frontend/src/hooks/useMatrixFilters.js b/frontend/src/hooks/useMatrixFilters.js
+index 7f6e4d1..7431ee3 100644
+--- a/frontend/src/hooks/useMatrixFilters.js
++++ b/frontend/src/hooks/useMatrixFilters.js
+@@ -44,6 +44,15 @@ export function toggleInDict(dict, key, value) {
+   return next;
+ }
  
-   useEffect(() => {
-@@ -138,7 +141,6 @@ const ApartmentDashboardPage = () => {
-       setLoading(true);
-       const data = await unitService.get(unitId);
-       setUnitData(data);
--      setShowNoTargetRows(false);
-     } catch (err) {
-       toast.error('שגיאה בטעינת פרטי דירה');
-       console.error(err);
-@@ -735,57 +737,44 @@ const ApartmentDashboardPage = () => {
-             {spareTilesOpen && (
-               <div className="px-4 pb-4">
-                 <div className="text-xs text-slate-500 mb-3 pb-2 border-b border-slate-100">
--                  {spareCanWrite ? (
-+                  {spareCanAssign ? (
-                     <label className="flex items-center gap-2">פרופיל:
-                       <select value={unit.spare_profile_id || ''} onChange={e => changeSpareProfile(e.target.value)} className="border border-slate-200 rounded-md px-2 py-1 text-xs">
-                         <option value="">אחר</option>
-                         {(unitData.spare_settings?.profiles || []).map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-                       </select>
-                     </label>
--                  ) : (unitData.spare_status?.profile?.name ? `פרופיל: ${unitData.spare_status.profile.name}` : 'דירה ללא פרופיל — ניתן לעדכן מלאי בלבד')}
-+                  ) : (
-+                    <>
-+                      {unitData.spare_status?.profile?.name ? `פרופיל: ${unitData.spare_status.profile.name}` : 'דירה ללא פרופיל — ניתן לעדכן מלאי בלבד'}
-+                      {spareCanWrite && !spareCanAssign ? ' · שינוי סיווג — דרך מנהל הפרויקט' : ''}
-+                    </>
-+                  )}
-                 </div>
-                 {Array.isArray(unitData.spare_status?.categories) && (
--                  (() => {
--                    const targetedRows = unitData.spare_status.categories.filter(row => row.status !== 'no_target');
--                    const noTargetRows = unitData.spare_status.categories.filter(row => row.status === 'no_target');
--                    return (
--                      <div className="space-y-1.5 mb-3">
--                        {targetedRows.map((row, idx) => (
--                          <div key={`${row.type}-${idx}`} className="flex items-center justify-between gap-3 py-1.5 text-[13px]">
--                            <span className="font-medium text-slate-700 min-w-0 flex-1 truncate">{row.name || row.type}</span>
--                            <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold whitespace-nowrap ${
--                              row.status === 'short' ? 'bg-red-100 text-red-700 border-red-200' :
--                              row.status === 'borderline' ? 'bg-amber-100 text-amber-800 border-amber-200' :
--                              row.status === 'ok' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
--                              'bg-slate-100 text-slate-500 border-slate-200'
--                            }`}>
--                              {row.status === 'short' ? `חסר ${row.missing || 0}` :
--                                row.status === 'borderline' ? 'גבולי' :
--                                row.status === 'ok' ? 'מספיק' : 'לא הוזן'}
--                            </span>
--                          </div>
--                        ))}
--                        {noTargetRows.length > 0 && (
--                          <div className="text-[11px] text-slate-400">
--                            <button type="button" onClick={() => setShowNoTargetRows(value => !value)} className="text-right">
--                              עוד {noTargetRows.length} סוגים ללא יעד
--                            </button>
--                            {showNoTargetRows && (
--                              <div className="mt-1 space-y-1">
--                                {noTargetRows.map((row, idx) => (
--                                  <div key={`${row.type}-${idx}`}>
--                                    {row.name || row.type}
--                                    {row.entered && row.actual === 0 ? ' · אין ספייר' :
--                                      row.entered && row.actual != null ? ` · ${row.actual} ${row.measure === 'sqm' ? 'מ"ר' : 'אריחים'}` : ''}
--                                  </div>
--                                ))}
--                              </div>
--                            )}
--                          </div>
--                        )}
--                      </div>
--                    );
--                  })()
-+                  <div className="space-y-1.5 mb-3">
-+                    {unitData.spare_status.categories.map((row, idx) => {
-+                      const isZero = row.entered && row.actual === 0;
-+                      const isShort = row.status === 'short';
-+                      const isBorderline = row.status === 'borderline';
-+                      const isOk = row.status === 'ok';
-+                      const hasInventory = row.entered && row.actual > 0;
-+                      const chipText = isZero ? 'אין ספייר' :
-+                        isShort ? `חסר ${row.missing || 0}` :
-+                        isBorderline ? `${formatSpareQty(row)} · גבולי` :
-+                        isOk || hasInventory ? formatSpareQty(row) : 'לא הוזן';
-+                      const chipClasses = isZero || isShort ? 'bg-red-100 text-red-700 border-red-200' :
-+                        isBorderline ? 'bg-amber-100 text-amber-800 border-amber-200' :
-+                        isOk || hasInventory ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
-+                        'bg-slate-100 text-slate-500 border-slate-200';
-+                      return (
-+                        <div key={`${row.type}-${idx}`} className="flex items-center justify-between gap-3 py-1.5 text-[13px]">
-+                          <span className="font-medium text-slate-700 min-w-0 flex-1 truncate">{row.name || row.type}</span>
-+                          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold whitespace-nowrap ${chipClasses}`}>{chipText}</span>
-+                        </div>
-+                      );
-+                    })}
-+                  </div>
-                 )}
-                 {spareTilesEditing ? (
-                   <div className="space-y-3">
++export function spareStatusMatches(summary, value) {
++  const s = summary || {};
++  const overall = s.overall ?? 'no_profile';
++  if (value === 'short') return (s.short?.length ?? 0) > 0 || overall === 'short';
++  if (value === 'borderline') return (s.borderline?.length ?? 0) > 0 || overall === 'borderline';
++  if (value === 'not_entered') return (s.not_entered?.length ?? 0) > 0 || overall === 'not_entered';
++  return overall === value;
++}
++
+ /** Excel-pattern filtering: AND across, OR within. */
+ export function computeFilteredUnits(units, cellsByUnitStage, stages, filters, spareByUnit = {}) {
+   if (!Array.isArray(units)) return [];
+@@ -96,8 +105,9 @@ export function computeFilteredUnits(units, cellsByUnitStage, stages, filters, s
+ 
+     // 6. Spare inventory status
+     if (f.spare_status?.length) {
+-      const overall = spareByUnit?.[u.id]?.overall ?? 'no_profile';
+-      if (!f.spare_status.includes(overall)) return false;
++      if (!f.spare_status.some(value => spareStatusMatches(spareByUnit?.[u.id], value))) {
++        return false;
++      }
+     }
+ 
+     return true;
 diff --git a/frontend/src/pages/ExecutionMatrixPage.js b/frontend/src/pages/ExecutionMatrixPage.js
-index 5cf0abd..0ec41e8 100644
+index 0ec41e8..e7d96bf 100644
 --- a/frontend/src/pages/ExecutionMatrixPage.js
 +++ b/frontend/src/pages/ExecutionMatrixPage.js
-@@ -262,10 +262,10 @@ export default function ExecutionMatrixPage() {
-           <button
-             type="button"
-             onClick={handleExport}
--            disabled={exporting}
-+            disabled={exporting || filterAPI.filteredUnits.length === 0}
-             className="px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-100 active:bg-slate-200 transition-colors disabled:opacity-50 min-h-[44px] flex items-center gap-2 text-sm font-medium text-slate-700"
-             aria-label="ייצוא לExcel"
--            title="ייצוא לExcel"
-+            title={filterAPI.filteredUnits.length === 0 ? 'אין דירות לייצוא בסינון הנוכחי' : 'ייצוא לExcel'}
-           >
-             {exporting
-               ? <Loader2 className="w-4 h-4 animate-spin" />
-diff --git a/frontend/src/pages/SpareTilesPage.js b/frontend/src/pages/SpareTilesPage.js
-index e1b8f66..45afbe1 100644
---- a/frontend/src/pages/SpareTilesPage.js
-+++ b/frontend/src/pages/SpareTilesPage.js
-@@ -45,6 +45,10 @@ export default function SpareTilesPage() {
-   useEffect(() => { if (buildingId) loadAssignments(buildingId).catch(() => toast.error('לא ניתן לטעון את הבניין')); }, [buildingId, loadAssignments]);
+@@ -4,7 +4,7 @@ import { Loader2, AlertCircle, LayoutGrid, ArrowRight, Settings, Download } from
+ import { downloadBlob } from '../utils/fileDownload';
+ import { toast } from 'sonner';
+ import { useMatrixData } from '../hooks/useMatrixData';
+-import useMatrixFilters from '../hooks/useMatrixFilters';
++import useMatrixFilters, { spareStatusMatches } from '../hooks/useMatrixFilters';
+ import { matrixService } from '../services/matrixService';
+ import MatrixListView from '../components/matrix/MatrixListView';
+ import MatrixGridView from '../components/matrix/MatrixGridView';
+@@ -109,8 +109,9 @@ export default function ExecutionMatrixPage() {
+       no_profile: 0,
+     };
+     for (const unit of units) {
+-      const status = spareByUnit[unit.id]?.overall ?? 'no_profile';
+-      if (Object.prototype.hasOwnProperty.call(counts, status)) counts[status] += 1;
++      for (const key of Object.keys(counts)) {
++        if (spareStatusMatches(spareByUnit[unit.id], key)) counts[key] += 1;
++      }
+     }
+     return counts;
+   }, [units, spareByUnit]);
+@@ -322,30 +323,45 @@ export default function ExecutionMatrixPage() {
+           </div>
+         )}
  
-   const profiles = draft?.profiles || [];
-+  const savedProfiles = useMemo(
-+    () => (draft?.profiles || []).filter(profile => profile.id),
-+    [draft?.profiles]
-+  );
-   const names = useMemo(() => Object.fromEntries((settings?.profiles || []).map(p => [p.id, p.name])), [settings]);
-   const baseline = useMemo(() => new Set((assignments?.floors || []).flatMap(f => f.units || []).filter(u => u.spare_profile_id === profileId).map(u => u.id)), [assignments, profileId]);
-   const addCount = [...selected].filter(id => !baseline.has(id)).length;
-@@ -84,6 +88,12 @@ export default function SpareTilesPage() {
-   };
-   const switchProfile = (id) => { setProfileId(id); setSelected(new Set()); };
-   useEffect(() => { setSelected(new Set(baseline)); }, [baseline]);
-+  useEffect(() => {
-+    if (profileId && !savedProfiles.some(profile => profile.id === profileId)) {
-+      setProfileId('');
-+      setSelected(new Set());
-+    }
-+  }, [profileId, savedProfiles]);
-   if (loading) return <div className="min-h-screen bg-slate-50 p-5" dir="rtl"><div className="max-w-5xl mx-auto space-y-3 animate-pulse"><div className="h-20 bg-slate-200 rounded-2xl" /><div className="h-64 bg-slate-200 rounded-2xl" /></div></div>;
-   if (error) return <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6" dir="rtl"><div className="text-center bg-white p-7 rounded-2xl border border-amber-200"><p className="text-slate-700 mb-4">{error}</p><button onClick={load} className="px-4 py-2 bg-amber-500 text-white rounded-lg">נסה שוב</button></div></div>;
- 
-@@ -92,7 +102,7 @@ export default function SpareTilesPage() {
-       <div className="max-w-5xl mx-auto px-4 py-4 flex gap-3 items-center">
-         <button onClick={() => navigate(`/projects/${projectId}/dashboard`)} className="p-2 rounded-lg bg-white/10 hover:bg-white/20"><ArrowRight className="w-5 h-5" /></button>
-         <div className="flex-1"><p className="text-[11px] text-amber-300 tracking-wide">ניהול מלאי באתר</p><h1 className="text-xl font-bold">ריצוף ספייר</h1></div>
--        <span className={`text-xs px-2.5 py-1 rounded-full ${canWrite ? 'bg-amber-400 text-slate-900' : 'bg-slate-600 text-slate-200'}`}>{canWrite ? 'עריכה פעילה' : 'צפייה בלבד'}</span>
-+        <span className={`text-xs px-2.5 py-1 rounded-full ${canWrite ? 'bg-amber-400 text-slate-900' : 'bg-slate-600 text-slate-200'}`}>{canWrite ? 'עריכה פעילה' : 'צפייה בלבד — עריכה למנהל פרויקט'}</span>
+-        <div className="md:hidden">
+-          <MatrixListView
+-            units={filterAPI.filteredUnits}
+-            stages={stages}
+-            cells={cells}
+-            floorsById={floorsById}
+-            buildingsById={buildingsById}
+-            onCellClick={handleCellClick}
+-            spare={matrixSpare}
+-            onSpareClick={handleSpareClick}
+-          />
+-        </div>
+-        <div className="hidden md:block">
+-          <MatrixGridView
+-            units={filterAPI.filteredUnits}
+-            stages={stages}
+-            cells={cells}
+-            floorsById={floorsById}
+-            buildingsById={buildingsById}
+-            onCellClick={handleCellClick}
+-            spare={matrixSpare}
+-            onSpareClick={handleSpareClick}
+-          />
+-        </div>
++        {units.length > 0 && filterAPI.filteredUnits.length === 0 ? (
++          <div className="text-center py-12 text-slate-500" dir="rtl">
++            <p>אין דירות שמתאימות לסינון הנוכחי</p>
++            <button
++              type="button"
++              onClick={filterAPI.reset}
++              className="mt-3 text-sm font-semibold text-amber-700 hover:text-amber-800"
++            >
++              נקה סינון
++            </button>
++          </div>
++        ) : (
++          <>
++            <div className="md:hidden">
++              <MatrixListView
++                units={filterAPI.filteredUnits}
++                stages={stages}
++                cells={cells}
++                floorsById={floorsById}
++                buildingsById={buildingsById}
++                onCellClick={handleCellClick}
++                spare={matrixSpare}
++                onSpareClick={handleSpareClick}
++              />
++            </div>
++            <div className="hidden md:block">
++              <MatrixGridView
++                units={filterAPI.filteredUnits}
++                stages={stages}
++                cells={cells}
++                floorsById={floorsById}
++                buildingsById={buildingsById}
++                onCellClick={handleCellClick}
++                spare={matrixSpare}
++                onSpareClick={handleSpareClick}
++              />
++            </div>
++          </>
++        )}
        </div>
-     </header>
-     <div className="max-w-5xl mx-auto px-4 pt-5">
-@@ -118,10 +128,10 @@ export default function SpareTilesPage() {
-           </article>)}</div>
-           <button disabled={!canWrite || profiles.length >= 10} onClick={() => updateDraft(d => ({ ...d, profiles: [...d.profiles, blankProfile()] }))} className="m-3 text-sm text-amber-700 font-bold disabled:opacity-40"><Plus className="inline w-4 h-4 ml-1" />הוסף פרופיל</button>
-         </div>
--        <div className="bg-white rounded-2xl border border-slate-200 p-4"><label className="font-bold text-slate-800">מרווח ביטחון</label><div className="flex items-center mt-2 gap-3"><input disabled={!canWrite} type="number" min="0" max="100" value={draft.margin_pct} onChange={e => updateDraft(d => ({ ...d, margin_pct: Math.min(100, Math.max(0, Number(e.target.value))) }))} className="w-24 border rounded-lg py-2 text-center" /><span className="text-sm text-slate-500">אחוז מעל היעד לאזור הגבולי</span></div><div className="mt-3 flex gap-3 text-[11px]"><span className="text-red-700">חסר — להזמין</span><span className="text-amber-700">גבולי</span><span className="text-emerald-700">מספיק</span><span className="text-slate-500">לא הוזן / ללא יעד</span></div></div>
-+        <div className="bg-white rounded-2xl border border-slate-200 p-4"><div className="font-bold text-slate-800">מקרא</div><div className="mt-3 flex gap-3 text-[11px]"><span className="text-red-700">חסר — להזמין</span><span className="text-amber-700">גבולי</span><span className="text-emerald-700">מספיק</span><span className="text-slate-500">לא הוזן / ללא יעד</span></div></div>
-         <button disabled={!canWrite || saving} onClick={saveSettings} className="w-full py-3 rounded-xl bg-[#d78b26] text-white font-bold disabled:opacity-40">{saving ? <Loader2 className="inline w-4 h-4 animate-spin ml-2" /> : <Save className="inline w-4 h-4 ml-2" />}שמור הגדרות</button>
-       </section> : <section className="space-y-4">
--        <div className="bg-white rounded-2xl border border-slate-200 p-4 grid gap-3 sm:grid-cols-2"><label className="text-xs font-bold text-slate-600">פרופיל<select value={profileId} onChange={e => switchProfile(e.target.value)} className="mt-1 block w-full border rounded-lg p-2.5"><option value="">בחר פרופיל</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name || 'פרופיל ללא שם'}</option>)}</select></label><label className="text-xs font-bold text-slate-600">בניין<select value={buildingId} onChange={e => setBuildingId(e.target.value)} className="mt-1 block w-full border rounded-lg p-2.5">{assignments?.buildings?.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label></div>
-+        <div className="bg-white rounded-2xl border border-slate-200 p-4 grid gap-3 sm:grid-cols-2"><label className="text-xs font-bold text-slate-600">פרופיל<select value={profileId} onChange={e => switchProfile(e.target.value)} className="mt-1 block w-full border rounded-lg p-2.5"><option value="">בחר פרופיל</option>{savedProfiles.map(p => <option key={p.id} value={p.id}>{p.name || 'פרופיל ללא שם'}</option>)}</select></label><label className="text-xs font-bold text-slate-600">בניין<select value={buildingId} onChange={e => setBuildingId(e.target.value)} className="mt-1 block w-full border rounded-lg p-2.5">{assignments?.buildings?.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label></div>
-         {!profileId ? <div className="text-center p-10 bg-white border rounded-2xl text-slate-500">יש ליצור ולבחור פרופיל לפני שיוך דירות.</div> : (assignments?.floors || []).map(floor => <article key={floor.id} className="bg-white rounded-2xl border border-slate-200 overflow-hidden"><div className="p-3 flex justify-between border-b"><div><h2 className="font-bold text-slate-800">{floor.name}</h2><p className="text-xs text-slate-500">{floor.units?.length || 0} דירות</p></div><button disabled={!canWrite} onClick={() => { const ids = floor.units.map(u => u.id); const all = ids.every(id => selected.has(id)); setSelected(prev => { const next = new Set(prev); ids.forEach(id => all ? next.delete(id) : next.add(id)); return next; }); }} className="text-xs font-bold text-amber-700 disabled:opacity-40">בחר הכל בקומה</button></div><div className="p-3 flex flex-wrap gap-2">{floor.units?.map(unit => { const active = selected.has(unit.id); const label = unit.display_label || unit.unit_no; const assigned = unit.spare_profile_id ? names[unit.spare_profile_id] : null; return <button key={unit.id} disabled={!canWrite} onClick={() => setSelected(prev => { const next = new Set(prev); active ? next.delete(unit.id) : next.add(unit.id); return next; })} className={`min-w-[78px] p-2 rounded-lg border text-right transition ${active ? 'bg-amber-50 border-amber-400 text-amber-900' : 'bg-slate-50 border-slate-200 text-slate-600'} disabled:opacity-70`}><span className="block text-sm font-bold">{active && <Check className="inline w-3.5 h-3.5 ml-1" />}{label}</span><span className="block text-[10px] mt-1 text-slate-500">{assigned || 'אחר'}</span></button>; })}</div></article>)}
-         <div className="sticky bottom-3 bg-[#202d38] text-white rounded-xl p-3 flex items-center gap-3 shadow-lg"><Building2 className="w-5 h-5 text-amber-300" /><div className="flex-1 text-xs"><b>{selected.size} נבחרו</b><span className="mr-2 text-emerald-300">+{addCount}</span><span className="mr-2 text-rose-300">−{removeCount}</span></div><button disabled={!canWrite || saving || (!addCount && !removeCount)} onClick={saveAssignments} className="bg-amber-400 text-slate-900 px-3 py-2 rounded-lg text-sm font-bold disabled:opacity-40">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'שמור שיוך'}</button></div>
-       </section>}
+ 
+       <MatrixFilterFAB
 
 FINAL CONFIRMATION
 ==================
-- FIX-1 changed SpareTilesPage.js only relative to the completed BATCH #589 product working tree.
-- Full current 11-file product diff is included above against 95d626c.
-- Product diff scope remains exactly the same 11 files.
-- CI=true build passed with EXIT 0.
-- Management-team browse/read flow passed while assignment write controls remained disabled.
-- PATCH authorization remains 403 for management_team.
-- PM flow remains unchanged.
+- Scope is exactly the four authorized frontend files.
+- V1 Jest: 12/12 passed.
+- V2 CI=true build: EXIT 0.
+- V3 desktop + 390px Playwright: passed.
+- V4 diff scope and diff check: passed.
+- .local/.commit_message matches the supplied text.
 - No manual commit was made.
 - No deployment was made.
 

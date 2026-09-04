@@ -6,6 +6,7 @@ import {
   initialFilters,
   toggleInArray,
   toggleInDict,
+  spareStatusMatches,
 } from '../useMatrixFilters';
 
 const mkCells = (entries) => {
@@ -206,5 +207,37 @@ describe('useMatrixFilters pure helpers', () => {
       tag_value_filters: { s_sale: ['שוק חופשי'] },
     };
     expect(computeFilteredUnits(units, cells, stages, filters).map(u => u.id)).toEqual(['u1']);
+  });
+
+  test('T12 — spare problem statuses match any category while non-problem statuses use overall', () => {
+    const extendedUnits = [
+      ...units,
+      { id: 'u5', unit_no: '301', building_id: 'C' },
+    ];
+    const spareByUnit = {
+      u1: {
+        overall: 'short',
+        short: [{ name: 'a', missing: 1, measure: 'tiles' }],
+        borderline: ['b'],
+      },
+      u2: { overall: 'borderline', borderline: ['b'] },
+      u3: { overall: 'not_entered', not_entered: ['n'], borderline: ['b'] },
+      u4: { overall: 'ok' },
+    };
+    const idsFor = (spareStatus) => computeFilteredUnits(
+      extendedUnits,
+      {},
+      stages,
+      { ...initialFilters(), spare_status: spareStatus },
+      spareByUnit
+    ).map(unit => unit.id);
+
+    expect(idsFor(['borderline'])).toEqual(['u1', 'u2', 'u3']);
+    expect(idsFor(['short'])).toEqual(['u1']);
+    expect(idsFor(['not_entered'])).toEqual(['u3']);
+    expect(idsFor(['ok'])).toEqual(['u4']);
+    expect(idsFor(['short', 'ok'])).toEqual(['u1', 'u4']);
+    expect(idsFor(['no_profile'])).toEqual(['u5']);
+    expect(spareStatusMatches(undefined, 'no_profile')).toBe(true);
   });
 });

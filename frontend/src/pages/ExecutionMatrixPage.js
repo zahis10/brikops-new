@@ -4,7 +4,7 @@ import { Loader2, AlertCircle, LayoutGrid, ArrowRight, Settings, Download } from
 import { downloadBlob } from '../utils/fileDownload';
 import { toast } from 'sonner';
 import { useMatrixData } from '../hooks/useMatrixData';
-import useMatrixFilters from '../hooks/useMatrixFilters';
+import useMatrixFilters, { spareStatusMatches } from '../hooks/useMatrixFilters';
 import { matrixService } from '../services/matrixService';
 import MatrixListView from '../components/matrix/MatrixListView';
 import MatrixGridView from '../components/matrix/MatrixGridView';
@@ -109,8 +109,9 @@ export default function ExecutionMatrixPage() {
       no_profile: 0,
     };
     for (const unit of units) {
-      const status = spareByUnit[unit.id]?.overall ?? 'no_profile';
-      if (Object.prototype.hasOwnProperty.call(counts, status)) counts[status] += 1;
+      for (const key of Object.keys(counts)) {
+        if (spareStatusMatches(spareByUnit[unit.id], key)) counts[key] += 1;
+      }
     }
     return counts;
   }, [units, spareByUnit]);
@@ -322,30 +323,45 @@ export default function ExecutionMatrixPage() {
           </div>
         )}
 
-        <div className="md:hidden">
-          <MatrixListView
-            units={filterAPI.filteredUnits}
-            stages={stages}
-            cells={cells}
-            floorsById={floorsById}
-            buildingsById={buildingsById}
-            onCellClick={handleCellClick}
-            spare={matrixSpare}
-            onSpareClick={handleSpareClick}
-          />
-        </div>
-        <div className="hidden md:block">
-          <MatrixGridView
-            units={filterAPI.filteredUnits}
-            stages={stages}
-            cells={cells}
-            floorsById={floorsById}
-            buildingsById={buildingsById}
-            onCellClick={handleCellClick}
-            spare={matrixSpare}
-            onSpareClick={handleSpareClick}
-          />
-        </div>
+        {units.length > 0 && filterAPI.filteredUnits.length === 0 ? (
+          <div className="text-center py-12 text-slate-500" dir="rtl">
+            <p>אין דירות שמתאימות לסינון הנוכחי</p>
+            <button
+              type="button"
+              onClick={filterAPI.reset}
+              className="mt-3 text-sm font-semibold text-amber-700 hover:text-amber-800"
+            >
+              נקה סינון
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="md:hidden">
+              <MatrixListView
+                units={filterAPI.filteredUnits}
+                stages={stages}
+                cells={cells}
+                floorsById={floorsById}
+                buildingsById={buildingsById}
+                onCellClick={handleCellClick}
+                spare={matrixSpare}
+                onSpareClick={handleSpareClick}
+              />
+            </div>
+            <div className="hidden md:block">
+              <MatrixGridView
+                units={filterAPI.filteredUnits}
+                stages={stages}
+                cells={cells}
+                floorsById={floorsById}
+                buildingsById={buildingsById}
+                onCellClick={handleCellClick}
+                spare={matrixSpare}
+                onSpareClick={handleSpareClick}
+              />
+            </div>
+          </>
+        )}
       </div>
 
       <MatrixFilterFAB
