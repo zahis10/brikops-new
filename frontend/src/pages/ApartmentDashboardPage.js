@@ -122,6 +122,7 @@ const ApartmentDashboardPage = () => {
   const [spareTilesEditing, setSpareTilesEditing] = useState(false);
   const [spareTilesEntries, setSpareTilesEntries] = useState([]);
   const [spareTilesSaving, setSpareTilesSaving] = useState(false);
+  const [showNoTargetRows, setShowNoTargetRows] = useState(false);
   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
   const spareCanWrite = unitData?.spare_can_write === true;
   const flagChecked = !!features?.defects_v2;
@@ -137,6 +138,7 @@ const ApartmentDashboardPage = () => {
       setLoading(true);
       const data = await unitService.get(unitId);
       setUnitData(data);
+      setShowNoTargetRows(false);
     } catch (err) {
       toast.error('שגיאה בטעינת פרטי דירה');
       console.error(err);
@@ -743,17 +745,47 @@ const ApartmentDashboardPage = () => {
                   ) : (unitData.spare_status?.profile?.name ? `פרופיל: ${unitData.spare_status.profile.name}` : 'דירה ללא פרופיל — ניתן לעדכן מלאי בלבד')}
                 </div>
                 {Array.isArray(unitData.spare_status?.categories) && (
-                  <div className="space-y-1.5 mb-3">
-                    {unitData.spare_status.categories.map((row, idx) => (
-                      <div key={`${row.type}-${idx}`} className="flex items-center gap-2 text-xs">
-                        <span className="flex-1 font-medium text-slate-700">{row.name || row.type}</span>
-                        <span className="text-slate-500">{row.entered && row.actual === 0 ? 'אין ספייר' : row.actual == null ? '—' : row.actual} / {row.target || '—'} {row.measure === 'tiles' ? 'אריחים' : row.measure === 'cartons' ? 'קרטונים' : row.measure === 'sqm' ? 'מ"ר' : ''}</span>
-                        {row.actual != null && row.target > 0 && <span className="w-12 bg-slate-100 rounded-full h-1.5 overflow-hidden"><span className={`block h-full rounded-full ${row.status === 'short' ? 'bg-red-500' : row.status === 'borderline' ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${Math.min(100, (row.actual / row.target) * 100)}%` }} /></span>}
-                        <span className={`w-2 h-2 rounded-full ${row.status === 'short' ? 'bg-red-500' : row.status === 'borderline' ? 'bg-amber-500' : row.status === 'ok' ? 'bg-green-500' : 'bg-slate-300'}`} />
-                        <span className="w-14 text-[10px] text-slate-500">{row.status === 'short' ? `חסר ${row.missing || 0}` : row.status === 'borderline' ? 'גבולי' : row.status === 'ok' ? 'מספיק' : row.status === 'no_target' ? 'ללא יעד' : 'לא הוזן'}</span>
+                  (() => {
+                    const targetedRows = unitData.spare_status.categories.filter(row => row.status !== 'no_target');
+                    const noTargetRows = unitData.spare_status.categories.filter(row => row.status === 'no_target');
+                    return (
+                      <div className="space-y-1.5 mb-3">
+                        {targetedRows.map((row, idx) => (
+                          <div key={`${row.type}-${idx}`} className="flex items-center justify-between gap-3 py-1.5 text-[13px]">
+                            <span className="font-medium text-slate-700 min-w-0 flex-1 truncate">{row.name || row.type}</span>
+                            <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold whitespace-nowrap ${
+                              row.status === 'short' ? 'bg-red-100 text-red-700 border-red-200' :
+                              row.status === 'borderline' ? 'bg-amber-100 text-amber-800 border-amber-200' :
+                              row.status === 'ok' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
+                              'bg-slate-100 text-slate-500 border-slate-200'
+                            }`}>
+                              {row.status === 'short' ? `חסר ${row.missing || 0}` :
+                                row.status === 'borderline' ? 'גבולי' :
+                                row.status === 'ok' ? 'מספיק' : 'לא הוזן'}
+                            </span>
+                          </div>
+                        ))}
+                        {noTargetRows.length > 0 && (
+                          <div className="text-[11px] text-slate-400">
+                            <button type="button" onClick={() => setShowNoTargetRows(value => !value)} className="text-right">
+                              עוד {noTargetRows.length} סוגים ללא יעד
+                            </button>
+                            {showNoTargetRows && (
+                              <div className="mt-1 space-y-1">
+                                {noTargetRows.map((row, idx) => (
+                                  <div key={`${row.type}-${idx}`}>
+                                    {row.name || row.type}
+                                    {row.entered && row.actual === 0 ? ' · אין ספייר' :
+                                      row.entered && row.actual != null ? ` · ${row.actual} ${row.measure === 'sqm' ? 'מ"ר' : 'אריחים'}` : ''}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })()
                 )}
                 {spareTilesEditing ? (
                   <div className="space-y-3">
