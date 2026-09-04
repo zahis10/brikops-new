@@ -1,0 +1,231 @@
+# BATCH #586 — Spare Tiles Matrix
+
+Status: PLAN ONLY — WAITING FOR ZAHI TO WRITE "תתחיל"
+Date: 2026-09-04
+Branch: staging
+Verified base: fe167f9
+
+## What & Why
+
+Deliver one consolidated batch with two connected outcomes:
+
+1. Simplify spare-tile measurement so cartons are packaging, not a persisted
+   unit of measure. Categories use only tiles or square metres. Carton
+   conversion is performed locally in each apartment because carton size can
+   differ between buyers.
+2. Add derived spare-tile status to the Execution Matrix, including desktop
+   and mobile presentation, quick filters, saved-view support, unit deep links,
+   and the Excel export.
+
+The explicit-zero rules delivered in BATCH #587 remain unchanged. Projects
+without spare profiles retain the existing matrix UI and export behavior.
+
+## STEP 0 Findings
+
+- `git rev-parse --short HEAD` returned `fe167f9`.
+- `git status --short --untracked-files=all` returned no output.
+- `spare_tiles.py` still imports `Decimal, InvalidOperation`.
+- Four of five default categories currently use `measure: cartons`.
+- Current measures are `tiles`, `cartons`, and `sqm`.
+- `validate_spare_settings` currently validates and persists `per_carton`.
+- Existing tests:
+  - `test_per_carton_validation_and_normalization`
+  - `test_per_carton_rejections`
+- The live probe sends per-carton values and checks their normalization and
+  invalid inputs.
+- `SpareTilesPage.js` sends `{name, measure, per_carton}`, displays the factor,
+  and offers tiles/cartons/sqm.
+- `ApartmentDashboardPage.js` uses `category.per_carton` in the profile-aware
+  helper.
+- Matrix API, desktop/mobile views, filters, saved-view schema, and Excel
+  currently have no spare support.
+- Grep for `spare` across the matrix areas returned zero matches, as expected.
+- No existing project task overlaps this batch.
+
+## Done looks like
+
+### Part A — Measurement model
+
+- Categories are measured only in tiles or square metres.
+- Existing staging-only `cartons` settings normalize to `tiles`.
+- Unknown measures still return the existing Hebrew 422 error.
+- Project settings no longer store or display `per_carton`.
+- Every configured profile-aware apartment row gets two UI-only helper inputs:
+  cartons and tiles/m² per carton.
+- When both helper inputs are present, count becomes the rounded multiplication
+  result and the exact Hebrew conversion caption is shown.
+- Direct count entry clears both helper fields.
+- Clearing either helper field leaves the current count unchanged.
+- Custom rows and the no-profile legacy editor remain without the helper.
+- Explicit-zero controls, persistence rules, and legacy row ordering remain
+  unchanged.
+
+### Part B — Execution Matrix
+
+- `GET /api/execution-matrix/{project_id}` gains one additive top-level
+  `spare` object.
+- Enabled projects receive a read-only summary per unit: overall, profile,
+  short rows, not-entered rows, and missing total.
+- Without profiles, `spare.enabled` is false and `spare.by_unit` is empty.
+- Desktop gains a conditional final “ריצוף ספייר” column after stage columns.
+- Mobile gains a compact spare pill in the card header and a final spare row in
+  the expanded body.
+- Tapping a pill opens the unit dashboard/defects route with a return path back
+  to the matrix.
+- A counters strip offers exact one-tap filters for all six statuses.
+- The drawer gains a conditional “ריצוף ספייר” group after location.
+- Saved views serialize and restore `spare_status`.
+- Excel gains a conditional final spare column with Hebrew labels, missing
+  details, profile comments, and approved fills.
+- Spare data remains derived and read-only; matrix/QC records are never mutated.
+
+## Backend response shape
+
+The existing matrix response gains:
+
+{
+  "spare": {
+    "enabled": true,
+    "by_unit": {
+      "<unit_id>": {
+        "overall": "short|borderline|ok|not_entered|no_target|no_profile",
+        "profile": "<profile name> | null",
+        "short": [
+          {
+            "name": "<category>",
+            "missing": 2,
+            "measure": "tiles|sqm|null"
+          }
+        ],
+        "not_entered": ["<category>"],
+        "missing_total": 2
+      }
+    }
+  }
+}
+
+Every pre-existing response key and value remains unchanged.
+
+## DOM and interaction changes
+
+### Desktop
+
+- Add one conditional header after the stage headers.
+- Add one conditional cell after the stage cells for each unit.
+- Render a reusable `SparePill`.
+- Preserve the existing table DOM when `spare.enabled` is false.
+
+### Mobile
+
+- Add a small conditional `SparePill` before the completed/total count.
+- Add a conditional spare row after the expanded stage list.
+- Preserve the existing card DOM when `spare.enabled` is false.
+
+### Filters
+
+- Add the counters strip below `StatusLegend`.
+- Add the drawer group after location and before general information.
+- Add `spare_status` to initial state, active counts, and saved-view
+  serialization/deserialization.
+- Preserve old helper arities and existing saved views.
+
+## Out of scope
+
+- No changes to the unit spare PATCH or `entered` semantics.
+- No changes to defect prefill, handover, general defect export, API services,
+  or application routing.
+- No writes to matrix cells, stages, matrix config, or QC collections.
+- No changes to RBAC, sorting, or the 2,000-unit export cap.
+- No persisted carton-helper values and no automatic notes.
+- No dependencies or lockfile changes.
+- No commit or deployment before Zahi’s approval.
+
+## Steps
+
+1. **Replace the project-level carton model** — Restrict normalized category
+   measures to tiles and square metres, coerce old carton settings to tiles,
+   remove per-carton persistence, and update focused backend tests and the live
+   probe.
+2. **Move carton conversion into the apartment** — Add two UI-only helper
+   inputs to configured profile-aware rows while preserving direct count,
+   explicit zero, custom rows, legacy rows, and save ordering.
+3. **Create a pure matrix spare summary** — Reuse existing status computation
+   to produce the compact summary and centralized Hebrew labels.
+4. **Expose the additive matrix contract** — Load project spare settings,
+   enable summaries only when profiles exist, and append the new response key.
+5. **Extend Excel conditionally** — Add the spare column, status text, fills,
+   missing details, and profile comments only for enabled projects.
+6. **Add reusable status presentation** — Build `SparePill` and integrate it
+   conditionally into desktop and mobile matrix views.
+7. **Add quick filters and saved-view support** — Extend pure filter helpers,
+   hook actions, active counts, the drawer, counters strip, and serialization.
+8. **Verify the complete batch** — Run backend tests, frontend hook tests,
+   CI=true build, live probe, desktop/mobile checks, and mandatory legacy-data
+   preservation.
+9. **Prepare approval evidence** — Produce `review.txt` with STEP 0, full diff,
+   V1–V7 evidence and screenshots, plus the requested commit-message file;
+   stop before commit/deploy.
+
+## Verification plan
+
+- Backend spare/matrix/export tests and Python compile checks.
+- Live no-profile and profiled projects with printed JSON and workbook evidence.
+- Jest filter tests, including old-arity compatibility.
+- `CI=true` frontend build.
+- Playwright at 1280px: column, colors, tooltip, deep link, and return.
+- Playwright at 390px: mobile pill/row, no overflow, quick filter, drawer,
+  clear-all, and saved-view restore.
+- Part A at 390px: `2 × 12 = 24`, direct loose count `2`, and clearing one
+  helper field leaves count unchanged.
+- Legacy Mongo deep equality and confirmed-zero `entered: true` only on the
+  selected row.
+- `git diff --check`, no lockfile changes, and frozen files unchanged.
+
+## Relevant files
+
+- `backend/contractor_ops/spare_tiles.py`
+- `backend/contractor_ops/execution_matrix_router.py`
+- `backend/contractor_ops/execution_matrix_export.py`
+- `backend/contractor_ops/schemas.py`
+- `backend/tests/test_spare_tiles.py`
+- `backend/tests/probe_spare_tiles_http.py`
+- `backend/tests/test_execution_matrix_export.py`
+- `frontend/src/components/matrix/SparePill.js`
+- `frontend/src/components/matrix/MatrixGridView.js`
+- `frontend/src/components/matrix/MatrixListView.js`
+- `frontend/src/hooks/useMatrixFilters.js`
+- `frontend/src/hooks/__tests__/useMatrixFilters.test.js`
+- `frontend/src/components/matrix/MatrixFilterSection.js`
+- `frontend/src/components/matrix/MatrixFilterDrawer.js`
+- `frontend/src/pages/ExecutionMatrixPage.js`
+- `frontend/src/pages/SpareTilesPage.js`
+- `frontend/src/pages/ApartmentDashboardPage.js`
+
+## Frozen files
+
+- `backend/contractor_ops/projects_router.py`
+- `backend/contractor_ops/spare_tiles_router.py`
+- `backend/contractor_ops/export_router.py`
+- `frontend/src/pages/HandoverOverviewPage.js`
+- `frontend/src/components/NewDefectModal.js`
+- `frontend/src/App.js`
+- `frontend/src/services/api.js`
+
+## Open scope decision
+
+The supplied V5 sentence says “exactly 15 files”, but its explicit list contains
+17 files. This plan treats the explicit 17-file list as authoritative because
+every listed file maps directly to a required E0–E13 outcome. If 15 is the hard
+limit, Zahi must identify which two listed files to exclude before implementation.
+
+## Planned commit message
+
+feat(spare-tiles): spare status in the execution matrix; cartons become an
+input helper instead of a unit of measure
+
+The execution matrix now shows a derived "ריצוף ספייר" status per unit, quick
+filters, a saved-view-compatible drawer section, and the same status in Excel.
+Categories use only tiles or m²; carton conversion is an apartment-local UI
+helper so loose units remain supported.
+
+AWAITING ZAHI TO WRITE "תתחיל" — DO NOT CODE OR DEPLOY

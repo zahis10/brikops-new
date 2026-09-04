@@ -1075,3 +1075,17 @@ mtime_ms = 1788438694223
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/34cee2bd-54bc-425e-a436-cf8cde8a3b31/811211c4-07b5-400f-86a9-6169c760e567"
 storage_version_token = "1788438709515524"
 content_type = "text/plain"
+
+[[outputs]]
+id = "YQ52sJ0aywzMGOuKQLwlQ"
+uri = "file://BATCH_586_PLAN.txt"
+type = "text"
+title = "BATCH #586 — תוכנית עבודה"
+description = "תוכנית מלאה לאחר STEP 0: Part A, Part B, חוזה API, שינויי DOM, בדיקות, scope וקבצים קפואים. לא בוצע שינוי בקוד המוצר."
+logical_id = "1b107f24-6961-4359-a091-b1ab1687cb76"
+content_hash = "sha256:b05a1194a31738d61c5d6bc0b9b869d54b2e9666b2a14c6b94e6d26eba667953"
+size = 9771
+mtime_ms = 1788501282436
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/1b107f24-6961-4359-a091-b1ab1687cb76/efb6718d-fbd7-4c66-9e77-4b55ba6326e7"
+storage_version_token = "1788501292866766"
+content_type = "text/plain"
