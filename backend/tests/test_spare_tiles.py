@@ -226,8 +226,39 @@ def test_matrix_spare_summary_short_categories_and_missing_total():
             {'name': 'חיפוי מטבח', 'missing': 2, 'measure': 'sqm'},
         ],
         'not_entered': [],
+        'borderline': [],
         'missing_total': 12,
     }
+
+
+def test_matrix_spare_summary_short_also_surfaces_borderline_categories():
+    config = {
+        'categories': [
+            {'name': 'ריצוף יבש', 'measure': 'tiles'},
+            {'name': 'חיפוי מטבח', 'measure': 'sqm'},
+        ],
+        'profiles': [{
+            'id': PROFILE_ID,
+            'name': 'פרופיל א',
+            'targets': {'ריצוף יבש': 10, 'חיפוי מטבח': 5},
+        }],
+        'margin_pct': 10,
+    }
+    result = matrix_spare_summary(
+        {
+            'spare_profile_id': PROFILE_ID,
+            'spare_tiles': [
+                {'type': 'ריצוף יבש', 'count': 8},
+                {'type': 'חיפוי מטבח', 'count': 5},
+            ],
+        },
+        config,
+    )
+    assert result['overall'] == 'short'
+    assert result['short'] == [
+        {'name': 'ריצוף יבש', 'missing': 2, 'measure': 'tiles'},
+    ]
+    assert result['borderline'] == ['חיפוי מטבח']
 
 
 def test_matrix_spare_summary_ok():
@@ -241,6 +272,7 @@ def test_matrix_spare_summary_ok():
     assert result['overall'] == 'ok'
     assert result['profile'] == '3 חדרים'
     assert result['short'] == []
+    assert result['borderline'] == []
     assert result['missing_total'] == 0
 
 

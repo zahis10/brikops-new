@@ -238,5 +238,10 @@ def matrix_spare_summary(unit_doc, spare_settings):
             for row in st['categories']
             if row['status'] == 'not_entered'
         ],
+        'borderline': [
+            row['name']
+            for row in st['categories']
+            if row['status'] == 'borderline'
+        ],
         'missing_total': sum((row['missing'] or 0) for row in short),
     }

@@ -186,6 +186,53 @@ def test_spare_enabled_appends_status_column_with_fills_and_profile_comments():
     assert ok_cell.fill.fgColor.rgb.upper().endswith("D1FAE5")
 
 
+def test_spare_export_includes_borderline_and_not_entered_details():
+    project = {"id": "p1", "name": "Demo"}
+    units = [
+        {"id": "u-short", "unit_no": "1"},
+        {"id": "u-borderline", "unit_no": "2"},
+        {"id": "u-not-entered", "unit_no": "3"},
+    ]
+    spare = {
+        "enabled": True,
+        "by_unit": {
+            "u-short": {
+                "overall": "short",
+                "short": [{"name": "ריצוף יבש", "missing": 2, "measure": "tiles"}],
+                "borderline": ["חיפוי מטבח"],
+                "not_entered": [],
+            },
+            "u-borderline": {
+                "overall": "borderline",
+                "short": [],
+                "borderline": ["ריצוף יבש"],
+                "not_entered": [],
+            },
+            "u-not-entered": {
+                "overall": "not_entered",
+                "short": [],
+                "borderline": ["ריצוף יבש"],
+                "not_entered": ["חיפוי מטבח"],
+            },
+        },
+    }
+    ws = _read_workbook(
+        build_matrix_xlsx(project, units, [], [], {}, {}, spare=spare)
+    ).active
+
+    short_cell = ws.cell(row=2, column=5)
+    assert short_cell.value == "חסר — להזמין: ריצוף יבש 2 · גבולי: חיפוי מטבח"
+    assert short_cell.fill.fgColor.rgb.upper().endswith("FEE2E2")
+
+    borderline_cell = ws.cell(row=3, column=5)
+    assert borderline_cell.value == "גבולי: ריצוף יבש"
+    assert borderline_cell.fill.fgColor.rgb.upper().endswith("FEF3C7")
+
+    not_entered_cell = ws.cell(row=4, column=5)
+    assert not_entered_cell.value == "לא הוזן: חיפוי מטבח · גבולי: ריצוף יבש"
+    assert not_entered_cell.fill.fgColor.rgb.upper().endswith("F1F5F9")
+
+
 # =====================================================================
 # T2 — status label translation + fills
 # =====================================================================

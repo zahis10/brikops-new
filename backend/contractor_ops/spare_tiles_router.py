@@ -15,7 +15,7 @@ from contractor_ops.spare_tiles import default_spare_settings, validate_spare_se
 
 
 router = APIRouter(prefix='/api')
-WRITE_ROLES = ('project_manager', 'owner', 'management_team')
+WRITE_ROLES = ('project_manager', 'owner')
 
 
 async def _project_or_404(db, project_id):
@@ -28,7 +28,7 @@ async def _project_or_404(db, project_id):
 async def _require_write(user, project_id):
     role = await _get_project_role(user, project_id)
     if role not in WRITE_ROLES:
-        raise HTTPException(status_code=403, detail='אין הרשאה לעדכן הגדרות ריצוף ספייר')
+        raise HTTPException(status_code=403, detail='רק מנהל הפרויקט יכול לשנות הגדרות ושיוך ריצוף ספייר')
 
 
 async def _can_write(user, project_id):

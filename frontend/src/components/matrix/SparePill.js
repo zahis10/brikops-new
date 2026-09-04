@@ -42,9 +42,11 @@ export default function SparePill({
   const config = summary ? STATUS_CONFIG[summary.overall] || STATUS_CONFIG.no_profile : null;
   const shortRows = Array.isArray(summary?.short) ? summary.short : [];
   const notEntered = Array.isArray(summary?.not_entered) ? summary.not_entered : [];
-  const text = config
+  const borderline = Array.isArray(summary?.borderline) ? summary.borderline : [];
+  const baseText = config
     ? `${config.label}${summary?.overall === 'short' && shortRows.length > 1 ? ` (${shortRows.length})` : ''}`
     : '—';
+  const text = `${baseText}${['short', 'not_entered'].includes(summary?.overall) && borderline.length ? ' · גבולי' : ''}`;
   const titleParts = [
     summary?.profile ? `פרופיל: ${summary.profile}` : 'ללא פרופיל',
     ...shortRows.map(row => {
@@ -52,6 +54,7 @@ export default function SparePill({
       return `${row.name}: חסר ${row.missing}${measure ? ` ${measure}` : ''}`;
     }),
   ];
+  if (borderline.length) titleParts.push(`גבולי: ${borderline.join(', ')}`);
   if (notEntered.length) titleParts.push(`לא הוזן: ${notEntered.join(', ')}`);
 
   const inner = (

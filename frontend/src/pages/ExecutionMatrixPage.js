@@ -262,10 +262,10 @@ export default function ExecutionMatrixPage() {
           <button
             type="button"
             onClick={handleExport}
-            disabled={exporting}
+            disabled={exporting || filterAPI.filteredUnits.length === 0}
             className="px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-100 active:bg-slate-200 transition-colors disabled:opacity-50 min-h-[44px] flex items-center gap-2 text-sm font-medium text-slate-700"
             aria-label="ייצוא לExcel"
-            title="ייצוא לExcel"
+            title={filterAPI.filteredUnits.length === 0 ? 'אין דירות לייצוא בסינון הנוכחי' : 'ייצוא לExcel'}
           >
             {exporting
               ? <Loader2 className="w-4 h-4 animate-spin" />

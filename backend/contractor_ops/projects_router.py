@@ -1228,10 +1228,9 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
         else default_spare_settings()
     )
     spare_status = compute_spare_status(unit, spare_settings)
-    spare_can_write = (
-        await _get_project_role(user, project_id) in ('project_manager', 'owner', 'management_team')
-        if project_id else False
-    )
+    spare_role = await _get_project_role(user, project_id) if project_id else None
+    spare_can_write = spare_role in ('project_manager', 'owner', 'management_team')
+    spare_can_assign = spare_role in ('project_manager', 'owner')
 
     return {
         'unit': {
@@ -1245,6 +1244,7 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
         'spare_profiles_exist': bool(spare_settings.get('profiles')),
         'spare_status': spare_status,
         'spare_can_write': spare_can_write,
+        'spare_can_assign': spare_can_assign,
         'kpi': {
             'total': len(tasks),
             'open': by_status.get('open', 0) + by_status.get('assigned', 0) + by_status.get('reopened', 0),

@@ -119,6 +119,7 @@ def main():
     other_project_id = f"probe-spare-other-project-{tag}"
     pm_id = f"probe-spare-pm-{tag}"
     owner_id = f"probe-spare-owner-{tag}"
+    management_id = f"probe-spare-management-{tag}"
     viewer_id = f"probe-spare-viewer-{tag}"
     building_id = f"probe-spare-building-main-{tag}"
     other_building_id = f"probe-spare-building-first-{tag}"
@@ -140,7 +141,7 @@ def main():
     legacy_count = 13
     legacy_notes = "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק"
 
-    user_ids = [pm_id, owner_id, viewer_id]
+    user_ids = [pm_id, owner_id, management_id, viewer_id]
     project_ids = [project_id, other_project_id]
     building_ids = [building_id, other_building_id]
     floor_ids = [floor_low_id, floor_high_id]
@@ -203,10 +204,19 @@ def main():
                 "user_status": "active",
                 "session_version": 0,
             },
+            {
+                "id": management_id,
+                "role": "management_team",
+                "full_name": "צוות ניהול בדיקת ספייר",
+                "user_status": "active",
+                "session_version": 0,
+            },
         ])
         db.organization_memberships.insert_many([
             {"id": f"probe-om-pm-{tag}", "org_id": org_id, "user_id": pm_id, "role": "member"},
             {"id": f"probe-om-owner-{tag}", "org_id": org_id, "user_id": owner_id, "role": "owner"},
+            {"id": f"probe-om-management-{tag}", "org_id": org_id,
+             "user_id": management_id, "role": "member"},
             {"id": f"probe-om-view-{tag}", "org_id": org_id, "user_id": viewer_id, "role": "member"},
         ])
         db.project_memberships.insert_many([
@@ -214,6 +224,8 @@ def main():
              "role": "project_manager"},
             {"id": f"probe-pm-owner-{tag}", "project_id": project_id, "user_id": owner_id,
              "role": "owner"},
+            {"id": f"probe-pm-management-{tag}", "project_id": project_id,
+             "user_id": management_id, "role": "management_team"},
             {"id": f"probe-pm-view-{tag}", "project_id": project_id, "user_id": viewer_id,
              "role": "viewer"},
             {"id": f"probe-pm-other-{tag}", "project_id": other_project_id, "user_id": pm_id,
@@ -280,6 +292,9 @@ def main():
 
         pm_headers = {"Authorization": f"Bearer {_create_token(pm_id, 'project_manager')}"}
         owner_headers = {"Authorization": f"Bearer {_create_token(owner_id, 'owner')}"}
+        management_headers = {
+            "Authorization": f"Bearer {_create_token(management_id, 'management_team')}"
+        }
         viewer_headers = {"Authorization": f"Bearer {_create_token(viewer_id, 'viewer')}"}
 
         # V3 baseline before any project settings are persisted.
@@ -288,7 +303,13 @@ def main():
         check("V3 absent settings has no profiles", baseline["spare_profiles_exist"] is False)
         check("V3 absent settings status is no_profile",
               baseline["spare_status"]["overall"] == "no_profile")
-        additive_top = {"spare_settings", "spare_profiles_exist", "spare_status", "spare_can_write"}
+        additive_top = {
+            "spare_settings",
+            "spare_profiles_exist",
+            "spare_status",
+            "spare_can_write",
+            "spare_can_assign",
+        }
         baseline_top_keys = set(baseline) - additive_top
         baseline_unit_keys = set(baseline["unit"]) - {"spare_profile_id"}
         check("V3 baseline existing top-level keys captured", bool(baseline_top_keys))
@@ -335,7 +356,7 @@ def main():
             ],
             "profiles": [
                 {"id": profile_a, "name": "3 חדרים",
-                 "targets": {"ריצוף יבש": 10, "ריצוף מרפסות": 2}},
+                 "targets": {"ריצוף יבש": 10, "ריצוף מרפסות": 3}},
                 {"id": profile_b, "name": "4 חדרים",
                  "targets": {"ריצוף יבש": 12, "ריצוף מרפסות": 3}},
             ],
@@ -345,10 +366,21 @@ def main():
         viewer_get = call("GET", settings_path, viewer_headers, 200).json()
         check("V2 viewer GET settings allowed and read-only",
               viewer_get["can_write"] is False)
+        management_get = call("GET", settings_path, management_headers, 200).json()
+        check("V2 management team GET settings is read-only",
+              management_get["can_write"] is False)
         call("GET", assignments_path, viewer_headers, 200)
         call("PUT", settings_path, viewer_headers, 403, json=profile_payload)
+        management_put = call(
+            "PUT", settings_path, management_headers, 403, json=profile_payload
+        ).json()
+        check("V2 management team settings rejection message is exact",
+              management_put["detail"]
+              == "רק מנהל הפרויקט יכול לשנות הגדרות ושיוך ריצוף ספייר")
         call("PATCH", f"{settings_path.rsplit('/', 1)[0]}/spare-profiles/{profile_a}/units",
              viewer_headers, 403, json={"add": [unit_one_id], "remove": []})
+        call("PATCH", f"{settings_path.rsplit('/', 1)[0]}/spare-profiles/{profile_a}/units",
+             management_headers, 403, json={"add": [unit_one_id], "remove": []})
 
         pm_saved = call("PUT", settings_path, pm_headers, 200, json=profile_payload).json()
         check("V2 PM saved two profiles",
@@ -405,6 +437,24 @@ def main():
         expected_unit_keys = {"id", "unit_no", "display_label", "spare_profile_id"}
         check("V2 assignment unit payload is exact",
               set(assignment_payload["floors"][0]["units"][0]) == expected_unit_keys)
+
+        management_unit = call(
+            "GET", f"/api/units/{unit_one_id}", management_headers, 200
+        ).json()
+        check("V3 management team can update inventory but cannot assign profiles",
+              management_unit["spare_can_write"] is True
+              and management_unit["spare_can_assign"] is False)
+        pm_unit = call("GET", f"/api/units/{unit_one_id}", pm_headers, 200).json()
+        check("V3 PM can update inventory and assign profiles",
+              pm_unit["spare_can_write"] is True
+              and pm_unit["spare_can_assign"] is True)
+
+        management_inventory_before = unit_document(db, unit_one_id)
+        call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", management_headers, 200,
+             json={"spare_tiles": legacy_spare_tiles})
+        management_inventory_after = unit_document(db, unit_one_id)
+        check("V3 management team inventory no-op preserves whole unit",
+              management_inventory_after == management_inventory_before)
 
         profile_base = f"/api/projects/{project_id}/spare-profiles"
         added = call("PATCH", f"{profile_base}/{profile_a}/units", pm_headers, 200,
@@ -532,7 +582,9 @@ def main():
               after["spare_status"]["overall"] == "short"
               and dry_row["actual"] == 8 and dry_row["target"] == 10
               and dry_row["missing"] == 2)
-        check("V3 viewer unit capability is false", after["spare_can_write"] is False)
+        check("V3 viewer unit capabilities are false",
+              after["spare_can_write"] is False
+              and after["spare_can_assign"] is False)
 
         matrix_after = call("GET", matrix_path, pm_headers, 200).json()
         check("V2 matrix existing key set unchanged",
@@ -547,6 +599,8 @@ def main():
               matrix_spare["enabled"] is True
               and matrix_spare["by_unit"][unit_one_id]["overall"] == "short"
               and matrix_spare["by_unit"][unit_one_id]["short"] == expected_short
+              and matrix_spare["by_unit"][unit_one_id]["borderline"]
+              == ["ריצוף מרפסות"]
               and matrix_spare["by_unit"][unit_one_id]["missing_total"] == 2)
         check("V2 matrix unit B not entered",
               matrix_spare["by_unit"][unit_two_id]["overall"] == "not_entered")
@@ -559,10 +613,11 @@ def main():
               matrix_export_after["headers"][-1] == "ריצוף ספייר")
         check("V2 matrix export short text and fill",
               matrix_export_after["rows"]["101"]["value"]
-              == "חסר — להזמין: ריצוף יבש 2"
+              == "חסר — להזמין: ריצוף יבש 2 · גבולי: ריצוף מרפסות"
               and matrix_export_after["rows"]["101"]["fill"] == "FEE2E2")
         check("V2 matrix export not-entered and no-profile values",
-              matrix_export_after["rows"]["102"]["value"] == "לא הוזן"
+              matrix_export_after["rows"]["102"]["value"]
+              == "לא הוזן: ריצוף יבש, ריצוף מרפסות"
               and matrix_export_after["rows"]["801"]["value"] == "אחר")
         print("\n[V2 JSON] execution matrix spare")
         print(json.dumps(matrix_spare, ensure_ascii=False, sort_keys=True, indent=2))

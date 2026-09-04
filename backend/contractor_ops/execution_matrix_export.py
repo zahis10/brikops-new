@@ -145,6 +145,7 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
             spare_summary = (spare.get("by_unit") or {}).get(unit["id"]) or {}
             overall = spare_summary.get("overall", "no_profile")
             label = SPARE_OVERALL_LABELS.get(overall, overall)
+            borderline = spare_summary.get("borderline") or []
             if overall == "short":
                 details = ", ".join(
                     f"{row['name']} {row['missing']}"
@@ -152,6 +153,14 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
                 )
                 if details:
                     label = f"{label}: {details}"
+            elif overall == "not_entered":
+                details = ", ".join(spare_summary.get("not_entered") or [])
+                if details:
+                    label = f"{label}: {details}"
+            elif overall == "borderline" and borderline:
+                label = f"{label}: {', '.join(borderline)}"
+            if overall in {"short", "not_entered"} and borderline:
+                label = f"{label} · גבולי: {', '.join(borderline)}"
             spare_cell = ws.cell(row=row_idx, column=spare_col, value=label)
             fill = SPARE_FILLS.get(overall)
             if fill is not None:
