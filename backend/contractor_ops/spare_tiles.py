@@ -180,7 +180,13 @@ def compute_spare_status(unit_doc, spare_settings):
         target = targets.get(name) if profile else None
         missing = None
         if not target or target <= 0:
-            status = 'no_target'
+            # A confirmed "אין ספייר" is a shortage even without a target
+            # (order quantity unknown → missing stays None).
+            status = (
+                'short'
+                if (entry and entry.get('entered') is True and actual == 0)
+                else 'no_target'
+            )
         elif not entered:
             status = 'not_entered'
         elif actual < target:

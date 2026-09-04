@@ -149,6 +149,8 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
             if overall == "short":
                 details = ", ".join(
                     f"{row['name']} {row['missing']}"
+                    if row.get("missing") is not None
+                    else f"{row['name']} (אין ספייר)"
                     for row in spare_summary.get("short") or []
                 )
                 if details:

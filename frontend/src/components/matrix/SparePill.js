@@ -57,7 +57,9 @@ export default function SparePill({
     summary?.profile ? `פרופיל: ${summary.profile}` : 'ללא פרופיל',
     ...shortRows.map(row => {
       const measure = measureLabel(row.measure);
-      return `${row.name}: חסר ${row.missing}${measure ? ` ${measure}` : ''}`;
+      return row.missing == null
+        ? `${row.name}: אין ספייר`
+        : `${row.name}: חסר ${row.missing}${measure ? ` ${measure}` : ''}`;
     }),
   ];
   if (borderline.length) titleParts.push(`גבולי: ${borderline.join(', ')}`);

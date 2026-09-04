@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH #590 — review.txt"
-description = "הדוח המלא מול af36779: Jest, CI build, Playwright desktop/mobile, screenshots וה-diff המלא של ארבעת קובצי ה-frontend."
+title = "BATCH #591 — review.txt"
+description = "הדוח המלא מול 565cdb4: diff של ששת הקבצים, pytest, 99 בדיקות HTTP, CI build, Playwright desktop/mobile וראיות MD5."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:7dd0c53e18ba6838385783228893ff9b90ff5d59bb3818c39b6438e2b83dfdea"
-size = 15724
-mtime_ms = 1788532866456
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/ad8147bb-dea3-480f-a5bb-33aa70a6a89c"
-storage_version_token = "1788532887315791"
+content_hash = "sha256:8c6f0caddb503d5cffca8b1bdf4e7db5a86723f9ecfcacbeaec9bede68e113a9"
+size = 17265
+mtime_ms = 1788535011385
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/1c10ddf2-c9fc-4a84-bcb6-4240e03b9f6f"
+storage_version_token = "1788535025850806"
 content_type = "text/plain"
 
 [[outputs]]

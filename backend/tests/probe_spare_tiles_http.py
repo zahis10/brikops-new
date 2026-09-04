@@ -502,6 +502,7 @@ def main():
         confirmed_zero_payload = [
             {"type": "ריצוף יבש", "count": 0, "notes": "", "entered": True},
             {"type": "ריצוף מרפסות", "count": 3, "notes": "קרטון"},
+            {"type": "חיפוי מטבח", "count": 0, "notes": "", "entered": True},
         ]
         call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
              json={"spare_tiles": confirmed_zero_payload})
@@ -521,6 +522,32 @@ def main():
               and confirmed_dry_row["entered"] is True
               and confirmed_dry_row["status"] == "short"
               and confirmed_dry_row["missing"] == confirmed_dry_row["target"] == 10)
+        confirmed_kitchen_row = next(
+            row for row in confirmed_response["spare_status"]["categories"]
+            if row["name"] == "חיפוי מטבח"
+        )
+        check("V1 confirmed zero without target is short with unknown missing",
+              confirmed_kitchen_row["actual"] == 0
+              and confirmed_kitchen_row["entered"] is True
+              and confirmed_kitchen_row["status"] == "short"
+              and confirmed_kitchen_row["target"] is None
+              and confirmed_kitchen_row["missing"] is None)
+        confirmed_matrix = call("GET", matrix_path, pm_headers, 200).json()
+        confirmed_summary = confirmed_matrix["spare"]["by_unit"][unit_one_id]
+        check("V2 matrix includes confirmed zero without target as short",
+              confirmed_summary["overall"] == "short"
+              and any(
+                  row["name"] == "חיפוי מטבח" and row["missing"] is None
+                  for row in confirmed_summary["short"]
+              ))
+        confirmed_matrix_export = execution_matrix_export_values(
+            call("POST", matrix_export_path, pm_headers, 200, json={}).content
+        )
+        confirmed_export_value = confirmed_matrix_export["rows"]["101"]["value"]
+        check("V2 matrix export prints confirmed zero without target honestly",
+              confirmed_export_value.startswith("חסר — להזמין:")
+              and "חיפוי מטבח (אין ספייר)" in confirmed_export_value
+              and "ריצוף יבש 10" in confirmed_export_value)
 
         call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
              json={"spare_tiles": legacy_spare_tiles})

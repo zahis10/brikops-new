@@ -23,7 +23,11 @@ PROFILE_ID = str(uuid.uuid4())
 def settings(target=10, margin=10):
     return {
         'categories': [{'name': 'ריצוף יבש', 'measure': 'tiles'}],
-        'profiles': [{'id': PROFILE_ID, 'name': '3 חדרים', 'targets': {'ריצוף יבש': target}}],
+        'profiles': [{
+            'id': PROFILE_ID,
+            'name': '3 חדרים',
+            'targets': {} if target == 0 else {'ריצוף יבש': target},
+        }],
         'margin_pct': margin,
     }
 
@@ -86,6 +90,20 @@ def test_confirmed_zero_is_entered_and_short():
 
 
 def test_no_target_and_no_profile():
+    confirmed_zero = status(0, target=0, entered=True)
+    confirmed_zero_row = confirmed_zero['categories'][0]
+    assert confirmed_zero['overall'] == 'short'
+    assert confirmed_zero_row == {
+        'name': 'ריצוף יבש',
+        'measure': 'tiles',
+        'target': None,
+        'actual': 0,
+        'status': 'short',
+        'missing': None,
+        'entered': True,
+    }
+    assert status(0, target=0)['overall'] == 'no_target'
+    assert status(0, notes='legacy note', target=0)['overall'] == 'no_target'
     assert status(4, target=0)['overall'] == 'no_target'
     assert status(4, profile_id=None)['overall'] == 'no_profile'
     assert status(4, profile_id=str(uuid.uuid4()))['overall'] == 'no_profile'
@@ -229,6 +247,28 @@ def test_matrix_spare_summary_short_categories_and_missing_total():
         'borderline': [],
         'missing_total': 12,
     }
+
+
+def test_matrix_spare_summary_confirmed_zero_without_target():
+    result = matrix_spare_summary(
+        {
+            'spare_profile_id': PROFILE_ID,
+            'spare_tiles': [{
+                'type': 'ריצוף יבש',
+                'count': 0,
+                'notes': '',
+                'entered': True,
+            }],
+        },
+        settings(target=0),
+    )
+    assert result['overall'] == 'short'
+    assert result['short'] == [{
+        'name': 'ריצוף יבש',
+        'missing': None,
+        'measure': 'tiles',
+    }]
+    assert result['missing_total'] == 0
 
 
 def test_matrix_spare_summary_short_also_surfaces_borderline_categories():

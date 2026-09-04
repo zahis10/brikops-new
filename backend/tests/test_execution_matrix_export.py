@@ -186,6 +186,29 @@ def test_spare_enabled_appends_status_column_with_fills_and_profile_comments():
     assert ok_cell.fill.fgColor.rgb.upper().endswith("D1FAE5")
 
 
+def test_spare_export_formats_unknown_and_known_shortage_quantities():
+    project = {"id": "p1", "name": "Demo"}
+    units = [{"id": "u-short", "unit_no": "1"}]
+    spare = {
+        "enabled": True,
+        "by_unit": {
+            "u-short": {
+                "overall": "short",
+                "short": [
+                    {"name": "A", "missing": None, "measure": "tiles"},
+                    {"name": "B", "missing": 2, "measure": "tiles"},
+                ],
+            },
+        },
+    }
+    ws = _read_workbook(
+        build_matrix_xlsx(project, units, [], [], {}, {}, spare=spare)
+    ).active
+    short_cell = ws.cell(row=2, column=5)
+    assert short_cell.value == "חסר — להזמין: A (אין ספייר), B 2"
+    assert short_cell.fill.fgColor.rgb.upper().endswith("FEE2E2")
+
+
 def test_spare_export_includes_borderline_and_not_entered_details():
     project = {"id": "p1", "name": "Demo"}
     units = [

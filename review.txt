@@ -1,79 +1,92 @@
-BATCH #590 — EXECUTION MATRIX SPARE COUNTS + ANY-CATEGORY FILTERS
-Base: af36779 | Branch: staging | Scope: frontend only, exactly 4 files
+BATCH #591 — CONFIRMED "אין ספייר" WITHOUT TARGET IS A SHORTAGE
+Base: 565cdb4 | Branch: staging | Scope: exactly 6 product/test files
 
 BASE GATE
 =========
 branch=staging
-HEAD=af36779febd5a7f4daa9f34752e91f1b0ef51f94
-origin/staging=af36779febd5a7f4daa9f34752e91f1b0ef51f94
+HEAD=565cdb4dbe53be0d4fc4dc34e9b0120f45da3254
+origin/staging=565cdb4dbe53be0d4fc4dc34e9b0120f45da3254
 Working tree before implementation: clean.
-All four target files present.
+All six authorized files present.
 
 IMPLEMENTATION
 ==============
-E1 — SparePill.js
-- Problem-state pills are now assembled from ordered segments.
-- short categories: חסר N.
-- borderline categories: גבולי N.
-- not-entered appears when there are no short rows.
-- ok / no_target / no_profile / missing summary retain their prior labels.
-- Colors, overall state, tooltip, size and click behavior are unchanged.
+E1 — backend/contractor_ops/spare_tiles.py
+- A category with no positive target is now short when its saved entry explicitly carries entered: true and actual is zero.
+- missing remains None, so the system reports shortage without inventing an order quantity.
+- Missing/zero-target rows without the explicit confirmation flag remain no_target, including legacy zero rows with notes.
+- The explicit flag check is intentionally narrower than the derived row.entered value: row.entered also becomes true from legacy notes, while the required V7 legacy assertions must remain unchanged.
+- All positive-target branches, row shape, overall precedence, matrix_spare_summary and validation are unchanged.
 
-E2 — useMatrixFilters.js
-- Added exported pure helper spareStatusMatches(summary, value).
-- חסר / גבולי / לא הוזן match when any category has that state, with overall fallback.
-- מספיק / ללא יעד / אחר retain overall-only matching.
-- Multiple selected spare statuses remain OR semantics.
-- Serialization, saved views, active counts and toggles are unchanged.
+E2 — backend/contractor_ops/execution_matrix_export.py
+- Short rows with a numeric missing quantity retain "name quantity".
+- Short rows with missing=None render "name (אין ספייר)" instead of "name None".
+- All other #589/#590 export behavior remains unchanged.
 
-E3 — useMatrixFilters.test.js
-- Kept every existing test, including the baseline T11 four-argument compatibility regression.
-- Added T12 for any-category short/borderline/not-entered matching, OR semantics, ok and missing-summary/no-profile behavior.
-- The uploaded spec called this new case T11, but af36779 already contains an existing T11; it was preserved rather than renamed or removed.
+E3 — frontend/src/components/matrix/SparePill.js
+- Tooltip rows with missing=null render "name: אין ספייר".
+- Numeric shortages retain "name: חסר N measure".
+- Pill text, category-count segments, colors, sizing and click behavior are unchanged.
 
-E4 — ExecutionMatrixPage.js
-- Spare counter chips use spareStatusMatches for the same semantics as filtering.
-- A filter miss in a non-empty project replaces the views with:
-  אין דירות שמתאימות לסינון הנוכחי
-  נקה סינון
-- The reset button calls filterAPI.reset.
-- The counters strip, header, filter drawer and already-disabled zero-result export remain present.
-- MatrixGridView and MatrixListView were not edited; their true-empty-project text is unchanged.
+E4 — tests
+- test_spare_tiles.py covers explicit zero/no target => short, target/missing None, and entered true.
+- The test helper now models target=0 as an absent profile target, matching the production no-target shape.
+- Legacy zero without a flag, including a legacy row with notes, remains no_target.
+- matrix_spare_summary includes the unknown-quantity short row and missing_total remains 0.
+- test_execution_matrix_export.py covers mixed unknown and known shortage quantities plus FEE2E2 fill.
+- probe_spare_tiles_http.py sends an explicit confirmed zero for חיפוי מטבח, verifies unit status, matrix summary, Excel wording, and retains every existing V7 deep-equal check.
 
-V1 — JEST
-=========
-Command: cd frontend && CI=true yarn test --watchAll=false --runTestsByPath src/hooks/__tests__/useMatrixFilters.test.js
-Result: PASS.
+V1 — PYTEST + LIVE HTTP PROBE
+==============================
+Pytest command:
+  cd backend && MONGO_URL=mongodb://localhost:27017 DB_NAME=contractor_ops \
+  pytest -q tests/test_spare_tiles.py tests/test_execution_matrix_export.py \
+  tests/test_execution_matrix.py
 
-PASS src/hooks/__tests__/useMatrixFilters.test.js
-  useMatrixFilters pure helpers
-    ✓ T1 — building + tag AND combination filters correctly
-    ✓ T2 — status filter OR within: multiple statuses keep unit if ANY match
-    ✓ T3 — global search_text matches in cell.text_value AND cell.note
-    ✓ T4 — activeCount counts every active section correctly
-    ✓ T5 — loadSavedView replaces state atomically (no leak between switches)
-    ✓ T6 — sentinel boundary: __empty__ ↔ "" round-trips correctly
-    ✓ T7 — reset semantics: applying ≥4 sections then resetting → all empty + activeCount.total===0
-    ✓ T8 — spare status filters short and defaults missing summaries to no_profile
-    ✓ T9 — activeCount includes each selected spare status
-    ✓ T10 — spare_status survives saved-view serialization round-trip
-    ✓ T11 — old four-argument helper calls retain existing results
-    ✓ T12 — spare problem statuses match any category while non-problem statuses use overall
+Final result:
+  53 passed, 8 warnings in 1.48s
 
-Test Suites: 1 passed, 1 total
-Tests: 12 passed, 12 total
-Snapshots: 0 total
+Warnings are existing Pydantic v2 deprecations in schemas/execution_matrix_router.
 
-Environment note:
-- The first Jest launch was blocked before loading tests because canvas could not find libuuid.so.1.
-- libuuid was added temporarily through Replit system-package management, the suite passed, and it was then removed.
-- replit.nix is byte-clean against af36779; no dependency or environment file remains changed.
+Live probe command:
+  cd backend && python tests/probe_spare_tiles_http.py
 
-V2 — CI=true BUILD
-==================
-Command: cd frontend && REACT_APP_BACKEND_URL=/ CI=true yarn build
+Final result:
+  All 99 live HTTP checks passed.
+
+New-rule probe evidence:
+- V1 confirmed zero stored exactly — PASS.
+- V1 confirmed zero is short with full target missing — PASS.
+- V1 confirmed zero without target is short with unknown missing — PASS.
+- V2 matrix includes confirmed zero without target as short — PASS.
+- V2 matrix export prints confirmed zero without target honestly — PASS.
+
+Required unchanged-save evidence:
+- V7 whole unit unchanged after settings/profile save — PASS.
+- V7 profile-aware unchanged save preserves whole unit — PASS.
+- V7 legacy array restored without entered keys — PASS.
+- V7 deleted configured category remains exact custom entry — PASS.
+- V7 no-profile legacy branch preserves whole unit — PASS.
+- V7 handover overview spare values unchanged — PASS.
+- V7 export spare columns unchanged — PASS.
+
+Other preserved probe evidence:
+- Matrix unit A short summary, unit B not entered and unit C no profile — PASS.
+- Matrix export header, short text/fill, not-entered and no-profile values — PASS.
+- RBAC, assignment, stale-write, sorting and audit checks — PASS.
+
+Probe iteration note:
+- The first new matrix assertion incorrectly assumed חיפוי מטבח used measure=tiles; it is configured as sqm. The assertion was narrowed to the required name + missing=None contract.
+- The next full run revealed that using derived entered would classify a legacy count=0 row with notes as newly short, contradicting the required unchanged V7 assertions. The production condition was narrowed to entry.entered is True.
+- The final complete run passed all 99 checks.
+
+V2 — CI=true FRONTEND BUILD
+============================
+Command:
+  cd frontend && CI=true REACT_APP_BACKEND_URL=/ yarn build
+
 Result: EXIT 0.
-Bundle: build/static/js/main.946fb05f.js.
+Bundle: build/static/js/main.a6ac5bcf.js
 No new ESLint warnings.
 Existing-only warnings:
 - Browserslist data age notice.
@@ -81,289 +94,280 @@ Existing-only warnings:
 
 V3 — PLAYWRIGHT DESKTOP + 390PX
 ================================
-Tester: batch590-ui-verification
-Authenticated pass verdict: SUCCESS.
-Fixture: five isolated units with exact requested summary combinations; removed after testing.
-Temporary managed-secret token: stored only in /tmp, never printed, removed after testing.
-No data mutation, save or export action was performed.
+Tester: batch591-ui-verification
+Final verdict: PASS after correcting the unit route to ApartmentDashboardPage's /defects route and reading the title from SparePill's inner span[title].
+Fixtures and temporary auth/download files were removed after verification.
+No application data was saved through the UI.
 
-Desktop pills and colors:
-- Unit A: חסר 2 · גבולי 1 — red.
-- Unit B: גבולי 1 — amber.
-- Unit C: גבולי 1 · לא הוזן — slate.
-- Unit D: מספיק — green.
-- Unit E: אחר — neutral/gray.
+Minimal scenario — desktop unit card:
+- Header/status: חסר — להזמין.
+- חיפוי מטבח: אין ספייר, red.
+- ריצוף יבש: 12 אריחים, green.
+- ריצוף מרפסות: 4 אריחים, green.
+- Screenshot zmbb7l (expanded); 3kdzxq (collapsed/header).
 
-Counter strip:
-- חסר 1
-- גבולי 3
-- מספיק 1
-- לא הוזן 1
-- אחר 1
-- ללא יעד hidden at zero.
+Minimal scenario — desktop matrix/filter/tooltip/export:
+- Row SparePill: חסר 1, red.
+- חסר counter: 1.
+- Clicking חסר retained the unit in the filtered matrix.
+- Inner span title exactly included the line: חיפוי מטבח: אין ספייר.
+- Excel header ריצוף ספייר was found dynamically at M1.
+- Excel cell M2 exactly: חסר — להזמין: חיפוי מטבח (אין ספייר).
+- Excel fill: FEE2E2 (stored as 00FEE2E2).
+- Screenshots qk2qy5 (initial), ay9bkq (filtered), bmk2si (title verification).
 
-Filter behavior:
-- Quick גבולי chip listed exactly units A, B and C.
-- Drawer גבולי alone listed exactly A, B and C.
-- Drawer גבולי + מספיק listed exactly A, B, C and D.
-- A guaranteed nonexistent free-search filter produced zero results.
-- Exact honest empty text rendered: אין דירות שמתאימות לסינון הנוכחי.
-- Exact reset action rendered: נקה סינון.
-- Excel export was disabled with title אין דירות לייצוא בסינון הנוכחי.
-- Clicking נקה סינון restored all five units and re-enabled export.
+Zahi unit-1 shape — desktop:
+- Card header/status: חסר — להזמין.
+- Three red rows: two אין ספייר plus numeric חסר 2.
+- One amber row: 5 מ״ר · גבולי.
+- One green row: 7 אריחים.
+- Matrix row SparePill exactly: חסר 3 · גבולי 1, red.
+- Screenshots pgweal (card), fu0koh (matrix).
 
-Mobile @390px:
-- All five rows displayed the same exact pill texts as desktop.
-- document scrollWidth=375 and body scrollWidth=375 at a 390px viewport; no page-level horizontal overflow.
+390px:
+- Minimal card retained the same red/green semantics; screenshot iguzdi.
+- Minimal matrix pill exactly חסר 1; screenshot h5ha4x.
+- Demo matrix pill exactly חסר 3 · גבולי 1; screenshot nossd8.
+- Both matrix pages: innerWidth=390, clientWidth=375, document/body scrollWidth=375; no page-level horizontal overflow.
 
-Screenshots:
-- stwlbz — initial desktop five pills and counter strip.
-- e4sv7t — quick גבולי result with A/B/C only.
-- 0qmrs2 — drawer גבולי-only result.
-- ubsk22 — drawer גבולי + מספיק selection state.
-- omrkfm — honest empty state and disabled export.
-- pxkyrx — empty-state filter drawer context.
-- wyui1v — reset restored all five desktop units.
-- ts9m39 — 390px five-row mobile view without overflow.
+Runtime evidence:
+- Start application is RUNNING and served main.a6ac5bcf.js.
+- Auth, unit, execution-matrix and export requests returned 200 in the completed pass.
+- No backend/API errors or crashes occurred.
+- Existing external Google Fonts/inline-resource CSP noise did not block the flow.
 
-Runtime/log evidence:
-- Start application is RUNNING and served main.946fb05f.js.
-- Authenticated /api/auth/me and execution-matrix requests returned 200.
-- No application/API failure occurred in the completed pass.
-- Existing external-font/inline-resource CSP noise and a non-blocking dialog aria-describedby warning did not affect the flow.
-
-V4 — SCOPE + PRESERVATION
-=========================
-Command: git diff --name-only af36779 -- backend frontend
-Result: exactly 4 files:
+V4 — SCOPE + BYTE PRESERVATION
+================================
+Command: git diff --name-only 565cdb4
+Result before generating this review: exactly 6 files:
+- backend/contractor_ops/execution_matrix_export.py
+- backend/contractor_ops/spare_tiles.py
+- backend/tests/probe_spare_tiles_http.py
+- backend/tests/test_execution_matrix_export.py
+- backend/tests/test_spare_tiles.py
 - frontend/src/components/matrix/SparePill.js
-- frontend/src/hooks/__tests__/useMatrixFilters.test.js
-- frontend/src/hooks/useMatrixFilters.js
-- frontend/src/pages/ExecutionMatrixPage.js
 
-git diff --check af36779 for the four files: PASS.
-replit.nix diff vs af36779: CLEAN.
-Backend files changed: none.
-MatrixGridView/ListView/FilterDrawer/FilterSection changed: none.
-SparePill colors/tooltip/click/size changed: none.
-Saved-view payloads changed: none.
-Unit page / SpareTilesPage changed: none.
-Schema / Excel changed: none.
-Dependencies or migrations retained: none.
+Count: 6.
+git diff --check 565cdb4: PASS.
+Backend/frontend forbidden files changed: none.
+Dependencies/migrations/data changes retained: none.
+Temporary fixture documents remaining: 0.
+Temporary token and downloaded xlsx: removed.
 Manual commit: none.
 Deployment: none.
 
-COMPLETE 4-FILE DIFF VS af36779
+awk + md5 byte-preservation evidence:
+- validate_spare_settings base:    9cdb473c3ebc6259039f060e7f734745
+- validate_spare_settings current: 9cdb473c3ebc6259039f060e7f734745
+- Result: byte-identical.
+- patch_unit_spare_tiles base:     c5eb6f90a2632c68156d0353513acba0
+- patch_unit_spare_tiles current:  c5eb6f90a2632c68156d0353513acba0
+- Result: byte-identical.
+
+COMPLETE 6-FILE DIFF VS 565cdb4
 ================================
+diff --git a/backend/contractor_ops/execution_matrix_export.py b/backend/contractor_ops/execution_matrix_export.py
+index 0854706..699d425 100644
+--- a/backend/contractor_ops/execution_matrix_export.py
++++ b/backend/contractor_ops/execution_matrix_export.py
+@@ -149,6 +149,8 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
+             if overall == "short":
+                 details = ", ".join(
+                     f"{row['name']} {row['missing']}"
++                    if row.get("missing") is not None
++                    else f"{row['name']} (אין ספייר)"
+                     for row in spare_summary.get("short") or []
+                 )
+                 if details:
+diff --git a/backend/contractor_ops/spare_tiles.py b/backend/contractor_ops/spare_tiles.py
+index 369ee11..75b0a28 100644
+--- a/backend/contractor_ops/spare_tiles.py
++++ b/backend/contractor_ops/spare_tiles.py
+@@ -180,7 +180,13 @@ def compute_spare_status(unit_doc, spare_settings):
+         target = targets.get(name) if profile else None
+         missing = None
+         if not target or target <= 0:
+-            status = 'no_target'
++            # A confirmed "אין ספייר" is a shortage even without a target
++            # (order quantity unknown → missing stays None).
++            status = (
++                'short'
++                if (entry and entry.get('entered') is True and actual == 0)
++                else 'no_target'
++            )
+         elif not entered:
+             status = 'not_entered'
+         elif actual < target:
+diff --git a/backend/tests/probe_spare_tiles_http.py b/backend/tests/probe_spare_tiles_http.py
+index 871d7d0..2f8f0dd 100644
+--- a/backend/tests/probe_spare_tiles_http.py
++++ b/backend/tests/probe_spare_tiles_http.py
+@@ -502,6 +502,7 @@ def main():
+         confirmed_zero_payload = [
+             {"type": "ריצוף יבש", "count": 0, "notes": "", "entered": True},
+             {"type": "ריצוף מרפסות", "count": 3, "notes": "קרטון"},
++            {"type": "חיפוי מטבח", "count": 0, "notes": "", "entered": True},
+         ]
+         call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
+              json={"spare_tiles": confirmed_zero_payload})
+@@ -521,6 +522,32 @@ def main():
+               and confirmed_dry_row["entered"] is True
+               and confirmed_dry_row["status"] == "short"
+               and confirmed_dry_row["missing"] == confirmed_dry_row["target"] == 10)
++        confirmed_kitchen_row = next(
++            row for row in confirmed_response["spare_status"]["categories"]
++            if row["name"] == "חיפוי מטבח"
++        )
++        check("V1 confirmed zero without target is short with unknown missing",
++              confirmed_kitchen_row["actual"] == 0
++              and confirmed_kitchen_row["entered"] is True
++              and confirmed_kitchen_row["status"] == "short"
++              and confirmed_kitchen_row["target"] is None
++              and confirmed_kitchen_row["missing"] is None)
++        confirmed_matrix = call("GET", matrix_path, pm_headers, 200).json()
++        confirmed_summary = confirmed_matrix["spare"]["by_unit"][unit_one_id]
++        check("V2 matrix includes confirmed zero without target as short",
++              confirmed_summary["overall"] == "short"
++              and any(
++                  row["name"] == "חיפוי מטבח" and row["missing"] is None
++                  for row in confirmed_summary["short"]
++              ))
++        confirmed_matrix_export = execution_matrix_export_values(
++            call("POST", matrix_export_path, pm_headers, 200, json={}).content
++        )
++        confirmed_export_value = confirmed_matrix_export["rows"]["101"]["value"]
++        check("V2 matrix export prints confirmed zero without target honestly",
++              confirmed_export_value.startswith("חסר — להזמין:")
++              and "חיפוי מטבח (אין ספייר)" in confirmed_export_value
++              and "ריצוף יבש 10" in confirmed_export_value)
+ 
+         call("PATCH", f"/api/units/{unit_one_id}/spare-tiles", pm_headers, 200,
+              json={"spare_tiles": legacy_spare_tiles})
+diff --git a/backend/tests/test_execution_matrix_export.py b/backend/tests/test_execution_matrix_export.py
+index 57b2605..3365801 100644
+--- a/backend/tests/test_execution_matrix_export.py
++++ b/backend/tests/test_execution_matrix_export.py
+@@ -186,6 +186,29 @@ def test_spare_enabled_appends_status_column_with_fills_and_profile_comments():
+     assert ok_cell.fill.fgColor.rgb.upper().endswith("D1FAE5")
+ 
+ 
++def test_spare_export_formats_unknown_and_known_shortage_quantities():
++    project = {"id": "p1", "name": "Demo"}
++    units = [{"id": "u-short", "unit_no": "1"}]
++    spare = {
++        "enabled": True,
++        "by_unit": {
++            "u-short": {
++                "overall": "short",
++                "short": [
++                    {"name": "A", "missing": None, "measure": "tiles"},
++                    {"name": "B", "missing": 2, "measure": "tiles"},
++                ],
++            },
++        },
++    }
++    ws = _read_workbook(
++        build_matrix_xlsx(project, units, [], [], {}, {}, spare=spare)
++    ).active
++    short_cell = ws.cell(row=2, column=5)
++    assert short_cell.value == "חסר — להזמין: A (אין ספייר), B 2"
++    assert short_cell.fill.fgColor.rgb.upper().endswith("FEE2E2")
++
++
+ def test_spare_export_includes_borderline_and_not_entered_details():
+     project = {"id": "p1", "name": "Demo"}
+     units = [
+diff --git a/backend/tests/test_spare_tiles.py b/backend/tests/test_spare_tiles.py
+index 336d1be..065495c 100644
+--- a/backend/tests/test_spare_tiles.py
++++ b/backend/tests/test_spare_tiles.py
+@@ -23,7 +23,11 @@ PROFILE_ID = str(uuid.uuid4())
+ def settings(target=10, margin=10):
+     return {
+         'categories': [{'name': 'ריצוף יבש', 'measure': 'tiles'}],
+-        'profiles': [{'id': PROFILE_ID, 'name': '3 חדרים', 'targets': {'ריצוף יבש': target}}],
++        'profiles': [{
++            'id': PROFILE_ID,
++            'name': '3 חדרים',
++            'targets': {} if target == 0 else {'ריצוף יבש': target},
++        }],
+         'margin_pct': margin,
+     }
+ 
+@@ -86,6 +90,20 @@ def test_confirmed_zero_is_entered_and_short():
+ 
+ 
+ def test_no_target_and_no_profile():
++    confirmed_zero = status(0, target=0, entered=True)
++    confirmed_zero_row = confirmed_zero['categories'][0]
++    assert confirmed_zero['overall'] == 'short'
++    assert confirmed_zero_row == {
++        'name': 'ריצוף יבש',
++        'measure': 'tiles',
++        'target': None,
++        'actual': 0,
++        'status': 'short',
++        'missing': None,
++        'entered': True,
++    }
++    assert status(0, target=0)['overall'] == 'no_target'
++    assert status(0, notes='legacy note', target=0)['overall'] == 'no_target'
+     assert status(4, target=0)['overall'] == 'no_target'
+     assert status(4, profile_id=None)['overall'] == 'no_profile'
+     assert status(4, profile_id=str(uuid.uuid4()))['overall'] == 'no_profile'
+@@ -231,6 +249,28 @@ def test_matrix_spare_summary_short_categories_and_missing_total():
+     }
+ 
+ 
++def test_matrix_spare_summary_confirmed_zero_without_target():
++    result = matrix_spare_summary(
++        {
++            'spare_profile_id': PROFILE_ID,
++            'spare_tiles': [{
++                'type': 'ריצוף יבש',
++                'count': 0,
++                'notes': '',
++                'entered': True,
++            }],
++        },
++        settings(target=0),
++    )
++    assert result['overall'] == 'short'
++    assert result['short'] == [{
++        'name': 'ריצוף יבש',
++        'missing': None,
++        'measure': 'tiles',
++    }]
++    assert result['missing_total'] == 0
++
++
+ def test_matrix_spare_summary_short_also_surfaces_borderline_categories():
+     config = {
+         'categories': [
 diff --git a/frontend/src/components/matrix/SparePill.js b/frontend/src/components/matrix/SparePill.js
-index 8a6b656..6464c37 100644
+index 6464c37..8c2b849 100644
 --- a/frontend/src/components/matrix/SparePill.js
 +++ b/frontend/src/components/matrix/SparePill.js
-@@ -43,10 +43,16 @@ export default function SparePill({
-   const shortRows = Array.isArray(summary?.short) ? summary.short : [];
-   const notEntered = Array.isArray(summary?.not_entered) ? summary.not_entered : [];
-   const borderline = Array.isArray(summary?.borderline) ? summary.borderline : [];
--  const baseText = config
--    ? `${config.label}${summary?.overall === 'short' && shortRows.length > 1 ? ` (${shortRows.length})` : ''}`
--    : '—';
--  const text = `${baseText}${['short', 'not_entered'].includes(summary?.overall) && borderline.length ? ' · גבולי' : ''}`;
-+  const nShort = shortRows.length;
-+  const nBorder = borderline.length;
-+  const nNotEntered = notEntered.length;
-+  const labelOnly = !summary || ['ok', 'no_target', 'no_profile'].includes(summary.overall);
-+  const segments = labelOnly ? [] : [
-+    ...(nShort > 0 ? [`חסר ${nShort}`] : []),
-+    ...(nBorder > 0 ? [`גבולי ${nBorder}`] : []),
-+    ...(nShort === 0 && nNotEntered > 0 ? ['לא הוזן'] : []),
-+  ];
-+  const text = config ? (segments.join(' · ') || config.label) : '—';
-   const titleParts = [
+@@ -57,7 +57,9 @@ export default function SparePill({
      summary?.profile ? `פרופיל: ${summary.profile}` : 'ללא פרופיל',
      ...shortRows.map(row => {
-diff --git a/frontend/src/hooks/__tests__/useMatrixFilters.test.js b/frontend/src/hooks/__tests__/useMatrixFilters.test.js
-index 8921069..7a5b962 100644
---- a/frontend/src/hooks/__tests__/useMatrixFilters.test.js
-+++ b/frontend/src/hooks/__tests__/useMatrixFilters.test.js
-@@ -6,6 +6,7 @@ import {
-   initialFilters,
-   toggleInArray,
-   toggleInDict,
-+  spareStatusMatches,
- } from '../useMatrixFilters';
- 
- const mkCells = (entries) => {
-@@ -207,4 +208,36 @@ describe('useMatrixFilters pure helpers', () => {
-     };
-     expect(computeFilteredUnits(units, cells, stages, filters).map(u => u.id)).toEqual(['u1']);
-   });
-+
-+  test('T12 — spare problem statuses match any category while non-problem statuses use overall', () => {
-+    const extendedUnits = [
-+      ...units,
-+      { id: 'u5', unit_no: '301', building_id: 'C' },
-+    ];
-+    const spareByUnit = {
-+      u1: {
-+        overall: 'short',
-+        short: [{ name: 'a', missing: 1, measure: 'tiles' }],
-+        borderline: ['b'],
-+      },
-+      u2: { overall: 'borderline', borderline: ['b'] },
-+      u3: { overall: 'not_entered', not_entered: ['n'], borderline: ['b'] },
-+      u4: { overall: 'ok' },
-+    };
-+    const idsFor = (spareStatus) => computeFilteredUnits(
-+      extendedUnits,
-+      {},
-+      stages,
-+      { ...initialFilters(), spare_status: spareStatus },
-+      spareByUnit
-+    ).map(unit => unit.id);
-+
-+    expect(idsFor(['borderline'])).toEqual(['u1', 'u2', 'u3']);
-+    expect(idsFor(['short'])).toEqual(['u1']);
-+    expect(idsFor(['not_entered'])).toEqual(['u3']);
-+    expect(idsFor(['ok'])).toEqual(['u4']);
-+    expect(idsFor(['short', 'ok'])).toEqual(['u1', 'u4']);
-+    expect(idsFor(['no_profile'])).toEqual(['u5']);
-+    expect(spareStatusMatches(undefined, 'no_profile')).toBe(true);
-+  });
- });
-diff --git a/frontend/src/hooks/useMatrixFilters.js b/frontend/src/hooks/useMatrixFilters.js
-index 7f6e4d1..7431ee3 100644
---- a/frontend/src/hooks/useMatrixFilters.js
-+++ b/frontend/src/hooks/useMatrixFilters.js
-@@ -44,6 +44,15 @@ export function toggleInDict(dict, key, value) {
-   return next;
- }
- 
-+export function spareStatusMatches(summary, value) {
-+  const s = summary || {};
-+  const overall = s.overall ?? 'no_profile';
-+  if (value === 'short') return (s.short?.length ?? 0) > 0 || overall === 'short';
-+  if (value === 'borderline') return (s.borderline?.length ?? 0) > 0 || overall === 'borderline';
-+  if (value === 'not_entered') return (s.not_entered?.length ?? 0) > 0 || overall === 'not_entered';
-+  return overall === value;
-+}
-+
- /** Excel-pattern filtering: AND across, OR within. */
- export function computeFilteredUnits(units, cellsByUnitStage, stages, filters, spareByUnit = {}) {
-   if (!Array.isArray(units)) return [];
-@@ -96,8 +105,9 @@ export function computeFilteredUnits(units, cellsByUnitStage, stages, filters, s
- 
-     // 6. Spare inventory status
-     if (f.spare_status?.length) {
--      const overall = spareByUnit?.[u.id]?.overall ?? 'no_profile';
--      if (!f.spare_status.includes(overall)) return false;
-+      if (!f.spare_status.some(value => spareStatusMatches(spareByUnit?.[u.id], value))) {
-+        return false;
-+      }
-     }
- 
-     return true;
-diff --git a/frontend/src/pages/ExecutionMatrixPage.js b/frontend/src/pages/ExecutionMatrixPage.js
-index 0ec41e8..e7d96bf 100644
---- a/frontend/src/pages/ExecutionMatrixPage.js
-+++ b/frontend/src/pages/ExecutionMatrixPage.js
-@@ -4,7 +4,7 @@ import { Loader2, AlertCircle, LayoutGrid, ArrowRight, Settings, Download } from
- import { downloadBlob } from '../utils/fileDownload';
- import { toast } from 'sonner';
- import { useMatrixData } from '../hooks/useMatrixData';
--import useMatrixFilters from '../hooks/useMatrixFilters';
-+import useMatrixFilters, { spareStatusMatches } from '../hooks/useMatrixFilters';
- import { matrixService } from '../services/matrixService';
- import MatrixListView from '../components/matrix/MatrixListView';
- import MatrixGridView from '../components/matrix/MatrixGridView';
-@@ -109,8 +109,9 @@ export default function ExecutionMatrixPage() {
-       no_profile: 0,
-     };
-     for (const unit of units) {
--      const status = spareByUnit[unit.id]?.overall ?? 'no_profile';
--      if (Object.prototype.hasOwnProperty.call(counts, status)) counts[status] += 1;
-+      for (const key of Object.keys(counts)) {
-+        if (spareStatusMatches(spareByUnit[unit.id], key)) counts[key] += 1;
-+      }
-     }
-     return counts;
-   }, [units, spareByUnit]);
-@@ -322,30 +323,45 @@ export default function ExecutionMatrixPage() {
-           </div>
-         )}
- 
--        <div className="md:hidden">
--          <MatrixListView
--            units={filterAPI.filteredUnits}
--            stages={stages}
--            cells={cells}
--            floorsById={floorsById}
--            buildingsById={buildingsById}
--            onCellClick={handleCellClick}
--            spare={matrixSpare}
--            onSpareClick={handleSpareClick}
--          />
--        </div>
--        <div className="hidden md:block">
--          <MatrixGridView
--            units={filterAPI.filteredUnits}
--            stages={stages}
--            cells={cells}
--            floorsById={floorsById}
--            buildingsById={buildingsById}
--            onCellClick={handleCellClick}
--            spare={matrixSpare}
--            onSpareClick={handleSpareClick}
--          />
--        </div>
-+        {units.length > 0 && filterAPI.filteredUnits.length === 0 ? (
-+          <div className="text-center py-12 text-slate-500" dir="rtl">
-+            <p>אין דירות שמתאימות לסינון הנוכחי</p>
-+            <button
-+              type="button"
-+              onClick={filterAPI.reset}
-+              className="mt-3 text-sm font-semibold text-amber-700 hover:text-amber-800"
-+            >
-+              נקה סינון
-+            </button>
-+          </div>
-+        ) : (
-+          <>
-+            <div className="md:hidden">
-+              <MatrixListView
-+                units={filterAPI.filteredUnits}
-+                stages={stages}
-+                cells={cells}
-+                floorsById={floorsById}
-+                buildingsById={buildingsById}
-+                onCellClick={handleCellClick}
-+                spare={matrixSpare}
-+                onSpareClick={handleSpareClick}
-+              />
-+            </div>
-+            <div className="hidden md:block">
-+              <MatrixGridView
-+                units={filterAPI.filteredUnits}
-+                stages={stages}
-+                cells={cells}
-+                floorsById={floorsById}
-+                buildingsById={buildingsById}
-+                onCellClick={handleCellClick}
-+                spare={matrixSpare}
-+                onSpareClick={handleSpareClick}
-+              />
-+            </div>
-+          </>
-+        )}
-       </div>
- 
-       <MatrixFilterFAB
+       const measure = measureLabel(row.measure);
+-      return `${row.name}: חסר ${row.missing}${measure ? ` ${measure}` : ''}`;
++      return row.missing == null
++        ? `${row.name}: אין ספייר`
++        : `${row.name}: חסר ${row.missing}${measure ? ` ${measure}` : ''}`;
+     }),
+   ];
+   if (borderline.length) titleParts.push(`גבולי: ${borderline.join(', ')}`);
 
 FINAL CONFIRMATION
 ==================
-- Scope is exactly the four authorized frontend files.
-- V1 Jest: 12/12 passed.
+- Scope is exactly the six authorized product/test files.
+- V1 pytest: 53/53 passed.
+- V1 live HTTP probe: 99/99 passed, including all V7 deep-equal checks.
 - V2 CI=true build: EXIT 0.
 - V3 desktop + 390px Playwright: passed.
-- V4 diff scope and diff check: passed.
+- V4 scope, diff check and forbidden-function MD5 checks: passed.
 - .local/.commit_message matches the supplied text.
 - No manual commit was made.
 - No deployment was made.
