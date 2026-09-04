@@ -120,6 +120,72 @@ def test_build_xlsx_basic_structure():
     assert ws.max_row == 3  # header + 2 units
 
 
+def test_spare_none_preserves_original_headers_and_values():
+    project = {"id": "p1", "name": "Demo"}
+    stages = [{"id": "s1", "title": "ריצוף", "type": "status"}]
+    units = [{"id": "u1", "unit_no": "1"}]
+    cells = [{
+        "unit_id": "u1",
+        "stage_id": "s1",
+        "status": "completed",
+        "note": None,
+    }]
+    buf = build_matrix_xlsx(
+        project, units, stages, cells, {}, {}, spare=None
+    )
+    ws = _read_workbook(buf).active
+    assert [cell.value for cell in ws[1]] == [
+        "בניין", "קומה", "דירה", "מס׳ חדרים", "ריצוף",
+    ]
+    assert "ריצוף ספייר" not in [cell.value for cell in ws[1]]
+    assert [cell.value for cell in ws[2]] == [
+        "—", "—", "1", None, "הושלם",
+    ]
+
+
+def test_spare_enabled_appends_status_column_with_fills_and_profile_comments():
+    project = {"id": "p1", "name": "Demo"}
+    units = [
+        {"id": "u-short", "unit_no": "1"},
+        {"id": "u-ok", "unit_no": "2"},
+    ]
+    spare = {
+        "enabled": True,
+        "by_unit": {
+            "u-short": {
+                "overall": "short",
+                "profile": "3 חדרים",
+                "short": [
+                    {"name": "ריצוף יבש", "missing": 2, "measure": "tiles"},
+                ],
+                "not_entered": [],
+                "missing_total": 2,
+            },
+            "u-ok": {
+                "overall": "ok",
+                "profile": "4 חדרים",
+                "short": [],
+                "not_entered": [],
+                "missing_total": 0,
+            },
+        },
+    }
+    buf = build_matrix_xlsx(
+        project, units, [], [], {}, {}, spare=spare
+    )
+    ws = _read_workbook(buf).active
+    assert ws.cell(row=1, column=5).value == "ריצוף ספייר"
+    short_cell = ws.cell(row=2, column=5)
+    assert short_cell.value.startswith("חסר — להזמין:")
+    assert short_cell.value == "חסר — להזמין: ריצוף יבש 2"
+    assert short_cell.fill.fgColor.rgb.upper().endswith("FEE2E2")
+    assert short_cell.comment.text == "3 חדרים"
+    assert short_cell.comment.author == "BrikOps"
+    ok_cell = ws.cell(row=3, column=5)
+    assert ok_cell.value == "מספיק"
+    assert ok_cell.fill.fgColor.rgb.upper().endswith("D1FAE5")
+
+
 # =====================================================================
 # T2 — status label translation + fills
 # =====================================================================

@@ -233,6 +233,7 @@ const ApartmentDashboardPage = () => {
           notes: savedEntry?.entry.notes ?? '',
           entered: savedEntry?.entry.entered === true,
           cartons: '',
+          perCarton: '',
           isConfigured: true,
           isPersisted: !!savedEntry,
           originalIndex: savedEntry?.originalIndex,
@@ -247,6 +248,7 @@ const ApartmentDashboardPage = () => {
           notes: entry.notes ?? '',
           entered: entry.entered === true,
           cartons: '',
+          perCarton: '',
           isConfigured: false,
           isPersisted: true,
           originalIndex,
@@ -262,6 +264,7 @@ const ApartmentDashboardPage = () => {
           notes: savedEntry?.entry.notes ?? '',
           entered: savedEntry?.entry.entered === true,
           cartons: '',
+          perCarton: '',
           isConfigured: true,
           isPersisted: !!savedEntry,
           originalIndex: savedEntry?.originalIndex,
@@ -276,6 +279,7 @@ const ApartmentDashboardPage = () => {
           notes: entry.notes ?? '',
           entered: entry.entered === true,
           cartons: '',
+          perCarton: '',
           isConfigured: false,
           isPersisted: true,
           originalIndex,
@@ -759,11 +763,15 @@ const ApartmentDashboardPage = () => {
                         <div className="flex gap-2 items-end flex-wrap">
                           {(() => {
                             const category = (unitData.spare_settings?.categories || []).find(c => c.name === entry.type);
-                            const measureLabel = category?.measure === 'tiles' ? 'אריחים' : category?.measure === 'cartons' ? 'קרטונים' : category?.measure === 'sqm' ? 'מ"ר' : '';
+                            const measureLabel = category?.measure === 'tiles' ? 'אריחים' : category?.measure === 'sqm' ? 'מ"ר' : '';
                             return <>
-                              <label className="w-24 text-[10px] text-slate-500">כמות<input type="number" min="0" value={entry.count} onChange={e => { const count = e.target.value; setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count, cartons: '', entered: Number(count) > 0 ? false : en.entered } : en)); }} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /><span className="block mt-0.5 text-[10px] text-slate-400">{measureLabel}</span></label>
-                              <label className="flex items-center gap-1 pb-5 text-[10px] text-slate-600"><input type="checkbox" checked={String(entry.count) === '0' && entry.entered === true} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: '0', cartons: '', entered: e.target.checked } : en))} />אין</label>
-                              {category?.per_carton != null && <label className="w-24 text-[10px] text-slate-500">קרטונים<input type="number" min="0" step="0.01" value={entry.cartons || ''} onChange={e => { const cartons = e.target.value; setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, cartons, ...(cartons === '' ? {} : { count: String(Math.round(Number(cartons) * Number(category.per_carton))), entered: false }) } : en)); }} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" />{entry.cartons !== '' && <span className="block mt-0.5 text-[10px] text-slate-400">{entry.cartons} קרטונים × {category.per_carton} = {Math.round(Number(entry.cartons) * Number(category.per_carton))} {measureLabel}</span>}</label>}
+                              <label className="w-24 text-[10px] text-slate-500">כמות<input type="number" min="0" value={entry.count} onChange={e => { const count = e.target.value; setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count, cartons: '', perCarton: '', entered: Number(count) > 0 ? false : en.entered } : en)); }} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /><span className="block mt-0.5 text-[10px] text-slate-400">{measureLabel}</span></label>
+                              <label className="flex items-center gap-1 pb-5 text-[10px] text-slate-600"><input type="checkbox" checked={String(entry.count) === '0' && entry.entered === true} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: '0', cartons: '', perCarton: '', entered: e.target.checked } : en))} />אין</label>
+                              {entry.isConfigured && <div className="flex gap-2 flex-wrap">
+                                <label className="w-24 text-[10px] text-slate-500">קרטונים<input type="number" min="0" step="1" value={entry.cartons} onChange={e => { const cartons = e.target.value; setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, cartons, ...(cartons !== '' && en.perCarton !== '' ? { count: String(Math.round(Number(cartons) * Number(en.perCarton))), entered: false } : {}) } : en)); }} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /></label>
+                                <label className="w-24 text-[10px] text-slate-500">{measureLabel} בקרטון<input type="number" min="0.01" step="0.01" value={entry.perCarton} onChange={e => { const perCarton = e.target.value; setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, perCarton, ...(perCarton !== '' && en.cartons !== '' ? { count: String(Math.round(Number(en.cartons) * Number(perCarton))), entered: false } : {}) } : en)); }} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /></label>
+                                {entry.cartons !== '' && entry.perCarton !== '' && <span className="w-full text-[10px] text-slate-400">{entry.cartons} קרטונים × {entry.perCarton} = {entry.count} {measureLabel}</span>}
+                              </div>}
                             </>;
                           })()}
                           <label className="flex-1 min-w-[120px] text-[10px] text-slate-500">הערות<input type="text" value={entry.notes} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, notes: e.target.value } : en))} maxLength={500} placeholder="הערה..." className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /></label>
@@ -771,8 +779,8 @@ const ApartmentDashboardPage = () => {
                       </div>
                     ))}
                     <div className="flex items-center gap-3 flex-wrap">
-                      {spareTilesEntries.length < 20 && <button type="button" onClick={() => { const name = window.prompt('שם סוג ריצוף חדש:'); if (!name?.trim()) return; const trimmed = name.trim().slice(0, 50); if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) { toast.error('סוג ריצוף כבר קיים'); return; } setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', entered: false, cartons: '', isConfigured: false }]); }} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Plus className="w-3.5 h-3.5" />הוסף סוג ריצוף</button>}
-                      <button type="button" onClick={() => setSpareTilesEntries(prev => prev.map(entry => entry.isConfigured ? { ...entry, count: '0', cartons: '', entered: true } : entry))} className="text-xs text-amber-700 font-medium">אין ספייר בדירה</button>
+                      {spareTilesEntries.length < 20 && <button type="button" onClick={() => { const name = window.prompt('שם סוג ריצוף חדש:'); if (!name?.trim()) return; const trimmed = name.trim().slice(0, 50); if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) { toast.error('סוג ריצוף כבר קיים'); return; } setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', entered: false, cartons: '', perCarton: '', isConfigured: false }]); }} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Plus className="w-3.5 h-3.5" />הוסף סוג ריצוף</button>}
+                      <button type="button" onClick={() => setSpareTilesEntries(prev => prev.map(entry => entry.isConfigured ? { ...entry, count: '0', cartons: '', perCarton: '', entered: true } : entry))} className="text-xs text-amber-700 font-medium">אין ספייר בדירה</button>
                     </div>
                     <div className="flex gap-2"><button onClick={saveSpareTiles} disabled={spareTilesSaving} className="flex-1 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium">{spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin inline" /> : 'שמור'}</button><button onClick={() => setSpareTilesEditing(false)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600">ביטול</button></div>
                   </div>
@@ -886,7 +894,7 @@ const ApartmentDashboardPage = () => {
                           toast.error('סוג ריצוף כבר קיים');
                           return;
                         }
-                        setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', entered: false, cartons: '', isConfigured: false }]);
+                        setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', entered: false, cartons: '', perCarton: '', isConfigured: false }]);
                       }}
                       className="flex items-center gap-1.5 text-xs text-amber-600 font-medium hover:text-amber-700 transition-colors"
                     >

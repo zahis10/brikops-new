@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from contractor_ops.spare_tiles import (
     compute_spare_status,
     default_spare_settings,
+    matrix_spare_summary,
     validate_spare_settings,
 )
 from contractor_ops import spare_tiles_router
@@ -45,12 +46,25 @@ def test_defaults_are_fresh():
     assert default_spare_settings()['categories'][0]['name'] == 'ריצוף יבש'
 
 
+def test_default_categories_are_all_tiles():
+    assert {
+        category['measure']
+        for category in default_spare_settings()['categories']
+    } == {'tiles'}
+
+
 def test_short_borderline_and_ok():
     short = status(8)
     assert short['overall'] == 'short'
     assert short['categories'][0]['missing'] == 2
     assert status(3, target=3)['overall'] == 'borderline'
     assert status(7, target=5)['overall'] == 'ok'
+
+
+def test_two_tiles_against_twelve_is_short_by_ten():
+    result = status(2, target=12)
+    assert result['overall'] == 'short'
+    assert result['categories'][0]['missing'] == 10
 
 
 def test_not_entered_and_zero_with_notes():
@@ -94,7 +108,7 @@ def test_custom_type_appended_and_overall_precedence():
     config = {
         'categories': [
             {'name': 'א', 'measure': 'tiles'},
-            {'name': 'ב', 'measure': 'cartons'},
+            {'name': 'ב', 'measure': 'sqm'},
         ],
         'profiles': [{
             'id': PROFILE_ID,
@@ -137,7 +151,7 @@ def valid_body():
 @pytest.mark.parametrize('mutate', [
     lambda body: body.update(categories=[
         {'name': 'ריצוף', 'measure': 'tiles'},
-        {'name': '  ריצוף  ', 'measure': 'cartons'},
+        {'name': '  ריצוף  ', 'measure': 'sqm'},
     ]),
     lambda body: body.update(profiles=[
         {'name': str(index), 'targets': {}} for index in range(11)
@@ -165,31 +179,79 @@ def test_validation_preserves_uuid_and_drops_deleted_category_targets():
     assert result['profiles'][0]['targets'] == {'ריצוף': 4}
 
 
-def test_per_carton_validation_and_normalization():
+def test_cartons_measure_normalizes_to_tiles():
     body = valid_body()
-    body['categories'] = [
-        {'name': 'אריחים', 'measure': 'tiles', 'per_carton': 4},
-        {'name': 'שטח', 'measure': 'sqm', 'per_carton': 1.44},
-        {'name': 'קרטונים', 'measure': 'cartons', 'per_carton': 8},
-        {'name': 'ישן', 'measure': 'tiles'},
-    ]
+    body['categories'][0]['measure'] = 'cartons'
     result = validate_spare_settings(body)
-    assert result['categories'] == [
-        {'name': 'אריחים', 'measure': 'tiles', 'per_carton': 4},
-        {'name': 'שטח', 'measure': 'sqm', 'per_carton': 1.44},
-        {'name': 'קרטונים', 'measure': 'cartons', 'per_carton': None},
-        {'name': 'ישן', 'measure': 'tiles', 'per_carton': None},
-    ]
+    assert result['categories'] == [{'name': 'ריצוף', 'measure': 'tiles'}]
 
 
-@pytest.mark.parametrize('value', [0, -1, 'x', True, 1.234])
-def test_per_carton_rejections(value):
+def test_unknown_measure_is_rejected():
     body = valid_body()
-    body['categories'][0]['per_carton'] = value
+    body['categories'][0]['measure'] = 'boxes'
     with pytest.raises(HTTPException) as error:
         validate_spare_settings(body)
     assert error.value.status_code == 422
-    assert error.value.detail == 'כמות בקרטון לא חוקית'
+    assert error.value.detail == 'יחידת מידה לא חוקית'
+
+
+def test_matrix_spare_summary_short_categories_and_missing_total():
+    config = {
+        'categories': [
+            {'name': 'ריצוף יבש', 'measure': 'tiles'},
+            {'name': 'חיפוי מטבח', 'measure': 'sqm'},
+        ],
+        'profiles': [{
+            'id': PROFILE_ID,
+            'name': 'פרופיל א',
+            'targets': {'ריצוף יבש': 12, 'חיפוי מטבח': 5},
+        }],
+        'margin_pct': 10,
+    }
+    result = matrix_spare_summary(
+        {
+            'spare_profile_id': PROFILE_ID,
+            'spare_tiles': [
+                {'type': 'ריצוף יבש', 'count': 2},
+                {'type': 'חיפוי מטבח', 'count': 3},
+            ],
+        },
+        config,
+    )
+    assert result == {
+        'overall': 'short',
+        'profile': 'פרופיל א',
+        'short': [
+            {'name': 'ריצוף יבש', 'missing': 10, 'measure': 'tiles'},
+            {'name': 'חיפוי מטבח', 'missing': 2, 'measure': 'sqm'},
+        ],
+        'not_entered': [],
+        'missing_total': 12,
+    }
+
+
+def test_matrix_spare_summary_ok():
+    result = matrix_spare_summary(
+        {
+            'spare_profile_id': PROFILE_ID,
+            'spare_tiles': [{'type': 'ריצוף יבש', 'count': 12}],
+        },
+        settings(target=10, margin=10),
+    )
+    assert result['overall'] == 'ok'
+    assert result['profile'] == '3 חדרים'
+    assert result['short'] == []
+    assert result['missing_total'] == 0
+
+
+def test_matrix_spare_summary_no_profile():
+    result = matrix_spare_summary(
+        {'spare_tiles': [{'type': 'ריצוף יבש', 'count': 2}]},
+        settings(),
+    )
+    assert result['overall'] == 'no_profile'
+    assert result['profile'] is None
+    assert result['short'] == []
 
 
 class _Result:

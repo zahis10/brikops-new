@@ -50,6 +50,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from contractor_ops.execution_matrix_export import build_matrix_xlsx
+from contractor_ops.spare_tiles import (
+    default_spare_settings,
+    matrix_spare_summary,
+)
 from contractor_ops.router import (
     _now,
     _audit,
@@ -360,6 +364,27 @@ async def get_matrix(
 
     cells_summary = [_summarize_cell(c) for c in cells_docs]
 
+    project_result = db.projects.find_one(
+        {"id": project_id},
+        {"_id": 0, "spare_settings": 1},
+    )
+    # Some direct unit tests use a loose MagicMock for collections that were
+    # previously untouched by this endpoint.
+    if hasattr(project_result, "__await__"):
+        project = await project_result
+    else:
+        project = project_result if isinstance(project_result, dict) else None
+    spare_settings = (
+        project.get("spare_settings")
+        if project and project.get("spare_settings")
+        else default_spare_settings()
+    )
+    spare_enabled = bool(spare_settings.get("profiles"))
+    by_unit = {
+        unit["id"]: matrix_spare_summary(unit, spare_settings)
+        for unit in units
+    } if spare_enabled else {}
+
     return {
         "project_id": project_id,
         "stages": stages,
@@ -380,6 +405,7 @@ async def get_matrix(
             "can_edit": can_edit,
         },
         "matrix_config_id": matrix_config["id"],
+        "spare": {"enabled": spare_enabled, "by_unit": by_unit},
     }
 
 
@@ -760,7 +786,25 @@ async def export_matrix_xlsx(
     # module-level _unit_sort_key (#485+#486+#489 6-tuple).
     units = sorted(units, key=lambda u: _unit_sort_key(u, buildings, floors))
 
-    buf = build_matrix_xlsx(project, units, stages, cells_summary, buildings, floors)
+    spare_settings = (
+        project.get("spare_settings")
+        if project.get("spare_settings")
+        else default_spare_settings()
+    )
+    spare_enabled = bool(spare_settings.get("profiles"))
+    by_unit = {
+        unit["id"]: matrix_spare_summary(unit, spare_settings)
+        for unit in units
+    } if spare_enabled else {}
+    buf = build_matrix_xlsx(
+        project,
+        units,
+        stages,
+        cells_summary,
+        buildings,
+        floors,
+        spare={"enabled": spare_enabled, "by_unit": by_unit},
+    )
 
     # Filename: sanitize illegal filesystem chars (Windows / iOS / macOS)
     # — Hebrew + spaces + parentheses are safe; only the 9 reserved chars

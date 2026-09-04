@@ -1,7 +1,17 @@
 import React, { useMemo } from 'react';
 import MatrixCell from './MatrixCell';
+import SparePill from './SparePill';
 
-export default function MatrixGridView({ units, stages, cells, floorsById, buildingsById, onCellClick = null }) {
+export default function MatrixGridView({
+  units,
+  stages,
+  cells,
+  floorsById,
+  buildingsById,
+  onCellClick = null,
+  spare,
+  onSpareClick = null,
+}) {
   const cellsByUnitStage = useMemo(() => {
     const map = {};
     for (const c of cells) {
@@ -45,6 +55,12 @@ export default function MatrixGridView({ units, stages, cells, floorsById, build
                 )}
               </th>
             ))}
+            {spare?.enabled && (
+              <th className="px-2 py-2 text-center text-[11px] font-medium text-slate-700 min-w-[64px] border-l border-slate-100 last:border-l-0">
+                <div className="truncate max-w-[80px] mx-auto">ריצוף ספייר</div>
+                <div className="text-[9px] text-amber-600 mt-0.5">מלאי</div>
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -89,6 +105,16 @@ export default function MatrixGridView({ units, stages, cells, floorsById, build
                     </td>
                   );
                 })}
+                {spare?.enabled && (
+                  <td className="p-1.5 border-l border-slate-100 last:border-l-0 text-center">
+                    <SparePill
+                      summary={spare.byUnit?.[unit.id]}
+                      size="md"
+                      label={unit.unit_no}
+                      onClick={onSpareClick ? () => onSpareClick(unit) : null}
+                    />
+                  </td>
+                )}
               </tr>
             );
           })}

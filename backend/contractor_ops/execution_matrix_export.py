@@ -24,6 +24,8 @@ from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from contractor_ops.spare_tiles import SPARE_OVERALL_LABELS
+
 
 STATUS_LABELS = {
     "completed":      "הושלם",
@@ -48,6 +50,14 @@ STATUS_FILLS = {
 }
 
 HEADER_FILL = PatternFill("solid", fgColor="F3F4F6")  # slate-100
+SPARE_FILLS = {
+    "short": PatternFill("solid", fgColor="FEE2E2"),
+    "borderline": PatternFill("solid", fgColor="FEF3C7"),
+    "ok": PatternFill("solid", fgColor="D1FAE5"),
+    "not_entered": PatternFill("solid", fgColor="F1F5F9"),
+    "no_target": PatternFill("solid", fgColor="F1F5F9"),
+    "no_profile": PatternFill("solid", fgColor="F1F5F9"),
+}
 
 # XML 1.0 illegal control chars — openpyxl raises IllegalCharacterError
 # on these inside Comment text. PMs paste from Word / WhatsApp / Email
@@ -62,7 +72,7 @@ def _clean_note(note_raw):
     return note_clean[:500]
 
 
-def build_matrix_xlsx(project, units, stages, cells, buildings, floors):
+def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=None):
     """Build the .xlsx workbook.
 
     Args:
@@ -86,6 +96,9 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors):
     headers = ["בניין", "קומה", "דירה", "מס׳ חדרים"]
     for s in stages:
         headers.append(s.get("title") or "—")
+    spare_enabled = bool(spare and spare.get("enabled"))
+    if spare_enabled:
+        headers.append("ריצוף ספייר")
     ws.append(headers)
     for col_idx in range(1, len(headers) + 1):
         cell = ws.cell(row=1, column=col_idx)
@@ -126,6 +139,26 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors):
             if note_clean:
                 author = c.get("last_actor_name") or "BrikOps"
                 cell_xl.comment = Comment(note_clean, author)
+
+        if spare_enabled:
+            spare_col = 5 + len(stages)
+            spare_summary = (spare.get("by_unit") or {}).get(unit["id"]) or {}
+            overall = spare_summary.get("overall", "no_profile")
+            label = SPARE_OVERALL_LABELS.get(overall, overall)
+            if overall == "short":
+                details = ", ".join(
+                    f"{row['name']} {row['missing']}"
+                    for row in spare_summary.get("short") or []
+                )
+                if details:
+                    label = f"{label}: {details}"
+            spare_cell = ws.cell(row=row_idx, column=spare_col, value=label)
+            fill = SPARE_FILLS.get(overall)
+            if fill is not None:
+                spare_cell.fill = fill
+            profile = spare_summary.get("profile")
+            if profile:
+                spare_cell.comment = Comment(profile, "BrikOps")
 
     # ---- Frozen panes: header row + first 3 location columns ----
     ws.freeze_panes = "E2"

@@ -40,6 +40,8 @@ export default function MatrixFilterDrawer({
   savedViews = [],
   onSaveCurrentView,
   onDeleteSavedView,
+  spareEnabled = false,
+  toggleSpareStatus,
 }) {
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
 
@@ -83,6 +85,9 @@ export default function MatrixFilterDrawer({
   };
   const clearBuildings = () => {
     [...(filters.building_ids || [])].forEach(b => toggleBuilding(b));
+  };
+  const clearSpareStatus = () => {
+    [...(filters.spare_status || [])].forEach(v => toggleSpareStatus(v));
   };
 
   const total = activeCount?.total || 0;
@@ -204,6 +209,28 @@ export default function MatrixFilterDrawer({
                 placeholder="מספר דירה מכיל..."
                 onClear={() => setApartmentSearch('')}
               />
+
+              {spareEnabled && (
+                <>
+                  <SectionGroupDivider label="🧱 ריצוף ספייר" />
+                  <MatrixFilterSection
+                    mode="spare"
+                    title="מצב מלאי"
+                    activeCount={activeCount?.spare || 0}
+                    options={[
+                      { value: 'short', label: 'חסר — להזמין' },
+                      { value: 'borderline', label: 'גבולי' },
+                      { value: 'ok', label: 'מספיק' },
+                      { value: 'not_entered', label: 'לא הוזן' },
+                      { value: 'no_target', label: 'ללא יעד' },
+                      { value: 'no_profile', label: 'אחר (ללא פרופיל)' },
+                    ]}
+                    selectedValues={filters.spare_status || []}
+                    onToggle={toggleSpareStatus}
+                    onClear={clearSpareStatus}
+                  />
+                </>
+              )}
 
               {/* 📝 מידע כללי */}
               {tagStages.length > 0 && (

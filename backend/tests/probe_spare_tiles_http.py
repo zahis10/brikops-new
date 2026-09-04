@@ -1,4 +1,4 @@
-"""Live HTTP + local Mongo probe for BATCH #587 spare-tile enhancements.
+"""Live HTTP + local Mongo probe for BATCH #586 spare tiles + matrix.
 
 This intentionally targets the already-running development server. It does not
 use ASGITransport and never prints minted bearer tokens.
@@ -87,6 +87,27 @@ def exported_spare_values(content):
     values = [cell.value for cell in next(sheet.iter_rows(min_row=2, max_row=2))]
     spare_headers = [header for header in headers if str(header).startswith("ספייר:")]
     return {header: values[headers.index(header)] for header in spare_headers}
+
+
+def execution_matrix_export_values(content):
+    workbook = load_workbook(BytesIO(content))
+    sheet = workbook["מטריצת ביצוע"]
+    headers = [cell.value for cell in sheet[1]]
+    spare_col = (
+        headers.index("ריצוף ספייר") + 1
+        if "ריצוף ספייר" in headers
+        else None
+    )
+    rows = {}
+    if spare_col:
+        for row in range(2, sheet.max_row + 1):
+            unit_no = str(sheet.cell(row=row, column=3).value)
+            cell = sheet.cell(row=row, column=spare_col)
+            rows[unit_no] = {
+                "value": cell.value,
+                "fill": cell.fill.fgColor.rgb[-6:],
+            }
+    return {"headers": headers, "rows": rows}
 
 
 def main():
@@ -272,6 +293,17 @@ def main():
         baseline_unit_keys = set(baseline["unit"]) - {"spare_profile_id"}
         check("V3 baseline existing top-level keys captured", bool(baseline_top_keys))
         check("V3 baseline existing unit keys captured", bool(baseline_unit_keys))
+        matrix_path = f"/api/execution-matrix/{project_id}"
+        matrix_export_path = f"{matrix_path}/export.xlsx"
+        matrix_before = call("GET", matrix_path, pm_headers, 200).json()
+        matrix_keys_before = set(matrix_before) - {"spare"}
+        check("V2 matrix without settings disables spare",
+              matrix_before["spare"] == {"enabled": False, "by_unit": {}})
+        matrix_export_before = execution_matrix_export_values(
+            call("POST", matrix_export_path, pm_headers, 200, json={}).content
+        )
+        check("V2 matrix export without settings has no spare header",
+              "ריצוף ספייר" not in matrix_export_before["headers"])
         legacy_before = unit_document(db, unit_one_id)
         check("V7 seeded legacy spare_tiles exact array",
               legacy_before["spare_tiles"] == legacy_spare_tiles)
@@ -297,9 +329,9 @@ def main():
         assignments_path = f"/api/projects/{project_id}/spare-assignments"
         profile_payload = {
             "categories": [
-                {"name": "ריצוף יבש", "measure": "tiles", "per_carton": 4},
-                {"name": "ריצוף מרפסות", "measure": "cartons", "per_carton": 9},
-                {"name": "חיפוי מטבח", "measure": "sqm", "per_carton": 1.44},
+                {"name": "ריצוף יבש", "measure": "tiles"},
+                {"name": "ריצוף מרפסות", "measure": "tiles"},
+                {"name": "חיפוי מטבח", "measure": "sqm"},
             ],
             "profiles": [
                 {"id": profile_a, "name": "3 חדרים",
@@ -321,16 +353,6 @@ def main():
         pm_saved = call("PUT", settings_path, pm_headers, 200, json=profile_payload).json()
         check("V2 PM saved two profiles",
               [p["id"] for p in pm_saved["profiles"]] == [profile_a, profile_b])
-        per_carton_by_name = {
-            category["name"]: category.get("per_carton")
-            for category in pm_saved["categories"]
-        }
-        check("V3 per-carton values normalize by measure",
-              per_carton_by_name == {
-                  "ריצוף יבש": 4,
-                  "ריצוף מרפסות": None,
-                  "חיפוי מטבח": 1.44,
-              })
         after_settings_save = unit_document(db, unit_one_id)
         emit_documents("settings save", legacy_before, after_settings_save)
         check("V7 whole unit unchanged after settings/profile save",
@@ -347,23 +369,23 @@ def main():
               owner_saved["can_write"] is True and owner_saved["margin_pct"] == 11)
         owner_version = owner_saved["updated_at"]
 
-        for invalid_per_carton in (0, -1, "x"):
-            invalid_payload = {
-                **profile_payload,
-                "categories": [
-                    {
-                        **profile_payload["categories"][0],
-                        "per_carton": invalid_per_carton,
-                    },
-                    *profile_payload["categories"][1:],
-                ],
-                "updated_at": owner_version,
-            }
-            invalid_response = call(
-                "PUT", settings_path, pm_headers, 422, json=invalid_payload
-            )
-            check("V3 invalid per-carton has Hebrew error",
-                  invalid_response.json().get("detail") == "כמות בקרטון לא חוקית")
+        cartons_payload = {
+            **profile_payload,
+            "categories": [
+                {"name": "ריצוף יבש", "measure": "cartons"},
+                *profile_payload["categories"][1:],
+            ],
+            "updated_at": owner_version,
+        }
+        cartons_saved = call(
+            "PUT", settings_path, pm_headers, 200, json=cartons_payload
+        ).json()
+        check("V3 cartons measure coerced to tiles",
+              cartons_saved["categories"][0]["measure"] == "tiles"
+              and db.projects.find_one(
+                  {"id": project_id}, {"_id": 0, "spare_settings": 1}
+              )["spare_settings"]["categories"][0]["measure"] == "tiles")
+        owner_version = cartons_saved["updated_at"]
 
         stale_payload = {**profile_payload, "margin_pct": 12, "updated_at": pm_version}
         call("PUT", settings_path, pm_headers, 409, json=stale_payload)
@@ -512,6 +534,39 @@ def main():
               and dry_row["missing"] == 2)
         check("V3 viewer unit capability is false", after["spare_can_write"] is False)
 
+        matrix_after = call("GET", matrix_path, pm_headers, 200).json()
+        check("V2 matrix existing key set unchanged",
+              set(matrix_after) - {"spare"} == matrix_keys_before)
+        matrix_spare = matrix_after["spare"]
+        expected_short = [{
+            "name": "ריצוף יבש",
+            "missing": 2,
+            "measure": "tiles",
+        }]
+        check("V2 matrix unit A short summary",
+              matrix_spare["enabled"] is True
+              and matrix_spare["by_unit"][unit_one_id]["overall"] == "short"
+              and matrix_spare["by_unit"][unit_one_id]["short"] == expected_short
+              and matrix_spare["by_unit"][unit_one_id]["missing_total"] == 2)
+        check("V2 matrix unit B not entered",
+              matrix_spare["by_unit"][unit_two_id]["overall"] == "not_entered")
+        check("V2 matrix unit C no profile",
+              matrix_spare["by_unit"][unit_three_id]["overall"] == "no_profile")
+        matrix_export_after = execution_matrix_export_values(
+            call("POST", matrix_export_path, pm_headers, 200, json={}).content
+        )
+        check("V2 matrix export spare header is last",
+              matrix_export_after["headers"][-1] == "ריצוף ספייר")
+        check("V2 matrix export short text and fill",
+              matrix_export_after["rows"]["101"]["value"]
+              == "חסר — להזמין: ריצוף יבש 2"
+              and matrix_export_after["rows"]["101"]["fill"] == "FEE2E2")
+        check("V2 matrix export not-entered and no-profile values",
+              matrix_export_after["rows"]["102"]["value"] == "לא הוזן"
+              and matrix_export_after["rows"]["801"]["value"] == "אחר")
+        print("\n[V2 JSON] execution matrix spare")
+        print(json.dumps(matrix_spare, ensure_ascii=False, sort_keys=True, indent=2))
+
         overview_after = overview_spare_values(
             call("GET", overview_path, pm_headers, 200).json(), unit_one_id
         )
@@ -541,6 +596,7 @@ def main():
         print(f"\nAll {len(RESULTS)} live HTTP checks passed.")
     finally:
         db.audit_events.delete_many({"entity_id": {"$in": project_ids}})
+        db.execution_matrix.delete_many({"project_id": {"$in": project_ids}})
         db.tasks.delete_many({"id": task_id})
         db.units.delete_many({"id": {"$in": unit_ids}})
         db.floors.delete_many({"id": {"$in": floor_ids}})

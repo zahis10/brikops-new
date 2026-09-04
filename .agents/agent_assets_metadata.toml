@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH #587 — review.txt"
-description = "STEP 0, complete six-file diff, V1–V7 evidence, mobile screenshots, preservation proof, and architect PASS. Ends with the required approval marker."
+title = "BATCH #586 — Final Review"
+description = "STEP 0 evidence, complete 17-file diff against fe167f9, V1–V7 verification, live probe JSON, browser evidence, and final approval gate."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:ff155df87bd03ff4a18ceb00fdf70eb022dbf81b387c56d981799294f6872687"
-size = 49728
-mtime_ms = 1788462573131
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/548e054d-bddb-4d86-b24d-bbcb81892a9e"
-storage_version_token = "1788462605769791"
+content_hash = "sha256:b4a982805334a1e77620646d9b8b8abbc2c53c7d018fb9ea8663362ed880473f"
+size = 129092
+mtime_ms = 1788503536492
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/f90889b5-6d19-485a-9445-a91547003f64"
+storage_version_token = "1788503599320343"
 content_type = "text/plain"
 
 [[outputs]]

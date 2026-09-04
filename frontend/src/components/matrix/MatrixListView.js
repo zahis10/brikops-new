@@ -1,8 +1,18 @@
 import React, { useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import MatrixCell from './MatrixCell';
+import SparePill from './SparePill';
 
-export default function MatrixListView({ units, stages, cells, floorsById, buildingsById, onCellClick = null }) {
+export default function MatrixListView({
+  units,
+  stages,
+  cells,
+  floorsById,
+  buildingsById,
+  onCellClick = null,
+  spare,
+  onSpareClick = null,
+}) {
   const cellsByUnitStage = useMemo(() => {
     const map = {};
     for (const c of cells) {
@@ -52,15 +62,24 @@ export default function MatrixListView({ units, stages, cells, floorsById, build
         const floor = floorsById[unit.floor_id];
         const { completed, total, pct } = progressForUnit(unit.id);
         const isExpanded = expandedUnits.has(unit.id);
+        const HeaderWrapper = spare?.enabled ? 'div' : 'button';
         return (
           <div
             key={unit.id}
             className="bg-white rounded-xl border border-slate-200 overflow-hidden"
           >
             {/* Header — entire row is the tap target (≥56px). */}
-            <button
-              type="button"
+            <HeaderWrapper
+              type={spare?.enabled ? undefined : 'button'}
+              role={spare?.enabled ? 'button' : undefined}
+              tabIndex={spare?.enabled ? 0 : undefined}
               onClick={() => toggleUnit(unit.id)}
+              onKeyDown={spare?.enabled ? (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  toggleUnit(unit.id);
+                }
+              } : undefined}
               className="w-full px-3 py-3 hover:bg-slate-50 active:bg-slate-100 transition-colors text-right"
             >
               <div className="flex items-center justify-between mb-2">
@@ -88,6 +107,14 @@ export default function MatrixListView({ units, stages, cells, floorsById, build
                   )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  {spare?.enabled && (
+                    <SparePill
+                      summary={spare.byUnit?.[unit.id]}
+                      size="sm"
+                      label={unit.unit_no}
+                      onClick={onSpareClick ? () => onSpareClick(unit) : null}
+                    />
+                  )}
                   <span className="text-xs font-medium text-slate-600">
                     {completed}/{total}
                   </span>
@@ -104,7 +131,7 @@ export default function MatrixListView({ units, stages, cells, floorsById, build
                   style={{ width: `${pct}%` }}
                 />
               </div>
-            </button>
+            </HeaderWrapper>
 
             {/* Expanded body — vertical stage list, full names, 32×32 icons. */}
             {isExpanded && (
@@ -133,6 +160,21 @@ export default function MatrixListView({ units, stages, cells, floorsById, build
                     </Wrapper>
                   );
                 })}
+                {spare?.enabled && (
+                  <div className="w-full flex items-center justify-between gap-3 py-3 text-right border-t border-slate-50">
+                    <span className="text-[13px] text-slate-700 leading-snug min-w-0 flex-1">
+                      ריצוף ספייר
+                    </span>
+                    <div className="shrink-0">
+                      <SparePill
+                        summary={spare.byUnit?.[unit.id]}
+                        size="sm"
+                        label={unit.unit_no}
+                        onClick={onSpareClick ? () => onSpareClick(unit) : null}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

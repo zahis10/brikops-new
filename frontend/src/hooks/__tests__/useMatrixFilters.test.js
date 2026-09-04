@@ -155,4 +155,56 @@ describe('useMatrixFilters pure helpers', () => {
     expect(reset.tag_value_filters).toEqual({});
     expect(computeActiveCount(reset).total).toBe(0);
   });
+
+  test('T8 — spare status filters short and defaults missing summaries to no_profile', () => {
+    const spareByUnit = {
+      u1: { overall: 'short' },
+      u2: { overall: 'ok' },
+      u3: { overall: 'short' },
+    };
+    const shortFilters = { ...initialFilters(), spare_status: ['short'] };
+    expect(
+      computeFilteredUnits(units, {}, stages, shortFilters, spareByUnit).map(u => u.id)
+    ).toEqual(['u1', 'u3']);
+
+    const noProfileFilters = { ...initialFilters(), spare_status: ['no_profile'] };
+    expect(
+      computeFilteredUnits(units, {}, stages, noProfileFilters, spareByUnit).map(u => u.id)
+    ).toEqual(['u4']);
+  });
+
+  test('T9 — activeCount includes each selected spare status', () => {
+    const filters = {
+      ...initialFilters(),
+      building_ids: ['A'],
+      spare_status: ['short', 'not_entered'],
+    };
+    const count = computeActiveCount(filters);
+    expect(count.spare).toBe(2);
+    expect(count.total).toBe(3);
+  });
+
+  test('T10 — spare_status survives saved-view serialization round-trip', () => {
+    const filters = {
+      ...initialFilters(),
+      spare_status: ['short', 'borderline'],
+    };
+    const payload = serializeFilters(filters);
+    expect(payload.spare_status).toEqual(['short', 'borderline']);
+    expect(deserializeFilters(payload).spare_status).toEqual(['short', 'borderline']);
+    expect(deserializeFilters({}).spare_status).toEqual([]);
+  });
+
+  test('T11 — old four-argument helper calls retain existing results', () => {
+    const cells = mkCells([
+      ['u1', 's_sale', { text_value: 'שוק חופשי' }],
+      ['u2', 's_sale', { text_value: 'משתכן' }],
+    ]);
+    const filters = {
+      ...initialFilters(),
+      building_ids: ['A'],
+      tag_value_filters: { s_sale: ['שוק חופשי'] },
+    };
+    expect(computeFilteredUnits(units, cells, stages, filters).map(u => u.id)).toEqual(['u1']);
+  });
 });

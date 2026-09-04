@@ -4,7 +4,7 @@ import { spareTilesService } from '../services/api';
 import { toast } from 'sonner';
 import { ArrowRight, Building2, Check, Loader2, Minus, Plus, Save, SlidersHorizontal, Tag, Users } from 'lucide-react';
 
-const MEASURES = { tiles: 'אריחים', cartons: 'קרטונים', sqm: 'מ"ר' };
+const MEASURES = { tiles: 'אריחים', sqm: 'מ"ר' };
 const blankProfile = () => ({ clientKey: `profile-${Date.now()}-${Math.random()}`, name: '', targets: {}, assigned_units: 0 });
 const categoriesWithClientKeys = (categories) => (categories || []).map((category, index) => ({
   ...category,
@@ -55,11 +55,7 @@ export default function SpareTilesPage() {
     if (!canWrite) return;
     const categories = draft.categories
       .filter(c => c.name.trim())
-      .map(({ name, measure, per_carton }) => ({
-        name: name.trim(),
-        measure,
-        per_carton: per_carton || null,
-      }));
+      .map(({ name, measure }) => ({ name: name.trim(), measure }));
     if (!categories.length) return toast.error('נדרשת לפחות קטגוריה אחת');
     if (categories.length > 20 || draft.profiles.length > 10) return toast.error('חריגה ממספר הקטגוריות או הפרופילים המותר');
     try {
@@ -106,14 +102,13 @@ export default function SpareTilesPage() {
       </nav>
       {tab === 'settings' ? <section className="space-y-4">
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-          <div className="p-4 border-b border-slate-100"><h2 className="font-bold text-slate-800">קטגוריות מדידה</h2><p className="text-xs text-slate-500 mt-1">היעדים מוגדרים עבור כל פרופיל דירה.</p><p className="text-xs text-slate-500 mt-1">כמות בקרטון (רשות): מאפשרת להזין בשטח קרטונים ולקבל המרה אוטומטית</p></div>
+          <div className="p-4 border-b border-slate-100"><h2 className="font-bold text-slate-800">קטגוריות מדידה</h2><p className="text-xs text-slate-500 mt-1">היעדים מוגדרים עבור כל פרופיל דירה.</p></div>
           <div className="p-3 space-y-2">{draft.categories.map((cat, i) => <div key={cat.clientKey || `cat-${i}`} className="flex gap-2 items-center bg-slate-50 p-2 rounded-xl">
             {cat.new ? <input disabled={!canWrite} value={cat.name} onChange={e => updateDraft(d => ({ ...d, categories: d.categories.map((c, x) => x === i ? { ...c, name: e.target.value } : c) }))} placeholder="שם קטגוריה" className="flex-1 min-w-0 border rounded-lg px-2 py-2 text-sm" /> : <span className="flex-1 text-sm font-semibold text-slate-700">{cat.name}</span>}
-            <select disabled={!canWrite} value={cat.measure} onChange={e => updateDraft(d => ({ ...d, categories: d.categories.map((c, x) => x === i ? { ...c, measure: e.target.value, per_carton: e.target.value === 'cartons' ? null : c.per_carton } : c) }))} className="w-28 border rounded-lg py-2 text-xs"><option value="tiles">אריחים</option><option value="cartons">קרטונים</option><option value="sqm">מ"ר</option></select>
-            {cat.measure !== 'cartons' && <input disabled={!canWrite} type="number" min="0.01" step="0.01" value={cat.per_carton ?? ''} onChange={e => updateDraft(d => ({ ...d, categories: d.categories.map((c, x) => x === i ? { ...c, per_carton: e.target.value } : c) }))} placeholder="בקרטון" title={`כמות ${cat.measure === 'sqm' ? 'מ"ר' : 'אריחים'} בקרטון אחד — רשות`} className="w-24 border rounded-lg px-2 py-2 text-xs" />}
+            <select disabled={!canWrite} value={cat.measure} onChange={e => updateDraft(d => ({ ...d, categories: d.categories.map((c, x) => x === i ? { ...c, measure: e.target.value } : c) }))} className="w-28 border rounded-lg py-2 text-xs"><option value="tiles">אריחים</option><option value="sqm">מ"ר</option></select>
             <button disabled={!canWrite || draft.categories.length <= 1} onClick={() => updateDraft(d => ({ ...d, categories: d.categories.filter((_, x) => x !== i) }))} className="p-2 text-slate-400 disabled:opacity-30"><Minus className="w-4 h-4" /></button>
           </div>)}</div>
-          <button disabled={!canWrite || draft.categories.length >= 20} onClick={() => updateDraft(d => ({ ...d, categories: [...d.categories, { name: '', measure: 'tiles', per_carton: null, new: true, clientKey: `cat-${Date.now()}-${Math.random()}` }] }))} className="m-3 text-sm text-amber-700 font-bold disabled:opacity-40"><Plus className="inline w-4 h-4 ml-1" />הוסף קטגוריה</button>
+          <button disabled={!canWrite || draft.categories.length >= 20} onClick={() => updateDraft(d => ({ ...d, categories: [...d.categories, { name: '', measure: 'tiles', new: true, clientKey: `cat-${Date.now()}-${Math.random()}` }] }))} className="m-3 text-sm text-amber-700 font-bold disabled:opacity-40"><Plus className="inline w-4 h-4 ml-1" />הוסף קטגוריה</button>
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
           <div className="p-4 border-b border-slate-100 flex justify-between"><div><h2 className="font-bold text-slate-800">פרופילי דירות</h2><p className="text-xs text-slate-500 mt-1">הגדרה מפורשת של יעד לכל סוג דירה.</p></div><span className="text-xs bg-slate-100 text-slate-600 rounded-full px-2 py-1 h-fit">אחר: {settings?.unassigned_units || 0}</span></div>

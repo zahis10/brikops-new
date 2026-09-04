@@ -79,6 +79,12 @@ export default function ExecutionMatrixPage() {
   const stages = useMemo(() => data?.stages || [], [data]);
   const units = useMemo(() => data?.units || [], [data]);
   const cells = useMemo(() => data?.cells || [], [data]);
+  const spare = data?.spare;
+  const spareByUnit = useMemo(() => spare?.by_unit || {}, [spare]);
+  const matrixSpare = useMemo(
+    () => spare ? { ...spare, byUnit: spareByUnit } : spare,
+    [spare, spareByUnit]
+  );
 
   const cellsByUnitStage = useMemo(() => {
     const map = {};
@@ -86,12 +92,33 @@ export default function ExecutionMatrixPage() {
     return map;
   }, [cells]);
 
-  const filterAPI = useMatrixFilters({ units, cellsByUnitStage, stages });
+  const filterAPI = useMatrixFilters({ units, cellsByUnitStage, stages, spareByUnit });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [savedViews, setSavedViews] = useState([]);
 
   // #502 — Excel export state
   const [exporting, setExporting] = useState(false);
+
+  const spareCounts = useMemo(() => {
+    const counts = {
+      short: 0,
+      borderline: 0,
+      ok: 0,
+      not_entered: 0,
+      no_target: 0,
+      no_profile: 0,
+    };
+    for (const unit of units) {
+      const status = spareByUnit[unit.id]?.overall ?? 'no_profile';
+      if (Object.prototype.hasOwnProperty.call(counts, status)) counts[status] += 1;
+    }
+    return counts;
+  }, [units, spareByUnit]);
+
+  const handleSpareClick = useCallback((unit) => {
+    const returnTo = encodeURIComponent(`/projects/${projectId}/execution-matrix`);
+    navigate(`/projects/${projectId}/units/${unit.id}/defects?returnTo=${returnTo}`);
+  }, [navigate, projectId]);
 
   const handleExport = useCallback(async () => {
     if (exporting) return;
@@ -261,6 +288,40 @@ export default function ExecutionMatrixPage() {
           <StatusLegend defaultOpen={false} />
         </div>
 
+        {spare?.enabled && (
+          <div className="mb-4 flex items-center gap-2 overflow-x-auto pb-1" dir="rtl">
+            <span className="text-xs font-bold text-slate-700 shrink-0">ריצוף ספייר:</span>
+            {[
+              { value: 'short', label: 'חסר' },
+              { value: 'borderline', label: 'גבולי' },
+              { value: 'ok', label: 'מספיק' },
+              { value: 'not_entered', label: 'לא הוזן' },
+              { value: 'no_target', label: 'ללא יעד' },
+              { value: 'no_profile', label: 'אחר' },
+            ].map(option => {
+              const count = spareCounts[option.value];
+              if (count === 0 && option.value !== 'short') return null;
+              const isActive = filterAPI.filters.spare_status?.length === 1
+                && filterAPI.filters.spare_status[0] === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => filterAPI.setSpareStatus(isActive ? [] : [option.value])}
+                  className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    isActive
+                      ? 'bg-amber-500 border-amber-500 text-white'
+                      : 'bg-white border-slate-300 text-slate-700 hover:border-amber-400 hover:bg-amber-50'
+                  }`}
+                  aria-pressed={isActive}
+                >
+                  {option.label} {count}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         <div className="md:hidden">
           <MatrixListView
             units={filterAPI.filteredUnits}
@@ -269,6 +330,8 @@ export default function ExecutionMatrixPage() {
             floorsById={floorsById}
             buildingsById={buildingsById}
             onCellClick={handleCellClick}
+            spare={matrixSpare}
+            onSpareClick={handleSpareClick}
           />
         </div>
         <div className="hidden md:block">
@@ -279,6 +342,8 @@ export default function ExecutionMatrixPage() {
             floorsById={floorsById}
             buildingsById={buildingsById}
             onCellClick={handleCellClick}
+            spare={matrixSpare}
+            onSpareClick={handleSpareClick}
           />
         </div>
       </div>
@@ -307,6 +372,8 @@ export default function ExecutionMatrixPage() {
         savedViews={savedViews}
         onSaveCurrentView={handleSaveCurrentView}
         onDeleteSavedView={handleDeleteSavedView}
+        spareEnabled={!!spare?.enabled}
+        toggleSpareStatus={filterAPI.toggleSpareStatus}
       />
 
       <CellEditDialog

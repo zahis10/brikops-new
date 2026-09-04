@@ -27,6 +27,7 @@ export const initialFilters = () => ({
   search_text: '',
   stage_status_filters: {},   // { [stageId]: string[] }
   tag_value_filters: {},      // { [stageId]: string[] }
+  spare_status: [],
 });
 
 /** Toggle a value in an array (immutable). */
@@ -44,7 +45,7 @@ export function toggleInDict(dict, key, value) {
 }
 
 /** Excel-pattern filtering: AND across, OR within. */
-export function computeFilteredUnits(units, cellsByUnitStage, stages, filters) {
+export function computeFilteredUnits(units, cellsByUnitStage, stages, filters, spareByUnit = {}) {
   if (!Array.isArray(units)) return [];
   const f = filters || initialFilters();
   const stageList = Array.isArray(stages) ? stages : [];
@@ -93,6 +94,12 @@ export function computeFilteredUnits(units, cellsByUnitStage, stages, filters) {
       if (!inUnitNo && !inCells) return false;
     }
 
+    // 6. Spare inventory status
+    if (f.spare_status?.length) {
+      const overall = spareByUnit?.[u.id]?.overall ?? 'no_profile';
+      if (!f.spare_status.includes(overall)) return false;
+    }
+
     return true;
   });
 }
@@ -113,9 +120,10 @@ export function computeActiveCount(filters) {
   const building = f.building_ids?.length || 0;
   const apartment = f.apartment_search ? 1 : 0;
   const search = f.search_text ? 1 : 0;
+  const spare = f.spare_status?.length || 0;
   return {
-    total: building + apartment + search + stageStatusTotal + tagValueTotal,
-    building, apartment, search,
+    total: building + apartment + search + spare + stageStatusTotal + tagValueTotal,
+    building, apartment, search, spare,
     stage_status, tag_value,
   };
 }
@@ -150,6 +158,7 @@ export function serializeFilters(filters) {
     building_ids: f.building_ids?.length ? [...f.building_ids] : [],
     stage_status_filters: mapDict(f.stage_status_filters),
     tag_value_filters: mapDict(f.tag_value_filters),
+    spare_status: Array.isArray(f.spare_status) ? [...f.spare_status] : [],
     search_text: f.search_text || '',
     // apartment_search is frontend-only (pure substring); not in backend schema.
   };
@@ -172,17 +181,18 @@ export function deserializeFilters(payload) {
     search_text: p.search_text || '',
     stage_status_filters: mapDict(p.stage_status_filters),
     tag_value_filters: mapDict(p.tag_value_filters),
+    spare_status: Array.isArray(p.spare_status) ? [...p.spare_status] : [],
   };
 }
 
 // ===== Hook =====
 
-export default function useMatrixFilters({ units, cellsByUnitStage, stages }) {
+export default function useMatrixFilters({ units, cellsByUnitStage, stages, spareByUnit = {} }) {
   const [filters, setFilters] = useState(initialFilters);
 
   const filteredUnits = useMemo(
-    () => computeFilteredUnits(units || [], cellsByUnitStage || {}, stages || [], filters),
-    [units, cellsByUnitStage, stages, filters]
+    () => computeFilteredUnits(units || [], cellsByUnitStage || {}, stages || [], filters, spareByUnit),
+    [units, cellsByUnitStage, stages, filters, spareByUnit]
   );
 
   const activeCount = useMemo(() => computeActiveCount(filters), [filters]);
@@ -213,6 +223,14 @@ export default function useMatrixFilters({ units, cellsByUnitStage, stages }) {
     setFilters(prev => ({ ...prev, search_text: v || '' }));
   }, []);
 
+  const toggleSpareStatus = useCallback((value) => {
+    setFilters(prev => ({ ...prev, spare_status: toggleInArray(prev.spare_status, value) }));
+  }, []);
+
+  const setSpareStatus = useCallback((values) => {
+    setFilters(prev => ({ ...prev, spare_status: Array.isArray(values) ? [...values] : [] }));
+  }, []);
+
   const reset = useCallback(() => setFilters(initialFilters()), []);
 
   const loadSavedView = useCallback((view) => {
@@ -229,7 +247,7 @@ export default function useMatrixFilters({ units, cellsByUnitStage, stages }) {
   return {
     filters, filteredUnits, activeCount,
     toggleBuilding, toggleStageStatus, toggleTagValue,
-    setApartmentSearch, setSearchText,
+    setApartmentSearch, setSearchText, toggleSpareStatus, setSpareStatus,
     reset, loadSavedView,
     currentFilterPayload, distinctTagValues,
   };

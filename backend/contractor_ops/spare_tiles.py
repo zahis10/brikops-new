@@ -1,19 +1,27 @@
 import math
 import uuid
 from copy import deepcopy
-from decimal import Decimal, InvalidOperation
 
 from fastapi import HTTPException
 
 
 DEFAULT_SPARE_CATEGORIES = [
     {'name': 'ריצוף יבש', 'measure': 'tiles'},
-    {'name': 'ריצוף מרפסות', 'measure': 'cartons'},
-    {'name': 'חיפוי אמבטיות', 'measure': 'cartons'},
-    {'name': 'ריצוף אמבטיות', 'measure': 'cartons'},
-    {'name': 'חיפוי מטבח', 'measure': 'cartons'},
+    {'name': 'ריצוף מרפסות', 'measure': 'tiles'},
+    {'name': 'חיפוי אמבטיות', 'measure': 'tiles'},
+    {'name': 'ריצוף אמבטיות', 'measure': 'tiles'},
+    {'name': 'חיפוי מטבח', 'measure': 'tiles'},
 ]
-MEASURES = {'tiles', 'cartons', 'sqm'}
+MEASURES = {'tiles', 'sqm'}
+
+SPARE_OVERALL_LABELS = {
+    'short': 'חסר — להזמין',
+    'borderline': 'גבולי',
+    'ok': 'מספיק',
+    'not_entered': 'לא הוזן',
+    'no_target': 'ללא יעד',
+    'no_profile': 'אחר',
+}
 
 
 def default_spare_settings():
@@ -59,27 +67,12 @@ def validate_spare_settings(body):
         if name_key in category_names:
             raise HTTPException(status_code=422, detail=f'שם קטגוריה כפול: {name}')
         measure = raw.get('measure')
+        if measure == 'cartons':
+            measure = 'tiles'
         if measure not in MEASURES:
             raise HTTPException(status_code=422, detail='יחידת מידה לא חוקית')
-        per_carton = raw.get('per_carton')
-        if measure == 'cartons' or per_carton in (None, ''):
-            per_carton = None
-        else:
-            if isinstance(per_carton, bool):
-                raise HTTPException(status_code=422, detail='כמות בקרטון לא חוקית')
-            try:
-                decimal_value = Decimal(str(per_carton))
-            except (InvalidOperation, ValueError):
-                raise HTTPException(status_code=422, detail='כמות בקרטון לא חוקית')
-            if (
-                not decimal_value.is_finite()
-                or not Decimal('0.01') <= decimal_value <= Decimal('10000')
-                or decimal_value.as_tuple().exponent < -2
-            ):
-                raise HTTPException(status_code=422, detail='כמות בקרטון לא חוקית')
-            per_carton = int(decimal_value) if decimal_value == decimal_value.to_integral() else float(decimal_value)
         category_names.add(name_key)
-        categories.append({'name': name, 'measure': measure, 'per_carton': per_carton})
+        categories.append({'name': name, 'measure': measure})
 
     raw_profiles = body.get('profiles', [])
     if not isinstance(raw_profiles, list) or len(raw_profiles) > 10:
@@ -222,4 +215,28 @@ def compute_spare_status(unit_doc, spare_settings):
         'profile': {'id': profile['id'], 'name': profile['name']} if profile else None,
         'overall': overall,
         'categories': rows,
+    }
+
+
+def matrix_spare_summary(unit_doc, spare_settings):
+    st = compute_spare_status(unit_doc, spare_settings)
+    short = [
+        {
+            'name': row['name'],
+            'missing': row['missing'],
+            'measure': row['measure'],
+        }
+        for row in st['categories']
+        if row['status'] == 'short'
+    ]
+    return {
+        'overall': st['overall'],
+        'profile': st['profile']['name'] if st['profile'] else None,
+        'short': short,
+        'not_entered': [
+            row['name']
+            for row in st['categories']
+            if row['status'] == 'not_entered'
+        ],
+        'missing_total': sum((row['missing'] or 0) for row in short),
     }

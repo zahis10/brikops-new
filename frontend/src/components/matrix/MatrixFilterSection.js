@@ -18,6 +18,7 @@ const MODE_COLORS = {
   tag:       { letter: 'T', pillBg: 'bg-amber-100',  pillText: 'text-amber-800' },
   status:    { letter: 'S', pillBg: 'bg-violet-100', pillText: 'text-violet-700' },
   search:    { letter: '🔍', pillBg: 'bg-slate-100', pillText: 'text-slate-700' },
+  spare:     { letter: 'ס', pillBg: 'bg-amber-100',  pillText: 'text-amber-800' },
 };
 
 export default function MatrixFilterSection({
@@ -42,7 +43,7 @@ export default function MatrixFilterSection({
   }, [activeCount]);
 
   const palette = MODE_COLORS[mode] || MODE_COLORS.tag;
-  const isCheckbox = mode === 'building' || mode === 'status' || mode === 'tag';
+  const isCheckbox = mode === 'building' || mode === 'status' || mode === 'tag' || mode === 'spare';
   const isText = mode === 'apartment' || mode === 'search';
 
   return (

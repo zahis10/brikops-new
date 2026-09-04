@@ -1145,6 +1145,7 @@ class MatrixSavedViewFilters(BaseModel):
     stage_status_filters: Optional[Dict[str, List[str]]] = None
     tag_value_filters: Optional[Dict[str, List[str]]] = None
     search_text: Optional[str] = None
+    spare_status: Optional[List[str]] = None
 
 
 class MatrixSavedViewCreate(BaseModel):
