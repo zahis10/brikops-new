@@ -165,6 +165,9 @@ def compute_spare_status(unit_doc, spare_settings):
 
     rows = []
     targets = profile.get('targets', {}) if profile else {}
+    has_targets = bool(profile) and any(
+        (targets.get(name) or 0) > 0 for name, _measure in configured
+    )
     margin_pct = settings.get('margin_pct', 10)
     for name, measure in configured:
         entry = entries.get(name)
@@ -208,24 +211,31 @@ def compute_spare_status(unit_doc, spare_settings):
             'status': status,
             'missing': missing,
             'entered': entered,
+            'applicable': (target or 0) > 0 if has_targets else True,
         })
 
+    applicable_rows = [row for row in rows if row['applicable']]
+    entered_count = sum(1 for row in applicable_rows if row['entered'])
+    applicable_count = len(applicable_rows)
     if not profile:
         overall = 'no_profile'
+    elif any(row['status'] == 'short' for row in rows):
+        overall = 'short'
+    elif any(row['status'] == 'borderline' for row in rows):
+        overall = 'borderline'
+    elif entered_count < applicable_count:
+        overall = 'not_entered'
+    elif has_targets:
+        overall = 'ok'
+    elif applicable_count > 0:
+        overall = 'recorded'
     else:
-        statuses = {row['status'] for row in rows}
-        overall = next(
-            (
-                status for status in (
-                    'short', 'not_entered', 'borderline', 'ok', 'recorded', 'no_target'
-                )
-                if status in statuses
-            ),
-            'no_target',
-        )
+        overall = 'no_target'
     return {
         'profile': {'id': profile['id'], 'name': profile['name']} if profile else None,
         'overall': overall,
+        'entered_count': entered_count,
+        'applicable_count': applicable_count,
         'categories': rows,
     }
 
@@ -241,13 +251,11 @@ def matrix_spare_summary(unit_doc, spare_settings):
         for row in st['categories']
         if row['status'] == 'short'
     ]
-    tracking_only = (
-        st['profile'] is not None
-        and not any((row['target'] or 0) > 0 for row in st['categories'])
-    )
     return {
         'overall': st['overall'],
         'profile': st['profile']['name'] if st['profile'] else None,
+        'entered_count': st['entered_count'],
+        'applicable_count': st['applicable_count'],
         'short': short,
         'not_entered': [
             row['name']
@@ -264,12 +272,10 @@ def matrix_spare_summary(unit_doc, spare_settings):
             for row in st['categories']
             if row['status'] == 'recorded'
         ],
-        # In a tracking-only profile, no-target rows are categories without
-        # an entry. With any configured targets they are not applicable.
         'unfilled': [
             row['name']
             for row in st['categories']
-            if tracking_only and row['status'] == 'no_target'
+            if row['applicable'] and not row['entered']
         ],
         'categories_total': len(st['categories']),
         'missing_total': sum((row['missing'] or 0) for row in short),

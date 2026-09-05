@@ -172,18 +172,22 @@ def test_spare_enabled_appends_status_column_with_fills_and_profile_comments():
                 "missing_total": 0,
             },
             "u-recorded": {
-                "overall": "recorded",
+                "overall": "not_entered",
                 "recorded": ["א", "ב", "ג", "ד"],
                 "unfilled": ["חיפוי מטבח"],
+                "entered_count": 4,
+                "applicable_count": 5,
                 "categories_total": 5,
                 "short": [],
                 "borderline": [],
                 "not_entered": [],
             },
             "u-empty": {
-                "overall": "no_target",
+                "overall": "not_entered",
                 "recorded": [],
                 "unfilled": ["ריצוף יבש", "ריצוף מרפסות"],
+                "entered_count": 0,
+                "applicable_count": 2,
                 "categories_total": 2,
             },
             "u-legacy-no-target": {
@@ -207,7 +211,7 @@ def test_spare_enabled_appends_status_column_with_fills_and_profile_comments():
     assert ok_cell.fill.fgColor.rgb.upper().endswith("D1FAE5")
     recorded_cell = ws.cell(row=4, column=5)
     assert recorded_cell.value == "הוזן 4/5 · לא הוזן: חיפוי מטבח"
-    assert recorded_cell.fill.fgColor.rgb.upper().endswith("D1FAE5")
+    assert recorded_cell.fill.fgColor.rgb.upper().endswith("F1F5F9")
     empty_cell = ws.cell(row=5, column=5)
     assert empty_cell.value == "לא הוזן: ריצוף יבש, ריצוף מרפסות"
     assert empty_cell.fill.fgColor.rgb.upper().endswith("F1F5F9")
@@ -281,8 +285,74 @@ def test_spare_export_includes_borderline_and_not_entered_details():
     assert borderline_cell.fill.fgColor.rgb.upper().endswith("FEF3C7")
 
     not_entered_cell = ws.cell(row=4, column=5)
-    assert not_entered_cell.value == "לא הוזן: חיפוי מטבח · גבולי: ריצוף יבש"
+    assert not_entered_cell.value == "לא הוזן"
     assert not_entered_cell.fill.fgColor.rgb.upper().endswith("F1F5F9")
+
+
+def test_spare_export_uses_progress_and_problem_rule_for_every_profile_mode():
+    units = [
+        {"id": "partial", "unit_no": "1"},
+        {"id": "short", "unit_no": "2"},
+        {"id": "borderline", "unit_no": "3"},
+        {"id": "recorded", "unit_no": "4"},
+        {"id": "unassigned", "unit_no": "5"},
+        {"id": "empty", "unit_no": "6"},
+        {"id": "ok", "unit_no": "7"},
+        {"id": "old-empty", "unit_no": "8"},
+        {"id": "old-other", "unit_no": "9"},
+    ]
+    spare = {
+        "enabled": True,
+        "by_unit": {
+            "partial": {
+                "overall": "not_entered", "entered_count": 1, "applicable_count": 5,
+                "unfilled": ["ב", "ג", "ד", "ה"],
+            },
+            "short": {
+                "overall": "short", "entered_count": 3, "applicable_count": 5,
+                "short": [{"name": "ריצוף יבש", "missing": 2}],
+            },
+            "borderline": {
+                "overall": "borderline", "entered_count": 4, "applicable_count": 5,
+                "borderline": ["ריצוף יבש"],
+            },
+            "recorded": {
+                "overall": "recorded", "entered_count": 5, "applicable_count": 5,
+            },
+            "unassigned": {
+                "overall": "no_profile", "entered_count": 1, "applicable_count": 5,
+            },
+            "empty": {
+                "overall": "not_entered", "entered_count": 0, "applicable_count": 5,
+                "unfilled": ["א", "ב", "ג", "ד", "ה"],
+            },
+            "ok": {
+                "overall": "ok", "entered_count": 5, "applicable_count": 5,
+            },
+            "old-empty": {"overall": "not_entered"},
+            "old-other": {"overall": "no_profile"},
+        },
+    }
+    ws = _read_workbook(
+        build_matrix_xlsx({"id": "p1"}, units, [], [], {}, {}, spare=spare)
+    ).active
+    values = [ws.cell(row=row, column=5).value for row in range(2, 11)]
+    assert values == [
+        "הוזן 1/5 · לא הוזן: ב, ג, ד, ה",
+        "חסר — להזמין: ריצוף יבש 2 · הוזן 3/5",
+        "גבולי: ריצוף יבש · הוזן 4/5",
+        "הוזן 5/5",
+        "אחר · הוזן 1/5",
+        "לא הוזן: א, ב, ג, ד, ה",
+        "מספיק",
+        "לא הוזן",
+        "אחר",
+    ]
+    fills = [ws.cell(row=row, column=5).fill.fgColor.rgb.upper()[-6:] for row in range(2, 11)]
+    assert fills == [
+        "F1F5F9", "FEE2E2", "FEF3C7", "D1FAE5", "F1F5F9",
+        "F1F5F9", "D1FAE5", "F1F5F9", "F1F5F9",
+    ]
 
 
 # =====================================================================

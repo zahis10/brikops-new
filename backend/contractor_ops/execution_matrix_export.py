@@ -147,7 +147,19 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
             overall = spare_summary.get("overall", "no_profile")
             label = SPARE_OVERALL_LABELS.get(overall, overall)
             borderline = spare_summary.get("borderline") or []
-            if overall == "short":
+            unfilled = spare_summary.get("unfilled") or []
+            entered_count = spare_summary.get("entered_count") or 0
+            applicable_count = spare_summary.get("applicable_count") or 0
+            progress = (
+                "לא הוזן" if entered_count == 0
+                else f"הוזן {entered_count}/{applicable_count}"
+            ) if applicable_count and entered_count < applicable_count else None
+            if overall == "no_profile":
+                label = "אחר" + (
+                    f" · הוזן {entered_count}/{applicable_count}"
+                    if entered_count else ""
+                )
+            elif overall == "short":
                 details = ", ".join(
                     f"{row['name']} {row['missing']}"
                     if row.get("missing") is not None
@@ -156,25 +168,28 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
                 )
                 if details:
                     label = f"{label}: {details}"
+                if borderline:
+                    label = f"{label} · גבולי: {', '.join(borderline)}"
+                if progress:
+                    label = f"{label} · {progress}"
+            elif overall == "borderline":
+                if borderline:
+                    label = f"{label}: {', '.join(borderline)}"
+                if progress:
+                    label = f"{label} · {progress}"
             elif overall == "not_entered":
-                details = ", ".join(spare_summary.get("not_entered") or [])
-                if details:
+                details = ", ".join(unfilled)
+                if entered_count > 0:
+                    label = f"הוזן {entered_count}/{applicable_count}"
+                    if details:
+                        label = f"{label} · לא הוזן: {details}"
+                elif details:
                     label = f"{label}: {details}"
-            elif overall == "borderline" and borderline:
-                label = f"{label}: {', '.join(borderline)}"
             elif overall == "recorded":
-                recorded = spare_summary.get("recorded") or []
-                total = spare_summary.get("categories_total") or len(recorded)
-                label = f"{label} {len(recorded)}/{total}"
-                unfilled = spare_summary.get("unfilled") or []
-                if unfilled:
-                    label = f"{label} · לא הוזן: {', '.join(unfilled)}"
-            elif overall == "no_target":
-                unfilled = spare_summary.get("unfilled") or []
-                if unfilled:
-                    label = f"{label}: {', '.join(unfilled)}"
-            if overall in {"short", "not_entered"} and borderline:
-                label = f"{label} · גבולי: {', '.join(borderline)}"
+                label = (
+                    f"הוזן {applicable_count}/{applicable_count}"
+                    if applicable_count else label
+                )
             spare_cell = ws.cell(row=row_idx, column=spare_col, value=label)
             fill = SPARE_FILLS.get(overall)
             if fill is not None:

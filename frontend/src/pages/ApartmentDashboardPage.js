@@ -14,6 +14,7 @@ import StatusPill from '../components/StatusPill';
 import CategoryPill from '../components/CategoryPill';
 import Breadcrumbs from '../components/Breadcrumbs';
 import TaskCardSkeleton from '../components/TaskCardSkeleton';
+import { spareSummaryText } from '../components/matrix/SparePill';
 import { arraysEqualAsSets } from '../utils/filterHelpers';
 import { FEATURES } from '../config/features';
 import { getDefectCreatesForUnit } from '../services/offlineOutbox';
@@ -126,7 +127,13 @@ const ApartmentDashboardPage = () => {
   const spareCanWrite = unitData?.spare_can_write === true;
   const spareCanAssign = unitData?.spare_can_assign === true;
   const spareRows = unitData?.spare_status?.categories || [];
-  const spareRecorded = spareRows.filter(row => row.status === 'recorded').length;
+  const spareSummary = unitData?.spare_status ? {
+    overall: unitData.spare_status.overall,
+    short: spareRows.filter(row => row.status === 'short'),
+    borderline: spareRows.filter(row => row.status === 'borderline'),
+    entered_count: unitData.spare_status.entered_count ?? 0,
+    applicable_count: unitData.spare_status.applicable_count ?? 0,
+  } : null;
   const spareNoTargets = !!unitData?.spare_status?.profile
     && spareRows.length > 0
     && spareRows.every(row => !(row.target > 0));
@@ -731,12 +738,7 @@ const ApartmentDashboardPage = () => {
                   unitData.spare_status?.overall === 'ok' ? 'bg-green-500 text-white' :
                   unitData.spare_status?.overall === 'recorded' ? 'bg-green-500 text-white' : 'bg-slate-400 text-white'
                 }`}>
-                  {unitData.spare_status?.overall === 'short' ? 'חסר — להזמין' :
-                    unitData.spare_status?.overall === 'borderline' ? 'גבולי' :
-                    unitData.spare_status?.overall === 'ok' ? 'מספיק' :
-                    unitData.spare_status?.overall === 'recorded' ? `הוזן ${spareRecorded}/${spareRows.length}` :
-                    unitData.spare_status?.overall === 'no_profile' ? 'אחר' :
-                    'לא הוזן'}
+                  {spareSummary ? spareSummaryText(spareSummary) : 'לא הוזן'}
                 </span>
               </div>
               {spareTilesOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}

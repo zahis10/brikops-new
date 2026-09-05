@@ -31,6 +31,28 @@ const STATUS_CONFIG = {
   },
 };
 
+export function spareSummaryText(summary) {
+  const s = summary || {};
+  const overall = s.overall ?? 'no_profile';
+  const nShort = s.short?.length ?? 0;
+  const nBorder = s.borderline?.length ?? 0;
+  const x = s.entered_count ?? 0;
+  const y = s.applicable_count ?? 0;
+  const progress = y > 0 && x < y
+    ? (x === 0 ? 'לא הוזן' : `הוזן ${x}/${y}`)
+    : null;
+  if (overall === 'no_profile') return x > 0 ? `אחר · הוזן ${x}/${y}` : 'אחר';
+  const parts = [
+    ...(nShort > 0 ? [`חסר ${nShort}`] : []),
+    ...(nBorder > 0 ? [`גבולי ${nBorder}`] : []),
+    ...(progress ? [progress] : []),
+  ];
+  if (parts.length) return parts.join(' · ');
+  if (overall === 'ok') return 'מספיק';
+  if (overall === 'recorded') return y > 0 ? `הוזן ${y}/${y}` : 'הוזן';
+  return STATUS_CONFIG[overall]?.label ?? '—';
+}
+
 const measureLabel = (measure) => {
   if (measure === 'tiles') return 'אריחים';
   if (measure === 'sqm') return 'מ"ר';
@@ -45,25 +67,9 @@ export default function SparePill({
 }) {
   const config = summary ? STATUS_CONFIG[summary.overall] || STATUS_CONFIG.no_profile : null;
   const shortRows = Array.isArray(summary?.short) ? summary.short : [];
-  const notEntered = Array.isArray(summary?.not_entered) ? summary.not_entered : [];
   const borderline = Array.isArray(summary?.borderline) ? summary.borderline : [];
-  const recorded = Array.isArray(summary?.recorded) ? summary.recorded : [];
   const unfilled = Array.isArray(summary?.unfilled) ? summary.unfilled : [];
-  const total = summary?.categories_total ?? (recorded.length + unfilled.length);
-  const nShort = shortRows.length;
-  const nBorder = borderline.length;
-  const nNotEntered = notEntered.length;
-  const labelOnly = !summary || ['ok', 'no_target', 'no_profile'].includes(summary.overall);
-  const segments = labelOnly
-    ? []
-    : summary.overall === 'recorded'
-      ? [`הוזן ${recorded.length}/${total}`]
-      : [
-          ...(nShort > 0 ? [`חסר ${nShort}`] : []),
-          ...(nBorder > 0 ? [`גבולי ${nBorder}`] : []),
-          ...(nShort === 0 && nNotEntered > 0 ? [`לא הוזן ${nNotEntered}`] : []),
-        ];
-  const text = config ? (segments.join(' · ') || config.label) : '—';
+  const text = summary ? spareSummaryText(summary) : '—';
   const titleParts = [
     summary?.profile ? `פרופיל: ${summary.profile}` : 'ללא פרופיל',
     ...shortRows.map(row => {
@@ -74,7 +80,6 @@ export default function SparePill({
     }),
   ];
   if (borderline.length) titleParts.push(`גבולי: ${borderline.join(', ')}`);
-  if (notEntered.length) titleParts.push(`לא הוזן: ${notEntered.join(', ')}`);
   if (unfilled.length) titleParts.push(`לא הוזן: ${unfilled.join(', ')}`);
 
   const inner = (

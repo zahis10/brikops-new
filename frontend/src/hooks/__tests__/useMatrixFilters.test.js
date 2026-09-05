@@ -236,6 +236,12 @@ describe('useMatrixFilters pure helpers', () => {
       u6: { overall: 'no_target', unfilled: ['a'] },
       u7: { overall: 'ok', unfilled: [] },
       u8: { overall: 'no_target' },
+      u9: {
+        overall: 'no_profile',
+        unfilled: ['a'],
+        entered_count: 1,
+        applicable_count: 5,
+      },
     };
     const idsFor = (spareStatus) => computeFilteredUnits(
       extendedUnits,
@@ -247,7 +253,7 @@ describe('useMatrixFilters pure helpers', () => {
 
     expect(idsFor(['borderline'])).toEqual(['u1', 'u2', 'u3']);
     expect(idsFor(['short'])).toEqual(['u1']);
-    expect(idsFor(['not_entered'])).toEqual(['u3', 'u5', 'u6', 'u8']);
+    expect(idsFor(['not_entered'])).toEqual(['u3', 'u5', 'u6', 'u8', 'u9']);
     expect(idsFor(['ok'])).toEqual(['u4', 'u7']);
     expect(idsFor(['recorded'])).toEqual(['u5']);
     expect(idsFor(['no_target'])).toEqual(['u6', 'u8']);
@@ -259,6 +265,8 @@ describe('useMatrixFilters pure helpers', () => {
     expect(spareStatusMatches(spareByUnit.u7, 'not_entered')).toBe(false);
     expect(spareStatusMatches(spareByUnit.u8, 'not_entered')).toBe(true);
     expect(spareStatusMatches(spareByUnit.u8, 'no_target')).toBe(true);
+    expect(spareStatusMatches(spareByUnit.u9, 'not_entered')).toBe(true);
+    expect(spareStatusMatches(spareByUnit.u9, 'no_profile')).toBe(true);
     expect(spareStatusMatches(undefined, 'no_profile')).toBe(true);
   });
 });
