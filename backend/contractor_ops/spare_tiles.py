@@ -211,12 +211,10 @@ def compute_spare_status(unit_doc, spare_settings):
             'status': status,
             'missing': missing,
             'entered': entered,
-            'applicable': (target or 0) > 0 if has_targets else True,
         })
 
-    applicable_rows = [row for row in rows if row['applicable']]
-    entered_count = sum(1 for row in applicable_rows if row['entered'])
-    applicable_count = len(applicable_rows)
+    entered_count = sum(1 for row in rows if row['entered'])
+    applicable_count = len(rows)
     if not profile:
         overall = 'no_profile'
     elif any(row['status'] == 'short' for row in rows):
@@ -275,7 +273,7 @@ def matrix_spare_summary(unit_doc, spare_settings):
         'unfilled': [
             row['name']
             for row in st['categories']
-            if row['applicable'] and not row['entered']
+            if not row['entered']
         ],
         'categories_total': len(st['categories']),
         'missing_total': sum((row['missing'] or 0) for row in short),

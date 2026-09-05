@@ -622,12 +622,14 @@ def main():
             "missing": 2,
             "measure": "tiles",
         }]
-        check("V2 matrix unit A short summary",
+        check("V2 matrix unit A short summary counts every category",
               matrix_spare["enabled"] is True
               and matrix_spare["by_unit"][unit_one_id]["overall"] == "short"
               and matrix_spare["by_unit"][unit_one_id]["short"] == expected_short
               and matrix_spare["by_unit"][unit_one_id]["borderline"]
               == ["ריצוף מרפסות"]
+              and matrix_spare["by_unit"][unit_one_id]["applicable_count"] == 4
+              and matrix_spare["by_unit"][unit_one_id]["categories_total"] == 4
               and matrix_spare["by_unit"][unit_one_id]["missing_total"] == 2)
         check("V2 matrix unit B not entered",
               matrix_spare["by_unit"][unit_two_id]["overall"] == "not_entered")

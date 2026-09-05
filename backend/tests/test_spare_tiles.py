@@ -102,7 +102,6 @@ def test_no_target_and_no_profile():
         'status': 'short',
         'missing': None,
         'entered': True,
-        'applicable': True,
     }
     assert status(0, target=0)['overall'] == 'not_entered'
     legacy_note = status(0, notes='legacy note', target=0)
@@ -118,7 +117,6 @@ def test_no_target_and_no_profile():
         'status': 'recorded',
         'missing': None,
         'entered': True,
-        'applicable': True,
     }
     assert status(4, profile_id=None)['overall'] == 'no_profile'
     assert status(4, profile_id=str(uuid.uuid4()))['overall'] == 'no_profile'
@@ -338,7 +336,7 @@ def test_matrix_spare_summary_confirmed_zero_without_target():
     assert result['missing_total'] == 0
 
 
-def test_matrix_spare_summary_tracking_only_and_not_applicable_categories():
+def test_matrix_spare_summary_tracking_only_and_no_target_categories():
     tracking_config = {
         'categories': [
             {'name': 'א', 'measure': 'tiles'},
@@ -377,11 +375,11 @@ def test_matrix_spare_summary_tracking_only_and_not_applicable_categories():
             {'type': 'ב', 'count': 3},
         ],
     }, targets_config)
-    assert with_targets['overall'] == 'ok'
+    assert with_targets['overall'] == 'not_entered'
     assert with_targets['recorded'] == []
-    assert with_targets['unfilled'] == []
+    assert with_targets['unfilled'] == ['ג']
     assert with_targets['entered_count'] == 2
-    assert with_targets['applicable_count'] == 2
+    assert with_targets['applicable_count'] == 3
 
     unassigned = matrix_spare_summary({
         'spare_tiles': [
@@ -396,7 +394,7 @@ def test_matrix_spare_summary_tracking_only_and_not_applicable_categories():
     assert unassigned['applicable_count'] == 3
 
 
-def test_applicable_progress_for_targeted_tracking_and_unassigned_units():
+def test_progress_counts_every_category_for_targeted_tracking_and_unassigned_units():
     categories = [
         {'name': name, 'measure': 'tiles'}
         for name in ['א', 'ב', 'ג', 'ד', 'ה']
@@ -410,14 +408,13 @@ def test_applicable_progress_for_targeted_tracking_and_unassigned_units():
         }],
         'margin_pct': 10,
     }
-    one_entered = compute_spare_status({
+    partial = compute_spare_status({
         'spare_profile_id': PROFILE_ID,
         'spare_tiles': [{'type': 'א', 'count': 8}, {'type': 'ה', 'count': 2}],
     }, targeted)
-    assert one_entered['overall'] == 'not_entered'
-    assert one_entered['entered_count'] == 1
-    assert one_entered['applicable_count'] == 4
-    assert one_entered['categories'][4]['applicable'] is False
+    assert partial['overall'] == 'not_entered'
+    assert partial['entered_count'] == 2
+    assert partial['applicable_count'] == 5
 
     explicit_zero = compute_spare_status({
         'spare_profile_id': PROFILE_ID,
@@ -437,6 +434,28 @@ def test_applicable_progress_for_targeted_tracking_and_unassigned_units():
         'spare_tiles': [{'type': 'א', 'count': 8}, {'type': 'ה', 'count': 2}],
     }, targeted)
     assert summary['unfilled'] == ['ב', 'ג', 'ד']
+
+    complete_targeted = compute_spare_status({
+        'spare_profile_id': PROFILE_ID,
+        'spare_tiles': [
+            {'type': name, 'count': 6}
+            for name in ['א', 'ב', 'ג', 'ד']
+        ] + [{'type': 'ה', 'count': 1}],
+    }, targeted)
+    assert complete_targeted['overall'] == 'ok'
+    assert complete_targeted['entered_count'] == 5
+    assert complete_targeted['applicable_count'] == 5
+
+    missing_no_target = compute_spare_status({
+        'spare_profile_id': PROFILE_ID,
+        'spare_tiles': [
+            {'type': name, 'count': 6}
+            for name in ['א', 'ב', 'ג', 'ד']
+        ],
+    }, targeted)
+    assert missing_no_target['overall'] == 'not_entered'
+    assert missing_no_target['entered_count'] == 4
+    assert missing_no_target['applicable_count'] == 5
 
     tracking = {**targeted, 'profiles': [{
         'id': PROFILE_ID, 'name': 'מעקב', 'targets': {},
