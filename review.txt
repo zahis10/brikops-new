@@ -1,292 +1,491 @@
-BATCH #594 — REVIEW
-Base: origin/staging a5fbc9d
-Deployment: NOT PERFORMED
-Commit: NOT CREATED
+BATCH #595 HOTFIX — PREVENT INVITE TRANSLATION CRASHES
 
-================================================================================
-STEP 0
-================================================================================
+STEP 0 — CLEAN BASE
+- Branch: staging
+- Base commit: b81a780 (Update spare tiles logic and refactor related tests)
+- Initial git status: clean
+- This is the landed #594 base allowed by the task.
 
-$ git branch --show-current
-staging
-
-$ git rev-parse --short HEAD
-a5fbc9d
-
-$ git status --short
-[empty]
-
-STEP 0: PASS
-
-================================================================================
 IMPLEMENTATION SUMMARY
-================================================================================
+1. Public pending-invite info now exposes preferred_language with a Hebrew fallback.
+2. Onboarding applies the invite locale before publishing invite state, so the first invite render is in the intended language.
+3. A startup DOM guard tolerates stale removeChild/insertBefore references created by Chrome/Google Translate while preserving normal operations and remaining idempotent.
+4. The document opts out of browser translation with translate="no" and google notranslate metadata.
+5. Supported UI locale is restored from and persisted to brikops_lang; invalid/unavailable storage falls back safely.
+6. Focused backend, i18n, and DOM guard regressions were added.
+7. Browser verification exposed that LoginPage hardcoded its phone/OTP copy in Hebrew. A minimal extra scoped edit now reads existing i18n onboarding keys for that active flow. No auth handler, route, payload, register flow, or account behavior changed.
 
-- Removed the transient per-row applicable field.
-- entered_count now counts every displayed category row whose derived entered flag is true.
-- applicable_count keeps its API name but now equals len(rows) for targeted, target-less, and unassigned units.
-- unfilled now includes every displayed row without an entry.
-- Overall precedence is unchanged: short > borderline > incomplete/not_entered > ok/recorded; no_profile remains first.
-- A targeted profile reaches מספיק only after every row is entered, including rows without a positive target.
-- No stored data, migration, dependency, environment, frontend, export implementation, save-flow, or validation change.
+FULL SCOPED DIFF (base b81a780)
+diff --git a/backend/contractor_ops/onboarding_router.py b/backend/contractor_ops/onboarding_router.py
+index 212bed8..95cccaa 100644
+--- a/backend/contractor_ops/onboarding_router.py
++++ b/backend/contractor_ops/onboarding_router.py
+@@ -1448,6 +1448,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
+             'project_id': invite['project_id'],
+             'role': role,
+             'role_display': ROLE_LABELS_HE.get(role, role),
++            'preferred_language': invite.get('preferred_language') or 'he',
+         }
 
-================================================================================
-FULL DIFF VS a5fbc9d
-================================================================================
+     @router.post("/onboarding/join-by-code")
+diff --git a/frontend/public/index.html b/frontend/public/index.html
+index 307b832..3b61bf3 100644
+--- a/frontend/public/index.html
++++ b/frontend/public/index.html
+@@ -1,7 +1,8 @@
+ <!doctype html>
+-<html lang="he" dir="rtl">
++<html lang="he" dir="rtl" translate="no">
+     <head>
+         <meta charset="utf-8" />
++        <meta name="google" content="notranslate" />
+         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+         <meta name="theme-color" content="#0F172A" />
+         <meta name="description" content="BrikOps - ניהול משימות קבלן" />
+diff --git a/frontend/src/i18n/index.js b/frontend/src/i18n/index.js
+index ee5c8ea..8f32bad 100644
+--- a/frontend/src/i18n/index.js
++++ b/frontend/src/i18n/index.js
+@@ -6,10 +6,21 @@ import zh from './zh.json';
+ const LOCALES = { he, en, ar, zh };
+ let currentLocale = 'he';
 
-diff --git a/backend/contractor_ops/spare_tiles.py b/backend/contractor_ops/spare_tiles.py
-index 484730b..abf76f2 100644
---- a/backend/contractor_ops/spare_tiles.py
-+++ b/backend/contractor_ops/spare_tiles.py
-@@ -211,12 +211,10 @@ def compute_spare_status(unit_doc, spare_settings):
-             'status': status,
-             'missing': missing,
-             'entered': entered,
--            'applicable': (target or 0) > 0 if has_targets else True,
-         })
-
--    applicable_rows = [row for row in rows if row['applicable']]
--    entered_count = sum(1 for row in applicable_rows if row['entered'])
--    applicable_count = len(applicable_rows)
-+    entered_count = sum(1 for row in rows if row['entered'])
-+    applicable_count = len(rows)
-     if not profile:
-         overall = 'no_profile'
-     elif any(row['status'] == 'short' for row in rows):
-@@ -275,7 +273,7 @@ def matrix_spare_summary(unit_doc, spare_settings):
-         'unfilled': [
-             row['name']
-             for row in st['categories']
--            if row['applicable'] and not row['entered']
-+            if not row['entered']
-         ],
-         'categories_total': len(st['categories']),
-         'missing_total': sum((row['missing'] or 0) for row in short),
-diff --git a/backend/tests/probe_spare_tiles_http.py b/backend/tests/probe_spare_tiles_http.py
-index 2f8f0dd..e2fe853 100644
---- a/backend/tests/probe_spare_tiles_http.py
-+++ b/backend/tests/probe_spare_tiles_http.py
-@@ -622,12 +622,14 @@ def main():
-             "missing": 2,
-             "measure": "tiles",
-         }]
--        check("V2 matrix unit A short summary",
-+        check("V2 matrix unit A short summary counts every category",
-               matrix_spare["enabled"] is True
-               and matrix_spare["by_unit"][unit_one_id]["overall"] == "short"
-               and matrix_spare["by_unit"][unit_one_id]["short"] == expected_short
-               and matrix_spare["by_unit"][unit_one_id]["borderline"]
-               == ["ריצוף מרפסות"]
-+              and matrix_spare["by_unit"][unit_one_id]["applicable_count"] == 4
-+              and matrix_spare["by_unit"][unit_one_id]["categories_total"] == 4
-               and matrix_spare["by_unit"][unit_one_id]["missing_total"] == 2)
-         check("V2 matrix unit B not entered",
-               matrix_spare["by_unit"][unit_two_id]["overall"] == "not_entered")
-diff --git a/backend/tests/test_spare_tiles.py b/backend/tests/test_spare_tiles.py
-index bb84dfc..2502174 100644
---- a/backend/tests/test_spare_tiles.py
-+++ b/backend/tests/test_spare_tiles.py
-@@ -102,7 +102,6 @@ def test_no_target_and_no_profile():
-         'status': 'short',
-         'missing': None,
-         'entered': True,
--        'applicable': True,
-     }
-     assert status(0, target=0)['overall'] == 'not_entered'
-     legacy_note = status(0, notes='legacy note', target=0)
-@@ -118,7 +117,6 @@ def test_no_target_and_no_profile():
-         'status': 'recorded',
-         'missing': None,
-         'entered': True,
--        'applicable': True,
-     }
-     assert status(4, profile_id=None)['overall'] == 'no_profile'
-     assert status(4, profile_id=str(uuid.uuid4()))['overall'] == 'no_profile'
-@@ -338,7 +336,7 @@ def test_matrix_spare_summary_confirmed_zero_without_target():
-     assert result['missing_total'] == 0
-
-
--def test_matrix_spare_summary_tracking_only_and_not_applicable_categories():
-+def test_matrix_spare_summary_tracking_only_and_no_target_categories():
-     tracking_config = {
-         'categories': [
-             {'name': 'א', 'measure': 'tiles'},
-@@ -377,11 +375,11 @@ def test_matrix_spare_summary_tracking_only_and_not_applicable_categories():
-             {'type': 'ב', 'count': 3},
-         ],
-     }, targets_config)
--    assert with_targets['overall'] == 'ok'
-+    assert with_targets['overall'] == 'not_entered'
-     assert with_targets['recorded'] == []
--    assert with_targets['unfilled'] == []
-+    assert with_targets['unfilled'] == ['ג']
-     assert with_targets['entered_count'] == 2
--    assert with_targets['applicable_count'] == 2
-+    assert with_targets['applicable_count'] == 3
-
-     unassigned = matrix_spare_summary({
-         'spare_tiles': [
-@@ -396,7 +394,7 @@ def test_matrix_spare_summary_tracking_only_and_not_applicable_categories():
-     assert unassigned['applicable_count'] == 3
-
-
--def test_applicable_progress_for_targeted_tracking_and_unassigned_units():
-+def test_progress_counts_every_category_for_targeted_tracking_and_unassigned_units():
-     categories = [
-         {'name': name, 'measure': 'tiles'}
-         for name in ['א', 'ב', 'ג', 'ד', 'ה']
-@@ -410,14 +408,13 @@ def test_applicable_progress_for_targeted_tracking_and_unassigned_units():
-         }],
-         'margin_pct': 10,
-     }
--    one_entered = compute_spare_status({
-+    partial = compute_spare_status({
-         'spare_profile_id': PROFILE_ID,
-         'spare_tiles': [{'type': 'א', 'count': 8}, {'type': 'ה', 'count': 2}],
-     }, targeted)
--    assert one_entered['overall'] == 'not_entered'
--    assert one_entered['entered_count'] == 1
--    assert one_entered['applicable_count'] == 4
--    assert one_entered['categories'][4]['applicable'] is False
-+    assert partial['overall'] == 'not_entered'
-+    assert partial['entered_count'] == 2
-+    assert partial['applicable_count'] == 5
-
-     explicit_zero = compute_spare_status({
-         'spare_profile_id': PROFILE_ID,
-@@ -438,6 +435,28 @@ def test_applicable_progress_for_targeted_tracking_and_unassigned_units():
-     }, targeted)
-     assert summary['unfilled'] == ['ב', 'ג', 'ד']
-
-+    complete_targeted = compute_spare_status({
-+        'spare_profile_id': PROFILE_ID,
-+        'spare_tiles': [
-+            {'type': name, 'count': 6}
-+            for name in ['א', 'ב', 'ג', 'ד']
-+        ] + [{'type': 'ה', 'count': 1}],
-+    }, targeted)
-+    assert complete_targeted['overall'] == 'ok'
-+    assert complete_targeted['entered_count'] == 5
-+    assert complete_targeted['applicable_count'] == 5
++try {
++  const saved = localStorage.getItem('brikops_lang');
++  if (saved && LOCALES[saved]) {
++    currentLocale = saved;
++    document.documentElement.lang = saved;
++  }
++} catch {}
 +
-+    missing_no_target = compute_spare_status({
-+        'spare_profile_id': PROFILE_ID,
-+        'spare_tiles': [
-+            {'type': name, 'count': 6}
-+            for name in ['א', 'ב', 'ג', 'ד']
-+        ],
-+    }, targeted)
-+    assert missing_no_target['overall'] == 'not_entered'
-+    assert missing_no_target['entered_count'] == 4
-+    assert missing_no_target['applicable_count'] == 5
+ export function setLanguage(lang) {
+   const base = (lang || '').split('-')[0].split('_')[0].toLowerCase();
+   currentLocale = LOCALES[base] ? base : 'he';
+   document.documentElement.lang = currentLocale;
++  try {
++    localStorage.setItem('brikops_lang', currentLocale);
++  } catch {}
+ }
+
+ export function getLanguage() {
+diff --git a/frontend/src/index.js b/frontend/src/index.js
+index b8725ee..db6943e 100644
+--- a/frontend/src/index.js
++++ b/frontend/src/index.js
+@@ -2,6 +2,7 @@ import React from "react";
+ import ReactDOM from "react-dom/client";
+ import "@/index.css";
+ import App from "@/App";
++import { installDomGuard } from "@/utils/domGuard";
+ import { Capacitor } from '@capacitor/core';
+ import { SocialLogin } from '@capgo/capacitor-social-login';
+
+@@ -15,6 +16,8 @@ if (Capacitor.isNativePlatform()) {
+   }).catch((err) => console.error('[SocialLogin] init failed:', err));
+ }
+
++installDomGuard();
 +
-     tracking = {**targeted, 'profiles': [{
-         'id': PROFILE_ID, 'name': 'מעקב', 'targets': {},
-     }]}
+ const root = ReactDOM.createRoot(document.getElementById("root"));
+ root.render(
+   <React.StrictMode>
+diff --git a/frontend/src/pages/LoginPage.js b/frontend/src/pages/LoginPage.js
+index 120bed6..10a1c94 100644
+--- a/frontend/src/pages/LoginPage.js
++++ b/frontend/src/pages/LoginPage.js
+@@ -13,6 +13,7 @@ import { SignInWithApple } from '@capacitor-community/apple-sign-in';
+ import { SocialLogin } from '@capgo/capacitor-social-login';
+ import useOtpAutofill from '../hooks/useOtpAutofill';
+ import useAndroidSmsRetriever from '../hooks/useAndroidSmsRetriever';
++import { t } from '../i18n';
 
-================================================================================
-V1 — PYTEST + LIVE HTTP PROBE
-================================================================================
+ const ENABLE_REGISTER_MANAGEMENT_REDIRECTS =
+   process.env.REACT_APP_ENABLE_REGISTER_MANAGEMENT_REDIRECTS === 'true';
+@@ -101,12 +102,12 @@ const LoginPage = () => {
+   const handleRequestOtp = useCallback(async (e) => {
+     e.preventDefault();
+     if (!phone.trim()) {
+-      toast.error('יש להזין מספר טלפון');
++      toast.error(t('onboarding', 'err_phone_required'));
+       return;
+     }
+     const e164 = canonicalE164(phone);
+     if (!isValidIsraeliMobile(e164)) {
+-      toast.error('מספר טלפון לא תקין');
++      toast.error(t('onboarding', 'err_phone_invalid'));
+       return;
+     }
+     setLoading(true);
+@@ -114,7 +115,7 @@ const LoginPage = () => {
+       const res = await onboardingService.requestOtp(e164);
+       setPhoneE164(e164);
+       setPhoneStep('otp');
+-      toast('שולחים קוד אימות...', { icon: '📱' });
++      toast(t('onboarding', 'toast_sending_otp'), { icon: '📱' });
+     } catch (error) {
+       const status = error.response?.status;
+       const detail = error.response?.data?.detail || error.message;
+@@ -624,7 +625,7 @@ const LoginPage = () => {
+             onClick={() => { setAuthMethod('phone'); setErrors({}); }}
+           >
+             <Phone className="w-4 h-4" />
+-            טלפון
++            {t('onboarding', 'phone_label')}
+           </button>
+           <button type="button" role="tab" id="tab-email" aria-selected={authMethod === 'email'} aria-controls="tabpanel-email"
+             className={`flex-1 py-2.5 rounded-md text-sm font-medium transition-all touch-manipulation flex items-center justify-center gap-1.5 ${
+@@ -642,7 +643,7 @@ const LoginPage = () => {
+           <form onSubmit={handleRequestOtp} className="space-y-4" dir="rtl">
+             <div className="space-y-2">
+               <label htmlFor="phone" className="block text-sm font-medium text-slate-700">
+-                מספר טלפון
++                {t('onboarding', 'phone_label')}
+                 <span className="text-red-500 mr-1">*</span>
+               </label>
+               <div className="relative">
+@@ -666,9 +667,9 @@ const LoginPage = () => {
+               {loading ? (
+                 <span className="flex items-center justify-center gap-2">
+                   <Loader2 className="w-5 h-5 animate-spin" />
+-                  שולח קוד...
++                  {t('onboarding', 'toast_sending_otp')}
+                 </span>
+-              ) : 'שלח קוד אימות'}
++              ) : t('onboarding', 'send_otp')}
+             </Button>
+             <div className="text-left mt-2">
+               <a href="/forgot-password" className="text-sm text-amber-600 hover:text-amber-700 font-medium">
+@@ -688,15 +689,15 @@ const LoginPage = () => {
+               className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 mb-2"
+             >
+               <ArrowRight className="w-4 h-4" />
+-              חזרה
++              {t('onboarding', 'back')}
+             </button>
+             <div className="text-center mb-4">
+-              <p className="text-sm text-slate-600">קוד אימות נשלח למספר</p>
++              <p className="text-sm text-slate-600">{t('onboarding', 'otp_sent_to')}</p>
+               <bdi dir="ltr" className="font-mono text-base font-medium text-slate-900 mt-1 inline-block">{phoneE164}</bdi>
+             </div>
+             <div className="space-y-2">
+               <label htmlFor="otp" className="block text-sm font-medium text-slate-700">
+-                קוד אימות
++                {t('onboarding', 'otp_label')}
+                 <span className="text-red-500 mr-1">*</span>
+               </label>
+               <input
+@@ -720,9 +721,9 @@ const LoginPage = () => {
+               {loading ? (
+                 <span className="flex items-center justify-center gap-2">
+                   <Loader2 className="w-5 h-5 animate-spin" />
+-                  מאמת...
++                  {t('onboarding', 'verify')}
+                 </span>
+-              ) : 'אימות והתחברות'}
++              ) : t('onboarding', 'verify')}
+             </Button>
+             <button
+               type="button"
+@@ -730,7 +731,7 @@ const LoginPage = () => {
+               disabled={loading}
+               className="w-full text-sm text-amber-600 hover:text-amber-700 mt-2"
+             >
+-              שלח קוד חדש
++              {t('onboarding', 'resend_otp')}
+             </button>
+           </form>
+           </div>
+diff --git a/frontend/src/pages/OnboardingPage.js b/frontend/src/pages/OnboardingPage.js
+index 824c76d..fce625a 100644
+--- a/frontend/src/pages/OnboardingPage.js
++++ b/frontend/src/pages/OnboardingPage.js
+@@ -12,7 +12,7 @@ import { Button } from '../components/ui/button';
+ import { Card } from '../components/ui/card';
+ import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
+ import { navigateToProject } from '../utils/navigation';
+-import { t } from '../i18n';
++import { t, setLanguage } from '../i18n';
+ import { Capacitor } from '@capacitor/core';
+ import { SignInWithApple } from '@capacitor-community/apple-sign-in';
+ import { SocialLogin } from '@capgo/capacitor-social-login';
+@@ -115,6 +115,7 @@ const OnboardingPage = () => {
+       setInviteLoading(true);
+       onboardingService.getInviteInfo(inviteToken)
+         .then(info => {
++          if (info.preferred_language) setLanguage(info.preferred_language);
+           setInviteInfo(info);
+           setSelectedInvite({ invite_id: info.invite_id, project_name: info.project_name, role: info.role });
+           if (authToken) {
+diff --git a/backend/tests/test_invite_info.py b/backend/tests/test_invite_info.py
+new file mode 100644
+index 0000000..d76aed2
+--- /dev/null
++++ b/backend/tests/test_invite_info.py
+@@ -0,0 +1,54 @@
++import asyncio
++from unittest.mock import AsyncMock, MagicMock
++
++import pytest
++
++from contractor_ops import onboarding_router
++
++
++def _invite_info_endpoint():
++    router = onboarding_router.create_onboarding_router(
++        lambda: None,
++        lambda *_roles: lambda: None,
++    )
++    return next(
++        route.endpoint
++        for route in router.routes
++        if getattr(route, 'path', '') == '/api/invites/{invite_id}/info'
++        and 'GET' in getattr(route, 'methods', set())
++    )
++
++
++@pytest.mark.parametrize(
++    ('invite_language', 'expected_language'),
++    [('ar', 'ar'), (None, 'he')],
++)
++def test_invite_info_returns_preferred_language(
++    monkeypatch,
++    invite_language,
++    expected_language,
++):
++    db = MagicMock()
++    db.invites.find_one = AsyncMock(return_value={
++        'id': 'invite-1',
++        'project_id': 'project-1',
++        'status': 'pending',
++        'expires_at': '2999-01-01T00:00:00+00:00',
++        'role': 'contractor',
++        **(
++            {'preferred_language': invite_language}
++            if invite_language is not None
++            else {}
++        ),
++    })
++    db.projects.find_one = AsyncMock(return_value={
++        'id': 'project-1',
++        'name': 'Project',
++    })
++    monkeypatch.setattr(onboarding_router, 'get_db', lambda: db)
++
++    result = asyncio.run(_invite_info_endpoint()('invite-1'))
++
++    assert result['preferred_language'] == expected_language
++    assert result['invite_id'] == 'invite-1'
++    assert result['role'] == 'contractor'
+\ No newline at end of file
+diff --git a/frontend/src/i18n/__tests__/index.test.js b/frontend/src/i18n/__tests__/index.test.js
+new file mode 100644
+index 0000000..996d1e0
+--- /dev/null
++++ b/frontend/src/i18n/__tests__/index.test.js
+@@ -0,0 +1,61 @@
++const loadI18n = () => {
++  jest.resetModules();
++  return require('../index');
++};
++
++describe('i18n language persistence', () => {
++  beforeEach(() => {
++    localStorage.clear();
++    document.documentElement.lang = 'he';
++    jest.restoreAllMocks();
++  });
++
++  afterEach(() => {
++    jest.restoreAllMocks();
++  });
++
++  test('normalizes a regional Arabic locale and updates the document', () => {
++    const { getLanguage, setLanguage } = loadI18n();
++
++    setLanguage('ar-EG');
++
++    expect(getLanguage()).toBe('ar');
++    expect(document.documentElement.lang).toBe('ar');
++    expect(localStorage.getItem('brikops_lang')).toBe('ar');
++  });
++
++  test('restores a supported saved language on a fresh module load', () => {
++    localStorage.setItem('brikops_lang', 'zh');
++
++    const { getLanguage } = loadI18n();
++
++    expect(getLanguage()).toBe('zh');
++    expect(document.documentElement.lang).toBe('zh');
++  });
++
++  test('ignores an unknown saved language and starts in Hebrew', () => {
++    localStorage.setItem('brikops_lang', 'xx');
++
++    const { getLanguage } = loadI18n();
++
++    expect(getLanguage()).toBe('he');
++    expect(document.documentElement.lang).toBe('he');
++  });
++
++  test('swallows unavailable localStorage reads and writes', () => {
++    jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
++      throw new Error('storage unavailable');
++    });
++    const i18n = loadI18n();
++    expect(i18n.getLanguage()).toBe('he');
++
++    jest.restoreAllMocks();
++    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
++      throw new Error('storage unavailable');
++    });
++
++    expect(() => i18n.setLanguage('ar')).not.toThrow();
++    expect(i18n.getLanguage()).toBe('ar');
++    expect(document.documentElement.lang).toBe('ar');
++  });
++});
+\ No newline at end of file
+diff --git a/frontend/src/utils/domGuard.js b/frontend/src/utils/domGuard.js
+new file mode 100644
+index 0000000..6087ed6
+--- /dev/null
++++ b/frontend/src/utils/domGuard.js
+@@ -0,0 +1,22 @@
++// Chrome/Google Translate rewrites text nodes by wrapping them in <font>
++// elements. React can then hold stale parent references and throw NotFoundError
++// on its next commit (facebook/react#11538). Tolerate those stale references so
++// translated text may be stale, but the application does not crash.
++export function installDomGuard() {
++  if (typeof Node !== 'function' || !Node.prototype) return;
++  if (Node.prototype.__brikopsDomGuard) return;
++
++  const originalRemoveChild = Node.prototype.removeChild;
++  Node.prototype.removeChild = function removeChild(child) {
++    if (child && child.parentNode !== this) return child;
++    return originalRemoveChild.apply(this, arguments);
++  };
++
++  const originalInsertBefore = Node.prototype.insertBefore;
++  Node.prototype.insertBefore = function insertBefore(newNode, referenceNode) {
++    if (referenceNode && referenceNode.parentNode !== this) return newNode;
++    return originalInsertBefore.apply(this, arguments);
++  };
++
++  Node.prototype.__brikopsDomGuard = true;
++}
+\ No newline at end of file
+diff --git a/frontend/src/utils/__tests__/domGuard.test.js b/frontend/src/utils/__tests__/domGuard.test.js
+new file mode 100644
+index 0000000..78d81fe
+--- /dev/null
++++ b/frontend/src/utils/__tests__/domGuard.test.js
+@@ -0,0 +1,65 @@
++import { installDomGuard } from '../domGuard';
++
++describe('installDomGuard', () => {
++  const originalRemoveChild = Node.prototype.removeChild;
++  const originalInsertBefore = Node.prototype.insertBefore;
++
++  beforeEach(() => {
++    Node.prototype.removeChild = originalRemoveChild;
++    Node.prototype.insertBefore = originalInsertBefore;
++    delete Node.prototype.__brikopsDomGuard;
++  });
++
++  afterAll(() => {
++    Node.prototype.removeChild = originalRemoveChild;
++    Node.prototype.insertBefore = originalInsertBefore;
++    delete Node.prototype.__brikopsDomGuard;
++  });
++
++  test('tolerates removing a node that belongs to another parent', () => {
++    installDomGuard();
++    const parent = document.createElement('div');
++    const otherParent = document.createElement('div');
++    const child = document.createElement('span');
++    otherParent.appendChild(child);
++
++    expect(parent.removeChild(child)).toBe(child);
++    expect(child.parentNode).toBe(otherParent);
++  });
++
++  test('tolerates inserting before a reference in another parent', () => {
++    installDomGuard();
++    const parent = document.createElement('div');
++    const otherParent = document.createElement('div');
++    const reference = document.createElement('span');
++    const node = document.createElement('strong');
++    otherParent.appendChild(reference);
++
++    expect(parent.insertBefore(node, reference)).toBe(node);
++    expect(node.parentNode).toBeNull();
++  });
++
++  test('preserves normal remove and insert behavior', () => {
++    installDomGuard();
++    const parent = document.createElement('div');
++    const reference = document.createElement('span');
++    const node = document.createElement('strong');
++    parent.appendChild(reference);
++
++    expect(parent.insertBefore(node, reference)).toBe(node);
++    expect(parent.firstChild).toBe(node);
++    expect(parent.removeChild(node)).toBe(node);
++    expect(node.parentNode).toBeNull();
++  });
++
++  test('installs only once', () => {
++    installDomGuard();
++    const guardedRemoveChild = Node.prototype.removeChild;
++    const guardedInsertBefore = Node.prototype.insertBefore;
++
++    installDomGuard();
++
++    expect(Node.prototype.removeChild).toBe(guardedRemoveChild);
++    expect(Node.prototype.insertBefore).toBe(guardedInsertBefore);
++  });
++});
+\ No newline at end of file
 
-PASS: cd backend && python -m pytest tests/test_spare_tiles.py tests/test_execution_matrix_export.py tests/test_execution_matrix.py -q
-Result: 58 passed, 8 existing deprecation warnings, 5.05s.
+V1 — AUTOMATED REGRESSIONS
+PASS — backend focused suite:
+  cd backend && python -m pytest tests/test_invite_info.py tests/test_spare_tiles.py -q
+  33 passed; two pre-existing Pydantic deprecation warnings.
+PASS — frontend focused Jest suite:
+  CI=true yarn test --watchAll=false --runInBand src/utils/__tests__/domGuard.test.js src/i18n/__tests__/index.test.js
+  2 suites, 8 tests passed.
+PASS — git diff --check.
 
-PASS: live workflow restarted and started cleanly before the authoritative probe.
-PASS: MONGO_URL=mongodb://localhost:27017 DB_NAME=contractor_ops python tests/probe_spare_tiles_http.py
-Result: all 99 live HTTP checks passed, including:
-- V2 matrix unit A summary asserts applicable_count == categories_total == 4.
-- V2 matrix unit B remains not_entered and unit C remains no_profile.
-- V2 Excel checks pass.
-- V7 handover overview deep equality passes.
-- V7 export spare columns deep equality passes.
-- Settings, assignment, confirmed-zero, category deletion, unchanged save, permissions, and audit checks pass.
+V2 — PRODUCTION BUILD / SERVED BUNDLE
+PASS — CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+  Compiled successfully.
+PASS — built and served HTML contain translate="no" and google notranslate.
+PASS — served main.cce15971.js contains brikops_lang persistence and __brikopsDomGuard.
+PASS — final workflow restart completed; application startup and Mongo indexes completed.
+Known non-blocking local logs: existing CSP refusals for Google Fonts, assets.emergent.sh, inline visual-edit assets/styles; existing missing configured super-admin phone.
 
-Probe expectation note:
-- The supplied spec expected unit 102's Excel string to gain חיפוי מטבח.
-- Before: לא הוזן: ריצוף יבש, ריצוף מרפסות
-- After:  לא הוזן: ריצוף יבש, ריצוף מרפסות (unchanged)
-- Reason: the probe deliberately deletes חיפוי מטבח from spare settings before the final matrix/export call, so the final unit has only the two listed category rows. The new engine correctly counts all rows that still exist.
-- Rather than manufacture a false string change, the probe now directly asserts the changed live contract on unit 101: applicable_count == categories_total == 4. The check name changed from “V2 matrix unit A short summary” to “V2 matrix unit A short summary counts every category”.
-- The first pre-restart probe exposed that the running workflow still had #593 code (2 instead of 4); after one code restart, the authoritative final probe returned 4/4 and passed 99/99.
+V3 — PLAYWRIGHT INCIDENT / UI PASS
+PASS — Arabic pending invite GET returned preferred_language="ar".
+PASS — Arabic invite landed with exact heading "لديك دعوة لمشروع", OTP button "إرسال رمز التحقق", html lang=ar, and brikops_lang=ar.
+PASS — desktop and 390px layouts rendered without clipping.
+PASS — Arabic OTP send reached the Arabic OTP state under SMS stub without ErrorBoundary, NotFoundError, removeChild, or insertBefore exception.
+PASS — fresh Hebrew invite stayed Hebrew with html lang=he.
+PASS — management dev-auth applied Hebrew; logout returned to Hebrew login with stored he. Empty-storage fresh context started Hebrew.
+PASS — forced translator-style <font> wrapping of 14 live text nodes followed by React typing/checkbox re-renders stayed rendered with the guard, with no ErrorBoundary or matching exception.
+CONTROL — after temporarily restoring native Node methods in page context, the same simulation did not reproduce the production crash under this browser/React timing. This was not treated as a guarded failure.
+PASS — unchanged Hebrew login/OTP flow rendered and advanced under SMS stub.
+PASS — existing populated demo unit defects page rendered one defect and unchanged spare card "ריצוף ספייר" / "לא עודכן" without crash.
+PASS — temporary data cleanup: two invites and one temporary membership removed; final invite/membership/OTP/rate-limit/SMS-event counts for test identifiers were zero.
+Safety note: invite documents were seeded directly in local Mongo for browser verification because the existing PM invite endpoint queues outbound notifications. No invite creation/resend/notification endpoint was called.
 
-================================================================================
-V2 — CI BUILD
-================================================================================
+Initial Playwright finding and fix:
+- Initial same-context Arabic invite -> /login preserved html lang=ar and brikops_lang=ar but showed hardcoded Hebrew LoginPage phone/OTP copy.
+- LoginPage's active phone/OTP labels now use existing four-locale i18n keys. The follow-up change passed CI=true build and focused Jest checks; no second end-to-end pass was run, per the single-pass testing rule.
 
-PASS: CI=true GENERATE_SOURCEMAP=false yarn build; exit 0.
-- The BATCH introduces no frontend bundle logic change: zero frontend source files differ from a5fbc9d.
-- The generated asset hash varied between verification builds because REACT_APP_BACKEND_URL is compiled into CRA and was switched from the public preview domain to http://localhost:5000 so Playwright could reach the local app. This is build-environment content, not a BATCH source/bundle behavior change.
-- The local served bundle was verified to embed http://localhost:5000 before V3.
-- After V3, a final CI=true build restored the standard https://api.brikops.com API base (main.8c1c4aea.js), and the application workflow restarted successfully.
-- No env or dependency file was changed.
-
-================================================================================
-V3 — PLAYWRIGHT UI + EXCEL
-================================================================================
-
-PASS: one persistent Playwright tester session against http://localhost:5000, using temporary local Mongo seeds with exact BSON snapshot/restore.
-
-Scenario 1 — targets on 3 of 5; one sufficiently entered row:
-- Seed: targets A/B/C = 5; A count 6; B/C/D/E empty.
-- Matrix exact text: הוזן 1/5.
-- Matrix classes: bg-slate-100 text-slate-600 border-slate-200 (grey).
-- Apartment /defects card header exact text: הוזן 1/5, grey.
-- Excel apartment 18 cell exact text: הוזן 1/5 · לא הוזן: קטגוריה ב, קטגוריה ג, קטגוריה ד, קטגוריה ה.
-
-Scenario 2 — targets on 4 of 5; one below target, one confirmed zero, three empty:
-- Seed: targets A/B/C/D = 5; A count 1; B count 0 with entered=true; C/D/E empty.
-- Matrix exact text: חסר 2 · הוזן 2/5.
-- Matrix classes: bg-red-100 text-red-700 border-red-200 (red).
-- Apartment /defects card header exact text: חסר 2 · הוזן 2/5, red.
-
-Scenario 3 — every row entered and all targets met:
-- Seed: targets A/B/C = 5; A/B/C count 6; no-target D/E count 1.
-- Matrix exact text: מספיק.
-- Matrix classes: bg-emerald-100 text-emerald-700 border-emerald-200 (green).
-- Apartment /defects card header exact text: מספיק, green.
-
-Test-data protection:
-- The original project and unit BSON documents were restored after every scenario and exact equality checks passed.
-- Final checks: projectEqual=true; unitEqual=true.
-- The temporary project membership was deleted; remaining matching membership count=0.
-- No notification endpoint was called.
-- No backend/API failure occurred in the successful pass. Existing CSP refusals for external fonts/inline vendor assets did not block the tested UI or Excel export.
-
-================================================================================
-V4 — SCOPE + PROTECTED CODE
-================================================================================
-
-Exact three changed source/test files vs a5fbc9d:
-- backend/contractor_ops/spare_tiles.py
-- backend/tests/test_spare_tiles.py
-- backend/tests/probe_spare_tiles_http.py
-
-PASS: git diff --check.
-PASS: no untracked source files.
-PASS: validate_spare_settings byte-identical by awk + MD5:
-- base:    5278a15d316b233c18ea39964afd2029
-- current: 5278a15d316b233c18ea39964afd2029
-
-PASS: all prohibited/protected files unchanged, including:
-- backend/contractor_ops/projects_router.py
-- backend/contractor_ops/spare_tiles_router.py
-- backend/contractor_ops/execution_matrix_router.py
-- backend/contractor_ops/execution_matrix_export.py
-- backend/tests/test_execution_matrix_export.py
-- frontend/src/components/matrix/SparePill.js
-- frontend/src/components/matrix/SparePill.test.js
-- frontend/src/pages/ApartmentDashboardPage.js
-- frontend/src/hooks/useMatrixFilters.js
-- frontend/src/components/matrix/MatrixFilterDrawer.js
-- frontend/src/pages/ExecutionMatrixPage.js
-- frontend/src/pages/SpareTilesPage.js
-
-================================================================================
-DELIVERABLE
-================================================================================
-
-.local/.commit_message contains the exact supplied message.
-No commit was created.
-No deployment was performed.
+V4 — SCOPE / SAFETY
+PASS — no ErrorBoundary, RegisterPage, spare-inventory implementation, migrations, dependencies, environment configuration, production data, or deployment changes.
+PASS — no commit and no deployment performed.
+PASS — expected hotfix files plus focused tests and review.txt only, with one documented LoginPage.js scope exception required to satisfy Arabic-language persistence visibly.
+PASS — no test data remains.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

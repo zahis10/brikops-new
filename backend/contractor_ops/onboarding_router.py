@@ -1448,6 +1448,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             'project_id': invite['project_id'],
             'role': role,
             'role_display': ROLE_LABELS_HE.get(role, role),
+            'preferred_language': invite.get('preferred_language') or 'he',
         }
 
     @router.post("/onboarding/join-by-code")

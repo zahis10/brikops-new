@@ -12,7 +12,7 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
 import { navigateToProject } from '../utils/navigation';
-import { t } from '../i18n';
+import { t, setLanguage } from '../i18n';
 import { Capacitor } from '@capacitor/core';
 import { SignInWithApple } from '@capacitor-community/apple-sign-in';
 import { SocialLogin } from '@capgo/capacitor-social-login';
@@ -115,6 +115,7 @@ const OnboardingPage = () => {
       setInviteLoading(true);
       onboardingService.getInviteInfo(inviteToken)
         .then(info => {
+          if (info.preferred_language) setLanguage(info.preferred_language);
           setInviteInfo(info);
           setSelectedInvite({ invite_id: info.invite_id, project_name: info.project_name, role: info.role });
           if (authToken) {

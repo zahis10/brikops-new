@@ -13,6 +13,7 @@ import { SignInWithApple } from '@capacitor-community/apple-sign-in';
 import { SocialLogin } from '@capgo/capacitor-social-login';
 import useOtpAutofill from '../hooks/useOtpAutofill';
 import useAndroidSmsRetriever from '../hooks/useAndroidSmsRetriever';
+import { t } from '../i18n';
 
 const ENABLE_REGISTER_MANAGEMENT_REDIRECTS =
   process.env.REACT_APP_ENABLE_REGISTER_MANAGEMENT_REDIRECTS === 'true';
@@ -101,12 +102,12 @@ const LoginPage = () => {
   const handleRequestOtp = useCallback(async (e) => {
     e.preventDefault();
     if (!phone.trim()) {
-      toast.error('יש להזין מספר טלפון');
+      toast.error(t('onboarding', 'err_phone_required'));
       return;
     }
     const e164 = canonicalE164(phone);
     if (!isValidIsraeliMobile(e164)) {
-      toast.error('מספר טלפון לא תקין');
+      toast.error(t('onboarding', 'err_phone_invalid'));
       return;
     }
     setLoading(true);
@@ -114,7 +115,7 @@ const LoginPage = () => {
       const res = await onboardingService.requestOtp(e164);
       setPhoneE164(e164);
       setPhoneStep('otp');
-      toast('שולחים קוד אימות...', { icon: '📱' });
+      toast(t('onboarding', 'toast_sending_otp'), { icon: '📱' });
     } catch (error) {
       const status = error.response?.status;
       const detail = error.response?.data?.detail || error.message;
@@ -624,7 +625,7 @@ const LoginPage = () => {
             onClick={() => { setAuthMethod('phone'); setErrors({}); }}
           >
             <Phone className="w-4 h-4" />
-            טלפון
+            {t('onboarding', 'phone_label')}
           </button>
           <button type="button" role="tab" id="tab-email" aria-selected={authMethod === 'email'} aria-controls="tabpanel-email"
             className={`flex-1 py-2.5 rounded-md text-sm font-medium transition-all touch-manipulation flex items-center justify-center gap-1.5 ${
@@ -642,7 +643,7 @@ const LoginPage = () => {
           <form onSubmit={handleRequestOtp} className="space-y-4" dir="rtl">
             <div className="space-y-2">
               <label htmlFor="phone" className="block text-sm font-medium text-slate-700">
-                מספר טלפון
+                {t('onboarding', 'phone_label')}
                 <span className="text-red-500 mr-1">*</span>
               </label>
               <div className="relative">
@@ -666,9 +667,9 @@ const LoginPage = () => {
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  שולח קוד...
+                  {t('onboarding', 'toast_sending_otp')}
                 </span>
-              ) : 'שלח קוד אימות'}
+              ) : t('onboarding', 'send_otp')}
             </Button>
             <div className="text-left mt-2">
               <a href="/forgot-password" className="text-sm text-amber-600 hover:text-amber-700 font-medium">
@@ -688,15 +689,15 @@ const LoginPage = () => {
               className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 mb-2"
             >
               <ArrowRight className="w-4 h-4" />
-              חזרה
+              {t('onboarding', 'back')}
             </button>
             <div className="text-center mb-4">
-              <p className="text-sm text-slate-600">קוד אימות נשלח למספר</p>
+              <p className="text-sm text-slate-600">{t('onboarding', 'otp_sent_to')}</p>
               <bdi dir="ltr" className="font-mono text-base font-medium text-slate-900 mt-1 inline-block">{phoneE164}</bdi>
             </div>
             <div className="space-y-2">
               <label htmlFor="otp" className="block text-sm font-medium text-slate-700">
-                קוד אימות
+                {t('onboarding', 'otp_label')}
                 <span className="text-red-500 mr-1">*</span>
               </label>
               <input
@@ -720,9 +721,9 @@ const LoginPage = () => {
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  מאמת...
+                  {t('onboarding', 'verify')}
                 </span>
-              ) : 'אימות והתחברות'}
+              ) : t('onboarding', 'verify')}
             </Button>
             <button
               type="button"
@@ -730,7 +731,7 @@ const LoginPage = () => {
               disabled={loading}
               className="w-full text-sm text-amber-600 hover:text-amber-700 mt-2"
             >
-              שלח קוד חדש
+              {t('onboarding', 'resend_otp')}
             </button>
           </form>
           </div>

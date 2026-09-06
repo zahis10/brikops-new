@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import "@/index.css";
 import App from "@/App";
+import { installDomGuard } from "@/utils/domGuard";
 import { Capacitor } from '@capacitor/core';
 import { SocialLogin } from '@capgo/capacitor-social-login';
 
@@ -14,6 +15,8 @@ if (Capacitor.isNativePlatform()) {
     },
   }).catch((err) => console.error('[SocialLogin] init failed:', err));
 }
+
+installDomGuard();
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(

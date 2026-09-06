@@ -6,10 +6,21 @@ import zh from './zh.json';
 const LOCALES = { he, en, ar, zh };
 let currentLocale = 'he';
 
+try {
+  const saved = localStorage.getItem('brikops_lang');
+  if (saved && LOCALES[saved]) {
+    currentLocale = saved;
+    document.documentElement.lang = saved;
+  }
+} catch {}
+
 export function setLanguage(lang) {
   const base = (lang || '').split('-')[0].split('_')[0].toLowerCase();
   currentLocale = LOCALES[base] ? base : 'he';
   document.documentElement.lang = currentLocale;
+  try {
+    localStorage.setItem('brikops_lang', currentLocale);
+  } catch {}
 }
 
 export function getLanguage() {
