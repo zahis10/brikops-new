@@ -692,7 +692,7 @@ const LoginPage = () => {
               {t('onboarding', 'back')}
             </button>
             <div className="text-center mb-4">
-              <p className="text-sm text-slate-600">{t('onboarding', 'otp_sent_to')}</p>
+              <p className="text-sm text-slate-600">{t('onboarding', 'login_otp_sent_to')}</p>
               <bdi dir="ltr" className="font-mono text-base font-medium text-slate-900 mt-1 inline-block">{phoneE164}</bdi>
             </div>
             <div className="space-y-2">
@@ -721,9 +721,9 @@ const LoginPage = () => {
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  {t('onboarding', 'verify')}
+                  {t('onboarding', 'login_verify_and_login')}
                 </span>
-              ) : t('onboarding', 'verify')}
+              ) : t('onboarding', 'login_verify_and_login')}
             </Button>
             <button
               type="button"
@@ -731,7 +731,7 @@ const LoginPage = () => {
               disabled={loading}
               className="w-full text-sm text-amber-600 hover:text-amber-700 mt-2"
             >
-              {t('onboarding', 'resend_otp')}
+              {t('onboarding', 'login_resend_code')}
             </button>
           </form>
           </div>

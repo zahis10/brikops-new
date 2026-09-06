@@ -488,4 +488,79 @@ PASS — no commit and no deployment performed.
 PASS — expected hotfix files plus focused tests and review.txt only, with one documented LoginPage.js scope exception required to satisfy Arabic-language persistence visibly.
 PASS — no test data remains.
 
+FIX-1 — PRESERVE EXACT HEBREW LOGIN WORDING
+
+FIX-1 BASE / SCOPE
+- Base commit: 481845e
+- Initial git status: clean
+- Changed implementation files only:
+  - frontend/src/i18n/he.json
+  - frontend/src/i18n/en.json
+  - frontend/src/i18n/ar.json
+  - frontend/src/i18n/zh.json
+  - frontend/src/pages/LoginPage.js
+- No other implementation change.
+
+FIX-1 FULL DIFF
+diff --git a/frontend/src/i18n/he.json b/frontend/src/i18n/he.json
+@@ onboarding
+     "otp_sent_to": "שולחים קוד אימות ל-",
++    "login_otp_sent_to": "קוד אימות נשלח למספר",
+     "verify": "אימות",
++    "login_verify_and_login": "אימות והתחברות",
+     "resend_otp": "לא קיבלת קוד? שלח שוב",
++    "login_resend_code": "שלח קוד חדש",
+
+diff --git a/frontend/src/i18n/en.json b/frontend/src/i18n/en.json
+@@ onboarding
+     "otp_sent_to": "Sending verification code to ",
++    "login_otp_sent_to": "Verification code sent to",
+     "verify": "Verify",
++    "login_verify_and_login": "Verify and sign in",
+     "resend_otp": "Didn't receive a code? Resend",
++    "login_resend_code": "Send a new code",
+
+diff --git a/frontend/src/i18n/ar.json b/frontend/src/i18n/ar.json
+@@ onboarding
+     "otp_sent_to": "جاري إرسال رمز التحقق إلى ",
++    "login_otp_sent_to": "تم إرسال رمز التحقق إلى",
+     "verify": "تحقق",
++    "login_verify_and_login": "التحقق وتسجيل الدخول",
+     "resend_otp": "لم تستلم رمزاً؟ أعد الإرسال",
++    "login_resend_code": "إرسال رمز جديد",
+
+diff --git a/frontend/src/i18n/zh.json b/frontend/src/i18n/zh.json
+@@ onboarding
+     "otp_sent_to": "正在发送验证码到",
++    "login_otp_sent_to": "验证码已发送至",
+     "verify": "验证",
++    "login_verify_and_login": "验证并登录",
+     "resend_otp": "未收到验证码？重新发送",
++    "login_resend_code": "发送新验证码",
+
+diff --git a/frontend/src/pages/LoginPage.js b/frontend/src/pages/LoginPage.js
+@@ LoginPage phone OTP state
+-              <p className="text-sm text-slate-600">{t('onboarding', 'otp_sent_to')}</p>
++              <p className="text-sm text-slate-600">{t('onboarding', 'login_otp_sent_to')}</p>
+-                  {t('onboarding', 'verify')}
++                  {t('onboarding', 'login_verify_and_login')}
+-              ) : t('onboarding', 'verify')}
++              ) : t('onboarding', 'login_verify_and_login')}
+-              {t('onboarding', 'resend_otp')}
++              {t('onboarding', 'login_resend_code')}
+
+FIX-1 VERIFICATION
+PASS — Hebrew values are byte-for-byte the requested wording:
+- login_verify_and_login: אימות והתחברות
+- login_otp_sent_to: קוד אימות נשלח למספר
+- login_resend_code: שלח קוד חדש
+PASS — natural English, Arabic, and Chinese values were added under onboarding.
+PASS — LoginPage uses the new keys only for the OTP sent text, submit button, and resend button.
+PASS — CI=true yarn test --watchAll=false --runInBand src/utils/__tests__/domGuard.test.js src/i18n/__tests__/index.test.js
+  2 suites, 8 tests passed.
+PASS — CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+  Compiled successfully.
+PASS — git diff --check.
+PASS — no commit and no deployment performed.
+
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
