@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH #594 Review"
-description = "STEP 0, complete three-file diff, V1–V4 verification evidence, probe clarification, protected hash, and approval warning."
+title = "BATCH #595 — review.txt"
+description = "דו״ח מלא הכולל STEP 0, diff מלא, תוצאות V1–V4 וסימון DO NOT DEPLOY."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:fdba0b83417f7fd6386343421a5cfbef6857114580e3d5c3d36c6b4be905df42"
-size = 14273
-mtime_ms = 1788638019863
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/24e1091a-26fc-4798-8339-fa9cda5f52d6"
-storage_version_token = "1788638042037970"
+content_hash = "sha256:09cb536e87dce7c606aba27999cce5cd70fa6d6bf14fbe962ac9431c2df51bf9"
+size = 21305
+mtime_ms = 1788688718867
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/a96113af-a2cd-42a1-acdf-928b848b75d4"
+storage_version_token = "1788688877689260"
 content_type = "text/plain"
 
 [[outputs]]
