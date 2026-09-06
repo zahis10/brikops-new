@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH #595 — review.txt"
-description = "דו״ח מלא הכולל STEP 0, diff מלא, תוצאות V1–V4 וסימון DO NOT DEPLOY."
+title = "BATCH #595 + FIX-1 — review.txt"
+description = "הדו״ח המעודכן כולל ה־diff של FIX-1, תוצאות Jest/build ושורת DO NOT DEPLOY."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:09cb536e87dce7c606aba27999cce5cd70fa6d6bf14fbe962ac9431c2df51bf9"
-size = 21305
-mtime_ms = 1788688718867
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/a96113af-a2cd-42a1-acdf-928b848b75d4"
-storage_version_token = "1788688877689260"
+content_hash = "sha256:2f5ecc02621adf22fd02aec3c9c00deca8e9fcf4562572f0ad8bdc510fa3f08a"
+size = 24638
+mtime_ms = 1788690650875
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/f3b8b954-40b0-449d-a655-d7bc25574d01"
+storage_version_token = "1788691184186787"
 content_type = "text/plain"
 
 [[outputs]]
