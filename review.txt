@@ -7,7 +7,7 @@ STEP 0 — CLEAN BASE
 - This is the landed #594 base allowed by the task.
 
 IMPLEMENTATION SUMMARY
-1. Public pending-invite info now exposes preferred_language with a Hebrew fallback.
+1ס. Public pending-invite info now exposes preferred_language with a Hebrew fallback.
 2. Onboarding applies the invite locale before publishing invite state, so the first invite render is in the intended language.
 3. A startup DOM guard tolerates stale removeChild/insertBefore references created by Chrome/Google Translate while preserving normal operations and remaining idempotent.
 4. The document opts out of browser translation with translate="no" and google notranslate metadata.
