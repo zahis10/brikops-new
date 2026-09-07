@@ -564,3 +564,799 @@ PASS — git diff --check.
 PASS — no commit and no deployment performed.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+BATCH #596 — SECURITY FIXES A
+
+STEP 0 — CLEAN BASE
+- Requested branch: staging.
+- Isolated assigned-task branch reported: main.
+- HEAD: cbea773 (exact requested base; origin/staging == origin/main at this SHA per specification).
+- Initial git status: clean.
+- Environment difference recorded: the isolated task checkout uses main rather than staging; no base drift was present.
+
+IMPLEMENTATION SUMMARY
+1. Added one shared openpyxl neutralizer for strings beginning with =, +, -, @, tab, or carriage return. Values remain verbatim; only risky cells are forced to string type.
+2. Routed user-controlled execution-matrix, standard/full defects, and safety workbook writes through the helper without changing workbook structure, styles, links, comments, widths, sheet names, or filenames.
+3. Capped spare counts at 100,000 and rejected category names beginning with $ while preserving dotted names.
+4. Unit detail now returns 404 when no project can be resolved; normal project access validation remains unconditional once a project ID exists.
+5. Invalid spare-profile assignment errors show five IDs plus a Hebrew remaining-count suffix.
+6. Security middleware removes Access-Control-Allow-Credentials only when Access-Control-Allow-Origin is absent.
+7. Added focused round-trip, exporter, spare, and unit-detail regressions.
+
+FULL SCOPED DIFF VS cbea773
+Command:
+  git diff --no-ext-diff cbea773 -- <tracked scoped files>
+  git diff --no-index --no-ext-diff /dev/null <each new scoped file>
+
+diff --git a/backend/contractor_ops/execution_matrix_export.py b/backend/contractor_ops/execution_matrix_export.py
+index 26122e3..d92f610 100644
+--- a/backend/contractor_ops/execution_matrix_export.py
++++ b/backend/contractor_ops/execution_matrix_export.py
+@@ -25,6 +25,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
+ from openpyxl.utils import get_column_letter
+
+ from contractor_ops.spare_tiles import SPARE_OVERALL_LABELS
++from contractor_ops.xlsx_safe import append_row, neutralize, set_cell
+
+
+ STATUS_LABELS = {
+@@ -100,7 +101,7 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
+     spare_enabled = bool(spare and spare.get("enabled"))
+     if spare_enabled:
+         headers.append("ריצוף ספייר")
+-    ws.append(headers)
++    append_row(ws, headers)
+     for col_idx in range(1, len(headers) + 1):
+         cell = ws.cell(row=1, column=col_idx)
+         cell.font = Font(bold=True, size=11)
+@@ -115,10 +116,10 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
+         building = buildings.get(unit.get("building_id")) or {}
+         floor = floors.get(unit.get("floor_id")) or {}
+
+-        ws.cell(row=row_idx, column=1, value=building.get("name") or "—")
+-        ws.cell(row=row_idx, column=2, value=floor.get("floor_number") or "—")
+-        ws.cell(row=row_idx, column=3, value=unit.get("unit_no") or "—")
+-        ws.cell(row=row_idx, column=4, value=unit.get("room_count") or "")
++        set_cell(ws, row_idx, 1, building.get("name") or "—")
++        set_cell(ws, row_idx, 2, floor.get("floor_number") or "—")
++        set_cell(ws, row_idx, 3, unit.get("unit_no") or "—")
++        set_cell(ws, row_idx, 4, unit.get("room_count") or "")
+
+         for stage_idx, stage in enumerate(stages):
+             col = 5 + stage_idx
+@@ -128,6 +129,7 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
+                 continue
+             if stage.get("type") == "tag":
+                 cell_xl.value = c.get("text_value") or ""
++                neutralize(cell_xl)
+             else:
+                 status = c.get("status")
+                 if status:
+@@ -190,7 +192,7 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
+                     f"הוזן {applicable_count}/{applicable_count}"
+                     if applicable_count else label
+                 )
+-            spare_cell = ws.cell(row=row_idx, column=spare_col, value=label)
++            spare_cell = set_cell(ws, row_idx, spare_col, label)
+             fill = SPARE_FILLS.get(overall)
+             if fill is not None:
+                 spare_cell.fill = fill
+diff --git a/backend/contractor_ops/export_router.py b/backend/contractor_ops/export_router.py
+index d6723fe..826f47c 100644
+--- a/backend/contractor_ops/export_router.py
++++ b/backend/contractor_ops/export_router.py
+@@ -9,6 +9,7 @@ from pydantic import BaseModel
+ from starlette.responses import StreamingResponse
+
+ from contractor_ops.router import get_db, get_current_user, _check_project_read_access, _get_project_role, _audit
++from contractor_ops.xlsx_safe import set_cell
+ from models import CATEGORIES
+ from services.object_storage import generate_url
+
+@@ -340,7 +341,7 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
+         ] + spare_cols
+
+         for col_idx, value in enumerate(row_data, 1):
+-            cell = ws.cell(row=row_idx, column=col_idx, value=value)
++            cell = set_cell(ws, row_idx, col_idx, value)
+             cell.font = cell_font
+             cell.alignment = cell_align
+             cell.border = thin_border
+@@ -448,7 +449,7 @@ async def _generate_full_excel(project_id: str, project_name: str):
+
+     def _write_row(ws, row_idx, values):
+         for col_idx, value in enumerate(values, 1):
+-            cell = ws.cell(row=row_idx, column=col_idx, value=value)
++            cell = set_cell(ws, row_idx, col_idx, value)
+             cell.font = cell_font
+             cell.alignment = cell_align
+             cell.border = thin_border
+diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
+index c26a108..d1dba31 100644
+--- a/backend/contractor_ops/projects_router.py
++++ b/backend/contractor_ops/projects_router.py
+@@ -730,6 +730,8 @@ async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(
+             raise HTTPException(status_code=422, detail='count must be an integer')
+         if count < 0:
+             raise HTTPException(status_code=422, detail='count must be >= 0')
++        if count > 100000:
++            raise HTTPException(status_code=422, detail='כמות ספייר גדולה מדי (עד 100,000)')
+
+         notes = entry.get('notes', '') or ''
+         if not isinstance(notes, str):
+@@ -1206,8 +1208,9 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
+     building = await db.buildings.find_one({'id': unit.get('building_id')}, {'_id': 0}) if unit.get('building_id') else None
+     project_id = unit.get('project_id') or (building.get('project_id') if building else None)
+     project = await db.projects.find_one({'id': project_id}, {'_id': 0}) if project_id else None
+-    if project_id:
+-        await _check_project_read_access(user, project_id)
++    if not project_id:
++        raise HTTPException(status_code=404, detail='Unit not found')
++    await _check_project_read_access(user, project_id)
+
+     effective_label = unit.get('display_label') or unit.get('unit_no', '')
+     try:
+diff --git a/backend/contractor_ops/safety/score_exports.py b/backend/contractor_ops/safety/score_exports.py
+index d89904f..5ad022c 100644
+--- a/backend/contractor_ops/safety/score_exports.py
++++ b/backend/contractor_ops/safety/score_exports.py
+@@ -21,6 +21,7 @@ from contractor_ops.safety._shared import (  # noqa: F401
+     timedelta,
+     timezone,
+ )
++from contractor_ops.xlsx_safe import set_cell
+
+ # =====================================================================
+ # Score & Exports — Phase 1 Part 3 (Backend Advanced)
+@@ -349,7 +350,7 @@ def _write_sheet(wb, title, headers, rows, widths):
+         c.border = s["thin"]
+     for r_idx, row in enumerate(rows, 2):
+         for c_idx, val in enumerate(row, 1):
+-            c = ws.cell(row=r_idx, column=c_idx, value=val)
++            c = set_cell(ws, r_idx, c_idx, val)
+             c.font = s["cell_font"]
+             c.alignment = s["cell_align"]
+             c.border = s["thin"]
+diff --git a/backend/contractor_ops/spare_tiles.py b/backend/contractor_ops/spare_tiles.py
+index abf76f2..6b56719 100644
+--- a/backend/contractor_ops/spare_tiles.py
++++ b/backend/contractor_ops/spare_tiles.py
+@@ -64,6 +64,8 @@ def validate_spare_settings(body):
+         name = name.strip()
+         if len(name) > 50:
+             raise HTTPException(status_code=422, detail='שם קטגוריה ארוך מדי (עד 50 תווים)')
++        if name.startswith('$'):
++            raise HTTPException(status_code=422, detail='שם קטגוריה לא יכול להתחיל ב-$')
+         name_key = name.casefold()
+         if name_key in category_names:
+             raise HTTPException(status_code=422, detail=f'שם קטגוריה כפול: {name}')
+diff --git a/backend/contractor_ops/spare_tiles_router.py b/backend/contractor_ops/spare_tiles_router.py
+index aaaa3cc..963f260 100644
+--- a/backend/contractor_ops/spare_tiles_router.py
++++ b/backend/contractor_ops/spare_tiles_router.py
+@@ -262,9 +262,11 @@ async def patch_spare_profile_units(
+     units_by_id = {unit['id']: unit for unit in units}
+     offending = [unit_id for unit_id in requested_ids if unit_id not in units_by_id]
+     if offending:
++        shown = ', '.join(offending[:5])
++        more = f' ועוד {len(offending) - 5}' if len(offending) > 5 else ''
+         raise HTTPException(
+             status_code=422,
+-            detail=f"מזהי דירות לא חוקיים: {', '.join(offending)}",
++            detail=f"מזהי דירות לא חוקיים: {shown}{more}",
+         )
+
+     actual_add_ids = [
+diff --git a/backend/server.py b/backend/server.py
+index fef4a86..d584e92 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -1600,6 +1600,12 @@ class SecurityHeadersMiddleware(_BaseHTTPMiddleware):
+         response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+         response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
++        # CORS hygiene: never send the credentials flag without an allowed origin.
++        if (
++            'access-control-allow-credentials' in response.headers
++            and 'access-control-allow-origin' not in response.headers
++        ):
++            del response.headers['access-control-allow-credentials']
+         return response
+
+ app.add_middleware(SecurityHeadersMiddleware)
+diff --git a/backend/tests/test_execution_matrix_export.py b/backend/tests/test_execution_matrix_export.py
+index 9408e8b..f604a13 100644
+--- a/backend/tests/test_execution_matrix_export.py
++++ b/backend/tests/test_execution_matrix_export.py
+@@ -355,6 +355,51 @@ def test_spare_export_uses_progress_and_problem_rule_for_every_profile_mode():
+     ]
+
+
++def test_formula_like_user_text_is_stored_as_verbatim_strings():
++    project = {"id": "p1", "name": "Demo"}
++    stages = [{"id": "tag", "title": "=1+1", "type": "tag"}]
++    units = [{
++        "id": "u1",
++        "building_id": "b1",
++        "unit_no": "1",
++    }]
++    cells = [{
++        "unit_id": "u1",
++        "stage_id": "tag",
++        "text_value": "+cmd",
++        "note": None,
++    }]
++    buildings = {"b1": {"name": '=HYPERLINK("x","y")'}}
++    spare = {
++        "enabled": True,
++        "by_unit": {"u1": {"overall": "no_profile"}},
++    }
++
++    sheet = _read_workbook(
++        build_matrix_xlsx(
++            project,
++            units,
++            stages,
++            cells,
++            buildings,
++            {},
++            spare=spare,
++        )
++    ).active
++
++    expected = {
++        (1, 5): '=1+1',
++        (2, 1): '=HYPERLINK("x","y")',
++        (2, 5): '+cmd',
++    }
++    for (row, column), value in expected.items():
++        cell = sheet.cell(row=row, column=column)
++        assert cell.value == value
++        assert cell.data_type == 's'
++    assert sheet.cell(row=2, column=6).value == 'אחר'
++    assert sheet.cell(row=2, column=6).data_type == 's'
++
++
+ # =====================================================================
+ # T2 — status label translation + fills
+ # =====================================================================
+diff --git a/backend/tests/test_spare_tiles.py b/backend/tests/test_spare_tiles.py
+index 2502174..9825970 100644
+--- a/backend/tests/test_spare_tiles.py
++++ b/backend/tests/test_spare_tiles.py
+@@ -2,6 +2,7 @@ import asyncio
+ import os
+ import sys
+ import uuid
++from unittest.mock import AsyncMock, MagicMock
+
+ import pytest
+ from fastapi import HTTPException
+@@ -15,7 +16,7 @@ from contractor_ops.spare_tiles import (
+     matrix_spare_summary,
+     validate_spare_settings,
+ )
+-from contractor_ops import spare_tiles_router
++from contractor_ops import projects_router, spare_tiles_router
+
+
+ PROFILE_ID = str(uuid.uuid4())
+@@ -633,4 +634,104 @@ def test_stale_settings_editor_is_rejected(monkeypatch):
+             {'id': 'user'},
+         ))
+     assert error.value.status_code == 409
+-    assert db.projects.update_calls == []
+\ No newline at end of file
++    assert db.projects.update_calls == []
++
++
++def _named_category_settings(category_name):
++    return {
++        'categories': [{'name': category_name, 'measure': 'tiles'}],
++        'profiles': [],
++        'margin_pct': 10,
++    }
++
++
++def test_spare_category_cannot_start_with_dollar():
++    with pytest.raises(HTTPException) as error:
++        validate_spare_settings(_named_category_settings('$x'))
++
++    assert error.value.status_code == 422
++    assert error.value.detail == 'שם קטגוריה לא יכול להתחיל ב-$'
++
++
++def test_spare_category_with_dot_remains_valid():
++    result = validate_spare_settings(_named_category_settings('ריצוף 60.60'))
++
++    assert result['categories'] == [{
++        'name': 'ריצוף 60.60',
++        'measure': 'tiles',
++    }]
++
++
++def test_spare_count_is_capped_at_one_hundred_thousand(monkeypatch):
++    db = MagicMock()
++    unit = {'id': 'unit-1', 'project_id': 'project-1', 'unit_no': '1'}
++    updated_unit = {
++        **unit,
++        'spare_tiles': [{'type': 'ריצוף', 'count': 100000}],
++    }
++    db.units.find_one = AsyncMock(side_effect=[unit, updated_unit, unit])
++    db.units.update_one = AsyncMock()
++
++    async def project_manager(*_args):
++        return 'project_manager'
++
++    async def no_audit(*_args, **_kwargs):
++        return None
++
++    monkeypatch.setattr(projects_router, 'get_db', lambda: db)
++    monkeypatch.setattr(projects_router, '_get_project_role', project_manager)
++    monkeypatch.setattr(projects_router, '_audit', no_audit)
++
++    accepted = asyncio.run(projects_router.patch_unit_spare_tiles(
++        'unit-1',
++        {'spare_tiles': [{'type': 'ריצוף', 'count': 100000}]},
++        {'id': 'user-1'},
++    ))
++    assert accepted.spare_tiles[0]['count'] == 100000
++
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(projects_router.patch_unit_spare_tiles(
++            'unit-1',
++            {'spare_tiles': [{'type': 'ריצוף', 'count': 100001}]},
++            {'id': 'user-1'},
++        ))
++    assert error.value.status_code == 422
++    assert error.value.detail == 'כמות ספייר גדולה מדי (עד 100,000)'
++
++
++def test_invalid_profile_assignment_ids_are_capped_at_five(monkeypatch):
++    db = MagicMock()
++    profile_id = 'profile-1'
++    project = {
++        'id': 'project-1',
++        'spare_settings': {
++            'profiles': [{'id': profile_id, 'name': 'Profile'}],
++        },
++    }
++    db.units.find.return_value.to_list = AsyncMock(return_value=[])
++
++    async def project_or_404(*_args):
++        return project
++
++    async def allow_write(*_args):
++        return None
++
++    monkeypatch.setattr(spare_tiles_router, 'get_db', lambda: db)
++    monkeypatch.setattr(spare_tiles_router, '_project_or_404', project_or_404)
++    monkeypatch.setattr(spare_tiles_router, '_require_write', allow_write)
++
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(spare_tiles_router.patch_spare_profile_units(
++            'project-1',
++            profile_id,
++            {
++                'add': [f'unit-{index}' for index in range(1, 8)],
++                'remove': [],
++            },
++            {'id': 'user-1'},
++        ))
++    assert error.value.status_code == 422
++    assert error.value.detail == (
++        'מזהי דירות לא חוקיים: '
++        'unit-1, unit-2, unit-3, unit-4, unit-5 ועוד 2'
++    )
+\ No newline at end of file
+diff --git a/backend/contractor_ops/xlsx_safe.py b/backend/contractor_ops/xlsx_safe.py
+new file mode 100644
+index 0000000..e078724
+--- /dev/null
++++ b/backend/contractor_ops/xlsx_safe.py
+@@ -0,0 +1,28 @@
++"""Helpers that keep user-entered spreadsheet text from becoming formulas."""
++
++_RISKY_PREFIXES = ('=', '+', '-', '@', '\t', '\r')
++
++
++def is_formula_like(value):
++    return isinstance(value, str) and value[:1] in _RISKY_PREFIXES
++
++
++def neutralize(cell):
++    """Force a string cell for formula-like text; no-op otherwise."""
++    if is_formula_like(cell.value):
++        cell.data_type = 's'
++    return cell
++
++
++def set_cell(ws, row, column, value):
++    cell = ws.cell(row=row, column=column, value=value)
++    return neutralize(cell)
++
++
++def append_row(ws, values):
++    row_values = list(values)
++    ws.append(row_values)
++    row = ws.max_row
++    for index, value in enumerate(row_values, start=1):
++        if is_formula_like(value):
++            ws.cell(row=row, column=index).data_type = 's'
+\ No newline at end of file
+diff --git a/backend/tests/test_xlsx_safe.py b/backend/tests/test_xlsx_safe.py
+new file mode 100644
+index 0000000..097c6f3
+--- /dev/null
++++ b/backend/tests/test_xlsx_safe.py
+@@ -0,0 +1,61 @@
++from datetime import datetime
++from io import BytesIO
++
++from openpyxl import Workbook, load_workbook
++
++from contractor_ops.xlsx_safe import append_row, set_cell
++
++
++RISKY_VALUES = (
++    '=1+1',
++    '+1',
++    '-1',
++    '@SUM(A1)',
++    '\t=x',
++    "=cmd|' /C calc'!A0",
++)
++
++
++def _round_trip(workbook):
++    output = BytesIO()
++    workbook.save(output)
++    output.seek(0)
++    return load_workbook(output)
++
++
++def test_set_cell_stores_formula_like_values_as_verbatim_strings():
++    workbook = Workbook()
++    sheet = workbook.active
++    for column, value in enumerate(RISKY_VALUES, start=1):
++        set_cell(sheet, 1, column, value)
++
++    loaded = _round_trip(workbook).active
++    for column, value in enumerate(RISKY_VALUES, start=1):
++        cell = loaded.cell(row=1, column=column)
++        assert cell.data_type == 's'
++        assert cell.value == value
++
++
++def test_set_cell_preserves_plain_and_non_string_types():
++    workbook = Workbook()
++    sheet = workbook.active
++    values = ('plain text', 42, None, datetime(2026, 9, 7, 12, 30))
++    for column, value in enumerate(values, start=1):
++        set_cell(sheet, 1, column, value)
++
++    loaded = _round_trip(workbook).active
++    cells = [loaded.cell(row=1, column=column) for column in range(1, 5)]
++    assert [cell.value for cell in cells] == list(values)
++    assert [cell.data_type for cell in cells] == ['s', 'n', 'n', 'd']
++
++
++def test_append_row_neutralizes_only_formula_like_values():
++    workbook = Workbook()
++    sheet = workbook.active
++    values = ['plain', '=1+1', 5, '@cmd']
++
++    append_row(sheet, values)
++
++    loaded = _round_trip(workbook).active
++    assert [cell.value for cell in loaded[1]] == values
++    assert [cell.data_type for cell in loaded[1]] == ['s', 's', 'n', 's']
+\ No newline at end of file
+diff --git a/backend/tests/test_export_router_excel.py b/backend/tests/test_export_router_excel.py
+new file mode 100644
+index 0000000..6cf008a
+--- /dev/null
++++ b/backend/tests/test_export_router_excel.py
+@@ -0,0 +1,123 @@
++import asyncio
++from io import BytesIO
++from unittest.mock import AsyncMock, MagicMock, patch
++
++from openpyxl import load_workbook
++
++from contractor_ops import export_router
++
++
++class _Cursor:
++    def __init__(self, values):
++        self._values = values
++
++    async def to_list(self, _limit):
++        return list(self._values)
++
++
++def _formula_cells(workbook):
++    return [
++        f'{sheet.title}!{cell.coordinate}'
++        for sheet in workbook.worksheets
++        for row in sheet.iter_rows()
++        for cell in row
++        if cell.data_type == 'f'
++    ]
++
++
++def test_generate_excel_neutralizes_defect_and_map_text():
++    output = export_router._generate_excel(
++        [{
++            'id': 'task-1',
++            'display_number': '1',
++            'title': '=1+1',
++            'description': '@x',
++            'status': 'open',
++            'building_id': 'building-1',
++            'company_id': 'company-1',
++        }],
++        '+Project',
++        {},
++        {'company-1': '-Company'},
++        {},
++        {},
++        {'building-1': '=Building'},
++    )
++
++    sheet = load_workbook(output).active
++    expected = {
++        2: '+Project',
++        3: '=Building',
++        7: '=1+1',
++        8: '@x',
++        10: '-Company',
++    }
++    for column, value in expected.items():
++        cell = sheet.cell(row=2, column=column)
++        assert cell.value == value
++        assert cell.data_type == 's'
++
++
++def test_generate_full_excel_neutralizes_every_write_row_sheet():
++    db = MagicMock()
++    db.buildings.find.return_value = _Cursor([{
++        'id': 'building-1',
++        'project_id': 'project-1',
++        'name': '=Building',
++    }])
++    db.floors.find.return_value = _Cursor([])
++    db.units.find.return_value = _Cursor([])
++    db.project_companies.find.return_value = _Cursor([{
++        'id': 'company-1',
++        'project_id': 'project-1',
++        'name': '@Company',
++        'contact_name': '+Contact',
++    }])
++    db.project_memberships.find.return_value = _Cursor([{
++        'user_id': 'user-1',
++        'role': 'project_manager',
++    }])
++    db.users.find.return_value = _Cursor([{
++        'id': 'user-1',
++        'name': '=Worker',
++    }])
++    db.tasks.find.return_value = _Cursor([{
++        'id': 'task-1',
++        'title': '=1+1',
++        'description': '@Description',
++        'status': 'open',
++        'building_id': 'building-1',
++    }])
++    db.handover_protocols.find.return_value = _Cursor([{
++        'id': 'protocol-1',
++        'building_id': 'building-1',
++        'notes': '-Protocol note',
++        'sections': [],
++    }])
++    db.qc_runs.find.return_value = _Cursor([])
++
++    async def build():
++        with (
++            patch.object(export_router, 'get_db', return_value=db),
++            patch.object(
++                export_router,
++                '_resolve_image_links',
++                new=AsyncMock(return_value=[]),
++            ),
++        ):
++            return await export_router._generate_full_excel(
++                'project-1',
++                '+Project',
++            )
++
++    workbook = load_workbook(BytesIO(asyncio.run(build()).getvalue()))
++    assert _formula_cells(workbook) == []
++    assert workbook['ליקויים']['B2'].value == '+Project'
++    assert workbook['ליקויים']['G2'].value == '=1+1'
++    assert workbook['ליקויים']['H2'].value == '@Description'
++    assert workbook['פרוטוקולי מסירה']['L2'].value == '-Protocol note'
++    assert workbook['צוות']['A2'].value == '=Worker'
++    assert workbook['חברות וקבלנים']['A2'].value == '@Company'
++    assert workbook['חברות וקבלנים']['B2'].value == '+Contact'
++    for coordinate in ('B2', 'G2', 'H2'):
++        assert workbook['ליקויים'][coordinate].data_type == 's'
+\ No newline at end of file
+diff --git a/backend/tests/test_score_exports.py b/backend/tests/test_score_exports.py
+new file mode 100644
+index 0000000..1835ce8
+--- /dev/null
++++ b/backend/tests/test_score_exports.py
+@@ -0,0 +1,24 @@
++from io import BytesIO
++
++from openpyxl import Workbook, load_workbook
++
++from contractor_ops.safety.score_exports import _write_sheet
++
++
++def test_write_sheet_neutralizes_formula_like_values():
++    workbook = Workbook()
++    workbook.remove(workbook.active)
++    _write_sheet(
++        workbook,
++        'בדיקה',
++        ['א', 'ב', 'ג'],
++        [['=cmd', '-1', 'text']],
++        [10, 10, 10],
++    )
++    output = BytesIO()
++    workbook.save(output)
++    output.seek(0)
++
++    sheet = load_workbook(output)['בדיקה']
++    assert [cell.value for cell in sheet[2]] == ['=cmd', '-1', 'text']
++    assert [cell.data_type for cell in sheet[2]] == ['s', 's', 's']
+\ No newline at end of file
+diff --git a/backend/tests/test_unit_detail.py b/backend/tests/test_unit_detail.py
+new file mode 100644
+index 0000000..4e3c631
+--- /dev/null
++++ b/backend/tests/test_unit_detail.py
+@@ -0,0 +1,38 @@
++import asyncio
++from unittest.mock import AsyncMock, MagicMock, patch
++
++import pytest
++from fastapi import HTTPException
++
++from contractor_ops import projects_router
++
++
++def test_unit_without_resolvable_project_returns_404():
++    db = MagicMock()
++    db.units.find_one = AsyncMock(return_value={
++        'id': 'unit-1',
++        'floor_id': None,
++        'building_id': None,
++        'project_id': None,
++    })
++
++    async def run():
++        with (
++            patch.object(projects_router, 'get_db', return_value=db),
++            patch.object(
++                projects_router,
++                '_check_project_read_access',
++                new=AsyncMock(),
++            ) as access_check,
++        ):
++            with pytest.raises(HTTPException) as error:
++                await projects_router.get_unit_detail(
++                    'unit-1',
++                    {'id': 'user-1'},
++                )
++            assert access_check.await_count == 0
++            return error.value
++
++    error = asyncio.run(run())
++    assert error.status_code == 404
++    assert error.detail == 'Unit not found'
+\ No newline at end of file
+
+
+V1 — AUTOMATED REGRESSIONS
+Command:
+  cd backend && python -m pytest tests/test_xlsx_safe.py tests/test_export_router_excel.py tests/test_score_exports.py tests/test_unit_detail.py tests/test_spare_tiles.py tests/test_execution_matrix_export.py tests/test_execution_matrix.py -q
+Result:
+  70 passed, 8 pre-existing Pydantic deprecation warnings.
+
+Command:
+  cd backend && TEST_API_BASE=http://127.0.0.1:5000 python tests/probe_spare_tiles_http.py
+Result:
+  All 99 live HTTP checks passed.
+  V7 whole unit unchanged after settings/profile save: PASS.
+  V7 handover overview spare values unchanged: PASS.
+  V7 export spare columns unchanged: PASS.
+
+V2 — REAL XLSX ROUND-TRIP AND FORMULA SCAN
+Command:
+  cd backend && python - <<'PY'
+  # Seed a temporary local project/building/floor/unit and defect titled "=1+1".
+  # Build matrix and defects XLSX files through build_matrix_xlsx/_generate_excel.
+  # Reload every sheet with openpyxl and list cells whose data_type == "f".
+  # Delete all five temporary records in finally.
+  PY
+Output:
+  batch596-matrix.xlsx: sheets=['מטריצת ביצוע'] formula_cells=[]
+  batch596-defects.xlsx: sheets=['ליקויים'] formula_cells=[]
+  matrix malicious building: value='=Building' type='s'
+  matrix malicious header: value='=1+1' type='s'
+  matrix malicious tag: value='@batch596' type='s'
+  defect malicious title: value='=1+1' type='s'
+  cleanup: deleted={'tasks': 1, 'units': 1, 'floors': 1, 'buildings': 1, 'projects': 1} remaining=0
+
+V3 — WORKBOOK READABILITY
+- Both generated files loaded successfully through openpyxl after save, with expected sheet names and values and no repaired-record error.
+- LibreOffice/soffice is unavailable in this environment; optional PDF conversion was therefore skipped as allowed by the specification.
+
+V4 — EXACT SCOPE VS cbea773
+Command:
+  git diff --check
+Result:
+  clean
+
+Changed files (exactly the allowed backend implementation and chosen tests):
+- backend/contractor_ops/xlsx_safe.py (new)
+- backend/contractor_ops/execution_matrix_export.py
+- backend/contractor_ops/export_router.py
+- backend/contractor_ops/safety/score_exports.py
+- backend/contractor_ops/projects_router.py
+- backend/contractor_ops/spare_tiles.py
+- backend/contractor_ops/spare_tiles_router.py
+- backend/server.py
+- backend/tests/test_xlsx_safe.py (new)
+- backend/tests/test_execution_matrix_export.py
+- backend/tests/test_spare_tiles.py
+- backend/tests/test_export_router_excel.py (new)
+- backend/tests/test_score_exports.py (new)
+- backend/tests/test_unit_detail.py (new)
+
+PASS — no frontend, env, dependency, migration, importer, static-template, upload, or PDF-export file changed.
+PASS — no exported text, cell value, sheet/column order, style, link, comment, width, or filename was intentionally changed.
+PASS — no apostrophe prefixing or character stripping was added.
+
+FROZEN-FUNCTION HUNKS — EXPLICIT REVIEW
+E5 patch_unit_spare_tiles:
+@@
+         if count < 0:
+             raise HTTPException(status_code=422, detail='count must be >= 0')
++        if count > 100000:
++            raise HTTPException(status_code=422, detail='כמות ספייר גדולה מדי (עד 100,000)')
+
+E6 validate_spare_settings:
+@@
+         if len(name) > 50:
+             raise HTTPException(status_code=422, detail='שם קטגוריה ארוך מדי (עד 50 תווים)')
++        if name.startswith('$'):
++            raise HTTPException(status_code=422, detail='שם קטגוריה לא יכול להתחיל ב-$')
+
+CORS LIVE CHECK
+Command:
+  curl -sS -D - -o /dev/null -H 'Origin: https://evil.example' http://127.0.0.1:5000/api/health | tr -d '\r' | grep -i '^access-control-' || true
+Output:
+  access-control-expose-headers: x-request-id, x-response-time-ms
+Result:
+  PASS — neither Access-Control-Allow-Origin nor Access-Control-Allow-Credentials is present.
+
+Command:
+  curl -sS -D - -o /dev/null -H 'Origin: http://localhost:3000' http://127.0.0.1:5000/api/health | tr -d '\r' | grep -i '^access-control-'
+Output:
+  access-control-allow-credentials: true
+  access-control-expose-headers: x-request-id, x-response-time-ms
+  access-control-allow-origin: http://localhost:3000
+Result:
+  PASS — approved origin retains both ACAO and credential support.
+
+FINAL STATE
+- Start application workflow restarted once after the production batch and remained running with clean startup/request logs.
+- No temporary V2 or probe records remain.
+- No commit was created.
+- No deployment was performed.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY

@@ -262,9 +262,11 @@ async def patch_spare_profile_units(
     units_by_id = {unit['id']: unit for unit in units}
     offending = [unit_id for unit_id in requested_ids if unit_id not in units_by_id]
     if offending:
+        shown = ', '.join(offending[:5])
+        more = f' ועוד {len(offending) - 5}' if len(offending) > 5 else ''
         raise HTTPException(
             status_code=422,
-            detail=f"מזהי דירות לא חוקיים: {', '.join(offending)}",
+            detail=f"מזהי דירות לא חוקיים: {shown}{more}",
         )
 
     actual_add_ids = [

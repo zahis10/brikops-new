@@ -355,6 +355,51 @@ def test_spare_export_uses_progress_and_problem_rule_for_every_profile_mode():
     ]
 
 
+def test_formula_like_user_text_is_stored_as_verbatim_strings():
+    project = {"id": "p1", "name": "Demo"}
+    stages = [{"id": "tag", "title": "=1+1", "type": "tag"}]
+    units = [{
+        "id": "u1",
+        "building_id": "b1",
+        "unit_no": "1",
+    }]
+    cells = [{
+        "unit_id": "u1",
+        "stage_id": "tag",
+        "text_value": "+cmd",
+        "note": None,
+    }]
+    buildings = {"b1": {"name": '=HYPERLINK("x","y")'}}
+    spare = {
+        "enabled": True,
+        "by_unit": {"u1": {"overall": "no_profile"}},
+    }
+
+    sheet = _read_workbook(
+        build_matrix_xlsx(
+            project,
+            units,
+            stages,
+            cells,
+            buildings,
+            {},
+            spare=spare,
+        )
+    ).active
+
+    expected = {
+        (1, 5): '=1+1',
+        (2, 1): '=HYPERLINK("x","y")',
+        (2, 5): '+cmd',
+    }
+    for (row, column), value in expected.items():
+        cell = sheet.cell(row=row, column=column)
+        assert cell.value == value
+        assert cell.data_type == 's'
+    assert sheet.cell(row=2, column=6).value == 'אחר'
+    assert sheet.cell(row=2, column=6).data_type == 's'
+
+
 # =====================================================================
 # T2 — status label translation + fills
 # =====================================================================

@@ -64,6 +64,8 @@ def validate_spare_settings(body):
         name = name.strip()
         if len(name) > 50:
             raise HTTPException(status_code=422, detail='שם קטגוריה ארוך מדי (עד 50 תווים)')
+        if name.startswith('$'):
+            raise HTTPException(status_code=422, detail='שם קטגוריה לא יכול להתחיל ב-$')
         name_key = name.casefold()
         if name_key in category_names:
             raise HTTPException(status_code=422, detail=f'שם קטגוריה כפול: {name}')

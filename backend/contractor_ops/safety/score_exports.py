@@ -21,6 +21,7 @@ from contractor_ops.safety._shared import (  # noqa: F401
     timedelta,
     timezone,
 )
+from contractor_ops.xlsx_safe import set_cell
 
 # =====================================================================
 # Score & Exports — Phase 1 Part 3 (Backend Advanced)
@@ -349,7 +350,7 @@ def _write_sheet(wb, title, headers, rows, widths):
         c.border = s["thin"]
     for r_idx, row in enumerate(rows, 2):
         for c_idx, val in enumerate(row, 1):
-            c = ws.cell(row=r_idx, column=c_idx, value=val)
+            c = set_cell(ws, r_idx, c_idx, val)
             c.font = s["cell_font"]
             c.alignment = s["cell_align"]
             c.border = s["thin"]

@@ -730,6 +730,8 @@ async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(
             raise HTTPException(status_code=422, detail='count must be an integer')
         if count < 0:
             raise HTTPException(status_code=422, detail='count must be >= 0')
+        if count > 100000:
+            raise HTTPException(status_code=422, detail='כמות ספייר גדולה מדי (עד 100,000)')
 
         notes = entry.get('notes', '') or ''
         if not isinstance(notes, str):
@@ -1206,8 +1208,9 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
     building = await db.buildings.find_one({'id': unit.get('building_id')}, {'_id': 0}) if unit.get('building_id') else None
     project_id = unit.get('project_id') or (building.get('project_id') if building else None)
     project = await db.projects.find_one({'id': project_id}, {'_id': 0}) if project_id else None
-    if project_id:
-        await _check_project_read_access(user, project_id)
+    if not project_id:
+        raise HTTPException(status_code=404, detail='Unit not found')
+    await _check_project_read_access(user, project_id)
 
     effective_label = unit.get('display_label') or unit.get('unit_no', '')
     try:

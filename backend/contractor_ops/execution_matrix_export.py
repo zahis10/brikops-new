@@ -25,6 +25,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from contractor_ops.spare_tiles import SPARE_OVERALL_LABELS
+from contractor_ops.xlsx_safe import append_row, neutralize, set_cell
 
 
 STATUS_LABELS = {
@@ -100,7 +101,7 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
     spare_enabled = bool(spare and spare.get("enabled"))
     if spare_enabled:
         headers.append("ריצוף ספייר")
-    ws.append(headers)
+    append_row(ws, headers)
     for col_idx in range(1, len(headers) + 1):
         cell = ws.cell(row=1, column=col_idx)
         cell.font = Font(bold=True, size=11)
@@ -115,10 +116,10 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
         building = buildings.get(unit.get("building_id")) or {}
         floor = floors.get(unit.get("floor_id")) or {}
 
-        ws.cell(row=row_idx, column=1, value=building.get("name") or "—")
-        ws.cell(row=row_idx, column=2, value=floor.get("floor_number") or "—")
-        ws.cell(row=row_idx, column=3, value=unit.get("unit_no") or "—")
-        ws.cell(row=row_idx, column=4, value=unit.get("room_count") or "")
+        set_cell(ws, row_idx, 1, building.get("name") or "—")
+        set_cell(ws, row_idx, 2, floor.get("floor_number") or "—")
+        set_cell(ws, row_idx, 3, unit.get("unit_no") or "—")
+        set_cell(ws, row_idx, 4, unit.get("room_count") or "")
 
         for stage_idx, stage in enumerate(stages):
             col = 5 + stage_idx
@@ -128,6 +129,7 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
                 continue
             if stage.get("type") == "tag":
                 cell_xl.value = c.get("text_value") or ""
+                neutralize(cell_xl)
             else:
                 status = c.get("status")
                 if status:
@@ -190,7 +192,7 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
                     f"הוזן {applicable_count}/{applicable_count}"
                     if applicable_count else label
                 )
-            spare_cell = ws.cell(row=row_idx, column=spare_col, value=label)
+            spare_cell = set_cell(ws, row_idx, spare_col, label)
             fill = SPARE_FILLS.get(overall)
             if fill is not None:
                 spare_cell.fill = fill

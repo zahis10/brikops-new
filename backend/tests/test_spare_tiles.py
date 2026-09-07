@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 import uuid
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -15,7 +16,7 @@ from contractor_ops.spare_tiles import (
     matrix_spare_summary,
     validate_spare_settings,
 )
-from contractor_ops import spare_tiles_router
+from contractor_ops import projects_router, spare_tiles_router
 
 
 PROFILE_ID = str(uuid.uuid4())
@@ -634,3 +635,103 @@ def test_stale_settings_editor_is_rejected(monkeypatch):
         ))
     assert error.value.status_code == 409
     assert db.projects.update_calls == []
+
+
+def _named_category_settings(category_name):
+    return {
+        'categories': [{'name': category_name, 'measure': 'tiles'}],
+        'profiles': [],
+        'margin_pct': 10,
+    }
+
+
+def test_spare_category_cannot_start_with_dollar():
+    with pytest.raises(HTTPException) as error:
+        validate_spare_settings(_named_category_settings('$x'))
+
+    assert error.value.status_code == 422
+    assert error.value.detail == 'שם קטגוריה לא יכול להתחיל ב-$'
+
+
+def test_spare_category_with_dot_remains_valid():
+    result = validate_spare_settings(_named_category_settings('ריצוף 60.60'))
+
+    assert result['categories'] == [{
+        'name': 'ריצוף 60.60',
+        'measure': 'tiles',
+    }]
+
+
+def test_spare_count_is_capped_at_one_hundred_thousand(monkeypatch):
+    db = MagicMock()
+    unit = {'id': 'unit-1', 'project_id': 'project-1', 'unit_no': '1'}
+    updated_unit = {
+        **unit,
+        'spare_tiles': [{'type': 'ריצוף', 'count': 100000}],
+    }
+    db.units.find_one = AsyncMock(side_effect=[unit, updated_unit, unit])
+    db.units.update_one = AsyncMock()
+
+    async def project_manager(*_args):
+        return 'project_manager'
+
+    async def no_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(projects_router, 'get_db', lambda: db)
+    monkeypatch.setattr(projects_router, '_get_project_role', project_manager)
+    monkeypatch.setattr(projects_router, '_audit', no_audit)
+
+    accepted = asyncio.run(projects_router.patch_unit_spare_tiles(
+        'unit-1',
+        {'spare_tiles': [{'type': 'ריצוף', 'count': 100000}]},
+        {'id': 'user-1'},
+    ))
+    assert accepted.spare_tiles[0]['count'] == 100000
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(projects_router.patch_unit_spare_tiles(
+            'unit-1',
+            {'spare_tiles': [{'type': 'ריצוף', 'count': 100001}]},
+            {'id': 'user-1'},
+        ))
+    assert error.value.status_code == 422
+    assert error.value.detail == 'כמות ספייר גדולה מדי (עד 100,000)'
+
+
+def test_invalid_profile_assignment_ids_are_capped_at_five(monkeypatch):
+    db = MagicMock()
+    profile_id = 'profile-1'
+    project = {
+        'id': 'project-1',
+        'spare_settings': {
+            'profiles': [{'id': profile_id, 'name': 'Profile'}],
+        },
+    }
+    db.units.find.return_value.to_list = AsyncMock(return_value=[])
+
+    async def project_or_404(*_args):
+        return project
+
+    async def allow_write(*_args):
+        return None
+
+    monkeypatch.setattr(spare_tiles_router, 'get_db', lambda: db)
+    monkeypatch.setattr(spare_tiles_router, '_project_or_404', project_or_404)
+    monkeypatch.setattr(spare_tiles_router, '_require_write', allow_write)
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(spare_tiles_router.patch_spare_profile_units(
+            'project-1',
+            profile_id,
+            {
+                'add': [f'unit-{index}' for index in range(1, 8)],
+                'remove': [],
+            },
+            {'id': 'user-1'},
+        ))
+    assert error.value.status_code == 422
+    assert error.value.detail == (
+        'מזהי דירות לא חוקיים: '
+        'unit-1, unit-2, unit-3, unit-4, unit-5 ועוד 2'
+    )

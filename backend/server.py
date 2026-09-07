@@ -1600,6 +1600,12 @@ class SecurityHeadersMiddleware(_BaseHTTPMiddleware):
         response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
+        # CORS hygiene: never send the credentials flag without an allowed origin.
+        if (
+            'access-control-allow-credentials' in response.headers
+            and 'access-control-allow-origin' not in response.headers
+        ):
+            del response.headers['access-control-allow-credentials']
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)

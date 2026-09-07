@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
 from contractor_ops.router import get_db, get_current_user, _check_project_read_access, _get_project_role, _audit
+from contractor_ops.xlsx_safe import set_cell
 from models import CATEGORIES
 from services.object_storage import generate_url
 
@@ -340,7 +341,7 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
         ] + spare_cols
 
         for col_idx, value in enumerate(row_data, 1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell = set_cell(ws, row_idx, col_idx, value)
             cell.font = cell_font
             cell.alignment = cell_align
             cell.border = thin_border
@@ -448,7 +449,7 @@ async def _generate_full_excel(project_id: str, project_name: str):
 
     def _write_row(ws, row_idx, values):
         for col_idx, value in enumerate(values, 1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell = set_cell(ws, row_idx, col_idx, value)
             cell.font = cell_font
             cell.alignment = cell_align
             cell.border = thin_border
