@@ -1,1630 +1,311 @@
-BATCH #595 HOTFIX — PREVENT INVITE TRANSLATION CRASHES
-
-STEP 0 — CLEAN BASE
-- Branch: staging
-- Base commit: b81a780 (Update spare tiles logic and refactor related tests)
-- Initial git status: clean
-- This is the landed #594 base allowed by the task.
-
-IMPLEMENTATION SUMMARY
-1ס. Public pending-invite info now exposes preferred_language with a Hebrew fallback.
-2. Onboarding applies the invite locale before publishing invite state, so the first invite render is in the intended language.
-3. A startup DOM guard tolerates stale removeChild/insertBefore references created by Chrome/Google Translate while preserving normal operations and remaining idempotent.
-4. The document opts out of browser translation with translate="no" and google notranslate metadata.
-5. Supported UI locale is restored from and persisted to brikops_lang; invalid/unavailable storage falls back safely.
-6. Focused backend, i18n, and DOM guard regressions were added.
-7. Browser verification exposed that LoginPage hardcoded its phone/OTP copy in Hebrew. A minimal extra scoped edit now reads existing i18n onboarding keys for that active flow. No auth handler, route, payload, register flow, or account behavior changed.
-
-FULL SCOPED DIFF (base b81a780)
-diff --git a/backend/contractor_ops/onboarding_router.py b/backend/contractor_ops/onboarding_router.py
-index 212bed8..95cccaa 100644
---- a/backend/contractor_ops/onboarding_router.py
-+++ b/backend/contractor_ops/onboarding_router.py
-@@ -1448,6 +1448,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
-             'project_id': invite['project_id'],
-             'role': role,
-             'role_display': ROLE_LABELS_HE.get(role, role),
-+            'preferred_language': invite.get('preferred_language') or 'he',
-         }
-
-     @router.post("/onboarding/join-by-code")
-diff --git a/frontend/public/index.html b/frontend/public/index.html
-index 307b832..3b61bf3 100644
---- a/frontend/public/index.html
-+++ b/frontend/public/index.html
-@@ -1,7 +1,8 @@
- <!doctype html>
--<html lang="he" dir="rtl">
-+<html lang="he" dir="rtl" translate="no">
-     <head>
-         <meta charset="utf-8" />
-+        <meta name="google" content="notranslate" />
-         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-         <meta name="theme-color" content="#0F172A" />
-         <meta name="description" content="BrikOps - ניהול משימות קבלן" />
-diff --git a/frontend/src/i18n/index.js b/frontend/src/i18n/index.js
-index ee5c8ea..8f32bad 100644
---- a/frontend/src/i18n/index.js
-+++ b/frontend/src/i18n/index.js
-@@ -6,10 +6,21 @@ import zh from './zh.json';
- const LOCALES = { he, en, ar, zh };
- let currentLocale = 'he';
-
-+try {
-+  const saved = localStorage.getItem('brikops_lang');
-+  if (saved && LOCALES[saved]) {
-+    currentLocale = saved;
-+    document.documentElement.lang = saved;
-+  }
-+} catch {}
-+
- export function setLanguage(lang) {
-   const base = (lang || '').split('-')[0].split('_')[0].toLowerCase();
-   currentLocale = LOCALES[base] ? base : 'he';
-   document.documentElement.lang = currentLocale;
-+  try {
-+    localStorage.setItem('brikops_lang', currentLocale);
-+  } catch {}
- }
-
- export function getLanguage() {
-diff --git a/frontend/src/index.js b/frontend/src/index.js
-index b8725ee..db6943e 100644
---- a/frontend/src/index.js
-+++ b/frontend/src/index.js
-@@ -2,6 +2,7 @@ import React from "react";
- import ReactDOM from "react-dom/client";
- import "@/index.css";
- import App from "@/App";
-+import { installDomGuard } from "@/utils/domGuard";
- import { Capacitor } from '@capacitor/core';
- import { SocialLogin } from '@capgo/capacitor-social-login';
-
-@@ -15,6 +16,8 @@ if (Capacitor.isNativePlatform()) {
-   }).catch((err) => console.error('[SocialLogin] init failed:', err));
- }
-
-+installDomGuard();
-+
- const root = ReactDOM.createRoot(document.getElementById("root"));
- root.render(
-   <React.StrictMode>
-diff --git a/frontend/src/pages/LoginPage.js b/frontend/src/pages/LoginPage.js
-index 120bed6..10a1c94 100644
---- a/frontend/src/pages/LoginPage.js
-+++ b/frontend/src/pages/LoginPage.js
-@@ -13,6 +13,7 @@ import { SignInWithApple } from '@capacitor-community/apple-sign-in';
- import { SocialLogin } from '@capgo/capacitor-social-login';
- import useOtpAutofill from '../hooks/useOtpAutofill';
- import useAndroidSmsRetriever from '../hooks/useAndroidSmsRetriever';
-+import { t } from '../i18n';
-
- const ENABLE_REGISTER_MANAGEMENT_REDIRECTS =
-   process.env.REACT_APP_ENABLE_REGISTER_MANAGEMENT_REDIRECTS === 'true';
-@@ -101,12 +102,12 @@ const LoginPage = () => {
-   const handleRequestOtp = useCallback(async (e) => {
-     e.preventDefault();
-     if (!phone.trim()) {
--      toast.error('יש להזין מספר טלפון');
-+      toast.error(t('onboarding', 'err_phone_required'));
-       return;
-     }
-     const e164 = canonicalE164(phone);
-     if (!isValidIsraeliMobile(e164)) {
--      toast.error('מספר טלפון לא תקין');
-+      toast.error(t('onboarding', 'err_phone_invalid'));
-       return;
-     }
-     setLoading(true);
-@@ -114,7 +115,7 @@ const LoginPage = () => {
-       const res = await onboardingService.requestOtp(e164);
-       setPhoneE164(e164);
-       setPhoneStep('otp');
--      toast('שולחים קוד אימות...', { icon: '📱' });
-+      toast(t('onboarding', 'toast_sending_otp'), { icon: '📱' });
-     } catch (error) {
-       const status = error.response?.status;
-       const detail = error.response?.data?.detail || error.message;
-@@ -624,7 +625,7 @@ const LoginPage = () => {
-             onClick={() => { setAuthMethod('phone'); setErrors({}); }}
-           >
-             <Phone className="w-4 h-4" />
--            טלפון
-+            {t('onboarding', 'phone_label')}
-           </button>
-           <button type="button" role="tab" id="tab-email" aria-selected={authMethod === 'email'} aria-controls="tabpanel-email"
-             className={`flex-1 py-2.5 rounded-md text-sm font-medium transition-all touch-manipulation flex items-center justify-center gap-1.5 ${
-@@ -642,7 +643,7 @@ const LoginPage = () => {
-           <form onSubmit={handleRequestOtp} className="space-y-4" dir="rtl">
-             <div className="space-y-2">
-               <label htmlFor="phone" className="block text-sm font-medium text-slate-700">
--                מספר טלפון
-+                {t('onboarding', 'phone_label')}
-                 <span className="text-red-500 mr-1">*</span>
-               </label>
-               <div className="relative">
-@@ -666,9 +667,9 @@ const LoginPage = () => {
-               {loading ? (
-                 <span className="flex items-center justify-center gap-2">
-                   <Loader2 className="w-5 h-5 animate-spin" />
--                  שולח קוד...
-+                  {t('onboarding', 'toast_sending_otp')}
-                 </span>
--              ) : 'שלח קוד אימות'}
-+              ) : t('onboarding', 'send_otp')}
-             </Button>
-             <div className="text-left mt-2">
-               <a href="/forgot-password" className="text-sm text-amber-600 hover:text-amber-700 font-medium">
-@@ -688,15 +689,15 @@ const LoginPage = () => {
-               className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 mb-2"
-             >
-               <ArrowRight className="w-4 h-4" />
--              חזרה
-+              {t('onboarding', 'back')}
-             </button>
-             <div className="text-center mb-4">
--              <p className="text-sm text-slate-600">קוד אימות נשלח למספר</p>
-+              <p className="text-sm text-slate-600">{t('onboarding', 'otp_sent_to')}</p>
-               <bdi dir="ltr" className="font-mono text-base font-medium text-slate-900 mt-1 inline-block">{phoneE164}</bdi>
-             </div>
-             <div className="space-y-2">
-               <label htmlFor="otp" className="block text-sm font-medium text-slate-700">
--                קוד אימות
-+                {t('onboarding', 'otp_label')}
-                 <span className="text-red-500 mr-1">*</span>
-               </label>
-               <input
-@@ -720,9 +721,9 @@ const LoginPage = () => {
-               {loading ? (
-                 <span className="flex items-center justify-center gap-2">
-                   <Loader2 className="w-5 h-5 animate-spin" />
--                  מאמת...
-+                  {t('onboarding', 'verify')}
-                 </span>
--              ) : 'אימות והתחברות'}
-+              ) : t('onboarding', 'verify')}
-             </Button>
-             <button
-               type="button"
-@@ -730,7 +731,7 @@ const LoginPage = () => {
-               disabled={loading}
-               className="w-full text-sm text-amber-600 hover:text-amber-700 mt-2"
-             >
--              שלח קוד חדש
-+              {t('onboarding', 'resend_otp')}
-             </button>
-           </form>
-           </div>
-diff --git a/frontend/src/pages/OnboardingPage.js b/frontend/src/pages/OnboardingPage.js
-index 824c76d..fce625a 100644
---- a/frontend/src/pages/OnboardingPage.js
-+++ b/frontend/src/pages/OnboardingPage.js
-@@ -12,7 +12,7 @@ import { Button } from '../components/ui/button';
- import { Card } from '../components/ui/card';
- import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
- import { navigateToProject } from '../utils/navigation';
--import { t } from '../i18n';
-+import { t, setLanguage } from '../i18n';
- import { Capacitor } from '@capacitor/core';
- import { SignInWithApple } from '@capacitor-community/apple-sign-in';
- import { SocialLogin } from '@capgo/capacitor-social-login';
-@@ -115,6 +115,7 @@ const OnboardingPage = () => {
-       setInviteLoading(true);
-       onboardingService.getInviteInfo(inviteToken)
-         .then(info => {
-+          if (info.preferred_language) setLanguage(info.preferred_language);
-           setInviteInfo(info);
-           setSelectedInvite({ invite_id: info.invite_id, project_name: info.project_name, role: info.role });
-           if (authToken) {
-diff --git a/backend/tests/test_invite_info.py b/backend/tests/test_invite_info.py
-new file mode 100644
-index 0000000..d76aed2
---- /dev/null
-+++ b/backend/tests/test_invite_info.py
-@@ -0,0 +1,54 @@
-+import asyncio
-+from unittest.mock import AsyncMock, MagicMock
-+
-+import pytest
-+
-+from contractor_ops import onboarding_router
-+
-+
-+def _invite_info_endpoint():
-+    router = onboarding_router.create_onboarding_router(
-+        lambda: None,
-+        lambda *_roles: lambda: None,
-+    )
-+    return next(
-+        route.endpoint
-+        for route in router.routes
-+        if getattr(route, 'path', '') == '/api/invites/{invite_id}/info'
-+        and 'GET' in getattr(route, 'methods', set())
-+    )
-+
-+
-+@pytest.mark.parametrize(
-+    ('invite_language', 'expected_language'),
-+    [('ar', 'ar'), (None, 'he')],
-+)
-+def test_invite_info_returns_preferred_language(
-+    monkeypatch,
-+    invite_language,
-+    expected_language,
-+):
-+    db = MagicMock()
-+    db.invites.find_one = AsyncMock(return_value={
-+        'id': 'invite-1',
-+        'project_id': 'project-1',
-+        'status': 'pending',
-+        'expires_at': '2999-01-01T00:00:00+00:00',
-+        'role': 'contractor',
-+        **(
-+            {'preferred_language': invite_language}
-+            if invite_language is not None
-+            else {}
-+        ),
-+    })
-+    db.projects.find_one = AsyncMock(return_value={
-+        'id': 'project-1',
-+        'name': 'Project',
-+    })
-+    monkeypatch.setattr(onboarding_router, 'get_db', lambda: db)
-+
-+    result = asyncio.run(_invite_info_endpoint()('invite-1'))
-+
-+    assert result['preferred_language'] == expected_language
-+    assert result['invite_id'] == 'invite-1'
-+    assert result['role'] == 'contractor'
-\ No newline at end of file
-diff --git a/frontend/src/i18n/__tests__/index.test.js b/frontend/src/i18n/__tests__/index.test.js
-new file mode 100644
-index 0000000..996d1e0
---- /dev/null
-+++ b/frontend/src/i18n/__tests__/index.test.js
-@@ -0,0 +1,61 @@
-+const loadI18n = () => {
-+  jest.resetModules();
-+  return require('../index');
-+};
-+
-+describe('i18n language persistence', () => {
-+  beforeEach(() => {
-+    localStorage.clear();
-+    document.documentElement.lang = 'he';
-+    jest.restoreAllMocks();
-+  });
-+
-+  afterEach(() => {
-+    jest.restoreAllMocks();
-+  });
-+
-+  test('normalizes a regional Arabic locale and updates the document', () => {
-+    const { getLanguage, setLanguage } = loadI18n();
-+
-+    setLanguage('ar-EG');
-+
-+    expect(getLanguage()).toBe('ar');
-+    expect(document.documentElement.lang).toBe('ar');
-+    expect(localStorage.getItem('brikops_lang')).toBe('ar');
-+  });
-+
-+  test('restores a supported saved language on a fresh module load', () => {
-+    localStorage.setItem('brikops_lang', 'zh');
-+
-+    const { getLanguage } = loadI18n();
-+
-+    expect(getLanguage()).toBe('zh');
-+    expect(document.documentElement.lang).toBe('zh');
-+  });
-+
-+  test('ignores an unknown saved language and starts in Hebrew', () => {
-+    localStorage.setItem('brikops_lang', 'xx');
-+
-+    const { getLanguage } = loadI18n();
-+
-+    expect(getLanguage()).toBe('he');
-+    expect(document.documentElement.lang).toBe('he');
-+  });
-+
-+  test('swallows unavailable localStorage reads and writes', () => {
-+    jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-+      throw new Error('storage unavailable');
-+    });
-+    const i18n = loadI18n();
-+    expect(i18n.getLanguage()).toBe('he');
-+
-+    jest.restoreAllMocks();
-+    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-+      throw new Error('storage unavailable');
-+    });
-+
-+    expect(() => i18n.setLanguage('ar')).not.toThrow();
-+    expect(i18n.getLanguage()).toBe('ar');
-+    expect(document.documentElement.lang).toBe('ar');
-+  });
-+});
-\ No newline at end of file
-diff --git a/frontend/src/utils/domGuard.js b/frontend/src/utils/domGuard.js
-new file mode 100644
-index 0000000..6087ed6
---- /dev/null
-+++ b/frontend/src/utils/domGuard.js
-@@ -0,0 +1,22 @@
-+// Chrome/Google Translate rewrites text nodes by wrapping them in <font>
-+// elements. React can then hold stale parent references and throw NotFoundError
-+// on its next commit (facebook/react#11538). Tolerate those stale references so
-+// translated text may be stale, but the application does not crash.
-+export function installDomGuard() {
-+  if (typeof Node !== 'function' || !Node.prototype) return;
-+  if (Node.prototype.__brikopsDomGuard) return;
-+
-+  const originalRemoveChild = Node.prototype.removeChild;
-+  Node.prototype.removeChild = function removeChild(child) {
-+    if (child && child.parentNode !== this) return child;
-+    return originalRemoveChild.apply(this, arguments);
-+  };
-+
-+  const originalInsertBefore = Node.prototype.insertBefore;
-+  Node.prototype.insertBefore = function insertBefore(newNode, referenceNode) {
-+    if (referenceNode && referenceNode.parentNode !== this) return newNode;
-+    return originalInsertBefore.apply(this, arguments);
-+  };
-+
-+  Node.prototype.__brikopsDomGuard = true;
-+}
-\ No newline at end of file
-diff --git a/frontend/src/utils/__tests__/domGuard.test.js b/frontend/src/utils/__tests__/domGuard.test.js
-new file mode 100644
-index 0000000..78d81fe
---- /dev/null
-+++ b/frontend/src/utils/__tests__/domGuard.test.js
-@@ -0,0 +1,65 @@
-+import { installDomGuard } from '../domGuard';
-+
-+describe('installDomGuard', () => {
-+  const originalRemoveChild = Node.prototype.removeChild;
-+  const originalInsertBefore = Node.prototype.insertBefore;
-+
-+  beforeEach(() => {
-+    Node.prototype.removeChild = originalRemoveChild;
-+    Node.prototype.insertBefore = originalInsertBefore;
-+    delete Node.prototype.__brikopsDomGuard;
-+  });
-+
-+  afterAll(() => {
-+    Node.prototype.removeChild = originalRemoveChild;
-+    Node.prototype.insertBefore = originalInsertBefore;
-+    delete Node.prototype.__brikopsDomGuard;
-+  });
-+
-+  test('tolerates removing a node that belongs to another parent', () => {
-+    installDomGuard();
-+    const parent = document.createElement('div');
-+    const otherParent = document.createElement('div');
-+    const child = document.createElement('span');
-+    otherParent.appendChild(child);
-+
-+    expect(parent.removeChild(child)).toBe(child);
-+    expect(child.parentNode).toBe(otherParent);
-+  });
-+
-+  test('tolerates inserting before a reference in another parent', () => {
-+    installDomGuard();
-+    const parent = document.createElement('div');
-+    const otherParent = document.createElement('div');
-+    const reference = document.createElement('span');
-+    const node = document.createElement('strong');
-+    otherParent.appendChild(reference);
-+
-+    expect(parent.insertBefore(node, reference)).toBe(node);
-+    expect(node.parentNode).toBeNull();
-+  });
-+
-+  test('preserves normal remove and insert behavior', () => {
-+    installDomGuard();
-+    const parent = document.createElement('div');
-+    const reference = document.createElement('span');
-+    const node = document.createElement('strong');
-+    parent.appendChild(reference);
-+
-+    expect(parent.insertBefore(node, reference)).toBe(node);
-+    expect(parent.firstChild).toBe(node);
-+    expect(parent.removeChild(node)).toBe(node);
-+    expect(node.parentNode).toBeNull();
-+  });
-+
-+  test('installs only once', () => {
-+    installDomGuard();
-+    const guardedRemoveChild = Node.prototype.removeChild;
-+    const guardedInsertBefore = Node.prototype.insertBefore;
-+
-+    installDomGuard();
-+
-+    expect(Node.prototype.removeChild).toBe(guardedRemoveChild);
-+    expect(Node.prototype.insertBefore).toBe(guardedInsertBefore);
-+  });
-+});
-\ No newline at end of file
-
-V1 — AUTOMATED REGRESSIONS
-PASS — backend focused suite:
-  cd backend && python -m pytest tests/test_invite_info.py tests/test_spare_tiles.py -q
-  33 passed; two pre-existing Pydantic deprecation warnings.
-PASS — frontend focused Jest suite:
-  CI=true yarn test --watchAll=false --runInBand src/utils/__tests__/domGuard.test.js src/i18n/__tests__/index.test.js
-  2 suites, 8 tests passed.
-PASS — git diff --check.
-
-V2 — PRODUCTION BUILD / SERVED BUNDLE
-PASS — CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
-  Compiled successfully.
-PASS — built and served HTML contain translate="no" and google notranslate.
-PASS — served main.cce15971.js contains brikops_lang persistence and __brikopsDomGuard.
-PASS — final workflow restart completed; application startup and Mongo indexes completed.
-Known non-blocking local logs: existing CSP refusals for Google Fonts, assets.emergent.sh, inline visual-edit assets/styles; existing missing configured super-admin phone.
-
-V3 — PLAYWRIGHT INCIDENT / UI PASS
-PASS — Arabic pending invite GET returned preferred_language="ar".
-PASS — Arabic invite landed with exact heading "لديك دعوة لمشروع", OTP button "إرسال رمز التحقق", html lang=ar, and brikops_lang=ar.
-PASS — desktop and 390px layouts rendered without clipping.
-PASS — Arabic OTP send reached the Arabic OTP state under SMS stub without ErrorBoundary, NotFoundError, removeChild, or insertBefore exception.
-PASS — fresh Hebrew invite stayed Hebrew with html lang=he.
-PASS — management dev-auth applied Hebrew; logout returned to Hebrew login with stored he. Empty-storage fresh context started Hebrew.
-PASS — forced translator-style <font> wrapping of 14 live text nodes followed by React typing/checkbox re-renders stayed rendered with the guard, with no ErrorBoundary or matching exception.
-CONTROL — after temporarily restoring native Node methods in page context, the same simulation did not reproduce the production crash under this browser/React timing. This was not treated as a guarded failure.
-PASS — unchanged Hebrew login/OTP flow rendered and advanced under SMS stub.
-PASS — existing populated demo unit defects page rendered one defect and unchanged spare card "ריצוף ספייר" / "לא עודכן" without crash.
-PASS — temporary data cleanup: two invites and one temporary membership removed; final invite/membership/OTP/rate-limit/SMS-event counts for test identifiers were zero.
-Safety note: invite documents were seeded directly in local Mongo for browser verification because the existing PM invite endpoint queues outbound notifications. No invite creation/resend/notification endpoint was called.
-
-Initial Playwright finding and fix:
-- Initial same-context Arabic invite -> /login preserved html lang=ar and brikops_lang=ar but showed hardcoded Hebrew LoginPage phone/OTP copy.
-- LoginPage's active phone/OTP labels now use existing four-locale i18n keys. The follow-up change passed CI=true build and focused Jest checks; no second end-to-end pass was run, per the single-pass testing rule.
-
-V4 — SCOPE / SAFETY
-PASS — no ErrorBoundary, RegisterPage, spare-inventory implementation, migrations, dependencies, environment configuration, production data, or deployment changes.
-PASS — no commit and no deployment performed.
-PASS — expected hotfix files plus focused tests and review.txt only, with one documented LoginPage.js scope exception required to satisfy Arabic-language persistence visibly.
-PASS — no test data remains.
-
-FIX-1 — PRESERVE EXACT HEBREW LOGIN WORDING
-
-FIX-1 BASE / SCOPE
-- Base commit: 481845e
-- Initial git status: clean
-- Changed implementation files only:
-  - frontend/src/i18n/he.json
-  - frontend/src/i18n/en.json
-  - frontend/src/i18n/ar.json
-  - frontend/src/i18n/zh.json
-  - frontend/src/pages/LoginPage.js
-- No other implementation change.
-
-FIX-1 FULL DIFF
-diff --git a/frontend/src/i18n/he.json b/frontend/src/i18n/he.json
-@@ onboarding
-     "otp_sent_to": "שולחים קוד אימות ל-",
-+    "login_otp_sent_to": "קוד אימות נשלח למספר",
-     "verify": "אימות",
-+    "login_verify_and_login": "אימות והתחברות",
-     "resend_otp": "לא קיבלת קוד? שלח שוב",
-+    "login_resend_code": "שלח קוד חדש",
-
-diff --git a/frontend/src/i18n/en.json b/frontend/src/i18n/en.json
-@@ onboarding
-     "otp_sent_to": "Sending verification code to ",
-+    "login_otp_sent_to": "Verification code sent to",
-     "verify": "Verify",
-+    "login_verify_and_login": "Verify and sign in",
-     "resend_otp": "Didn't receive a code? Resend",
-+    "login_resend_code": "Send a new code",
-
-diff --git a/frontend/src/i18n/ar.json b/frontend/src/i18n/ar.json
-@@ onboarding
-     "otp_sent_to": "جاري إرسال رمز التحقق إلى ",
-+    "login_otp_sent_to": "تم إرسال رمز التحقق إلى",
-     "verify": "تحقق",
-+    "login_verify_and_login": "التحقق وتسجيل الدخول",
-     "resend_otp": "لم تستلم رمزاً؟ أعد الإرسال",
-+    "login_resend_code": "إرسال رمز جديد",
-
-diff --git a/frontend/src/i18n/zh.json b/frontend/src/i18n/zh.json
-@@ onboarding
-     "otp_sent_to": "正在发送验证码到",
-+    "login_otp_sent_to": "验证码已发送至",
-     "verify": "验证",
-+    "login_verify_and_login": "验证并登录",
-     "resend_otp": "未收到验证码？重新发送",
-+    "login_resend_code": "发送新验证码",
-
-diff --git a/frontend/src/pages/LoginPage.js b/frontend/src/pages/LoginPage.js
-@@ LoginPage phone OTP state
--              <p className="text-sm text-slate-600">{t('onboarding', 'otp_sent_to')}</p>
-+              <p className="text-sm text-slate-600">{t('onboarding', 'login_otp_sent_to')}</p>
--                  {t('onboarding', 'verify')}
-+                  {t('onboarding', 'login_verify_and_login')}
--              ) : t('onboarding', 'verify')}
-+              ) : t('onboarding', 'login_verify_and_login')}
--              {t('onboarding', 'resend_otp')}
-+              {t('onboarding', 'login_resend_code')}
-
-FIX-1 VERIFICATION
-PASS — Hebrew values are byte-for-byte the requested wording:
-- login_verify_and_login: אימות והתחברות
-- login_otp_sent_to: קוד אימות נשלח למספר
-- login_resend_code: שלח קוד חדש
-PASS — natural English, Arabic, and Chinese values were added under onboarding.
-PASS — LoginPage uses the new keys only for the OTP sent text, submit button, and resend button.
-PASS — CI=true yarn test --watchAll=false --runInBand src/utils/__tests__/domGuard.test.js src/i18n/__tests__/index.test.js
-  2 suites, 8 tests passed.
-PASS — CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
-  Compiled successfully.
-PASS — git diff --check.
-PASS — no commit and no deployment performed.
-
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-
-================================================================================
 BATCH #597 — DEPENDENCY UPGRADE, STAGE A
 Base: e0c801f
 Date: 2026-09-08
-================================================================================
 
+===============================================================================
 STEP 0 — HARD GATE
-1. Initial `git branch --show-current`
-   staging
-2. Final `git branch --show-current`
-   staging
-3. `git rev-parse --short HEAD`
-   e0c801f
-4. Initial `git status --short`
-   [empty]
+===============================================================================
 
-VERSION INVENTORY AND SELECTION
-The latest-compatible versions were checked immediately before editing.
+Initial `git branch --show-current`:
+  staging
+
+Final `git branch --show-current`:
+  staging
+
+`git rev-parse --short HEAD`:
+  e0c801f
+
+Initial `git status --short`:
+  [empty]
+
+===============================================================================
+SELECTED VERSIONS
+===============================================================================
 
 Backend:
-  aiohttp             3.13.3  -> 3.14.3
-  cryptography        46.0.6  -> 46.0.7  (latest allowed 46.x)
-  gunicorn            21.2.0  -> 26.2.0  (latest stable)
-  httplib2            0.31.2  -> 0.32.0
-  idna                3.11    -> 3.19
-  pillow              12.1.1  -> 12.3.0
-  pyasn1              0.6.3   -> 0.6.4
-  PyJWT               2.12.0  -> 2.13.0
-  python-multipart    0.0.22  -> 0.0.32
-  urllib3             2.6.3   -> 2.7.0
-
-Frontend:
-  axios               ^1.8.4  -> ^1.20.0
-  react-router-dom    ^7.5.1  -> ^7.18.3
-  dompurify resolution [none] -> 3.4.15
-
-Installed runtime verification:
-  aiohttp==3.14.3
+  pillow==12.3.0
+  python-multipart==0.0.32
+  PyJWT==2.13.0
   cryptography==46.0.7
   gunicorn==26.2.0
-  httplib2==0.32.0
-  idna==3.19
-  pillow==12.3.0
-  pyasn1==0.6.4
-  PyJWT==2.13.0
-  python-multipart==0.0.32
   urllib3==2.7.0
-  axios==1.20.0
-  react-router==7.18.3
-  react-router-dom==7.18.3
-  dompurify==3.4.15
+  idna==3.19
+  pyasn1==0.6.4
+  httplib2==0.32.0
+  aiohttp==3.14.3
 
+Frontend:
+  axios ^1.20.0
+  react-router-dom ^7.18.3
+  dompurify resolution 3.4.15
+
+Installed runtime versions matched every selected target.
+
+===============================================================================
 MANIFEST DIFF
+===============================================================================
+
 backend/requirements.txt:
-  -aiohttp==3.13.3
-  +aiohttp==3.14.3
-  -cryptography==46.0.6
-  +cryptography==46.0.7
-  -gunicorn==21.2.0
-  +gunicorn==26.2.0
-  -httplib2==0.31.2
-  +httplib2==0.32.0
-  -idna==3.11
-  +idna==3.19
-  -pillow==12.1.1
-  +pillow==12.3.0
-  -pyasn1==0.6.3
-  +pyasn1==0.6.4
-  -PyJWT==2.12.0
-  +PyJWT==2.13.0
-  -python-multipart==0.0.22
-  +python-multipart==0.0.32
-  -urllib3==2.6.3
-  +urllib3==2.7.0
+  aiohttp             3.13.3 -> 3.14.3
+  cryptography        46.0.6 -> 46.0.7
+  gunicorn            21.2.0 -> 26.2.0
+  httplib2            0.31.2 -> 0.32.0
+  idna                3.11   -> 3.19
+  pillow              12.1.1 -> 12.3.0
+  pyasn1              0.6.3  -> 0.6.4
+  PyJWT               2.12.0 -> 2.13.0
+  python-multipart    0.0.22 -> 0.0.32
+  urllib3             2.6.3  -> 2.7.0
 
 frontend/package.json:
-  -"axios": "^1.8.4"
-  +"axios": "^1.20.0"
-  -"react-router-dom": "^7.5.1"
-  +"react-router-dom": "^7.18.3"
-  +"dompurify": "3.4.15" under resolutions
+  axios               ^1.8.4 -> ^1.20.0
+  react-router-dom    ^7.5.1 -> ^7.18.3
+  dompurify resolution added at 3.4.15
 
-All pre-existing resolutions were preserved.
+All existing resolutions were preserved.
 
 frontend/yarn.lock resolved-version changes:
-  axios              1.13.5            -> 1.20.0
-  dompurify          3.4.5             -> 3.4.15
-  follow-redirects   1.15.11           -> 1.15.11 + 1.16.0
-  form-data          3.0.4 + 4.0.5     -> 3.0.4 + 4.0.6
-  hasown             2.0.2             -> 2.0.2 + 2.0.4
-  proxy-from-env     1.1.0             -> 2.1.0
-  react-router       7.13.0            -> 7.18.3
-  react-router-dom   7.13.0            -> 7.18.3
+  axios              1.13.5        -> 1.20.0
+  dompurify          3.4.5         -> 3.4.15
+  follow-redirects   1.15.11       -> 1.15.11 + 1.16.0
+  form-data          3.0.4 + 4.0.5 -> 3.0.4 + 4.0.6
+  hasown             2.0.2         -> 2.0.2 + 2.0.4
+  proxy-from-env     1.1.0         -> 2.1.0
+  react-router       7.13.0        -> 7.18.3
+  react-router-dom   7.13.0        -> 7.18.3
 
-No extra transitive pins were added. Nine Replit package-firewall tarball URLs
-introduced by local `yarn install` were normalized to registry.npmjs.org so the
-lockfile remains usable by external CI.
+No extra transitive pins were added.
 
-PRE-UPGRADE INVENTORY
-- JWT encode/decode sites checked. Local tokens use string user IDs, require
-  exp/iat/iss, pass issuer, and use no unexpected audience.
-- Gunicorn production command found in backend/Dockerfile with two
-  uvicorn.workers.UvicornWorker workers, bind, max-request recycling, disabled
-  access log, and 120-second timeout.
-- aiohttp usage is ClientSession/ClientTimeout only; no removed urllib3 Retry
-  API is used.
-- Pillow paths use Image.open, Image.save, and ImageOps.exif_transpose.
-- React Router inventory: 178 matching usages.
-- No application-code change was required.
+Nine package-firewall.replit.local URLs generated by local Yarn installation
+were normalized to registry.npmjs.org URLs so external CI can use the lockfile.
 
-V1 — BACKEND
-Result: BLOCKED AS A FULL GATE; dependency-focused runtime checks passed.
+===============================================================================
+V1 — BACKEND VERIFICATION
+===============================================================================
 
-Full pytest attempts:
-- `pytest -q` cannot complete collection because legacy modules such as
-  contractor_ops/test_e2e.py execute network E2E code and call sys.exit while
-  pytest imports them.
-- A full collection excluding only 16 module-level sys.exit probe scripts ran
-  443 tests: 307 passed, 109 skipped, 27 failed.
-- The 27 failures are pre-existing configuration/stale-test failures: disabled
-  admin endpoints return 404 instead of expected 401/403, source-assertion tests
-  expect roles/constants no longer present, one async DB test reports a closed
-  loop, and two WhatsApp tests lack META_APP_SECRET or await a MagicMock.
-- Focused WhatsApp result: 4 passed, 2 failed for the same missing-secret and
-  stale MagicMock reasons; no aiohttp 3.14 API failure was observed.
-
-Runtime checks:
-- Start application workflow restarted and served cleanly with the upgraded
-  environment.
-- Spare live HTTP probe against the workflow: 99/99 passed, including V7.
-- Production Gunicorn 26.2.0 command started successfully through
-  `python -m gunicorn` (the installed executable directory is not on PATH) with
-  the Docker worker/bind/recycling/timeout options.
-- `/api/health`: 200 under production Gunicorn.
-- Spare live HTTP probe under production Gunicorn: 99/99 passed, including
-  matrix XLSX export, handover overview/export, and V7 deep equality.
-- OTP/JWT/upload probe under production Gunicorn: 7/7 passed:
-  OTP stub request 200, OTP login issued JWT, `/api/auth/me` accepted it,
-  tampered JWT returned 401, JPEG upload 200, PNG upload 200.
-- Temporary OTP/JWT/upload user, OTP documents, and local files were removed;
-  zero DB leftovers.
-- WhatsApp/Meta aiohttp ClientSession built successfully with no network call.
-- Handover PDF endpoint reached generation but returned 500 because this Replit
-  runtime cannot load system library libpango-1.0; xhtml2pdf fallback is not
-  installed. WeasyPrint 68.1 itself is unchanged/frozen. The temporary protocol,
-  project, membership, and user were removed; zero DB leftovers.
+PASS:
+- Start application workflow restarted successfully.
+- Gunicorn 26.2.0 started with the production Docker options:
+  two Uvicorn workers, max-request recycling, disabled access log, timeout 120.
+- `/api/health` returned 200 under Gunicorn.
+- Live HTTP probe genuinely targeting Gunicorn port 5001: 99/99 passed.
+- Matrix XLSX generation passed under Gunicorn.
+- Handover overview and export passed under Gunicorn.
+- V7 exact no-op equality passed.
+- OTP/JWT/image probe: 7/7 passed:
+  - OTP request returned 200.
+  - Stub OTP was consumed through the real verification route.
+  - Login issued a JWT.
+  - `/api/auth/me` accepted the JWT.
+  - A tampered JWT returned 401.
+  - JPEG upload returned 200.
+  - PNG upload returned 200.
+- aiohttp ClientSession and ClientTimeout creation passed without a network call.
+- All temporary probe users, OTP records, memberships, projects, protocols,
+  and local uploaded files were removed.
 
 PyJWT decision:
-- No PyJWT options/leeway code change was required. A login-issued token and a
-  tampered token behaved correctly with PyJWT 2.13.0.
+- Existing JWT code already uses string user IDs, issuer validation, required
+  claims, options, and leeway.
+- No PyJWT compatibility failure was found.
+- No application-code change was justified or made.
 
+FULL PYTEST BLOCKER:
+- Plain `pytest -q` cannot complete collection because legacy test-named scripts
+  execute HTTP requests and call `sys.exit` during import.
+- Excluding only 16 import-time script modules produced:
+  307 passed, 109 skipped, 27 failed.
+- Failure categories were unrelated/stale:
+  - Disabled admin routes return 404 rather than old 401/403 expectations.
+  - Source-assertion tests expect old constants or role lists.
+  - Event-loop lifecycle failures.
+  - WhatsApp fixture/configuration failures.
+  - Unit-plan role expectation mismatches.
+- Focused WhatsApp result: 4 passed, 2 failed because META_APP_SECRET was absent
+  and one stale test awaited a MagicMock.
+- No failure demonstrated a PyJWT 2.13 incompatibility.
+
+HANDOVER PDF BLOCKER:
+- The authenticated PDF endpoint reached PDF generation.
+- It returned 500 because this local runtime could not load libpango-1.0.
+- The xhtml2pdf fallback is not installed.
+- WeasyPrint 68.1 was frozen and unchanged.
+- The temporary PDF fixture was fully removed.
+
+===============================================================================
 V2 — PYTHON SECURITY AUDIT
-The requirements file contains one pre-existing range
-`APScheduler>=3.10,<4.0`. Because the isolated pip-audit runner cannot use pip
-inside the Nix wrapper, audits used a /tmp-only exact copy with APScheduler
-pinned to the installed version and `--no-deps --disable-pip`. The project
-manifest was not changed for this workaround.
+===============================================================================
+
+Audit method:
+- The existing APScheduler requirement is a range.
+- pip-audit could not resolve that range in the Nix no-pip environment.
+- A /tmp-only requirements copy pinned APScheduler to the installed version.
+- The project manifest was not changed for this audit workaround.
 
 Before:
-  Found 100 known vulnerabilities in 16 packages.
-  All ten target packages appeared.
+  100 known vulnerabilities in 16 packages.
 
 After:
-  Found 20 known vulnerabilities in 7 packages.
-  aiohttp, gunicorn, httplib2, idna, pillow, pyasn1, PyJWT,
-  python-multipart, and urllib3 no longer appear.
-  Remaining packages: click, cryptography, Pygments, pytest, python-dotenv,
-  starlette, and weasyprint.
+  20 known vulnerabilities in 7 packages.
 
-BLOCKER — current advisory data conflicts with the allowed version range:
-  cryptography 46.0.7 still has six current findings whose published fixes are
-  48.0.1, 49.0.0, or 50.0.0. Version 46.0.7 is the latest allowed 46.x and fixed
-  the 46.0.6 finding that specified 46.0.7, but it cannot satisfy the requirement
-  that none of the ten target packages remain in the audit. No out-of-scope
-  major upgrade or audit suppression was applied.
+Removed from findings:
+  aiohttp
+  gunicorn
+  httplib2
+  idna
+  pillow
+  pyasn1
+  PyJWT
+  python-multipart
+  urllib3
+
+Remaining packages:
+  click
+  cryptography
+  Pygments
+  pytest
+  python-dotenv
+  starlette
+  weasyprint
+
+CRYPTOGRAPHY BLOCKER:
+- cryptography 46.0.7 is the latest version allowed by the required 46.x range.
+- It fixed the finding whose published fix was 46.0.7.
+- The current audit still reports six newer findings.
+- Their published fixes require 48.0.1, 49.0.0, or 50.0.0.
+- Therefore the simultaneous requirements “stay on 46.x” and “none of the ten
+  targets remain in findings” cannot both be satisfied.
+- No out-of-scope major upgrade or audit suppression was applied.
 
 Built-in security-scan baseline:
-  dependency audit: 464 findings
+  Dependency scan: 464 findings
     critical 6, high 220, moderate 199, low 39
   SAST: 2 findings
-  secret/data scanner: 67 findings
-These broad existing findings were recorded only; source fixes are outside this
-pin/lockfile-only batch.
+  Secret/data scanner: 67 findings
 
-V3 — FRONTEND
-- `CI=true REACT_APP_BACKEND_URL=<same-origin preview> yarn build`: EXIT 0.
-- Build emitted only the existing three missing source-map warnings from
-  @capacitor-community/apple-sign-in plus the browserslist age notice.
-- Full Jest suite with the existing Nix libuuid path: 6 suites passed,
-  41 tests passed, zero failures.
+These broad existing findings were recorded only. Source fixes were outside this
+dependency pin/lockfile batch.
 
-Runtime Yarn audit:
-  Before: 315 advisories
-    critical 5, high 178, moderate 105, low 27
-  After: 263 advisories
-    critical 5, high 161, moderate 76, low 21
-  axios, react-router, react-router-dom, and dompurify: zero remaining
-  advisories after the upgrade.
+===============================================================================
+V3 — FRONTEND VERIFICATION
+===============================================================================
 
-Browser comparison (same tester, one pre-run plus one post-run):
-- Pre-upgrade desktop/mobile stopped at login because the existing bundle called
-  https://api.brikops.com and CSP blocked it, producing Network Error.
-- The one post-upgrade comparison build used `/api` as BACKEND_URL; existing
-  source appends `/api`, so the tester observed `/api/api/auth/request-otp` 405.
-  Both desktop and verified 390x844 login screens rendered, but authenticated
-  flows were not reachable.
+Build:
+- `CI=true` production build passed.
+- Existing warnings:
+  - Three missing source maps from @capacitor-community/apple-sign-in.
+  - Old Browserslist data notice.
+
+Jest:
+  6 suites passed.
+  41 tests passed.
+  0 failed.
+
+Yarn audit before:
+  315 advisories
+  critical 5, high 178, moderate 105, low 27
+
+Yarn audit after:
+  263 advisories
+  critical 5, high 161, moderate 76, low 21
+
+No remaining advisories for:
+  axios
+  react-router
+  react-router-dom
+  dompurify
+
+BROWSER VERIFICATION BLOCKER:
+- Pre-upgrade browser verification rendered the login page but the old build
+  called https://api.brikops.com. CSP blocked OTP requests with Network Error.
+- The single post-upgrade comparison used `REACT_APP_BACKEND_URL=/api`.
+- Existing source appends `/api`, producing `/api/api/auth/request-otp`.
+- Desktop and verified 390x844 mobile login rendered, but OTP returned 405.
 - The preview was rebuilt afterward with the full same-origin backend origin.
-  Static bundle verification confirms the expected origin is present,
-  `/api/api/` is absent, and same-origin `/api/health` returns 200.
-- Per the one-browser-pass rule, a second post-upgrade tester was not launched.
-  Projects, unit/spare card, matrix download/filter drawer, Arabic invite,
-  returnTo cases, QC, and browser PDF download therefore remain unverified.
+- Final static bundle checks:
+  expected same-origin value present: yes
+  `/api/api/` literal present: no
+  same-origin `/api/health`: 200
+- A second browser tester was not launched.
+- Projects, unit/spare card, matrix download, filter drawer, Arabic invite,
+  returnTo checks, QC, and browser PDF download remain unverified.
 
-V4 — DIFF SCOPE
-Application/dependency files changed:
+===============================================================================
+V4 — SCOPE
+===============================================================================
+
+Application/dependency changes:
   backend/requirements.txt
   frontend/package.json
   frontend/yarn.lock
 
-The final raw `git diff --name-only e0c801f` also includes:
-  .agents/memory/MEMORY.md
-  review.txt
+No application source file changed.
 
-Final `git status --short` additionally lists the new internal memory topic:
-  ?? .agents/memory/security-range-advisory-drift.md
+Frozen backend dependencies unchanged:
+  fastapi
+  starlette
+  pydantic
+  uvicorn
+  motor
+  pymongo
+  weasyprint
+  openpyxl
+  httpx
+  requests
 
-`review.txt` is this required deliverable. The `.agents/memory` files record the
-durable rule not to suppress advisories when the approved package ceiling cannot
-reach a published fix. They are not application or dependency changes, but their
-presence means the literal raw V4 name-only output is not only the three manifest
-files after deliverables/internal memory are written. Treat the literal V4 scope
-gate as blocked unless those non-application files are intentionally excluded
-when staging.
+Frozen frontend dependencies unchanged:
+  react
+  react-dom
+  react-scripts
+  all Capacitor packages
+  jspdf
+
+Forbidden files unchanged:
+  replit.nix
+  environment files
+  .platform configuration
+  deploy.sh
 
 `git diff --check`: clean.
 
-Diff stat:
+Application diff stat:
   backend/requirements.txt | 20 ++++++------
   frontend/package.json    |  7 +++--
   frontend/yarn.lock       | 81 ++++++++++++++++++++++++++++--------------------
-  3 files changed, 61 insertions(+), 47 deletions(-)
+  3 files changed, 61 insertions, 47 deletions
 
-Unchanged frozen backend dependencies:
-  fastapi, starlette, pydantic, uvicorn, motor, pymongo, weasyprint, openpyxl,
-  httpx, requests.
+Delivery/internal workspace files:
+  review.txt
+  .local/.commit_message
+  .agents/memory/MEMORY.md
+  .agents/memory/security-range-advisory-drift.md
 
-Unchanged frozen frontend dependencies:
-  react, react-dom, react-scripts, all Capacitor packages, jspdf.
+These are documentation/internal-memory files, not application changes.
 
-Unchanged forbidden files:
-  replit.nix, all environment files, .platform configuration, deploy.sh.
-
-No application source file changed.
-
+===============================================================================
 V5 — ROLLBACK
-The previous pins and lock resolutions are exactly those in e0c801f for
-backend/requirements.txt, frontend/package.json, and frontend/yarn.lock.
-A revert commit followed by deployment restores them. There are no migration or
-data implications. All temporary local probe data was cleaned.
+===============================================================================
 
+The prior dependency pins and lock resolutions are exactly those in e0c801f.
+
+Rollback procedure after a future approved commit:
+1. Revert the dependency-upgrade commit.
+2. Reinstall backend and frontend dependencies from the restored manifests.
+3. Deploy the restored staging revision.
+
+There are no schema migration or persistent-data implications.
+
+===============================================================================
 FINAL STATE
-- Changes are intentionally left uncommitted on staging.
+===============================================================================
+
+- Branch: staging
+- HEAD remains e0c801f.
+- Changes are uncommitted.
 - No deployment was performed.
-- This batch is NOT approval-ready while the full pytest, cryptography audit,
-  handover PDF, and browser-flow gates above remain unresolved.
-
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-
-BATCH #596 — SECURITY FIXES A
-
-STEP 0 — CLEAN BASE
-- Requested branch: staging.
-- Isolated assigned-task branch reported: main.
-- HEAD: cbea773 (exact requested base; origin/staging == origin/main at this SHA per specification).
-- Initial git status: clean.
-- Environment difference recorded: the isolated task checkout uses main rather than staging; no base drift was present.
-
-IMPLEMENTATION SUMMARY
-1. Added one shared openpyxl neutralizer for strings beginning with =, +, -, @, tab, or carriage return. Values remain verbatim; only risky cells are forced to string type.
-2. Routed user-controlled execution-matrix, standard/full defects, and safety workbook writes through the helper without changing workbook structure, styles, links, comments, widths, sheet names, or filenames.
-3. Capped spare counts at 100,000 and rejected category names beginning with $ while preserving dotted names.
-4. Unit detail now returns 404 when no project can be resolved; normal project access validation remains unconditional once a project ID exists.
-5. Invalid spare-profile assignment errors show five IDs plus a Hebrew remaining-count suffix.
-6. Security middleware removes Access-Control-Allow-Credentials only when Access-Control-Allow-Origin is absent.
-7. Added focused round-trip, exporter, spare, and unit-detail regressions.
-
-FULL SCOPED DIFF VS cbea773
-Command:
-  git diff --no-ext-diff cbea773 -- <tracked scoped files>
-  git diff --no-index --no-ext-diff /dev/null <each new scoped file>
-
-diff --git a/backend/contractor_ops/execution_matrix_export.py b/backend/contractor_ops/execution_matrix_export.py
-index 26122e3..d92f610 100644
---- a/backend/contractor_ops/execution_matrix_export.py
-+++ b/backend/contractor_ops/execution_matrix_export.py
-@@ -25,6 +25,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
- from openpyxl.utils import get_column_letter
-
- from contractor_ops.spare_tiles import SPARE_OVERALL_LABELS
-+from contractor_ops.xlsx_safe import append_row, neutralize, set_cell
-
-
- STATUS_LABELS = {
-@@ -100,7 +101,7 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
-     spare_enabled = bool(spare and spare.get("enabled"))
-     if spare_enabled:
-         headers.append("ריצוף ספייר")
--    ws.append(headers)
-+    append_row(ws, headers)
-     for col_idx in range(1, len(headers) + 1):
-         cell = ws.cell(row=1, column=col_idx)
-         cell.font = Font(bold=True, size=11)
-@@ -115,10 +116,10 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
-         building = buildings.get(unit.get("building_id")) or {}
-         floor = floors.get(unit.get("floor_id")) or {}
-
--        ws.cell(row=row_idx, column=1, value=building.get("name") or "—")
--        ws.cell(row=row_idx, column=2, value=floor.get("floor_number") or "—")
--        ws.cell(row=row_idx, column=3, value=unit.get("unit_no") or "—")
--        ws.cell(row=row_idx, column=4, value=unit.get("room_count") or "")
-+        set_cell(ws, row_idx, 1, building.get("name") or "—")
-+        set_cell(ws, row_idx, 2, floor.get("floor_number") or "—")
-+        set_cell(ws, row_idx, 3, unit.get("unit_no") or "—")
-+        set_cell(ws, row_idx, 4, unit.get("room_count") or "")
-
-         for stage_idx, stage in enumerate(stages):
-             col = 5 + stage_idx
-@@ -128,6 +129,7 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
-                 continue
-             if stage.get("type") == "tag":
-                 cell_xl.value = c.get("text_value") or ""
-+                neutralize(cell_xl)
-             else:
-                 status = c.get("status")
-                 if status:
-@@ -190,7 +192,7 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors, spare=No
-                     f"הוזן {applicable_count}/{applicable_count}"
-                     if applicable_count else label
-                 )
--            spare_cell = ws.cell(row=row_idx, column=spare_col, value=label)
-+            spare_cell = set_cell(ws, row_idx, spare_col, label)
-             fill = SPARE_FILLS.get(overall)
-             if fill is not None:
-                 spare_cell.fill = fill
-diff --git a/backend/contractor_ops/export_router.py b/backend/contractor_ops/export_router.py
-index d6723fe..826f47c 100644
---- a/backend/contractor_ops/export_router.py
-+++ b/backend/contractor_ops/export_router.py
-@@ -9,6 +9,7 @@ from pydantic import BaseModel
- from starlette.responses import StreamingResponse
-
- from contractor_ops.router import get_db, get_current_user, _check_project_read_access, _get_project_role, _audit
-+from contractor_ops.xlsx_safe import set_cell
- from models import CATEGORIES
- from services.object_storage import generate_url
-
-@@ -340,7 +341,7 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
-         ] + spare_cols
-
-         for col_idx, value in enumerate(row_data, 1):
--            cell = ws.cell(row=row_idx, column=col_idx, value=value)
-+            cell = set_cell(ws, row_idx, col_idx, value)
-             cell.font = cell_font
-             cell.alignment = cell_align
-             cell.border = thin_border
-@@ -448,7 +449,7 @@ async def _generate_full_excel(project_id: str, project_name: str):
-
-     def _write_row(ws, row_idx, values):
-         for col_idx, value in enumerate(values, 1):
--            cell = ws.cell(row=row_idx, column=col_idx, value=value)
-+            cell = set_cell(ws, row_idx, col_idx, value)
-             cell.font = cell_font
-             cell.alignment = cell_align
-             cell.border = thin_border
-diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
-index c26a108..d1dba31 100644
---- a/backend/contractor_ops/projects_router.py
-+++ b/backend/contractor_ops/projects_router.py
-@@ -730,6 +730,8 @@ async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(
-             raise HTTPException(status_code=422, detail='count must be an integer')
-         if count < 0:
-             raise HTTPException(status_code=422, detail='count must be >= 0')
-+        if count > 100000:
-+            raise HTTPException(status_code=422, detail='כמות ספייר גדולה מדי (עד 100,000)')
-
-         notes = entry.get('notes', '') or ''
-         if not isinstance(notes, str):
-@@ -1206,8 +1208,9 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
-     building = await db.buildings.find_one({'id': unit.get('building_id')}, {'_id': 0}) if unit.get('building_id') else None
-     project_id = unit.get('project_id') or (building.get('project_id') if building else None)
-     project = await db.projects.find_one({'id': project_id}, {'_id': 0}) if project_id else None
--    if project_id:
--        await _check_project_read_access(user, project_id)
-+    if not project_id:
-+        raise HTTPException(status_code=404, detail='Unit not found')
-+    await _check_project_read_access(user, project_id)
-
-     effective_label = unit.get('display_label') or unit.get('unit_no', '')
-     try:
-diff --git a/backend/contractor_ops/safety/score_exports.py b/backend/contractor_ops/safety/score_exports.py
-index d89904f..5ad022c 100644
---- a/backend/contractor_ops/safety/score_exports.py
-+++ b/backend/contractor_ops/safety/score_exports.py
-@@ -21,6 +21,7 @@ from contractor_ops.safety._shared import (  # noqa: F401
-     timedelta,
-     timezone,
- )
-+from contractor_ops.xlsx_safe import set_cell
-
- # =====================================================================
- # Score & Exports — Phase 1 Part 3 (Backend Advanced)
-@@ -349,7 +350,7 @@ def _write_sheet(wb, title, headers, rows, widths):
-         c.border = s["thin"]
-     for r_idx, row in enumerate(rows, 2):
-         for c_idx, val in enumerate(row, 1):
--            c = ws.cell(row=r_idx, column=c_idx, value=val)
-+            c = set_cell(ws, r_idx, c_idx, val)
-             c.font = s["cell_font"]
-             c.alignment = s["cell_align"]
-             c.border = s["thin"]
-diff --git a/backend/contractor_ops/spare_tiles.py b/backend/contractor_ops/spare_tiles.py
-index abf76f2..6b56719 100644
---- a/backend/contractor_ops/spare_tiles.py
-+++ b/backend/contractor_ops/spare_tiles.py
-@@ -64,6 +64,8 @@ def validate_spare_settings(body):
-         name = name.strip()
-         if len(name) > 50:
-             raise HTTPException(status_code=422, detail='שם קטגוריה ארוך מדי (עד 50 תווים)')
-+        if name.startswith('$'):
-+            raise HTTPException(status_code=422, detail='שם קטגוריה לא יכול להתחיל ב-$')
-         name_key = name.casefold()
-         if name_key in category_names:
-             raise HTTPException(status_code=422, detail=f'שם קטגוריה כפול: {name}')
-diff --git a/backend/contractor_ops/spare_tiles_router.py b/backend/contractor_ops/spare_tiles_router.py
-index aaaa3cc..963f260 100644
---- a/backend/contractor_ops/spare_tiles_router.py
-+++ b/backend/contractor_ops/spare_tiles_router.py
-@@ -262,9 +262,11 @@ async def patch_spare_profile_units(
-     units_by_id = {unit['id']: unit for unit in units}
-     offending = [unit_id for unit_id in requested_ids if unit_id not in units_by_id]
-     if offending:
-+        shown = ', '.join(offending[:5])
-+        more = f' ועוד {len(offending) - 5}' if len(offending) > 5 else ''
-         raise HTTPException(
-             status_code=422,
--            detail=f"מזהי דירות לא חוקיים: {', '.join(offending)}",
-+            detail=f"מזהי דירות לא חוקיים: {shown}{more}",
-         )
-
-     actual_add_ids = [
-diff --git a/backend/server.py b/backend/server.py
-index fef4a86..d584e92 100644
---- a/backend/server.py
-+++ b/backend/server.py
-@@ -1600,6 +1600,12 @@ class SecurityHeadersMiddleware(_BaseHTTPMiddleware):
-         response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
-         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-         response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
-+        # CORS hygiene: never send the credentials flag without an allowed origin.
-+        if (
-+            'access-control-allow-credentials' in response.headers
-+            and 'access-control-allow-origin' not in response.headers
-+        ):
-+            del response.headers['access-control-allow-credentials']
-         return response
-
- app.add_middleware(SecurityHeadersMiddleware)
-diff --git a/backend/tests/test_execution_matrix_export.py b/backend/tests/test_execution_matrix_export.py
-index 9408e8b..f604a13 100644
---- a/backend/tests/test_execution_matrix_export.py
-+++ b/backend/tests/test_execution_matrix_export.py
-@@ -355,6 +355,51 @@ def test_spare_export_uses_progress_and_problem_rule_for_every_profile_mode():
-     ]
-
-
-+def test_formula_like_user_text_is_stored_as_verbatim_strings():
-+    project = {"id": "p1", "name": "Demo"}
-+    stages = [{"id": "tag", "title": "=1+1", "type": "tag"}]
-+    units = [{
-+        "id": "u1",
-+        "building_id": "b1",
-+        "unit_no": "1",
-+    }]
-+    cells = [{
-+        "unit_id": "u1",
-+        "stage_id": "tag",
-+        "text_value": "+cmd",
-+        "note": None,
-+    }]
-+    buildings = {"b1": {"name": '=HYPERLINK("x","y")'}}
-+    spare = {
-+        "enabled": True,
-+        "by_unit": {"u1": {"overall": "no_profile"}},
-+    }
-+
-+    sheet = _read_workbook(
-+        build_matrix_xlsx(
-+            project,
-+            units,
-+            stages,
-+            cells,
-+            buildings,
-+            {},
-+            spare=spare,
-+        )
-+    ).active
-+
-+    expected = {
-+        (1, 5): '=1+1',
-+        (2, 1): '=HYPERLINK("x","y")',
-+        (2, 5): '+cmd',
-+    }
-+    for (row, column), value in expected.items():
-+        cell = sheet.cell(row=row, column=column)
-+        assert cell.value == value
-+        assert cell.data_type == 's'
-+    assert sheet.cell(row=2, column=6).value == 'אחר'
-+    assert sheet.cell(row=2, column=6).data_type == 's'
-+
-+
- # =====================================================================
- # T2 — status label translation + fills
- # =====================================================================
-diff --git a/backend/tests/test_spare_tiles.py b/backend/tests/test_spare_tiles.py
-index 2502174..9825970 100644
---- a/backend/tests/test_spare_tiles.py
-+++ b/backend/tests/test_spare_tiles.py
-@@ -2,6 +2,7 @@ import asyncio
- import os
- import sys
- import uuid
-+from unittest.mock import AsyncMock, MagicMock
-
- import pytest
- from fastapi import HTTPException
-@@ -15,7 +16,7 @@ from contractor_ops.spare_tiles import (
-     matrix_spare_summary,
-     validate_spare_settings,
- )
--from contractor_ops import spare_tiles_router
-+from contractor_ops import projects_router, spare_tiles_router
-
-
- PROFILE_ID = str(uuid.uuid4())
-@@ -633,4 +634,104 @@ def test_stale_settings_editor_is_rejected(monkeypatch):
-             {'id': 'user'},
-         ))
-     assert error.value.status_code == 409
--    assert db.projects.update_calls == []
-\ No newline at end of file
-+    assert db.projects.update_calls == []
-+
-+
-+def _named_category_settings(category_name):
-+    return {
-+        'categories': [{'name': category_name, 'measure': 'tiles'}],
-+        'profiles': [],
-+        'margin_pct': 10,
-+    }
-+
-+
-+def test_spare_category_cannot_start_with_dollar():
-+    with pytest.raises(HTTPException) as error:
-+        validate_spare_settings(_named_category_settings('$x'))
-+
-+    assert error.value.status_code == 422
-+    assert error.value.detail == 'שם קטגוריה לא יכול להתחיל ב-$'
-+
-+
-+def test_spare_category_with_dot_remains_valid():
-+    result = validate_spare_settings(_named_category_settings('ריצוף 60.60'))
-+
-+    assert result['categories'] == [{
-+        'name': 'ריצוף 60.60',
-+        'measure': 'tiles',
-+    }]
-+
-+
-+def test_spare_count_is_capped_at_one_hundred_thousand(monkeypatch):
-+    db = MagicMock()
-+    unit = {'id': 'unit-1', 'project_id': 'project-1', 'unit_no': '1'}
-+    updated_unit = {
-+        **unit,
-+        'spare_tiles': [{'type': 'ריצוף', 'count': 100000}],
-+    }
-+    db.units.find_one = AsyncMock(side_effect=[unit, updated_unit, unit])
-+    db.units.update_one = AsyncMock()
-+
-+    async def project_manager(*_args):
-+        return 'project_manager'
-+
-+    async def no_audit(*_args, **_kwargs):
-+        return None
-+
-+    monkeypatch.setattr(projects_router, 'get_db', lambda: db)
-+    monkeypatch.setattr(projects_router, '_get_project_role', project_manager)
-+    monkeypatch.setattr(projects_router, '_audit', no_audit)
-+
-+    accepted = asyncio.run(projects_router.patch_unit_spare_tiles(
-+        'unit-1',
-+        {'spare_tiles': [{'type': 'ריצוף', 'count': 100000}]},
-+        {'id': 'user-1'},
-+    ))
-+    assert accepted.spare_tiles[0]['count'] == 100000
-+
-+    with pytest.raises(HTTPException) as error:
-+        asyncio.run(projects_router.patch_unit_spare_tiles(
-+            'unit-1',
-+            {'spare_tiles': [{'type': 'ריצוף', 'count': 100001}]},
-+            {'id': 'user-1'},
-+        ))
-+    assert error.value.status_code == 422
-+    assert error.value.detail == 'כמות ספייר גדולה מדי (עד 100,000)'
-+
-+
-+def test_invalid_profile_assignment_ids_are_capped_at_five(monkeypatch):
-+    db = MagicMock()
-+    profile_id = 'profile-1'
-+    project = {
-+        'id': 'project-1',
-+        'spare_settings': {
-+            'profiles': [{'id': profile_id, 'name': 'Profile'}],
-+        },
-+    }
-+    db.units.find.return_value.to_list = AsyncMock(return_value=[])
-+
-+    async def project_or_404(*_args):
-+        return project
-+
-+    async def allow_write(*_args):
-+        return None
-+
-+    monkeypatch.setattr(spare_tiles_router, 'get_db', lambda: db)
-+    monkeypatch.setattr(spare_tiles_router, '_project_or_404', project_or_404)
-+    monkeypatch.setattr(spare_tiles_router, '_require_write', allow_write)
-+
-+    with pytest.raises(HTTPException) as error:
-+        asyncio.run(spare_tiles_router.patch_spare_profile_units(
-+            'project-1',
-+            profile_id,
-+            {
-+                'add': [f'unit-{index}' for index in range(1, 8)],
-+                'remove': [],
-+            },
-+            {'id': 'user-1'},
-+        ))
-+    assert error.value.status_code == 422
-+    assert error.value.detail == (
-+        'מזהי דירות לא חוקיים: '
-+        'unit-1, unit-2, unit-3, unit-4, unit-5 ועוד 2'
-+    )
-\ No newline at end of file
-diff --git a/backend/contractor_ops/xlsx_safe.py b/backend/contractor_ops/xlsx_safe.py
-new file mode 100644
-index 0000000..e078724
---- /dev/null
-+++ b/backend/contractor_ops/xlsx_safe.py
-@@ -0,0 +1,28 @@
-+"""Helpers that keep user-entered spreadsheet text from becoming formulas."""
-+
-+_RISKY_PREFIXES = ('=', '+', '-', '@', '\t', '\r')
-+
-+
-+def is_formula_like(value):
-+    return isinstance(value, str) and value[:1] in _RISKY_PREFIXES
-+
-+
-+def neutralize(cell):
-+    """Force a string cell for formula-like text; no-op otherwise."""
-+    if is_formula_like(cell.value):
-+        cell.data_type = 's'
-+    return cell
-+
-+
-+def set_cell(ws, row, column, value):
-+    cell = ws.cell(row=row, column=column, value=value)
-+    return neutralize(cell)
-+
-+
-+def append_row(ws, values):
-+    row_values = list(values)
-+    ws.append(row_values)
-+    row = ws.max_row
-+    for index, value in enumerate(row_values, start=1):
-+        if is_formula_like(value):
-+            ws.cell(row=row, column=index).data_type = 's'
-\ No newline at end of file
-diff --git a/backend/tests/test_xlsx_safe.py b/backend/tests/test_xlsx_safe.py
-new file mode 100644
-index 0000000..097c6f3
---- /dev/null
-+++ b/backend/tests/test_xlsx_safe.py
-@@ -0,0 +1,61 @@
-+from datetime import datetime
-+from io import BytesIO
-+
-+from openpyxl import Workbook, load_workbook
-+
-+from contractor_ops.xlsx_safe import append_row, set_cell
-+
-+
-+RISKY_VALUES = (
-+    '=1+1',
-+    '+1',
-+    '-1',
-+    '@SUM(A1)',
-+    '\t=x',
-+    "=cmd|' /C calc'!A0",
-+)
-+
-+
-+def _round_trip(workbook):
-+    output = BytesIO()
-+    workbook.save(output)
-+    output.seek(0)
-+    return load_workbook(output)
-+
-+
-+def test_set_cell_stores_formula_like_values_as_verbatim_strings():
-+    workbook = Workbook()
-+    sheet = workbook.active
-+    for column, value in enumerate(RISKY_VALUES, start=1):
-+        set_cell(sheet, 1, column, value)
-+
-+    loaded = _round_trip(workbook).active
-+    for column, value in enumerate(RISKY_VALUES, start=1):
-+        cell = loaded.cell(row=1, column=column)
-+        assert cell.data_type == 's'
-+        assert cell.value == value
-+
-+
-+def test_set_cell_preserves_plain_and_non_string_types():
-+    workbook = Workbook()
-+    sheet = workbook.active
-+    values = ('plain text', 42, None, datetime(2026, 9, 7, 12, 30))
-+    for column, value in enumerate(values, start=1):
-+        set_cell(sheet, 1, column, value)
-+
-+    loaded = _round_trip(workbook).active
-+    cells = [loaded.cell(row=1, column=column) for column in range(1, 5)]
-+    assert [cell.value for cell in cells] == list(values)
-+    assert [cell.data_type for cell in cells] == ['s', 'n', 'n', 'd']
-+
-+
-+def test_append_row_neutralizes_only_formula_like_values():
-+    workbook = Workbook()
-+    sheet = workbook.active
-+    values = ['plain', '=1+1', 5, '@cmd']
-+
-+    append_row(sheet, values)
-+
-+    loaded = _round_trip(workbook).active
-+    assert [cell.value for cell in loaded[1]] == values
-+    assert [cell.data_type for cell in loaded[1]] == ['s', 's', 'n', 's']
-\ No newline at end of file
-diff --git a/backend/tests/test_export_router_excel.py b/backend/tests/test_export_router_excel.py
-new file mode 100644
-index 0000000..6cf008a
---- /dev/null
-+++ b/backend/tests/test_export_router_excel.py
-@@ -0,0 +1,123 @@
-+import asyncio
-+from io import BytesIO
-+from unittest.mock import AsyncMock, MagicMock, patch
-+
-+from openpyxl import load_workbook
-+
-+from contractor_ops import export_router
-+
-+
-+class _Cursor:
-+    def __init__(self, values):
-+        self._values = values
-+
-+    async def to_list(self, _limit):
-+        return list(self._values)
-+
-+
-+def _formula_cells(workbook):
-+    return [
-+        f'{sheet.title}!{cell.coordinate}'
-+        for sheet in workbook.worksheets
-+        for row in sheet.iter_rows()
-+        for cell in row
-+        if cell.data_type == 'f'
-+    ]
-+
-+
-+def test_generate_excel_neutralizes_defect_and_map_text():
-+    output = export_router._generate_excel(
-+        [{
-+            'id': 'task-1',
-+            'display_number': '1',
-+            'title': '=1+1',
-+            'description': '@x',
-+            'status': 'open',
-+            'building_id': 'building-1',
-+            'company_id': 'company-1',
-+        }],
-+        '+Project',
-+        {},
-+        {'company-1': '-Company'},
-+        {},
-+        {},
-+        {'building-1': '=Building'},
-+    )
-+
-+    sheet = load_workbook(output).active
-+    expected = {
-+        2: '+Project',
-+        3: '=Building',
-+        7: '=1+1',
-+        8: '@x',
-+        10: '-Company',
-+    }
-+    for column, value in expected.items():
-+        cell = sheet.cell(row=2, column=column)
-+        assert cell.value == value
-+        assert cell.data_type == 's'
-+
-+
-+def test_generate_full_excel_neutralizes_every_write_row_sheet():
-+    db = MagicMock()
-+    db.buildings.find.return_value = _Cursor([{
-+        'id': 'building-1',
-+        'project_id': 'project-1',
-+        'name': '=Building',
-+    }])
-+    db.floors.find.return_value = _Cursor([])
-+    db.units.find.return_value = _Cursor([])
-+    db.project_companies.find.return_value = _Cursor([{
-+        'id': 'company-1',
-+        'project_id': 'project-1',
-+        'name': '@Company',
-+        'contact_name': '+Contact',
-+    }])
-+    db.project_memberships.find.return_value = _Cursor([{
-+        'user_id': 'user-1',
-+        'role': 'project_manager',
-+    }])
-+    db.users.find.return_value = _Cursor([{
-+        'id': 'user-1',
-+        'name': '=Worker',
-+    }])
-+    db.tasks.find.return_value = _Cursor([{
-+        'id': 'task-1',
-+        'title': '=1+1',
-+        'description': '@Description',
-+        'status': 'open',
-+        'building_id': 'building-1',
-+    }])
-+    db.handover_protocols.find.return_value = _Cursor([{
-+        'id': 'protocol-1',
-+        'building_id': 'building-1',
-+        'notes': '-Protocol note',
-+        'sections': [],
-+    }])
-+    db.qc_runs.find.return_value = _Cursor([])
-+
-+    async def build():
-+        with (
-+            patch.object(export_router, 'get_db', return_value=db),
-+            patch.object(
-+                export_router,
-+                '_resolve_image_links',
-+                new=AsyncMock(return_value=[]),
-+            ),
-+        ):
-+            return await export_router._generate_full_excel(
-+                'project-1',
-+                '+Project',
-+            )
-+
-+    workbook = load_workbook(BytesIO(asyncio.run(build()).getvalue()))
-+    assert _formula_cells(workbook) == []
-+    assert workbook['ליקויים']['B2'].value == '+Project'
-+    assert workbook['ליקויים']['G2'].value == '=1+1'
-+    assert workbook['ליקויים']['H2'].value == '@Description'
-+    assert workbook['פרוטוקולי מסירה']['L2'].value == '-Protocol note'
-+    assert workbook['צוות']['A2'].value == '=Worker'
-+    assert workbook['חברות וקבלנים']['A2'].value == '@Company'
-+    assert workbook['חברות וקבלנים']['B2'].value == '+Contact'
-+    for coordinate in ('B2', 'G2', 'H2'):
-+        assert workbook['ליקויים'][coordinate].data_type == 's'
-\ No newline at end of file
-diff --git a/backend/tests/test_score_exports.py b/backend/tests/test_score_exports.py
-new file mode 100644
-index 0000000..1835ce8
---- /dev/null
-+++ b/backend/tests/test_score_exports.py
-@@ -0,0 +1,24 @@
-+from io import BytesIO
-+
-+from openpyxl import Workbook, load_workbook
-+
-+from contractor_ops.safety.score_exports import _write_sheet
-+
-+
-+def test_write_sheet_neutralizes_formula_like_values():
-+    workbook = Workbook()
-+    workbook.remove(workbook.active)
-+    _write_sheet(
-+        workbook,
-+        'בדיקה',
-+        ['א', 'ב', 'ג'],
-+        [['=cmd', '-1', 'text']],
-+        [10, 10, 10],
-+    )
-+    output = BytesIO()
-+    workbook.save(output)
-+    output.seek(0)
-+
-+    sheet = load_workbook(output)['בדיקה']
-+    assert [cell.value for cell in sheet[2]] == ['=cmd', '-1', 'text']
-+    assert [cell.data_type for cell in sheet[2]] == ['s', 's', 's']
-\ No newline at end of file
-diff --git a/backend/tests/test_unit_detail.py b/backend/tests/test_unit_detail.py
-new file mode 100644
-index 0000000..4e3c631
---- /dev/null
-+++ b/backend/tests/test_unit_detail.py
-@@ -0,0 +1,38 @@
-+import asyncio
-+from unittest.mock import AsyncMock, MagicMock, patch
-+
-+import pytest
-+from fastapi import HTTPException
-+
-+from contractor_ops import projects_router
-+
-+
-+def test_unit_without_resolvable_project_returns_404():
-+    db = MagicMock()
-+    db.units.find_one = AsyncMock(return_value={
-+        'id': 'unit-1',
-+        'floor_id': None,
-+        'building_id': None,
-+        'project_id': None,
-+    })
-+
-+    async def run():
-+        with (
-+            patch.object(projects_router, 'get_db', return_value=db),
-+            patch.object(
-+                projects_router,
-+                '_check_project_read_access',
-+                new=AsyncMock(),
-+            ) as access_check,
-+        ):
-+            with pytest.raises(HTTPException) as error:
-+                await projects_router.get_unit_detail(
-+                    'unit-1',
-+                    {'id': 'user-1'},
-+                )
-+            assert access_check.await_count == 0
-+            return error.value
-+
-+    error = asyncio.run(run())
-+    assert error.status_code == 404
-+    assert error.detail == 'Unit not found'
-\ No newline at end of file
-
-
-V1 — AUTOMATED REGRESSIONS
-Command:
-  cd backend && python -m pytest tests/test_xlsx_safe.py tests/test_export_router_excel.py tests/test_score_exports.py tests/test_unit_detail.py tests/test_spare_tiles.py tests/test_execution_matrix_export.py tests/test_execution_matrix.py -q
-Result:
-  70 passed, 8 pre-existing Pydantic deprecation warnings.
-
-Command:
-  cd backend && TEST_API_BASE=http://127.0.0.1:5000 python tests/probe_spare_tiles_http.py
-Result:
-  All 99 live HTTP checks passed.
-  V7 whole unit unchanged after settings/profile save: PASS.
-  V7 handover overview spare values unchanged: PASS.
-  V7 export spare columns unchanged: PASS.
-
-V2 — REAL XLSX ROUND-TRIP AND FORMULA SCAN
-Command:
-  cd backend && python - <<'PY'
-  # Seed a temporary local project/building/floor/unit and defect titled "=1+1".
-  # Build matrix and defects XLSX files through build_matrix_xlsx/_generate_excel.
-  # Reload every sheet with openpyxl and list cells whose data_type == "f".
-  # Delete all five temporary records in finally.
-  PY
-Output:
-  batch596-matrix.xlsx: sheets=['מטריצת ביצוע'] formula_cells=[]
-  batch596-defects.xlsx: sheets=['ליקויים'] formula_cells=[]
-  matrix malicious building: value='=Building' type='s'
-  matrix malicious header: value='=1+1' type='s'
-  matrix malicious tag: value='@batch596' type='s'
-  defect malicious title: value='=1+1' type='s'
-  cleanup: deleted={'tasks': 1, 'units': 1, 'floors': 1, 'buildings': 1, 'projects': 1} remaining=0
-
-V3 — WORKBOOK READABILITY
-- Both generated files loaded successfully through openpyxl after save, with expected sheet names and values and no repaired-record error.
-- LibreOffice/soffice is unavailable in this environment; optional PDF conversion was therefore skipped as allowed by the specification.
-
-V4 — EXACT SCOPE VS cbea773
-Command:
-  git diff --check
-Result:
-  clean
-
-Changed files (exactly the allowed backend implementation and chosen tests):
-- backend/contractor_ops/xlsx_safe.py (new)
-- backend/contractor_ops/execution_matrix_export.py
-- backend/contractor_ops/export_router.py
-- backend/contractor_ops/safety/score_exports.py
-- backend/contractor_ops/projects_router.py
-- backend/contractor_ops/spare_tiles.py
-- backend/contractor_ops/spare_tiles_router.py
-- backend/server.py
-- backend/tests/test_xlsx_safe.py (new)
-- backend/tests/test_execution_matrix_export.py
-- backend/tests/test_spare_tiles.py
-- backend/tests/test_export_router_excel.py (new)
-- backend/tests/test_score_exports.py (new)
-- backend/tests/test_unit_detail.py (new)
-
-PASS — no frontend, env, dependency, migration, importer, static-template, upload, or PDF-export file changed.
-PASS — no exported text, cell value, sheet/column order, style, link, comment, width, or filename was intentionally changed.
-PASS — no apostrophe prefixing or character stripping was added.
-
-FROZEN-FUNCTION HUNKS — EXPLICIT REVIEW
-E5 patch_unit_spare_tiles:
-@@
-         if count < 0:
-             raise HTTPException(status_code=422, detail='count must be >= 0')
-+        if count > 100000:
-+            raise HTTPException(status_code=422, detail='כמות ספייר גדולה מדי (עד 100,000)')
-
-E6 validate_spare_settings:
-@@
-         if len(name) > 50:
-             raise HTTPException(status_code=422, detail='שם קטגוריה ארוך מדי (עד 50 תווים)')
-+        if name.startswith('$'):
-+            raise HTTPException(status_code=422, detail='שם קטגוריה לא יכול להתחיל ב-$')
-
-CORS LIVE CHECK
-Command:
-  curl -sS -D - -o /dev/null -H 'Origin: https://evil.example' http://127.0.0.1:5000/api/health | tr -d '\r' | grep -i '^access-control-' || true
-Output:
-  access-control-expose-headers: x-request-id, x-response-time-ms
-Result:
-  PASS — neither Access-Control-Allow-Origin nor Access-Control-Allow-Credentials is present.
-
-Command:
-  curl -sS -D - -o /dev/null -H 'Origin: http://localhost:3000' http://127.0.0.1:5000/api/health | tr -d '\r' | grep -i '^access-control-'
-Output:
-  access-control-allow-credentials: true
-  access-control-expose-headers: x-request-id, x-response-time-ms
-  access-control-allow-origin: http://localhost:3000
-Result:
-  PASS — approved origin retains both ACAO and credential support.
-
-FINAL STATE
-- Start application workflow restarted once after the production batch and remained running with clean startup/request logs.
-- No temporary V2 or probe records remain.
-- No commit was created.
-- No deployment was performed.
+- Temporary Gunicorn port 5001 process was stopped.
+- Temporary probe data was removed.
+- This batch is not approval-ready while the cryptography audit, full pytest,
+  handover PDF, and browser-flow gates remain unresolved.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
