@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH #596 — review.txt"
-description = "הדוח המלא: STEP 0, diff מלא מול cbea773, ראיות V1–V4, בדיקות Excel/CORS, והערת אי-פריסה."
+title = "Batch #597 dependency upgrade review"
+description = "Stage A versions, manifest and lockfile deltas, V1–V5 evidence, blockers, rollback, and final no-deploy state."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:1e9795daeb5219aa267256577024a61c12e3ac087c97c9b48fea42b49cbecdee"
-size = 55140
-mtime_ms = 1788768838154
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/f1f705d2-5b5b-4595-8077-7f955fbc86ed"
-storage_version_token = "1788769488628013"
+content_hash = "sha256:17d7ff895894ef64b562505bd0a546451ffd66a6c3e0091853f946a912d13778"
+size = 65831
+mtime_ms = 1788854267331
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/dabace4c-8453-4d4d-9046-0239a42b7563"
+storage_version_token = "1788854282517669"
 content_type = "text/plain"
 
 [[outputs]]

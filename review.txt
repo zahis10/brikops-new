@@ -565,6 +565,274 @@ PASS — no commit and no deployment performed.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
+================================================================================
+BATCH #597 — DEPENDENCY UPGRADE, STAGE A
+Base: e0c801f
+Date: 2026-09-08
+================================================================================
+
+STEP 0 — HARD GATE
+1. Initial `git branch --show-current`
+   staging
+2. Final `git branch --show-current`
+   staging
+3. `git rev-parse --short HEAD`
+   e0c801f
+4. Initial `git status --short`
+   [empty]
+
+VERSION INVENTORY AND SELECTION
+The latest-compatible versions were checked immediately before editing.
+
+Backend:
+  aiohttp             3.13.3  -> 3.14.3
+  cryptography        46.0.6  -> 46.0.7  (latest allowed 46.x)
+  gunicorn            21.2.0  -> 26.2.0  (latest stable)
+  httplib2            0.31.2  -> 0.32.0
+  idna                3.11    -> 3.19
+  pillow              12.1.1  -> 12.3.0
+  pyasn1              0.6.3   -> 0.6.4
+  PyJWT               2.12.0  -> 2.13.0
+  python-multipart    0.0.22  -> 0.0.32
+  urllib3             2.6.3   -> 2.7.0
+
+Frontend:
+  axios               ^1.8.4  -> ^1.20.0
+  react-router-dom    ^7.5.1  -> ^7.18.3
+  dompurify resolution [none] -> 3.4.15
+
+Installed runtime verification:
+  aiohttp==3.14.3
+  cryptography==46.0.7
+  gunicorn==26.2.0
+  httplib2==0.32.0
+  idna==3.19
+  pillow==12.3.0
+  pyasn1==0.6.4
+  PyJWT==2.13.0
+  python-multipart==0.0.32
+  urllib3==2.7.0
+  axios==1.20.0
+  react-router==7.18.3
+  react-router-dom==7.18.3
+  dompurify==3.4.15
+
+MANIFEST DIFF
+backend/requirements.txt:
+  -aiohttp==3.13.3
+  +aiohttp==3.14.3
+  -cryptography==46.0.6
+  +cryptography==46.0.7
+  -gunicorn==21.2.0
+  +gunicorn==26.2.0
+  -httplib2==0.31.2
+  +httplib2==0.32.0
+  -idna==3.11
+  +idna==3.19
+  -pillow==12.1.1
+  +pillow==12.3.0
+  -pyasn1==0.6.3
+  +pyasn1==0.6.4
+  -PyJWT==2.12.0
+  +PyJWT==2.13.0
+  -python-multipart==0.0.22
+  +python-multipart==0.0.32
+  -urllib3==2.6.3
+  +urllib3==2.7.0
+
+frontend/package.json:
+  -"axios": "^1.8.4"
+  +"axios": "^1.20.0"
+  -"react-router-dom": "^7.5.1"
+  +"react-router-dom": "^7.18.3"
+  +"dompurify": "3.4.15" under resolutions
+
+All pre-existing resolutions were preserved.
+
+frontend/yarn.lock resolved-version changes:
+  axios              1.13.5            -> 1.20.0
+  dompurify          3.4.5             -> 3.4.15
+  follow-redirects   1.15.11           -> 1.15.11 + 1.16.0
+  form-data          3.0.4 + 4.0.5     -> 3.0.4 + 4.0.6
+  hasown             2.0.2             -> 2.0.2 + 2.0.4
+  proxy-from-env     1.1.0             -> 2.1.0
+  react-router       7.13.0            -> 7.18.3
+  react-router-dom   7.13.0            -> 7.18.3
+
+No extra transitive pins were added. Nine Replit package-firewall tarball URLs
+introduced by local `yarn install` were normalized to registry.npmjs.org so the
+lockfile remains usable by external CI.
+
+PRE-UPGRADE INVENTORY
+- JWT encode/decode sites checked. Local tokens use string user IDs, require
+  exp/iat/iss, pass issuer, and use no unexpected audience.
+- Gunicorn production command found in backend/Dockerfile with two
+  uvicorn.workers.UvicornWorker workers, bind, max-request recycling, disabled
+  access log, and 120-second timeout.
+- aiohttp usage is ClientSession/ClientTimeout only; no removed urllib3 Retry
+  API is used.
+- Pillow paths use Image.open, Image.save, and ImageOps.exif_transpose.
+- React Router inventory: 178 matching usages.
+- No application-code change was required.
+
+V1 — BACKEND
+Result: BLOCKED AS A FULL GATE; dependency-focused runtime checks passed.
+
+Full pytest attempts:
+- `pytest -q` cannot complete collection because legacy modules such as
+  contractor_ops/test_e2e.py execute network E2E code and call sys.exit while
+  pytest imports them.
+- A full collection excluding only 16 module-level sys.exit probe scripts ran
+  443 tests: 307 passed, 109 skipped, 27 failed.
+- The 27 failures are pre-existing configuration/stale-test failures: disabled
+  admin endpoints return 404 instead of expected 401/403, source-assertion tests
+  expect roles/constants no longer present, one async DB test reports a closed
+  loop, and two WhatsApp tests lack META_APP_SECRET or await a MagicMock.
+- Focused WhatsApp result: 4 passed, 2 failed for the same missing-secret and
+  stale MagicMock reasons; no aiohttp 3.14 API failure was observed.
+
+Runtime checks:
+- Start application workflow restarted and served cleanly with the upgraded
+  environment.
+- Spare live HTTP probe against the workflow: 99/99 passed, including V7.
+- Production Gunicorn 26.2.0 command started successfully through
+  `python -m gunicorn` (the installed executable directory is not on PATH) with
+  the Docker worker/bind/recycling/timeout options.
+- `/api/health`: 200 under production Gunicorn.
+- Spare live HTTP probe under production Gunicorn: 99/99 passed, including
+  matrix XLSX export, handover overview/export, and V7 deep equality.
+- OTP/JWT/upload probe under production Gunicorn: 7/7 passed:
+  OTP stub request 200, OTP login issued JWT, `/api/auth/me` accepted it,
+  tampered JWT returned 401, JPEG upload 200, PNG upload 200.
+- Temporary OTP/JWT/upload user, OTP documents, and local files were removed;
+  zero DB leftovers.
+- WhatsApp/Meta aiohttp ClientSession built successfully with no network call.
+- Handover PDF endpoint reached generation but returned 500 because this Replit
+  runtime cannot load system library libpango-1.0; xhtml2pdf fallback is not
+  installed. WeasyPrint 68.1 itself is unchanged/frozen. The temporary protocol,
+  project, membership, and user were removed; zero DB leftovers.
+
+PyJWT decision:
+- No PyJWT options/leeway code change was required. A login-issued token and a
+  tampered token behaved correctly with PyJWT 2.13.0.
+
+V2 — PYTHON SECURITY AUDIT
+The requirements file contains one pre-existing range
+`APScheduler>=3.10,<4.0`. Because the isolated pip-audit runner cannot use pip
+inside the Nix wrapper, audits used a /tmp-only exact copy with APScheduler
+pinned to the installed version and `--no-deps --disable-pip`. The project
+manifest was not changed for this workaround.
+
+Before:
+  Found 100 known vulnerabilities in 16 packages.
+  All ten target packages appeared.
+
+After:
+  Found 20 known vulnerabilities in 7 packages.
+  aiohttp, gunicorn, httplib2, idna, pillow, pyasn1, PyJWT,
+  python-multipart, and urllib3 no longer appear.
+  Remaining packages: click, cryptography, Pygments, pytest, python-dotenv,
+  starlette, and weasyprint.
+
+BLOCKER — current advisory data conflicts with the allowed version range:
+  cryptography 46.0.7 still has six current findings whose published fixes are
+  48.0.1, 49.0.0, or 50.0.0. Version 46.0.7 is the latest allowed 46.x and fixed
+  the 46.0.6 finding that specified 46.0.7, but it cannot satisfy the requirement
+  that none of the ten target packages remain in the audit. No out-of-scope
+  major upgrade or audit suppression was applied.
+
+Built-in security-scan baseline:
+  dependency audit: 464 findings
+    critical 6, high 220, moderate 199, low 39
+  SAST: 2 findings
+  secret/data scanner: 67 findings
+These broad existing findings were recorded only; source fixes are outside this
+pin/lockfile-only batch.
+
+V3 — FRONTEND
+- `CI=true REACT_APP_BACKEND_URL=<same-origin preview> yarn build`: EXIT 0.
+- Build emitted only the existing three missing source-map warnings from
+  @capacitor-community/apple-sign-in plus the browserslist age notice.
+- Full Jest suite with the existing Nix libuuid path: 6 suites passed,
+  41 tests passed, zero failures.
+
+Runtime Yarn audit:
+  Before: 315 advisories
+    critical 5, high 178, moderate 105, low 27
+  After: 263 advisories
+    critical 5, high 161, moderate 76, low 21
+  axios, react-router, react-router-dom, and dompurify: zero remaining
+  advisories after the upgrade.
+
+Browser comparison (same tester, one pre-run plus one post-run):
+- Pre-upgrade desktop/mobile stopped at login because the existing bundle called
+  https://api.brikops.com and CSP blocked it, producing Network Error.
+- The one post-upgrade comparison build used `/api` as BACKEND_URL; existing
+  source appends `/api`, so the tester observed `/api/api/auth/request-otp` 405.
+  Both desktop and verified 390x844 login screens rendered, but authenticated
+  flows were not reachable.
+- The preview was rebuilt afterward with the full same-origin backend origin.
+  Static bundle verification confirms the expected origin is present,
+  `/api/api/` is absent, and same-origin `/api/health` returns 200.
+- Per the one-browser-pass rule, a second post-upgrade tester was not launched.
+  Projects, unit/spare card, matrix download/filter drawer, Arabic invite,
+  returnTo cases, QC, and browser PDF download therefore remain unverified.
+
+V4 — DIFF SCOPE
+Application/dependency files changed:
+  backend/requirements.txt
+  frontend/package.json
+  frontend/yarn.lock
+
+The final raw `git diff --name-only e0c801f` also includes:
+  .agents/memory/MEMORY.md
+  review.txt
+
+Final `git status --short` additionally lists the new internal memory topic:
+  ?? .agents/memory/security-range-advisory-drift.md
+
+`review.txt` is this required deliverable. The `.agents/memory` files record the
+durable rule not to suppress advisories when the approved package ceiling cannot
+reach a published fix. They are not application or dependency changes, but their
+presence means the literal raw V4 name-only output is not only the three manifest
+files after deliverables/internal memory are written. Treat the literal V4 scope
+gate as blocked unless those non-application files are intentionally excluded
+when staging.
+
+`git diff --check`: clean.
+
+Diff stat:
+  backend/requirements.txt | 20 ++++++------
+  frontend/package.json    |  7 +++--
+  frontend/yarn.lock       | 81 ++++++++++++++++++++++++++++--------------------
+  3 files changed, 61 insertions(+), 47 deletions(-)
+
+Unchanged frozen backend dependencies:
+  fastapi, starlette, pydantic, uvicorn, motor, pymongo, weasyprint, openpyxl,
+  httpx, requests.
+
+Unchanged frozen frontend dependencies:
+  react, react-dom, react-scripts, all Capacitor packages, jspdf.
+
+Unchanged forbidden files:
+  replit.nix, all environment files, .platform configuration, deploy.sh.
+
+No application source file changed.
+
+V5 — ROLLBACK
+The previous pins and lock resolutions are exactly those in e0c801f for
+backend/requirements.txt, frontend/package.json, and frontend/yarn.lock.
+A revert commit followed by deployment restores them. There are no migration or
+data implications. All temporary local probe data was cleaned.
+
+FINAL STATE
+- Changes are intentionally left uncommitted on staging.
+- No deployment was performed.
+- This batch is NOT approval-ready while the full pytest, cryptography audit,
+  handover PDF, and browser-flow gates above remain unresolved.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
 BATCH #596 — SECURITY FIXES A
 
 STEP 0 — CLEAN BASE
