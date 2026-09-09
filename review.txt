@@ -157,6 +157,14 @@ Result:
   Final verified main bundle: build/static/js/main.827fe65b.js
   Final verified CSS: build/static/css/main.1ad71a6c.css
 
+The workflow/browser pass later served:
+  build/static/js/main.4d4bd2c2.js
+  build/static/css/main.1ad71a6c.css
+
+That served bundle contained the same Batch #598 feature and completed the
+recorded V3 browser flow. The hash difference came from the browser harness
+rebuild/runtime configuration; no manifest or source file changed.
+
 Non-failing existing notices:
 - Node fs.F_OK deprecation.
 - Browserslist/caniuse-lite age notice.
@@ -359,6 +367,13 @@ Application/test files in the batch:
 Delivery file:
   review.txt
 
+Allowed internal agent-memory files updated after the checkpoint:
+  .agents/memory/MEMORY.md
+  .agents/memory/jest-canvas-libuuid.md
+
+These record the Replit/Nix Jest `libuuid` harness quirk only; they are not
+application changes.
+
 Note:
 - `frontend/src/utils/roleLabels.js` already existed in fd9fec2, so it was
   extended rather than created. The filename and intended responsibility remain
@@ -431,7 +446,12 @@ Base:
   fd9fec2
 
 Final HEAD:
-  __FINAL_HEAD__
+  9dc2b7b
+
+Final local status after inserting the non-recursive HEAD evidence:
+  M .agents/memory/MEMORY.md
+  M review.txt
+  ?? .agents/memory/jest-canvas-libuuid.md
 
 `.local/.commit_message`:
   feat(escalations): field escalations phase 1 — spare tiles

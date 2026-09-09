@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "review.txt"
-description = "דו״ח הבדיקות המעודכן של Batch 597 / FIX-1."
+title = "Batch 598 — review.txt"
+description = "דו״ח המימוש והאימות המלא: V1–V5, ראיות דפדפן, cleanup, scope ו־rollback."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:45a50d68c4d3c5a3fa159acec6713d64866ec8c42dde215ad82e4bedcd5cd45a"
-size = 32116
-mtime_ms = 1788944498740
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/51ff6336-c00e-486a-9da7-dc62784008aa"
-storage_version_token = "1788945603078848"
+content_hash = "sha256:beda82616bc9508ae5a7fef3601a11e1f0b40e66a38623036ef3a920deded840"
+size = 19396
+mtime_ms = 1788961214517
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/56092d5d-b492-439b-9b2b-3d4938dd50c2"
+storage_version_token = "1788961225250637"
 content_type = "text/plain"
 
 [[outputs]]
