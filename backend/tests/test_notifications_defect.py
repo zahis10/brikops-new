@@ -12,11 +12,12 @@ test_billing_v1.py:307,336,366 — codebase has no pytest-asyncio plugin
 """
 import asyncio
 import sys
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, "/home/runner/workspace/backend")
 
 from contractor_ops import notification_helpers
+from contractor_ops import qc_router
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +121,30 @@ def test_create_defect_notification_empty_recipients_no_insert():
     asyncio.run(run())
 
 
+def test_create_field_escalation_notification_copies_extra_fields():
+    async def run():
+        db = MagicMock()
+        db.qc_notifications.insert_many = AsyncMock()
+        await notification_helpers.create_defect_notification(
+            db,
+            ["pm"],
+            notification_type="field_escalation",
+            action="escalate",
+            task_id="esc-1",
+            task_title="להזמין",
+            project_id="project-1",
+            actor_id="sender",
+            actor_name="יוסי",
+            body="גוף מוכן",
+            extra={"escalation_id": "esc-1", "unit_id": "unit-1", "urgency": "urgent"},
+        )
+        doc = db.qc_notifications.insert_many.await_args.args[0][0]
+        assert doc["escalation_id"] == "esc-1"
+        assert doc["unit_id"] == "unit-1"
+        assert doc["urgency"] == "urgent"
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # get_defect_recipients_for_close_request — 1 test
 # ---------------------------------------------------------------------------
@@ -177,3 +202,60 @@ def test_build_status_change_body_reject_with_reason():
     body2 = notification_helpers.build_status_change_body("reject", "x")
     assert body2 == "המנהל דחה את התיקון של \"x\""
     assert not body2.endswith("—")
+
+
+class _NotificationCursor:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def sort(self, *_args):
+        return self
+
+    def skip(self, *_args):
+        return self
+
+    def limit(self, *_args):
+        return self
+
+    async def to_list(self, _limit):
+        return self.rows
+
+
+def test_list_notifications_field_escalation_links_and_prebuilt_bodies():
+    async def run():
+        db = MagicMock()
+        db.qc_notifications.count_documents = AsyncMock(return_value=2)
+        db.qc_notifications.find.return_value = _NotificationCursor([
+            {
+                "id": "n1",
+                "user_id": "pm",
+                "notification_type": "field_escalation",
+                "action": "escalate",
+                "body": "גוף הקפצה מוכן",
+                "project_id": "project-1",
+                "created_at": "2026-09-04T10:00:00+00:00",
+                "read_at": None,
+            },
+            {
+                "id": "n2",
+                "user_id": "sender",
+                "notification_type": "field_escalation_resolved",
+                "action": "escalation_done",
+                "body": "גוף טיפול מוכן",
+                "project_id": "project-1",
+                "unit_id": "unit-1",
+                "created_at": "2026-09-04T11:00:00+00:00",
+                "read_at": None,
+            },
+        ])
+        with patch.object(qc_router, 'get_db', return_value=db):
+            return await qc_router.list_notifications(user={"id": "pm"})
+
+    result = asyncio.run(run())
+    first, second = result["notifications"]
+    assert first["action"] == "field_escalation"
+    assert first["body"] == "גוף הקפצה מוכן"
+    assert first["link"] == "/projects/project-1/dashboard?focus=escalations"
+    assert second["action"] == "field_escalation_resolved"
+    assert second["body"] == "גוף טיפול מוכן"
+    assert second["link"] == "/projects/project-1/units/unit-1/defects"

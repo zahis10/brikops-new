@@ -19,6 +19,8 @@ NOTIFICATION_TYPES = {
     'qc',                              # legacy QC stage events (existing)
     'defect_close_request',            # contractor uploaded proof, PM needs to approve
     'defect_status_change_by_pm',      # PM approved/rejected, contractor needs to know
+    'field_escalation',
+    'field_escalation_resolved',
 }
 
 
@@ -35,6 +37,7 @@ async def create_defect_notification(
     actor_name: str,
     body: str,
     reason: str = None,
+    extra: dict = None,
 ):
     """Insert one notification doc per recipient into qc_notifications.
 
@@ -53,7 +56,7 @@ async def create_defect_notification(
     for uid in recipients:
         if not uid or uid == actor_id:
             continue
-        docs.append({
+        doc = {
             "id": str(uuid.uuid4()),
             "user_id": uid,
             "notification_type": notification_type,
@@ -67,7 +70,10 @@ async def create_defect_notification(
             "reason": reason,
             "created_at": now,
             "read_at": None,
-        })
+        }
+        if extra:
+            doc.update(extra)
+        docs.append(doc)
     if docs:
         await db.qc_notifications.insert_many(docs)
         logger.info(

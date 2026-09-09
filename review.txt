@@ -1,838 +1,447 @@
-BATCH #597 — DEPENDENCY UPGRADE, STAGE A
-Base: e0c801f
-Date: 2026-09-08
+BATCH #598 — הקפצות מהשטח, PHASE 1 (SPARE TILES ONLY)
+Base: fd9fec2
+Date: 2026-09-09
 
 ===============================================================================
-STEP 0 — HARD GATE
+STEP 0 — BRANCH, BASE, AND SAFETY GATE
 ===============================================================================
 
-Initial `git branch --show-current`:
+`git branch --show-current`:
   staging
 
-Final `git branch --show-current`:
-  staging
+Initial `git rev-parse --short HEAD`:
+  fd9fec2
 
-`git rev-parse --short HEAD`:
-  e0c801f
+`git log --oneline -1 origin/staging`:
+  fd9fec2 Update agent assets metadata
 
-Initial `git status --short`:
-  [empty]
+Initial working tree:
+  clean
+
+Rules followed:
+- Work stayed on staging on top of fd9fec2.
+- No push, deploy, rebase, reset, amend, main-branch work, environment edit,
+  dependency change, schema migration, WhatsApp, SMS, push, e-mail, or chat.
+- `frontend/src/components/DashboardFoldSection.js` was read-only.
+- `backend/tests/probe_spare_tiles_http.py` was read/run-only.
+- Failed checks were diagnosed and the evidence run continued.
+- One ordered Playwright browser pass was used; it was not rerun.
 
 ===============================================================================
-SELECTED VERSIONS
+IMPLEMENTATION
 ===============================================================================
 
 Backend:
-  pillow==12.3.0
-  python-multipart==0.0.32
-  PyJWT==2.13.0
-  cryptography==46.0.7
-  gunicorn==26.2.0
-  urllib3==2.7.0
-  idna==3.19
-  pyasn1==0.6.4
-  httplib2==0.32.0
-  aiohttp==3.14.3
+- Added pure escalation helpers for the spare-status snapshot, Hebrew context
+  line, default message, eligibility, and notification bodies.
+- Added the field-escalation router:
+  - POST creates an escalation or appends a note to the existing open one.
+  - GET lists open/resolved/all items with role visibility and counts.
+  - PATCH handles done, dismiss, note, assign, and unassign.
+- Stored context is structured data, not only text.
+- PM/owner can see all project escalations.
+- management_team can see only items requested by or assigned to them.
+- contractor/viewer cannot list or create escalations.
+- Unit detail returns additive `spare_can_escalate` and
+  `spare_escalation` keys without changing existing keys.
+- Added in-app notification types, links, action mapping, and additive `extra`
+  fields while preserving existing QC notification behavior.
+- Added project/status/date and unit/status indexes.
+- The `(unit_id, status)` index is a unique partial index only for
+  `{type: "spare_tiles", status: "open"}`.
+- Startup establishes and verifies that correctness-critical unique index
+  before accepting traffic and fails closed if it cannot do so.
+- Concurrent duplicate creates retry as a note on the winning open escalation.
+- Concurrent done/dismiss updates are conditional on status=open, so only one
+  request audits and notifies.
 
 Frontend:
-  axios ^1.20.0
-  react-router-dom ^7.18.3
-  dompurify resolution 3.4.15
+- Added `escalationService` for create/list/patch.
+- Added Hebrew relative-time, sub-role-label, and escalation-draft utilities.
+- Added an accessible escalation sheet with title and description, structured
+  automatic context, urgency, editable text, character count, submit feedback,
+  and the explicit in-app/no-WhatsApp message.
+- Added unit-card escalation status and note/new-escalation actions.
+- Added dashboard focus rows and the
+  `הקפצות מהשטח · לטיפולי` fold with done, dismiss, assign, open-unit,
+  note display, and resolved-week display.
+- Added deep-link support for `?focus=escalations`.
+- Added field-escalation and resolved icons to the existing bell.
+- All newly introduced interactive controls have a minimum 44px touch height.
+- Existing large pages contain wiring only:
+  ApartmentDashboardPage.js: 5 added / 1 removed line.
+  ProjectDashboardPage.js: 17 added / 5 removed lines.
 
-Installed runtime versions matched every selected target.
-
-===============================================================================
-MANIFEST DIFF
-===============================================================================
-
-backend/requirements.txt:
-  aiohttp             3.13.3 -> 3.14.3
-  cryptography        46.0.6 -> 46.0.7
-  gunicorn            21.2.0 -> 26.2.0
-  httplib2            0.31.2 -> 0.32.0
-  idna                3.11   -> 3.19
-  pillow              12.1.1 -> 12.3.0
-  pyasn1              0.6.3  -> 0.6.4
-  PyJWT               2.12.0 -> 2.13.0
-  python-multipart    0.0.22 -> 0.0.32
-  urllib3             2.6.3  -> 2.7.0
-
-frontend/package.json:
-  axios               ^1.8.4 -> ^1.20.0
-  react-router-dom    ^7.5.1 -> ^7.18.3
-  dompurify resolution added at 3.4.15
-
-All existing resolutions were preserved.
-
-frontend/yarn.lock resolved-version changes:
-  axios              1.13.5        -> 1.20.0
-  dompurify          3.4.5         -> 3.4.15
-  follow-redirects   1.15.11       -> 1.15.11 + 1.16.0
-  form-data          3.0.4 + 4.0.5 -> 3.0.4 + 4.0.6
-  hasown             2.0.2         -> 2.0.2 + 2.0.4
-  proxy-from-env     1.1.0         -> 2.1.0
-  react-router       7.13.0        -> 7.18.3
-  react-router-dom   7.13.0        -> 7.18.3
-
-No extra transitive pins were added.
-
-Nine package-firewall.replit.local URLs generated by local Yarn installation
-were normalized to registry.npmjs.org URLs so external CI can use the lockfile.
+Independent architecture review:
+- Initial review found concurrency, cross-role visibility, missing note display,
+  and mobile touch-target gaps.
+- Those findings were fixed inside V4 scope.
+- Second review required fail-closed index setup and explicit adversarial tests;
+  those findings were also fixed inside V4 scope.
+- Final review: PASS. No remaining critical/high correctness or security issue.
 
 ===============================================================================
-V1 — BACKEND VERIFICATION
+V1 — BACKEND TESTS AND LIVE SPARE PROBE
 ===============================================================================
 
-PASS:
-- Start application workflow restarted successfully.
-- Gunicorn 26.2.0 started with the production Docker options:
-  two Uvicorn workers, max-request recycling, disabled access log, timeout 120.
-- `/api/health` returned 200 under Gunicorn.
-- Live HTTP probe genuinely targeting Gunicorn port 5001: 99/99 passed.
-- Matrix XLSX generation passed under Gunicorn.
-- Handover overview and export passed under Gunicorn.
-- V7 exact no-op equality passed.
-- OTP/JWT/image probe: 7/7 passed:
-  - OTP request returned 200.
-  - Stub OTP was consumed through the real verification route.
-  - Login issued a JWT.
-  - `/api/auth/me` accepted the JWT.
-  - A tampered JWT returned 401.
-  - JPEG upload returned 200.
-  - PNG upload returned 200.
-- aiohttp ClientSession and ClientTimeout creation passed without a network call.
-- All temporary probe users, OTP records, memberships, projects, protocols,
-  and local uploaded files were removed.
+Focused pytest command:
+  cd backend &&
+  PYTHONPATH=. pytest -q
+    tests/test_escalations.py
+    tests/test_unit_detail.py
+    tests/test_notifications_defect.py
+    tests/test_spare_tiles.py
 
-PyJWT decision:
-- Existing JWT code already uses string user IDs, issuer validation, required
-  claims, options, and leeway.
-- No PyJWT compatibility failure was found.
-- No application-code change was justified or made.
+Result:
+  71 passed, 6 warnings in 2.02s
 
-FULL PYTEST BLOCKER:
-- Plain `pytest -q` cannot complete collection because legacy test-named scripts
-  execute HTTP requests and call `sys.exit` during import.
-- Excluding only 16 import-time script modules produced:
-  307 passed, 109 skipped, 27 failed.
-- Failure categories were unrelated/stale:
-  - Disabled admin routes return 404 rather than old 401/403 expectations.
-  - Source-assertion tests expect old constants or role lists.
-  - Event-loop lifecycle failures.
-  - WhatsApp fixture/configuration failures.
-  - Unit-plan role expectation mismatches.
-- Focused WhatsApp result: 4 passed, 2 failed because META_APP_SECRET was absent
-  and one stale test awaited a MagicMock.
-- No failure demonstrated a PyJWT 2.13 incompatibility.
+Warnings:
+- Two existing Pydantic V1 validator deprecations.
+- Four FastAPI on_event deprecations caused by the isolated server index-helper
+  test importing the current server lifecycle hooks.
 
-HANDOVER PDF BLOCKER:
-- The authenticated PDF endpoint reached PDF generation.
-- It returned 500 because this local runtime could not load libpango-1.0.
-- The xhtml2pdf fallback is not installed.
-- WeasyPrint 68.1 was frozen and unchanged.
-- The temporary PDF fixture was fully removed.
+Coverage includes:
+- Exact helper context/default/body strings.
+- Every overall value for escalation eligibility.
+- Role gates and project/unit 404/422 paths.
+- Happy-path create with labels, requested_by sub_role, context, notification,
+  audit, and extra unit_id.
+- Sequential and concurrent second-send behavior.
+- One open document under concurrent create.
+- Unrelated management_team append denial.
+- PM/all and management_team own-or-assigned list visibility.
+- Urgent-first/newest sorting and visible counts.
+- Done/dismiss/assign/note authorization and side effects.
+- One terminal winner under concurrent resolution.
+- Unit-detail open/recent-resolved/none selection.
+- PM/management/contractor unit-detail visibility.
+- Notification body/link/action mapping.
+- Fail-closed unique-index setup and option verification.
 
-===============================================================================
-V2 — PYTHON SECURITY AUDIT
-===============================================================================
+Read/run-only live probe command:
+  cd backend &&
+  MONGO_URL=mongodb://localhost:27017
+  DB_NAME=contractor_ops
+  PYTHONPATH=/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages:
+             /home/runner/workspace/backend
+  python tests/probe_spare_tiles_http.py
 
-Audit method:
-- The existing APScheduler requirement is a range.
-- pip-audit could not resolve that range in the Nix no-pip environment.
-- A /tmp-only requirements copy pinned APScheduler to the installed version.
-- The project manifest was not changed for this audit workaround.
+Result:
+  All 99 live HTTP checks passed.
 
-Before:
-  100 known vulnerabilities in 16 packages.
+This includes the V7 whole-unit no-op equality, execution matrix, Excel,
+handover, export, settings/assignment access, and audit checks.
 
-After:
-  20 known vulnerabilities in 7 packages.
+`backend/tests/probe_spare_tiles_http.py` remained byte-identical.
 
-Removed from findings:
-  aiohttp
-  gunicorn
-  httplib2
-  idna
-  pillow
-  pyasn1
-  PyJWT
-  python-multipart
-  urllib3
-
-Remaining packages:
-  click
-  cryptography
-  Pygments
-  pytest
-  python-dotenv
-  starlette
-  weasyprint
-
-CRYPTOGRAPHY BLOCKER:
-- cryptography 46.0.7 is the latest version allowed by the required 46.x range.
-- It fixed the finding whose published fix was 46.0.7.
-- The current audit still reports six newer findings.
-- Their published fixes require 48.0.1, 49.0.0, or 50.0.0.
-- Therefore the simultaneous requirements “stay on 46.x” and “none of the ten
-  targets remain in findings” cannot both be satisfied.
-- No out-of-scope major upgrade or audit suppression was applied.
-
-Built-in security-scan baseline:
-  Dependency scan: 464 findings
-    critical 6, high 220, moderate 199, low 39
-  SAST: 2 findings
-  Secret/data scanner: 67 findings
-
-These broad existing findings were recorded only. Source fixes were outside this
-dependency pin/lockfile batch.
+Workflow:
+- Start application restarted successfully after the final backend changes.
+- `/api/health` returned 200 with database connected.
+- Startup completed and all indexes were created.
+- The actual field-escalation indexes were verified:
+  - `(project_id, status, created_at desc)`
+  - unique partial `(unit_id, status)` for
+    `{type: "spare_tiles", status: "open"}`
 
 ===============================================================================
-V3 — FRONTEND VERIFICATION
+V2 — FRONTEND BUILD AND JEST
 ===============================================================================
 
-Build:
-- `CI=true` production build passed.
-- Existing warnings:
-  - Three missing source maps from @capacitor-community/apple-sign-in.
-  - Old Browserslist data notice.
+Exact CI build:
+  cd frontend &&
+  CI=true GENERATE_SOURCEMAP=false
+  REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
 
-Jest:
-  6 suites passed.
-  41 tests passed.
-  0 failed.
+Result:
+  Compiled successfully.
+  Final verified main bundle: build/static/js/main.827fe65b.js
+  Final verified CSS: build/static/css/main.1ad71a6c.css
 
-Yarn audit before:
-  315 advisories
-  critical 5, high 178, moderate 105, low 27
+Non-failing existing notices:
+- Node fs.F_OK deprecation.
+- Browserslist/caniuse-lite age notice.
 
-Yarn audit after:
-  263 advisories
-  critical 5, high 161, moderate 76, low 21
+Focused utility Jest:
+  2 suites passed
+  2 tests passed
 
-No remaining advisories for:
-  axios
-  react-router
-  react-router-dom
-  dompurify
+Full Jest:
+  8 suites passed
+  43 tests passed
+  0 failed
 
-BROWSER VERIFICATION BLOCKER:
-- Pre-upgrade browser verification rendered the login page but the old build
-  called https://api.brikops.com. CSP blocked OTP requests with Network Error.
-- The single post-upgrade comparison used `REACT_APP_BACKEND_URL=/api`.
-- Existing source appends `/api`, producing `/api/api/auth/request-otp`.
-- Desktop and verified 390x844 mobile login rendered, but OTP returned 405.
-- The preview was rebuilt afterward with the full same-origin backend origin.
-- Final static bundle checks:
-  expected same-origin value present: yes
-  `/api/api/` literal present: no
-  same-origin `/api/health`: 200
-- A second browser tester was not launched.
-- Projects, unit/spare card, matrix download, filter drawer, Arabic invite,
-  returnTo checks, QC, and browser PDF download remain unverified.
+The Replit test runtime initially could not resolve `libuuid.so.1` for canvas.
+A /tmp-only library shim exposed the existing
+`/usr/lib/x86_64-linux-gnu/libuuid.so.1` without adding `/usr/lib` wholesale
+to LD_LIBRARY_PATH, avoiding an incompatible OpenSSL library. No project,
+environment, or dependency file changed for this harness fix.
 
 ===============================================================================
-V4 — SCOPE
+V3 — ONE ORDERED PLAYWRIGHT PASS, DESKTOP + 390
 ===============================================================================
 
-Application/dependency changes:
-  backend/requirements.txt
-  frontend/package.json
-  frontend/yarn.lock
+Overall verdict:
+  PASS for the functional a-g workflow.
+  PARTIAL for strict h evidence: the 390px dashboard was captured after both
+  test escalations were resolved, so it proves fold/history width but does not
+  prove the open-item action row at 390px. No second browser pass was run.
 
-No application source file changed.
+Seeded directly in local Mongo:
+- Existing demo project `פרויקט מגדלי הדמו` / DEMO-001.
+- Temporary management_team user `יוסי`, sub_role site_manager.
+- Temporary management_team user `דנה`, sub_role execution_engineer.
+- U1 assigned to a temporary profile:
+  - `ריצוף יבש`: target 10, actual 8, short, missing 2.
+  - `חיפוי מטבח`: target 5, explicit entered zero, short, missing 5.
+- U2 assigned to the same profile and fully entered at ok values.
+- The prior project spare_settings and both unit documents' touched fields were
+  saved before the pass and restored afterward.
 
-Frozen backend dependencies unchanged:
-  fastapi
-  starlette
-  pydantic
-  uvicorn
-  motor
-  pymongo
-  weasyprint
-  openpyxl
-  httpx
-  requests
+V3 a — role/card visibility:
+- PASS: Yossi U1 showed `הקפץ למנהל הפרויקט`.
+- PASS: Yossi U2 showed no escalation button.
+- PASS: demo PM U1 showed no escalation button.
 
-Frozen frontend dependencies unchanged:
-  react
-  react-dom
-  react-scripts
-  all Capacitor packages
-  jspdf
+V3 b — send and append note:
+- PASS: sheet showed title, building/unit description, automatic context,
+  `חסר: ריצוף יבש 2, חיפוי מטבח 5`, urgent default, prefilled text, and the
+  explicit in-app/no-WhatsApp footer.
+- PASS: send toast `ההקפצה נשלחה`.
+- PASS: card showed
+  `נשלחה הקפצה דחופה עכשיו · ממתינה אצל מנהל הפרויקט`.
+- PASS: note `נבדק שוב בשטח` produced `ההערה נוספה`.
+- Browser worker could not query local Mongo through its SQL-only DB interface.
+  Parent post-pass Mongo evidence found exactly two lifecycle documents total:
+  first status done with one note, second status dismissed with zero notes.
+  The unique partial index and concurrent backend test enforce one open item.
 
-Forbidden files unchanged:
-  replit.nix
-  environment files
-  .platform configuration
-  deploy.sh
+V3 c — PM bell and focused dashboard:
+- PASS: bell showed both escalation and note entries with the new icon/body.
+- PASS: bell click opened:
+  `/projects/ee134483-75d4-4e7a-a942-399fc4f1dfd3/dashboard?focus=escalations`
+- PASS: fold opened and the urgent focus row showed count 1.
+- PASS: card showed context, `יוסי · מנהל אתר`, note count, and note text.
+- Evidence discrepancy: the unread bell badge was 2 rather than the requested
+  +1 because both the initial escalation and the required appended note create
+  separate notification documents according to E2/E3. Scope/notification rules
+  were not changed to force the requested count.
 
-`git diff --check`: clean.
+V3 d — assignment:
+- PASS: PM transferred the item to Dana and received `הועבר לדנה`.
+- PASS: item showed `אצל דנה`.
+- PASS: Dana received the assigned bell notification.
+- PASS: Dana's dashboard showed the item and enabled `✓ טופל`.
+- PM retains all-item visibility by API contract and backend tests.
 
-Application diff stat:
-  backend/requirements.txt | 20 ++++++------
-  frontend/package.json    |  7 +++--
-  frontend/yarn.lock       | 81 ++++++++++++++++++++++++++++--------------------
-  3 files changed, 61 insertions, 47 deletions
+V3 e — done:
+- PASS: Dana resolved with `הוזמן, מגיע ביום ג׳`.
+- PASS: open list/focus row disappeared.
+- PASS: `טופלו השבוע: 1 · הצג` showed the resolved item.
+- PASS: Yossi's resolved notification opened U1.
+- PASS: U1 showed Dana, date, quoted note, and the escalation button again
+  because the unit remained short.
 
-Delivery/internal workspace files:
+V3 f — dismissed:
+- PASS: Yossi created a new escalation after the first was resolved.
+- PASS: PM accepted the native confirmation and marked it not relevant.
+- PASS: Yossi U1 showed
+  `סומן כלא רלוונטי ע״י מנהל פרויקט (דמו)`.
+
+V3 g — API authorization and validation:
+- PASS: contractor GET project escalations -> 403:
+  `אין הרשאה להקפצות בפרויקט זה`
+- PASS: contractor POST project escalation -> 403 with the same detail.
+- PASS: Yossi PATCH assign -> 403:
+  `אין הרשאה להעביר הקפצה זו`
+- PASS: PM PATCH unknown action -> 422:
+  `פעולה לא חוקית`
+- Initial no-Bearer attempts returned 401; the harness was corrected to use the
+  browser's actual localStorage token and the required checks continued.
+
+V3 h — 390x844:
+- PASS: Yossi U1 card/status/button fit without horizontal clipping.
+- PASS: escalation sheet title, context, urgency, textarea, footer, and submit
+  button fit without horizontal clipping.
+- PARTIAL: PM dashboard fold/history fit without horizontal clipping, but both
+  test escalations were already resolved, so an open-item action row was not
+  available in the 390px capture.
+- No missing DialogDescription / aria-describedby warning was emitted by the
+  new escalation sheet.
+
+Browser console/backend observations:
+- Existing baseline CSP refusals for Google Fonts, inline style/script,
+  Google Identity, and assets.emergent.sh.
+- Intentional 403/422 API checks produced matching browser resource errors.
+- No ErrorBoundary, uncaught application exception, unexpected 5xx, WhatsApp,
+  SMS, push, or e-mail side effect.
+- No OTP/rate-limit cleanup was needed during login switching.
+
+Screenshot evidence:
+  414mmh  Yossi desktop U1 button
+  pflfcx  Yossi desktop U2 without button
+  zlrfzi  PM desktop U1 without button
+  t1uqgd  desktop escalation sheet and automatic context
+  tv2yq7  sent escalation pending state
+  qzwm3x  appended-note success state
+  cf9af0  PM bell escalation and note entries
+  zdafb7  PM focused dashboard, context, reporter, and note
+  cv3hr9  PM item after assignment to Dana
+  7gnuqt  Dana assigned notification
+  rqrgmi  Dana focused dashboard with done action
+  psz276  resolved item under treated-this-week
+  fdtqxw  Yossi resolved U1 status and restored button
+  m80itq  second escalation sent
+  f3aq87  PM after not-relevant confirmation
+  frwoj0  Yossi not-relevant unit status
+  2b4c4u  authenticated demo contractor
+  axx75c  Yossi U1 at 390px
+  7isu31  escalation sheet at 390px
+  yi380c  PM dashboard fold/history at 390px
+
+Seed cleanup and restoration:
+  before_cleanup users                  2
+  before_cleanup project_memberships    2
+  before_cleanup organization_memberships 2
+  before_cleanup field_escalations      2
+  before_cleanup qc_notifications       6
+  before_cleanup audit_events           9
+  before_cleanup statuses               done, dismissed
+  before_cleanup notes_per_escalation   1, 0
+
+  removed users                         2
+  removed project_memberships           2
+  removed organization_memberships      2
+  removed field_escalations             2
+  removed qc_notifications              6
+  removed audit_events                  9
+  removed otp_metrics                   6
+  removed test_rate_limits              1
+
+  final users                           0
+  final project_memberships             0
+  final organization_memberships        0
+  final field_escalations               0
+  final qc_notifications                0
+  final audit_events                    0
+  final otp_codes                       0
+  final otp_metrics                     0
+  final test_rate_limits                0
+  project spare_settings restored       true
+  U1/U2 touched fields restored         true
+
+===============================================================================
+V4 — DIFF SCOPE
+===============================================================================
+
+Application/test files in the batch:
+  backend/contractor_ops/escalations.py
+  backend/contractor_ops/escalations_router.py
+  backend/contractor_ops/notification_helpers.py
+  backend/contractor_ops/projects_router.py
+  backend/contractor_ops/qc_router.py
+  backend/server.py
+  backend/tests/test_escalations.py
+  backend/tests/test_notifications_defect.py
+  backend/tests/test_unit_detail.py
+  frontend/src/components/NotificationBell.js
+  frontend/src/components/dashboard/EscalationsSection.js
+  frontend/src/components/spare/EscalationSheet.js
+  frontend/src/components/spare/SpareEscalationStatus.js
+  frontend/src/pages/ApartmentDashboardPage.js
+  frontend/src/pages/ProjectDashboardPage.js
+  frontend/src/services/api.js
+  frontend/src/utils/__tests__/escalationDraft.test.js
+  frontend/src/utils/__tests__/relativeTime.test.js
+  frontend/src/utils/escalationDraft.js
+  frontend/src/utils/relativeTime.js
+  frontend/src/utils/roleLabels.js
+
+Delivery file:
   review.txt
-  .local/.commit_message
-  .agents/memory/MEMORY.md
-  .agents/memory/security-range-advisory-drift.md
 
-These are documentation/internal-memory files, not application changes.
+Note:
+- `frontend/src/utils/roleLabels.js` already existed in fd9fec2, so it was
+  extended rather than created. The filename and intended responsibility remain
+  exactly the V4 scope.
+
+Confirmed byte-identical / untouched:
+  frontend/src/components/DashboardFoldSection.js
+  backend/tests/probe_spare_tiles_http.py
+  backend/contractor_ops/spare_tiles.py
+  backend/contractor_ops/spare_tiles_router.py
+  backend/contractor_ops/stats_router.py
+  backend/contractor_ops/execution_matrix_router.py
+  backend/contractor_ops/export_router.py
+  all env and dependency files
+
+`git diff --check`:
+  clean
+
+Final committed diff command:
+  git diff --name-only fd9fec2..HEAD
+
+Output:
+  backend/contractor_ops/escalations.py
+  backend/contractor_ops/escalations_router.py
+  backend/contractor_ops/notification_helpers.py
+  backend/contractor_ops/projects_router.py
+  backend/contractor_ops/qc_router.py
+  backend/server.py
+  backend/tests/test_escalations.py
+  backend/tests/test_notifications_defect.py
+  backend/tests/test_unit_detail.py
+  frontend/src/components/NotificationBell.js
+  frontend/src/components/dashboard/EscalationsSection.js
+  frontend/src/components/spare/EscalationSheet.js
+  frontend/src/components/spare/SpareEscalationStatus.js
+  frontend/src/pages/ApartmentDashboardPage.js
+  frontend/src/pages/ProjectDashboardPage.js
+  frontend/src/services/api.js
+  frontend/src/utils/__tests__/escalationDraft.test.js
+  frontend/src/utils/__tests__/relativeTime.test.js
+  frontend/src/utils/escalationDraft.js
+  frontend/src/utils/relativeTime.js
+  frontend/src/utils/roleLabels.js
+  review.txt
 
 ===============================================================================
 V5 — ROLLBACK
 ===============================================================================
 
-The prior dependency pins and lock resolutions are exactly those in e0c801f.
+The batch is additive.
 
-Rollback procedure after a future approved commit:
-1. Revert the dependency-upgrade commit.
-2. Reinstall backend and frontend dependencies from the restored manifests.
-3. Deploy the restored staging revision.
+Rollback after a future approval:
+1. Revert the local Batch #598 checkpoint commit.
+2. Rebuild/restart the application from the restored staging revision.
 
-There are no schema migration or persistent-data implications.
+The `field_escalations` collection and its two indexes may remain as unused
+data/indexes without schema coupling. New `qc_notifications` rows of the two
+types may remain during a rollback window; the old list endpoint would render
+them as legacy rows. No existing project, unit, spare, matrix, export, auth,
+invite, onboarding, or messaging document requires migration.
 
 ===============================================================================
 FINAL STATE
 ===============================================================================
 
-- Branch: staging
-- HEAD remains e0c801f.
-- Changes are uncommitted.
-- No deployment was performed.
-- Temporary Gunicorn port 5001 process was stopped.
-- Temporary probe data was removed.
-- This batch is not approval-ready while the cryptography audit, full pytest,
-  handover PDF, and browser-flow gates remain unresolved.
-
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-
-
-===============================================================================
-FIX-1 (8.9) — EVIDENCE-ONLY REVIEW
-===============================================================================
-
-Scope rules used for this pass:
-- HEAD stayed at 7cbb285 on staging.
-- No application source, dependency pin, framework, deployment configuration,
-  Dockerfile, pytest configuration, or probe script was changed.
-- No commit, push, deploy, rebase, reset, or amend was performed.
-- Per the clarified working rule, failed checks were recorded and diagnosed;
-  they did not stop the remaining evidence run.
-
-===============================================================================
-STEP 0 — HEAD, SCOPE, AND MANIFEST GATE
-===============================================================================
-
-`git branch --show-current`:
+Branch:
   staging
 
-`git rev-parse --short HEAD`:
-  7cbb285
+Base:
+  fd9fec2
 
-`git status --short --branch` before the evidence pass:
-  ## staging...origin/staging [ahead 3]
+Final HEAD:
+  __FINAL_HEAD__
 
-`git log --oneline -3`:
-  7cbb285 Update agent asset metadata and clear review logs
-  3a22038 Update agent assets metadata configuration
-  8e8b341 Update dependencies and add review notes
+`.local/.commit_message`:
+  feat(escalations): field escalations phase 1 — spare tiles
 
-`git show --stat --format='%h %an %s%n%b' HEAD`:
-  7cbb285 Replit Agent Update agent asset metadata and clear review logs
-  Replit-Commit-Author: Agent
+No push or deployment was performed. No work was done on main.
 
-   .agents/agent_assets_metadata.toml |   14 +-
-   review.txt                         | 1831 +++++-------------------------------
-   2 files changed, 263 insertions(+), 1582 deletions(-)
-
-`git diff --name-only e0c801f..HEAD`:
-  .agents/agent_assets_metadata.toml
-  .agents/memory/MEMORY.md
-  .agents/memory/security-range-advisory-drift.md
-  backend/requirements.txt
-  frontend/package.json
-  frontend/yarn.lock
-  review.txt
-
-The seventh file, `.agents/agent_assets_metadata.toml`, was explicitly approved
-by Zahi as Replit Agent asset metadata that has been part of prior batch commits.
-Nothing was fixed or removed from it.
-
-`git stash list`:
-  [empty]
-
-Manifest diff result:
-- Exactly ten backend target pins changed:
-  aiohttp 3.13.3 -> 3.14.3
-  cryptography 46.0.6 -> 46.0.7
-  gunicorn 21.2.0 -> 26.2.0
-  httplib2 0.31.2 -> 0.32.0
-  idna 3.11 -> 3.19
-  pillow 12.1.1 -> 12.3.0
-  pyasn1 0.6.3 -> 0.6.4
-  PyJWT 2.12.0 -> 2.13.0
-  python-multipart 0.0.22 -> 0.0.32
-  urllib3 2.6.3 -> 2.7.0
-- Frontend ranges:
-  axios ^1.8.4 -> ^1.20.0
-  react-router-dom ^7.5.1 -> ^7.18.3
-- One added resolution:
-  dompurify 3.4.15
-- No application-code diff was introduced.
-
-===============================================================================
-BUILD — EXACT FIX-1 FRONTEND BUILD
-===============================================================================
-
-Command:
-  cd frontend && CI=true GENERATE_SOURCEMAP=false \
-    REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
-
-Result:
-  Compiled successfully.
-  Main bundle: build/static/js/main.0d496e9e.js
-  Main CSS: build/static/css/main.164d3725.css
-
-Non-failing build notices:
-- Node DEP0176 fs.F_OK deprecation warning.
-- Browserslist caniuse-lite data is seven months old.
-
-===============================================================================
-F1 — ONE ORDERED BROWSER PASS
-===============================================================================
-
-Verdict:
-  PARTIAL / FAILURE.
-
-One Playwright browser pass was run. No second browser pass was started. The
-successful steps and every remaining gap are recorded below.
-
-Desktop 1440x900:
-- `/login` -> phone +972540000901 -> OTP stub -> `/projects` passed.
-- Visible login success text: `התחברת בהצלחה!`.
-- Projects list displayed `פרויקט מגדלי הדמו`, code `DEMO-001`, and role
-  `מנהל פרויקט (דמו)`.
-- Authenticated project URL:
-  http://localhost:5000/projects/ee134483-75d4-4e7a-a942-399fc4f1dfd3
-- Building A rendered at:
-  http://localhost:5000/projects/ee134483-75d4-4e7a-a942-399fc4f1dfd3/buildings/cbda1120-9f27-496e-9292-08dfe800475a
-- Units 1 and 6 rendered, but neither displayed a `ריצוף ספייר` card or the
-  requested #593 copy. This is a browser evidence failure against the expected
-  seeded fixture.
-- QC overview rendered at:
-  /projects/ee134483-75d4-4e7a-a942-399fc4f1dfd3/qc
-  It showed 0 pending, 0 failed, 6 in progress, and 0 completed; Building A was
-  18% and Building B was 40%.
-- Execution matrix rendered at:
-  /projects/ee134483-75d4-4e7a-a942-399fc4f1dfd3/execution-matrix
-  Visible summary: `2 מבנים • 30 דירות • 8 שלבים`.
-- Excel export downloaded to `/tmp/batch597-fix1-execution.xlsx`.
-  Size: 6032 bytes.
-- Independent openpyxl validation after the browser pass:
-  path /tmp/batch597-fix1-execution.xlsx
-  exists True
-  size_bytes 6032
-  sheetnames ['מטריצת ביצוע']
-  required_sheet_present True
-- Filter drawer opened; `בניין A` was toggled; the drawer showed one active
-  filter and 15 apartments; the drawer closed and the matrix showed
-  `סינון (1 פעילים)`.
-- A QC overview, floor dashboard, apartment tiling overview, and tiling detail
-  all rendered without ErrorBoundary.
-- No client-side PDF action was visible on the visited QC pages, so the required
-  jsPDF/DOMPurify PDF download was not executed. Source diagnosis after the pass
-  found the direct jsPDF call in `scannedImagesToPdf`, which is used by the
-  project-plans scan-upload path, while the visited QC pages exposed no such
-  control. No application code was changed.
-
-Arabic invite:
-- Not executed in the browser pass.
-- The browser worker inherited the Atlas SRV Mongo URL and could not seed the
-  requested local invite:
-  `querySrv ENOTFOUND _mongodb._tcp.brikops-us.vmjxkr.mongodb.net`.
-- It correctly did not call invite or notification endpoints.
-- No temporary invite, membership, or user was created.
-
-Deep-link redirects:
-- Not executed after the first successful login because subsequent OTP requests
-  returned HTTP 429 with `נא לנסות שוב מאוחר יותר.`.
-- Therefore no pass claim is made for either:
-  `/login?returnTo=/projects/<demo-project-id>`
-  `/login?returnTo=//evil.example`
-- No navigation to evil.example was observed.
-
-Mobile 390x844:
-- Authenticated `/projects` rendered with the demo project, active status,
-  `DEMO-001`, and recent-project card.
-- The execution matrix rendered as a responsive stack of 30 apartment cards.
-- The mobile filter drawer opened and closed and displayed building, apartment,
-  and stage sections.
-- A second mobile filter toggle was not completed.
-- Mobile login/OTP, spare card, Arabic invite/OTP, both returnTo outcomes, and
-  client-side PDF were not completed because the OTP service returned 429 after
-  the first login.
-
-Console errors and warnings:
-- Baseline-compatible CSP refusal for the Google Fonts stylesheet.
-- Baseline-compatible CSP refusals for inline styles.
-- Baseline-compatible CSP refusal for
-  `https://accounts.google.com/gsi/client`.
-- Baseline-compatible CSP refusal for
-  `https://assets.emergent.sh/scripts/emergent-main.js`.
-- HTTP 429 on POST `http://localhost:5000/api/auth/request-otp`,
-  request_id `9b360fb0`.
-- React accessibility warning when the filter dialog opened:
-  `Warning: Missing Description or aria-describedby={undefined} for
-  {DialogContent}.`
-- No ErrorBoundary was observed.
-
-Screenshot evidence IDs:
-  3nmbkn  desktop login with populated phone
-  loq62n  desktop OTP form with populated code and enabled login
-  cocoy8  authenticated desktop projects route
-  oxvn4i  desktop demo project structure
-  hwgp0g  Building A floor 1 with seeded units
-  aja6x4  unit 1, showing the missing spare card
-  0sgxe5  unit 6, showing the missing spare card
-  pgfwu9  desktop execution matrix
-  95rqyv  matrix after non-empty Excel export
-  acrzc8  desktop filter drawer open
-  xqwr49  Building A filter selected
-  zwyml9  matrix after closing drawer with active filter badge
-  zmos9v  QC overview
-  jzgoub  QC floor dashboard
-  u5jyra  apartment tiling overview
-  zxiyal  apartment tiling detail with no PDF action
-  3srm7i  mobile projects list
-  onfv6a  mobile execution matrix
-  3noatv  mobile filter drawer
-  sxhwl7  mobile matrix after drawer close
-
-Cleanup:
-  before_cleanup_otp_codes 0
-  before_cleanup_batch_invites 0
-  before_cleanup_batch_memberships 0
-  before_cleanup_batch_users 0
-  deleted_otp_codes 0
-  deleted_test_rate_limits 4
-  zero_otp_codes 0
-  zero_batch_invites 0
-  zero_batch_memberships 0
-  zero_batch_users 0
-  zero_test_rate_limits 0
-
-Only rate-limit records tied to the seeded demo phone or localhost browser IP
-were removed. Seeded demo project data was not modified.
-
-===============================================================================
-F2 — FULL PYTEST BEFORE/AFTER DELTA
-===============================================================================
-
-Both canonical runs used the same accepted 16-file ignore list:
-  contractor_ops/test_audit_immutability.py
-  contractor_ops/test_cross_project_rbac.py
-  contractor_ops/test_e2e_invite_proof.py
-  contractor_ops/test_e2e.py
-  contractor_ops/test_invites.py
-  contractor_ops/test_notifications.py
-  contractor_ops/test_onboarding.py
-  contractor_ops/test_phone_normalization_e2e.py
-  contractor_ops/test_phone_normalization.py
-  scripts/test_intelligence_closure.py
-  scripts/test_intelligence_gate.py
-  tests/test_deterministic_pagination.py
-  tests/test_object_storage_shapes.py
-  tests/test_project_isolation.py
-  tests/test_s3_mode.py
-  tests/test_storage_migration.py
-
-BEFORE counts:
-  27 failed, 307 passed, 109 skipped, 22 warnings in 11.18s
-
-BEFORE FAILED-ID list:
-  FAILED tests/test_billing.py::TestAccessGate::test_pm_cannot_access_admin_billing
-  FAILED tests/test_billing.py::TestAccessGate::test_pm_cannot_override
-  FAILED tests/test_billing_v1.py::TestMigrationRBAC::test_pm_cannot_dry_run
-  FAILED tests/test_billing_v1.py::TestPlansRBAC::test_pm_cannot_list_plans
-  FAILED tests/test_defect_safety_tag.py::test_defects_summary_includes_safety_open_count
-  FAILED tests/test_phone_change.py::TestAdminPhoneChange::test_admin_change_phone_blocked_for_non_admin
-  FAILED tests/test_phone_change.py::TestAdminUsersAPI::test_admin_user_detail_blocked_for_non_admin
-  FAILED tests/test_phone_change.py::TestAdminUsersAPI::test_admin_users_blocked_for_non_admin
-  FAILED tests/test_unified_auth_consent.py::test_backfill_idempotent
-  FAILED tests/test_unified_auth_consent.py::test_consent_capture_in_user_doc
-  FAILED tests/test_unified_auth_consent.py::test_link_branch_consent_capture_only_if_missing
-  FAILED tests/test_unified_auth_consent.py::test_pm_only_gates_removed
-  FAILED tests/test_unified_auth_consent.py::test_socialauth_request_has_invite_token_field
-  FAILED tests/test_unified_auth_consent.py::test_socialverify_request_has_terms_accepted
-  FAILED tests/test_unified_auth_consent.py::test_sso_invite_token_legacy_no_expiry
-  FAILED tests/test_unified_auth_consent.py::test_sso_invite_token_phone_mismatch
-  FAILED tests/test_unified_auth_consent.py::test_terms_gate_register_management
-  FAILED tests/test_unified_auth_consent.py::test_terms_gate_register_with_phone
-  FAILED tests/test_unified_auth_consent.py::test_terms_gate_user_create
-  FAILED tests/test_unit_plans_rbac.py::TestUnitPlansRBAC::test_admin_can_upload
-  FAILED tests/test_unit_plans_rbac.py::TestUnitPlansRBAC::test_owner_can_upload
-  FAILED tests/test_unit_plans_rbac.py::TestUnitPlansRBAC::test_upload_roles_tuple_not_empty
-  FAILED tests/test_viewer_rbac.py::test_valid_target_roles_exists_separately
-  FAILED tests/test_viewer_rbac.py::test_viewer_explicit_blocks_exist
-  FAILED tests/test_whatsapp_fixes.py::test_post_webhook_processes_multiple_statuses
-  FAILED tests/test_whatsapp_fixes.py::test_process_job_rejects_empty_provider_id
-  FAILED tests/test_whatsapp_fixes.py::test_process_webhook_accepts_sent_status
-
-AFTER counts:
-  27 failed, 307 passed, 109 skipped, 22 warnings in 11.22s
-
-AFTER FAILED-ID list:
-  FAILED tests/test_billing.py::TestAccessGate::test_pm_cannot_access_admin_billing
-  FAILED tests/test_billing.py::TestAccessGate::test_pm_cannot_override
-  FAILED tests/test_billing_v1.py::TestMigrationRBAC::test_pm_cannot_dry_run
-  FAILED tests/test_billing_v1.py::TestPlansRBAC::test_pm_cannot_list_plans
-  FAILED tests/test_defect_safety_tag.py::test_defects_summary_includes_safety_open_count
-  FAILED tests/test_phone_change.py::TestAdminPhoneChange::test_admin_change_phone_blocked_for_non_admin
-  FAILED tests/test_phone_change.py::TestAdminUsersAPI::test_admin_user_detail_blocked_for_non_admin
-  FAILED tests/test_phone_change.py::TestAdminUsersAPI::test_admin_users_blocked_for_non_admin
-  FAILED tests/test_unified_auth_consent.py::test_backfill_idempotent
-  FAILED tests/test_unified_auth_consent.py::test_consent_capture_in_user_doc
-  FAILED tests/test_unified_auth_consent.py::test_link_branch_consent_capture_only_if_missing
-  FAILED tests/test_unified_auth_consent.py::test_pm_only_gates_removed
-  FAILED tests/test_unified_auth_consent.py::test_socialauth_request_has_invite_token_field
-  FAILED tests/test_unified_auth_consent.py::test_socialverify_request_has_terms_accepted
-  FAILED tests/test_unified_auth_consent.py::test_sso_invite_token_legacy_no_expiry
-  FAILED tests/test_unified_auth_consent.py::test_sso_invite_token_phone_mismatch
-  FAILED tests/test_unified_auth_consent.py::test_terms_gate_register_management
-  FAILED tests/test_unified_auth_consent.py::test_terms_gate_register_with_phone
-  FAILED tests/test_unified_auth_consent.py::test_terms_gate_user_create
-  FAILED tests/test_unit_plans_rbac.py::TestUnitPlansRBAC::test_admin_can_upload
-  FAILED tests/test_unit_plans_rbac.py::TestUnitPlansRBAC::test_owner_can_upload
-  FAILED tests/test_unit_plans_rbac.py::TestUnitPlansRBAC::test_upload_roles_tuple_not_empty
-  FAILED tests/test_viewer_rbac.py::test_valid_target_roles_exists_separately
-  FAILED tests/test_viewer_rbac.py::test_viewer_explicit_blocks_exist
-  FAILED tests/test_whatsapp_fixes.py::test_post_webhook_processes_multiple_statuses
-  FAILED tests/test_whatsapp_fixes.py::test_process_job_rejects_empty_provider_id
-  FAILED tests/test_whatsapp_fixes.py::test_process_webhook_accepts_sent_status
-
-`diff -u /tmp/before.txt /tmp/after-final.txt`:
-  [empty]
-  IDENTICAL
-
-An initial pre-restore AFTER attempt produced 22 failures, 296 passes, and 125
-skips with a different failure set. It was not used as the canonical delta.
-After the exact BEFORE installation and the required full requirements restore,
-the final AFTER rerun was stable and byte-identical to the 27-ID BEFORE list.
-This non-canonical first result is retained here as test-environment variability,
-not hidden as a pass.
-
-The ten restored target versions:
-  aiohttp==3.14.3
-  cryptography==46.0.7
-  gunicorn==26.2.0
-  httplib2==0.32.0
-  idna==3.19
-  pillow==12.3.0
-  pyasn1==0.6.4
-  PyJWT==2.13.0
-  python-multipart==0.0.32
-  urllib3==2.7.0
-
-The temporary version swap created duplicate old/new dist-info directories
-because pip was forced to use the writable project package target. Only the ten
-old temporary dist-info directories were removed, then the complete approved
-requirements file was installed. Imports and `pip freeze --path` both proved
-the ten versions above. No manifest changed.
-
-===============================================================================
-F3 — OFFLINE APPLE/GOOGLE RS256
-===============================================================================
-
-Full output:
-  OK apple-style RS256 verify
-  OK tampered RS256 rejected
-  OK wrong audience rejected
-  OK google-auth RS256 verify
-  cryptography 46.0.7 pyjwt 2.13.0 google-auth 2.49.0-dev0
-
-===============================================================================
-F4 — GUNICORN 26 WORKER RECYCLING
-===============================================================================
-
-Attempt 1 — harness misconfiguration retained as requested:
-- Command inherited the shell Atlas `MONGO_URL`.
-- Gunicorn 26.2.0 started and booted both workers.
-- Atlas SRV DNS cannot resolve in this sandbox:
-  `_mongodb._tcp.brikops-us.vmjxkr.mongodb.net`.
-- Result: 100 responses with curl status 000; workers exited while importing
-  the app and connecting to Atlas.
-- Diagnosis: harness misconfiguration, not a Gunicorn regression.
-
-Attempt 2 — local Mongo without the workflow PYTHONPATH:
-- Local Mongo was selected, but Nix Python 3.12 NumPy shadowed the workspace
-  Python 3.11 package and both workers exited on
-  `numpy._core._multiarray_umath`.
-- Diagnosis: incomplete workflow environment.
-
-Attempt 3 — complete workflow environment, unpaced:
-  29 200
-  71 429
-- Workers recycled, but the app-wide unauthenticated IP limit measured the
-  harness instead of Gunicorn.
-
-Attempt 4 — paced after the prior burst:
-  81 200
-  19 429
-- Replacement workers booted, but 19 requests remained in the previous
-  rate-limit window.
-
-Final attempt — local Mongo, workflow PYTHONPATH, and unique proxy client IPs:
-  100 200
-
-Worker log evidence:
-  Booting worker with pid: 3728
-  Booting worker with pid: 3729
-  Booting worker with pid: 3833
-  Booting worker with pid: 3835
-
-Gunicorn version:
-  gunicorn (version 26.2.0)
-
-The two replacement PIDs prove both workers recycled after max-requests=20.
-Gunicorn did not emit a literal `Autorestarting worker` line for these
-UvicornWorker replacements; it emitted the replacement `Booting worker` lines.
-The temporary Gunicorn master was stopped and the PID no longer exists.
-
-===============================================================================
-F5 — PDF RUNTIME / PANGO PROOF
-===============================================================================
-
-`python -c "import weasyprint" 2>&1 | tail -3`:
-  [empty; import exited successfully]
-
-`ldconfig -p 2>/dev/null | grep -i pango || echo
-"no libpango on this runtime"`:
-  no libpango on this runtime
-
-Production-image proof from backend/Dockerfile remains:
-  libpango-1.0-0
-  libpangocairo-1.0-0
-  libgdk-pixbuf-2.0-0
-  libcairo2
-
-Per the FIX-1 decision, one real handover PDF remains a staging-soak check after
-an approved deployment.
-
-===============================================================================
-F6 — PIP-AUDIT AFTER TABLE
-===============================================================================
-
-The isolated audit used a /tmp-only copy of requirements with the existing
-APScheduler range pinned to the installed 3.11.2 for audit resolution. The
-project manifest was not changed.
-
-  Found 20 known vulnerabilities in 7 packages
-
-  Name          Version ID                  Fix Versions
-  ------------- ------- ------------------- ------------
-  click         8.3.1   PYSEC-2026-2132     8.3.3
-  cryptography  46.0.7  PYSEC-2026-3554     49.0.0
-  cryptography  46.0.7  PYSEC-2026-3553     49.0.0
-  cryptography  46.0.7  PYSEC-2026-3552     50.0.0
-  cryptography  46.0.7  PYSEC-2026-3553     49.0.0
-  cryptography  46.0.7  PYSEC-2026-3554     49.0.0
-  cryptography  46.0.7  GHSA-537c-gmf6-5ccf 48.0.1
-  pygments      2.19.2  PYSEC-2026-2987     2.20.0
-  pytest        9.0.2   PYSEC-2026-1845     9.0.3
-  python-dotenv 1.2.1   PYSEC-2026-2270     1.2.2
-  starlette     0.46.2  PYSEC-2026-161      1.0.1
-  starlette     0.46.2  PYSEC-2026-161      1.0.1
-  starlette     0.46.2  PYSEC-2026-248      1.3.0
-  starlette     0.46.2  PYSEC-2026-249      1.3.1
-  starlette     0.46.2  PYSEC-2026-248      1.3.0
-  starlette     0.46.2  PYSEC-2026-1942     0.49.1
-  starlette     0.46.2  PYSEC-2026-1941     0.47.2
-  starlette     0.46.2  PYSEC-2026-2281     1.1.0
-  starlette     0.46.2  PYSEC-2026-2280     1.1.0
-  weasyprint    68.1    PYSEC-2026-3412
-
-Six cryptography finding rows, exactly as emitted:
-  PYSEC-2026-3554
-  PYSEC-2026-3553
-  PYSEC-2026-3552
-  PYSEC-2026-3553
-  PYSEC-2026-3554
-  GHSA-537c-gmf6-5ccf
-
-The table contains four unique cryptography IDs because pip-audit emitted two
-PYSEC IDs twice. Their fixes require cryptography 48.0.1, 49.0.0, or 50.0.0.
-Per the approved decision, cryptography stays at 46.0.7 in this batch.
-
-Confirmed absent from the AFTER table:
-  aiohttp
-  gunicorn
-  httplib2
-  idna
-  pillow
-  pyasn1
-  PyJWT
-  python-multipart
-  urllib3
-
-===============================================================================
-F7 — LOCKFILE HYGIENE
-===============================================================================
-
-`grep -c -i replit frontend/yarn.lock`:
-  0
-
-`git diff e0c801f -- frontend/yarn.lock | grep '^+.*resolved' |
- grep -v -E 'registry\.(npmjs\.org|yarnpkg\.com)'`:
-  [empty]
-
-`cd frontend && yarn install --frozen-lockfile`:
-  EXIT 0
-
-The frozen install completed all four Yarn phases and both existing postinstall
-copy commands. It reported only existing resolution/peer warnings, the
-package-lock/Yarn warning, and Node DEP0169. It did not rewrite yarn.lock.
-
-`cd frontend && yarn why dompurify | grep -i 'found\|version'`:
-  => Found "dompurify@3.4.15"
-
-`git status --short frontend/yarn.lock`:
-  [empty]
-
-`git diff --stat e0c801f -- frontend/yarn.lock`:
-  frontend/yarn.lock | 81 +++++++++++++++++++++++++++++++-----------------------
-  1 file changed, 47 insertions(+), 34 deletions(-)
-
-The Replit package firewall did not rewrite any lockfile URL during the frozen
-install.
-
-===============================================================================
-FINAL FIX-1 STATE
-===============================================================================
-
-`.local/.commit_message` is unchanged:
-  chore(deps): stage A security upgrades — pillow, python-multipart,
-  PyJWT, cryptography, gunicorn, urllib3, idna, pyasn1, httplib2, aiohttp;
-  axios, react-router-dom, dompurify resolution
-
-  Minor/patch upgrades closing the known CVEs found by the 4.9 audit in
-  libraries on the request path and in upload/auth/outbound-HTTP paths.
-  No framework changes (fastapi/starlette/pydantic/uvicorn/react are
-  unchanged); no application code changes.
-
-`git branch --show-current`:
-  staging
-
-`git log --oneline -1`:
-  7cbb285 Update agent asset metadata and clear review logs
-
-`git status --short` after appending this section:
-   M review.txt
-
-No commit was created. Nothing was pushed or deployed. No work was done on
-main.
+Open evidence deviations requiring Zahi's review:
+1. PM unread badge was 2 after escalation + appended note, while V3(c) asked
+   for +1; E2/E3 explicitly create a notification for both events.
+2. The 390px dashboard screenshot was taken after both test items were resolved,
+   so it does not show an open escalation action row.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

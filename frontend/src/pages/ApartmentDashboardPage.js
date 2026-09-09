@@ -15,6 +15,8 @@ import CategoryPill from '../components/CategoryPill';
 import Breadcrumbs from '../components/Breadcrumbs';
 import TaskCardSkeleton from '../components/TaskCardSkeleton';
 import { spareSummaryText } from '../components/matrix/SparePill';
+import EscalationSheet from '../components/spare/EscalationSheet';
+import SpareEscalationStatus from '../components/spare/SpareEscalationStatus';
 import { arraysEqualAsSets } from '../utils/filterHelpers';
 import { FEATURES } from '../config/features';
 import { getDefectCreatesForUnit } from '../services/offlineOutbox';
@@ -123,6 +125,7 @@ const ApartmentDashboardPage = () => {
   const [spareTilesEditing, setSpareTilesEditing] = useState(false);
   const [spareTilesEntries, setSpareTilesEntries] = useState([]);
   const [spareTilesSaving, setSpareTilesSaving] = useState(false);
+  const [sheetMode, setSheetMode] = useState(null);
   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
   const spareCanWrite = unitData?.spare_can_write === true;
   const spareCanAssign = unitData?.spare_can_assign === true;
@@ -817,12 +820,13 @@ const ApartmentDashboardPage = () => {
                     </div>
                     <div className="flex gap-2"><button onClick={saveSpareTiles} disabled={spareTilesSaving} className="flex-1 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium">{spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin inline" /> : 'שמור'}</button><button onClick={() => setSpareTilesEditing(false)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600">ביטול</button></div>
                   </div>
-                ) : spareCanWrite && <button onClick={startSpareTilesEdit} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Pencil className="w-3.5 h-3.5" />עדכון מלאי</button>}
+                ) : <><SpareEscalationStatus unitData={unitData} onOpenSheet={setSheetMode} />{spareCanWrite && <button onClick={startSpareTilesEdit} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Pencil className="w-3.5 h-3.5" />עדכון מלאי</button>}</>}
               </div>
             )}
           </div>
         </div>
       )}
+      <EscalationSheet open={!!sheetMode} onClose={() => setSheetMode(null)} projectId={projectId} unit={{ id: unitId, label: effectiveLabel }} buildingName={building?.name || ''} spareStatus={unitData.spare_status} mode={sheetMode || 'new'} onSent={loadUnit} />
       {!unitData.spare_profiles_exist && (
       <div className="max-w-lg mx-auto px-4 mt-3">
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">

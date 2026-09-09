@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Bell, CheckCheck, Clock, ShieldCheck, ShieldX, Send, RotateCcw, X } from 'lucide-react';
+import { Bell, CheckCheck, Clock, ShieldCheck, ShieldX, Send, RotateCcw, X, Megaphone, CheckCircle2 } from 'lucide-react';
 import { qcNotificationService } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
@@ -14,6 +14,8 @@ const ACTION_ICONS = {
   defect_close_request: { icon: Send, color: 'text-blue-500' },
   defect_approved: { icon: ShieldCheck, color: 'text-emerald-500' },
   defect_rejected: { icon: ShieldX, color: 'text-red-500' },
+  field_escalation: { icon: Megaphone, color: 'text-amber-500' },
+  field_escalation_resolved: { icon: CheckCircle2, color: 'text-emerald-500' },
 };
 
 const formatTimeAgo = (dateStr) => {

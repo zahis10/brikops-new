@@ -16,6 +16,7 @@ from contractor_ops.schemas import (
     BulkFloorRequest, BulkUnitRequest, InsertFloorRequest,
 )
 from contractor_ops.spare_tiles import compute_spare_status, default_spare_settings
+from contractor_ops.escalations import context_line
 
 router = APIRouter(prefix="/api")
 
@@ -1234,6 +1235,58 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
     spare_role = await _get_project_role(user, project_id) if project_id else None
     spare_can_write = spare_role in ('project_manager', 'owner', 'management_team')
     spare_can_assign = spare_role in ('project_manager', 'owner')
+    spare_escalation = None
+    if spare_role in ('project_manager', 'owner'):
+        escalation_query = {
+            'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open',
+        }
+    elif spare_role == 'management_team':
+        escalation_query = {
+            'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open',
+            '$or': [
+                {'requested_by.id': user['id']},
+                {'assigned_to.id': user['id']},
+            ],
+        }
+    else:
+        escalation_query = None
+    if escalation_query:
+        spare_escalation = await db.field_escalations.find_one(
+            escalation_query, {'_id': 0},
+        )
+    if not spare_escalation and escalation_query:
+        seven_days_ago = (
+            __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
+            - __import__('datetime').timedelta(days=7)
+        ).isoformat()
+        resolved_query = {
+            'unit_id': unit_id,
+            'type': 'spare_tiles',
+            'status': {'$in': ['done', 'dismissed']},
+            'resolved_at': {'$gte': seven_days_ago},
+        }
+        if spare_role == 'management_team':
+            resolved_query['$or'] = [
+                {'requested_by.id': user['id']},
+                {'assigned_to.id': user['id']},
+            ]
+        spare_escalation = await db.field_escalations.find_one(
+            resolved_query,
+            {'_id': 0},
+            sort=[('resolved_at', -1)],
+        )
+    serialized_escalation = None
+    if spare_escalation:
+        serialized_escalation = {
+            key: spare_escalation.get(key)
+            for key in (
+                'id', 'status', 'urgency', 'text', 'created_at',
+                'requested_by', 'assigned_to', 'resolved_by', 'resolved_at',
+                'resolution_note',
+            )
+        }
+        serialized_escalation['notes_count'] = len(spare_escalation.get('notes') or [])
+        serialized_escalation['context_line'] = context_line(spare_escalation.get('context'))
 
     return {
         'unit': {
@@ -1248,6 +1301,8 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
         'spare_status': spare_status,
         'spare_can_write': spare_can_write,
         'spare_can_assign': spare_can_assign,
+        'spare_can_escalate': spare_role == 'management_team',
+        'spare_escalation': serialized_escalation,
         'kpi': {
             'total': len(tasks),
             'open': by_status.get('open', 0) + by_status.get('assigned', 0) + by_status.get('reopened', 0),

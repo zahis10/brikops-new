@@ -536,6 +536,9 @@ app.include_router(projects_router)
 from contractor_ops.spare_tiles_router import router as spare_tiles_router
 app.include_router(spare_tiles_router)
 
+from contractor_ops.escalations_router import router as escalations_router
+app.include_router(escalations_router)
+
 from contractor_ops.tasks_router import router as tasks_router
 app.include_router(tasks_router)
 
@@ -564,6 +567,42 @@ transfer_router = create_transfer_router(get_current_user)
 app.include_router(transfer_router)
 
 
+async def _ensure_field_escalation_open_index():
+    """Establish the invariant required by escalation creation.
+
+    This is deliberately outside the best-effort index block below: allowing
+    startup to continue without this partial unique index would reintroduce
+    duplicate open escalations under concurrent POSTs.
+    """
+    collection = db.field_escalations
+    partial = {"type": "spare_tiles", "status": "open"}
+    key = [("unit_id", 1), ("status", 1)]
+    indexes = await collection.index_information()
+    for name, info in indexes.items():
+        if name == "_id_":
+            continue
+        if info.get("key") == key and (
+            not info.get("unique")
+            or info.get("partialFilterExpression") != partial
+        ):
+            await collection.drop_index(name)
+    index_name = await collection.create_index(
+        key,
+        unique=True,
+        partialFilterExpression=partial,
+    )
+    verified = (await collection.index_information()).get(index_name)
+    if (
+        not verified
+        or verified.get("key") != key
+        or verified.get("unique") is not True
+        or verified.get("partialFilterExpression") != partial
+    ):
+        raise RuntimeError(
+            "field_escalations open uniqueness index could not be verified"
+        )
+
+
 async def create_indexes():
     try:
         await db.tasks.create_index([
@@ -581,6 +620,7 @@ async def create_indexes():
             unique=True
         )
         await db.audit_events.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
+        await db.field_escalations.create_index([("project_id", 1), ("status", 1), ("created_at", -1)])
         await db.users.create_index("email", unique=True, sparse=True)
         await db.auth_failed_attempts.create_index(
             [("identifier", 1), ("ip", 1)],
@@ -1361,6 +1401,10 @@ async def startup():
     else:
         logger.info("[STARTUP] Reminder scheduler DISABLED by config")
 
+    # This invariant is correctness-critical and must be established before
+    # the server starts accepting traffic; unlike the neighboring indexes, a
+    # failure here is intentionally fatal rather than best-effort.
+    await _ensure_field_escalation_open_index()
     asyncio.create_task(_deferred_db_init())
 
     logger.info("[STARTUP] Server accepting connections — DB init running in background.")

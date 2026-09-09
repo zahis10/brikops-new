@@ -3896,6 +3896,11 @@ async def list_notifications(
         "close_request": "defect_close_request",
         "approve": "defect_approved",
         "reject": "defect_rejected",
+        "escalate": "field_escalation",
+        "escalation_note": "field_escalation",
+        "escalation_assigned": "field_escalation",
+        "escalation_done": "field_escalation_resolved",
+        "escalation_dismissed": "field_escalation_resolved",
     }
 
     notifications = []
@@ -3905,7 +3910,12 @@ async def list_notifications(
 
         # Build body — defect notifications carry a pre-built body field;
         # QC notifications synthesize from actor + verb + stage_label.
-        if ntype in ("defect_close_request", "defect_status_change_by_pm") and n.get("body"):
+        if ntype in (
+            "defect_close_request",
+            "defect_status_change_by_pm",
+            "field_escalation",
+            "field_escalation_resolved",
+        ) and n.get("body"):
             body = n["body"]
         else:
             # Legacy QC body composition (preserved verbatim).
@@ -3919,7 +3929,15 @@ async def list_notifications(
         # Build link — defect notifications point to /tasks/{id};
         # QC notifications point to the existing run/stage URL.
         link = None
-        if ntype in ("defect_close_request", "defect_status_change_by_pm"):
+        if ntype == "field_escalation":
+            if n.get("project_id"):
+                link = f"/projects/{n['project_id']}/dashboard?focus=escalations"
+        elif ntype == "field_escalation_resolved":
+            if n.get("project_id") and n.get("unit_id"):
+                link = f"/projects/{n['project_id']}/units/{n['unit_id']}/defects"
+            elif n.get("project_id"):
+                link = f"/projects/{n['project_id']}/dashboard?focus=escalations"
+        elif ntype in ("defect_close_request", "defect_status_change_by_pm"):
             if n.get("task_id"):
                 link = f"/tasks/{n['task_id']}?src=bell"
         elif n.get("project_id") and n.get("floor_id") and n.get("run_id") and n.get("stage_id"):

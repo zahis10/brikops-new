@@ -14,3 +14,13 @@ export function getRoleLabel(role) {
 }
 
 export const CONTRACTOR_ROLE = 'contractor';
+
+export const SUB_ROLE_LABELS = {
+  site_manager: 'מנהל אתר',
+  execution_engineer: 'מהנדס ביצוע',
+  safety_assistant: 'עוזר בטיחות',
+  work_manager: 'מנהל עבודה',
+  safety_officer: 'ממונה בטיחות',
+};
+
+export const subRoleLabel = (code) => SUB_ROLE_LABELS[code] || '';

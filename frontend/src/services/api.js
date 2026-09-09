@@ -1086,6 +1086,21 @@ export const spareTilesService = {
   },
 };
 
+export const escalationService = {
+  async create(projectId, body) {
+    const response = await axios.post(`${API}/projects/${projectId}/escalations`, body, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async list(projectId, status = 'open') {
+    const response = await axios.get(`${API}/projects/${projectId}/escalations?status=${status}`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async patch(escalationId, body) {
+    const response = await axios.patch(`${API}/escalations/${escalationId}`, body, { headers: getAuthHeader() });
+    return response.data;
+  },
+};
+
 export const archiveService = {
   async archiveBuilding(buildingId, reason) {
     const response = await axios.post(`${API}/buildings/${buildingId}/archive`, { reason }, { headers: getAuthHeader() });

@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { projectService, buildingService, qcService, handoverService } from '../services/api';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { projectService, buildingService, qcService, handoverService, escalationService } from '../services/api';
 import { qcFloorStatusLabel } from '../utils/qcLabels';
 import { useAuth } from '../contexts/AuthContext';
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import NotificationBell from '../components/NotificationBell';
 import HamburgerMenu from '../components/HamburgerMenu';
 import DashboardFoldSection from '../components/DashboardFoldSection';
+import EscalationsSection from '../components/dashboard/EscalationsSection';
 import ProjectsLightSkyline from '../components/ProjectsLightSkyline';
 import { tRole } from '../i18n';
 import { toast } from 'sonner';
@@ -14,7 +15,7 @@ import {
   ArrowRight, AlertTriangle, Clock, CheckCircle2, Users, Timer,
   ChevronLeft, ChevronDown, Building2, HardHat, Loader2, RefreshCw,
   ExternalLink, BarChart3, AlertCircle, Shield, ClipboardCheck,
-  Construction, FileSignature, Send, MessageSquare
+  Construction, FileSignature, Send, MessageSquare, Megaphone
 } from 'lucide-react';
 
 import OfflineState from '../components/OfflineState';
@@ -118,6 +119,7 @@ const getBarTextColor = (index, total) => {
 export default function ProjectDashboardPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, logout } = useAuth();
   const [data, setData] = useState(null);
   const [project, setProject] = useState(null);
@@ -130,6 +132,7 @@ export default function ProjectDashboardPage() {
   const [alertsExpanded, setAlertsExpanded] = useState(false);
   const [highlightEntity, setHighlightEntity] = useState(null);
   const [handoverSummary, setHandoverSummary] = useState(null);
+  const [escalations, setEscalations] = useState(null);
   const [sendingDigest, setSendingDigest] = useState(false);
   const [sendingReminder, setSendingReminder] = useState({});
   const stageRefs = useRef({});
@@ -153,7 +156,7 @@ export default function ProjectDashboardPage() {
     setExecSummary(null);
     setHandoverSummary(null);
     try {
-      const [dashResult, projResult, hierarchyResult, execResult, handoverResult] = await Promise.allSettled([
+      const [dashResult, projResult, hierarchyResult, execResult, handoverResult, escalationsResult] = await Promise.allSettled([
         projectService.getDashboard(projectId),
         projectService.get(projectId),
         (async () => {
@@ -170,6 +173,7 @@ export default function ProjectDashboardPage() {
         })(),
         qcService.getExecutionSummary(projectId),
         handoverService.getSummary(projectId),
+        escalationService.list(projectId, 'open'),
       ]);
 
       if (dashResult.status === 'rejected' || projResult.status === 'rejected') {
@@ -181,6 +185,7 @@ export default function ProjectDashboardPage() {
       if (hierarchyResult.status === 'fulfilled') setQcSummary(hierarchyResult.value);
       if (execResult.status === 'fulfilled') setExecSummary(execResult.value);
       if (handoverResult.status === 'fulfilled') setHandoverSummary(handoverResult.value);
+      setEscalations(escalationsResult.status === 'fulfilled' ? escalationsResult.value : null);
     } catch (err) {
       if (err.response?.status === 403) {
         toast.error('אין לך הרשאה למרכז ניהול זה');
@@ -196,6 +201,7 @@ export default function ProjectDashboardPage() {
   }, [projectId, navigate]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (escalations && searchParams.get('focus') === 'escalations') openAndScroll('escalations'); }, [escalations, searchParams]);
 
   const handleSendDigest = async () => {
     setSendingDigest(true);
@@ -264,12 +270,14 @@ export default function ProjectDashboardPage() {
   const totalStuck = stuck_contractors.reduce((sum, c) => sum + c.stuck_count, 0);
   const openHandoverDefects = (handoverSummary && handoverSummary.total_units > 0 && handoverSummary.open_handover_defects) || 0;
   const expiringCertsTotal = safety ? (safety.expiring_certs_7 || 0) + (safety.expiring_certs_30 || 0) : 0;
+  const urgentEscalation = escalations?.items?.find(item => item.urgency === 'urgent');
+  const normalEscalation = escalations?.items?.find(item => item.urgency !== 'urgent');
   const hasSla = [kpis.sla_response_7d, kpis.sla_close_7d, kpis.sla_response_30d, kpis.sla_close_30d].some(v => v && v > 0);
   const showFocus = (safety && safety.open_incidents > 0)
     || showPendingApprovals
     || totalStuck > 0
     || openHandoverDefects > 0
-    || expiringCertsTotal > 0;
+    || expiringCertsTotal > 0 || (escalations?.open_count || 0) > 0;
 
   return (
     <div className="min-h-screen pb-24" dir="rtl" style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #eef2f8 60%, #e9eef6 100%)' }}>
@@ -370,6 +378,8 @@ export default function ProjectDashboardPage() {
           <div className="bg-white rounded-xl border shadow-sm p-4 border-r-4" style={{ borderRightColor: '#f59e0b' }}>
             <h3 className="text-sm font-bold text-slate-700 mb-2">🎯 איפה להתמקד עכשיו</h3>
             <div className="space-y-1.5">
+              {urgentEscalation && <button onClick={() => openAndScroll('escalations')} className="w-full flex items-center gap-2.5 p-2.5 rounded-lg border border-red-200 bg-red-50 text-right"><span className="text-xs font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">{escalations.urgent_count}</span><div className="flex-1 min-w-0"><p className="text-sm font-bold text-red-700">הקפצות דחופות מהשטח</p><p className="text-xs text-red-400 truncate">{urgentEscalation.requested_by?.name} · ריצוף ספייר · {urgentEscalation.labels?.building} דירה {urgentEscalation.labels?.unit}</p></div><ChevronLeft className="w-4 h-4 text-red-300" /></button>}
+              {normalEscalation && <button onClick={() => openAndScroll('escalations')} className="w-full flex items-center gap-2.5 p-2.5 rounded-lg border border-amber-200 bg-amber-50 text-right"><span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{escalations.open_count - escalations.urgent_count}</span><div className="flex-1 min-w-0"><p className="text-sm font-bold text-slate-700">הקפצות מהשטח</p><p className="text-xs text-slate-400 truncate">{normalEscalation.requested_by?.name} · ריצוף ספייר · {normalEscalation.labels?.building} דירה {normalEscalation.labels?.unit}</p></div><ChevronLeft className="w-4 h-4 text-slate-300" /></button>}
               {safety && safety.open_incidents > 0 && (
                 <button
                   onClick={() => navigate(`/projects/${projectId}/safety?tab=incidents`)}
@@ -441,6 +451,8 @@ export default function ProjectDashboardPage() {
             </div>
           </div>
         )}
+
+        {escalations && (escalations.open_count > 0 || escalations.resolved_week_count > 0) && <div ref={el => { foldRefs.current.escalations = el; }}><DashboardFoldSection id="escalations" projectId={projectId} icon={Megaphone} iconColor="text-amber-500" title="הקפצות מהשטח · לטיפולי" summary={`${escalations.open_count} פתוחות`} forceOpen={foldForce.escalations || 0}><EscalationsSection projectId={projectId} escalations={escalations} canAssign={escalations.can_assign} currentUserId={user?.id} onChanged={() => escalationService.list(projectId, 'open').then(setEscalations).catch(() => {})} /></DashboardFoldSection></div>}
 
         <div ref={handoverRef}>
         {handoverSummary && handoverSummary.total_units > 0 && (() => {
