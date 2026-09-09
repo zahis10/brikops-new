@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "review.txt — Batch #597"
-description = "קובץ נקי ומתוקן שמכיל רק את דוח Batch #597."
+title = "review.txt"
+description = "דו״ח הבדיקות המעודכן של Batch 597 / FIX-1."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:96bb58b5e8f6a4fb031e0a9f32d2f349e5198345529a87d1c05bfceef7c69f38"
-size = 9977
-mtime_ms = 1788875085669
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/3a00d120-d056-4cc7-aeb1-cf8135831e68"
-storage_version_token = "1788875104239477"
+content_hash = "sha256:45a50d68c4d3c5a3fa159acec6713d64866ec8c42dde215ad82e4bedcd5cd45a"
+size = 32116
+mtime_ms = 1788944498740
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/51ff6336-c00e-486a-9da7-dc62784008aa"
+storage_version_token = "1788945603078848"
 content_type = "text/plain"
 
 [[outputs]]
