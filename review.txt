@@ -2749,3 +2749,481 @@ Final branch: staging. Final code HEAD: 3938562. Working-tree delivery: M review
 No push or deployment. Screenshot acceptance remains blocked as stated above.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+
+===============================================================================
+FIX-2 (10.9)
+===============================================================================
+
+STEP 0 — 2026-09-10
+Branch: staging
+Starting HEAD: 53f6f7b
+Starting working tree: clean
+Base remains fd9fec2; origin/staging unchanged.
+Local code commit: 55c8a6d — fix(escalations): share unit state across management team
+No push, deploy, main work, reset, rebase, or amend.
+
+A — OPEN ESCALATION IS SHARED UNIT STATE
+Both POST existing-open and DuplicateKeyError winner lookups now use exactly unit_id + type=spare_tiles + status=open, with no requester/assignee visibility filter. Any authorized TEAM_ROLES sender can append a note. The unrelated-sender 403 branch is removed; if the winning open item disappears during concurrent resolution, the endpoint returns the existing resolved-conflict 409 rather than an authorization error.
+Unit detail returns the unit open escalation, or the recent resolved escalation, for management_team just as for PM/owner. Contractor/viewer still receive no escalation and do not query the collection.
+Dashboard LIST keeps the original own-or-assigned filter; assignment and resolution permissions are unchanged.
+Tests cover unrelated-management appending both directly and through DuplicateKeyError, shared open and recent-resolved unit state, unchanged LIST filtering, and contractor/viewer isolation.
+
+B — NULL TEXT
+POST now uses text = str(body.get('text') or '').strip().
+JSON null is rejected with 422 for empty text and never stored as the string None. Covered by the request-validation test.
+
+C — BEST-EFFORT INDEX HELPER AND DATETIME IMPORT
+Renamed helper to _ensure_field_escalation_indexes. Both the project/status/created_at index and the named unique partial unit/status index are inside one try/except. Either creation failure is logged and swallowed; no index verification or pre-traffic await was added. Both failure positions are tested.
+projects_router uses the normal top-of-file from datetime import datetime, timedelta, timezone import; inline __import__ calls are removed.
+
+VERBATIM DIFF OF A–C AND UPDATED TESTS
+Command: git diff 53f6f7b..HEAD -- backend/contractor_ops/escalations_router.py backend/contractor_ops/projects_router.py backend/server.py backend/tests/test_escalations.py backend/tests/test_unit_detail.py
+Captured at HEAD 55c8a6d:
+
+diff --git a/backend/contractor_ops/escalations_router.py b/backend/contractor_ops/escalations_router.py
+index b2ca02e..0918622 100644
+--- a/backend/contractor_ops/escalations_router.py
++++ b/backend/contractor_ops/escalations_router.py
+@@ -115,14 +115,8 @@ def _visibility(role, user_id):
+     return {}
+ 
+ 
+-def _visible_unit_escalation(unit_id, role, user_id):
+-    query = {'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open'}
+-    if role == 'management_team':
+-        query['$or'] = [
+-            {'requested_by.id': user_id},
+-            {'assigned_to.id': user_id},
+-        ]
+-    return query
++def _open_unit_escalation(unit_id):
++    return {'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open'}
+ 
+ 
+ async def _append_open_note(db, escalation, actor, text, user_id):
+@@ -178,14 +172,14 @@ async def create_escalation(
+     urgency = body.get('urgency', 'normal')
+     if urgency not in URGENCIES:
+         raise HTTPException(status_code=422, detail='דחיפות לא חוקית')
+-    text = str(body.get('text', '')).strip()
++    text = str(body.get('text') or '').strip()
+     if not 1 <= len(text) <= 500:
+         raise HTTPException(status_code=422, detail='יש לכתוב הודעה (עד 500 תווים)')
+ 
+     now = _now()
+     actor = {'id': user['id'], 'name': user.get('name', '')}
+     existing = await db.field_escalations.find_one(
+-        _visible_unit_escalation(unit_id, role, user['id'])
++        _open_unit_escalation(unit_id)
+     )
+     if existing:
+         existing, _ = await _append_open_note(db, existing, actor, text, user['id'])
+@@ -226,13 +220,12 @@ async def create_escalation(
+     try:
+         await db.field_escalations.insert_one(escalation)
+     except DuplicateKeyError:
+-        # Another request won the unique open-escalation slot.  Only append
+-        # when that winner is visible to this sender.
++        # Open escalations are unit state shared by every authorized team sender.
+         winner = await db.field_escalations.find_one(
+-            _visible_unit_escalation(unit_id, role, user['id'])
++            _open_unit_escalation(unit_id)
+         )
+         if not winner:
+-            raise HTTPException(status_code=403, detail='אין הרשאה להקפצה זו')
++            raise HTTPException(status_code=409, detail='ההקפצה כבר טופלה')
+         winner, appended = await _append_open_note(
+             db, winner, actor, text, user['id'],
+         )
+diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
+index 75635b3..11058c6 100644
+--- a/backend/contractor_ops/projects_router.py
++++ b/backend/contractor_ops/projects_router.py
+@@ -1,6 +1,7 @@
+ import re
+ import uuid
+ import secrets
++from datetime import datetime, timedelta, timezone
+ from typing import Optional, List
+ 
+ from fastapi import APIRouter, HTTPException, Depends, Query, Body, Request
+@@ -1236,18 +1237,10 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
+     spare_can_write = spare_role in ('project_manager', 'owner', 'management_team')
+     spare_can_assign = spare_role in ('project_manager', 'owner')
+     spare_escalation = None
+-    if spare_role in ('project_manager', 'owner'):
++    if spare_role in ('project_manager', 'owner', 'management_team'):
+         escalation_query = {
+             'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open',
+         }
+-    elif spare_role == 'management_team':
+-        escalation_query = {
+-            'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open',
+-            '$or': [
+-                {'requested_by.id': user['id']},
+-                {'assigned_to.id': user['id']},
+-            ],
+-        }
+     else:
+         escalation_query = None
+     if escalation_query:
+@@ -1256,8 +1249,7 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
+         )
+     if not spare_escalation and escalation_query:
+         seven_days_ago = (
+-            __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
+-            - __import__('datetime').timedelta(days=7)
++            datetime.now(timezone.utc) - timedelta(days=7)
+         ).isoformat()
+         resolved_query = {
+             'unit_id': unit_id,
+@@ -1265,11 +1257,6 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
+             'status': {'$in': ['done', 'dismissed']},
+             'resolved_at': {'$gte': seven_days_ago},
+         }
+-        if spare_role == 'management_team':
+-            resolved_query['$or'] = [
+-                {'requested_by.id': user['id']},
+-                {'assigned_to.id': user['id']},
+-            ]
+         spare_escalation = await db.field_escalations.find_one(
+             resolved_query,
+             {'_id': 0},
+diff --git a/backend/server.py b/backend/server.py
+index 0cad528..8b832ae 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -567,9 +567,12 @@ transfer_router = create_transfer_router(get_current_user)
+ app.include_router(transfer_router)
+ 
+ 
+-async def _ensure_field_escalation_open_index():
+-    """Create the open-escalation index best-effort, without blocking startup."""
++async def _ensure_field_escalation_indexes():
++    """Create escalation indexes best-effort, without blocking startup."""
+     try:
++        await db.field_escalations.create_index(
++            [("project_id", 1), ("status", 1), ("created_at", -1)]
++        )
+         await db.field_escalations.create_index(
+             [("unit_id", 1), ("status", 1)],
+             name="uniq_open_spare_escalation_per_unit",
+@@ -577,7 +580,7 @@ async def _ensure_field_escalation_open_index():
+             partialFilterExpression={"type": "spare_tiles", "status": "open"},
+         )
+     except Exception:
+-        logger.exception("Failed to create field_escalations open uniqueness index (non-fatal)")
++        logger.exception("Failed to create field_escalations indexes (non-fatal)")
+ 
+ 
+ async def create_indexes():
+@@ -597,8 +600,7 @@ async def create_indexes():
+             unique=True
+         )
+         await db.audit_events.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
+-        await db.field_escalations.create_index([("project_id", 1), ("status", 1), ("created_at", -1)])
+-        await _ensure_field_escalation_open_index()
++        await _ensure_field_escalation_indexes()
+         await db.users.create_index("email", unique=True, sparse=True)
+         await db.auth_failed_attempts.create_index(
+             [("identifier", 1), ("ip", 1)],
+diff --git a/backend/tests/test_escalations.py b/backend/tests/test_escalations.py
+index 41430e2..eb3dc37 100644
+--- a/backend/tests/test_escalations.py
++++ b/backend/tests/test_escalations.py
+@@ -188,6 +188,14 @@ def test_create_rejects_role_non_short_and_long_text(monkeypatch):
+         ))
+     assert error.value.detail == 'יש לכתוב הודעה (עד 500 תווים)'
+ 
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(escalations_router.create_escalation(
++            'project-1', {'unit_id': 'unit-1', 'text': None}, {'id': 'pm'},
++        ))
++    assert error.value.status_code == 422
++    assert error.value.detail == 'יש לכתוב הודעה (עד 500 תווים)'
++    db.field_escalations.insert_one.assert_not_called()
++
+ 
+ def test_second_create_appends_note_and_notifies_assignee(monkeypatch):
+     db = MagicMock()
+@@ -504,16 +512,19 @@ def test_concurrent_resolution_only_one_request_audits_and_notifies(monkeypatch)
+     assert notify.await_count == 1
+ 
+ 
+-def test_unrelated_management_cannot_append_via_post(monkeypatch):
++@pytest.mark.parametrize('duplicate_race', [False, True])
++def test_unrelated_management_appends_note_via_post(monkeypatch, duplicate_race):
+     db = MagicMock()
+     db.projects.find_one = AsyncMock(return_value={'id': 'project-1'})
+     db.units.find_one = AsyncMock(return_value={'id': 'unit-1', 'project_id': 'project-1'})
+     db.buildings.find_one = AsyncMock(return_value={'name': 'בניין א'})
+     db.floors.find_one = AsyncMock(return_value={'name': 'קומה 1'})
+-    db.field_escalations.find_one = AsyncMock(side_effect=[
+-        None,  # visibility-filtered existing lookup
+-        None,  # duplicate-key winner lookup (not visible)
+-    ])
++    existing = sample_escalation()
++    db.field_escalations.find_one = AsyncMock(
++        side_effect=[None, existing] if duplicate_race else [existing],
++    )
++    db.field_escalations.update_one = AsyncMock()
++    db.project_memberships.find.return_value = Cursor([{'user_id': 'pm'}])
+     db.field_escalations.insert_one = AsyncMock(
+         side_effect=DuplicateKeyError('duplicate open escalation'),
+     )
+@@ -524,18 +535,27 @@ def test_unrelated_management_cannot_append_via_post(monkeypatch):
+         AsyncMock(return_value={'role': 'management_team', 'sub_role': 'site_manager'}),
+     )
+     monkeypatch.setattr(escalations_router, 'compute_spare_status', lambda *_: sample_status())
++    monkeypatch.setattr(escalations_router, '_audit', AsyncMock())
++    monkeypatch.setattr(escalations_router, 'create_defect_notification', AsyncMock())
+ 
+-    with pytest.raises(HTTPException) as error:
+-        asyncio.run(escalations_router.create_escalation(
+-            'project-1',
+-            {'unit_id': 'unit-1', 'text': 'הודעה'},
+-            {'id': 'unrelated', 'name': 'מנהל אחר'},
+-        ))
+-    assert error.value.status_code == 403
+-    db.field_escalations.update_one.assert_not_called()
+-
+-
+-def test_open_unique_index_setup_is_best_effort(caplog):
++    result = asyncio.run(escalations_router.create_escalation(
++        'project-1',
++        {'unit_id': 'unit-1', 'text': 'הודעה'},
++        {'id': 'unrelated', 'name': 'מנהל אחר'},
++    ))
++    assert result['appended_note'] is True
++    db.field_escalations.update_one.assert_awaited_once()
++    assert existing['notes'][-1]['by']['id'] == 'unrelated'
++    for call in db.field_escalations.find_one.await_args_list:
++        assert call.args[0] == {
++            'unit_id': 'unit-1', 'type': 'spare_tiles', 'status': 'open',
++        }
++    if not duplicate_race:
++        db.field_escalations.insert_one.assert_not_called()
++
++
++@pytest.mark.parametrize('failed_index', [0, 1])
++def test_escalation_index_setup_is_best_effort(caplog, failed_index):
+     # Index failures must be logged, not propagated into startup.
+     from unittest.mock import patch
+ 
+@@ -543,21 +563,29 @@ def test_open_unique_index_setup_is_best_effort(caplog):
+         import server
+ 
+     collection = MagicMock()
+-    collection.create_index = AsyncMock(side_effect=RuntimeError('index unavailable'))
++    collection.create_index = AsyncMock(
++        side_effect=['project_index'] * failed_index + [RuntimeError('index unavailable')],
++    )
+     with patch.object(server, 'db', field_escalations=collection):
+-        asyncio.run(server._ensure_field_escalation_open_index())
++        asyncio.run(server._ensure_field_escalation_indexes())
+     assert 'index unavailable' in caplog.text
+     assert 'non-fatal' in caplog.text
+     collection.index_information.assert_not_called()
+-    collection.create_index.assert_awaited_once_with(
++    assert collection.create_index.await_count == failed_index + 1
++
++    # Success likewise needs no post-create verification.
++    collection.create_index = AsyncMock(return_value='index')
++    with patch.object(server, 'db', field_escalations=collection):
++        asyncio.run(server._ensure_field_escalation_indexes())
++    assert collection.create_index.await_count == 2
++    assert collection.create_index.await_args_list[0].args == (
++        [('project_id', 1), ('status', 1), ('created_at', -1)],
++    )
++    collection.create_index.assert_awaited_with(
+         [('unit_id', 1), ('status', 1)],
+         name='uniq_open_spare_escalation_per_unit',
+         unique=True,
+         partialFilterExpression={'type': 'spare_tiles', 'status': 'open'},
+     )
+ 
+-    # Success likewise needs no post-create verification.
+-    collection.create_index = AsyncMock(return_value='uniq_open_spare_escalation_per_unit')
+-    with patch.object(server, 'db', field_escalations=collection):
+-        asyncio.run(server._ensure_field_escalation_open_index())
+     collection.index_information.assert_not_called()
+\ No newline at end of file
+diff --git a/backend/tests/test_unit_detail.py b/backend/tests/test_unit_detail.py
+index 3ddbbaa..fbbadec 100644
+--- a/backend/tests/test_unit_detail.py
++++ b/backend/tests/test_unit_detail.py
+@@ -122,7 +122,8 @@ def test_unit_detail_open_escalation_wins_and_management_can_escalate():
+         (None, None),
+     ],
+ )
+-def test_unit_detail_recent_resolved_or_none_for_pm(resolved, expected):
++@pytest.mark.parametrize('role', ['project_manager', 'management_team'])
++def test_unit_detail_recent_resolved_or_none_for_team(resolved, expected, role):
+     db = _unit_detail_db([None, resolved])
+ 
+     async def run():
+@@ -132,26 +133,28 @@ def test_unit_detail_recent_resolved_or_none_for_pm(resolved, expected):
+             patch.object(
+                 projects_router,
+                 '_get_project_role',
+-                new=AsyncMock(return_value='project_manager'),
++                new=AsyncMock(return_value=role),
+             ),
+         ):
+             return await projects_router.get_unit_detail('unit-1', {'id': 'pm'})
+ 
+     result = asyncio.run(run())
+-    assert result['spare_can_escalate'] is False
++    assert result['spare_can_escalate'] is (role == 'management_team')
+     assert (
+         result['spare_escalation']['id'] if result['spare_escalation'] else None
+     ) == expected
+     assert db.field_escalations.find_one.await_count == 2
++    assert '$or' not in db.field_escalations.find_one.await_args.args[0]
+ 
+ 
+-def test_unrelated_management_unit_detail_has_no_escalation_payload_or_leak():
++def test_unrelated_management_unit_detail_sees_open_escalation():
+     db = _unit_detail_db([{
+         'id': 'other-escalation',
+         'status': 'open',
++        'requested_by': {'id': 'another-user'},
++        'assigned_to': None,
+         'context': {'short': [], 'borderline': []},
+     }])
+-    db.field_escalations.find_one = AsyncMock(return_value=None)
+ 
+     async def run():
+         with (
+@@ -166,14 +169,15 @@ def test_unrelated_management_unit_detail_has_no_escalation_payload_or_leak():
+             return await projects_router.get_unit_detail('unit-1', {'id': 'different-user'})
+ 
+     result = asyncio.run(run())
+-    assert result['spare_escalation'] is None
+-    assert db.field_escalations.find_one.await_args.args[0]['$or'] == [
+-        {'requested_by.id': 'different-user'},
+-        {'assigned_to.id': 'different-user'},
+-    ]
++    assert result['spare_escalation']['id'] == 'other-escalation'
++    assert db.field_escalations.find_one.await_count == 1
++    assert db.field_escalations.find_one.await_args.args[0] == {
++        'unit_id': 'unit-1', 'type': 'spare_tiles', 'status': 'open',
++    }
+ 
+ 
+-def test_contractor_unit_detail_does_not_query_escalations():
++@pytest.mark.parametrize('role', ['contractor', 'viewer'])
++def test_contractor_or_viewer_unit_detail_does_not_query_escalations(role):
+     db = _unit_detail_db([])
+     db.field_escalations.find_one = AsyncMock()
+ 
+@@ -184,7 +188,7 @@ def test_contractor_unit_detail_does_not_query_escalations():
+             patch.object(
+                 projects_router,
+                 '_get_project_role',
+-                new=AsyncMock(return_value='contractor'),
++                new=AsyncMock(return_value=role),
+             ),
+         ):
+             return await projects_router.get_unit_detail('unit-1', {'id': 'contractor'})
+
+V1 — FOUR PYTEST MODULES
+Command:
+  cd backend && MONGO_URL=mongodb://localhost:27017 DB_NAME=contractor_ops PYTHONPATH=. pytest -q tests/test_escalations.py tests/test_unit_detail.py tests/test_notifications_defect.py tests/test_spare_tiles.py
+Result: 76 passed, 6 warnings in 11.11s.
+Warnings: existing Pydantic validator and FastAPI on_event deprecations.
+One coherent V1 run; no live-probe or additional Jest/browser regression pass was requested or run.
+
+CI BUILD
+Command:
+  cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+Result: Compiled successfully (27.70s).
+Bundle: build/static/js/main.4d4bd2c2.js
+CSS: build/static/css/main.1ad71a6c.css
+Non-failing notices: fs.F_OK deprecation and outdated Browserslist data.
+
+STARTUP
+Restarted Start application once after the changes. Port 5000 is serving the application; /api/health returned 200. Mockup Sandbox was not started.
+The old equivalent unit_id_1_status_1 unique partial index still exists locally. Creation under the new explicit name logs IndexOptionsConflict code 85 as non-fatal, then deferred DB initialization completes and the app serves requests. The existing index was not dropped to force a name change.
+Existing unrelated startup notice: configured super-admin user absent.
+
+D — ONE 390x844 SCREENSHOT, CORRECT APPLICATION
+Screenshot ID: pk2r0h
+URL: http://localhost:5000/projects/ee134483-75d4-4e7a-a942-399fc4f1dfd3/dashboard?focus=escalations
+Viewport: 390x844
+Authenticated as the existing demo PM through the normal dev phone/OTP login. Exactly one open document was seeded directly in local Mongo before capture.
+The open לטיפולי fold displays the item title/details and all four actions together: טופל, לא רלוונטי, העבר ל…, פתח דירה. The actions wrap vertically within the card without horizontal clipping. The top of the card/fold is above the screenshot viewport due to scrolling, but the item text/context and complete action area are visible together. Parent visually inspected the screenshot.
+Exactly one screenshot in this FIX-2 run. No escalation actions were clicked, no additional routes beyond required login/dashboard, no API probes, no full browser pass. This supplies the action-row evidence missing from the earlier review.
+
+FIXTURE CLEANUP — ZERO COUNTS
+Only one escalation document was seeded; no users, memberships, notifications, project settings, or unit fields were changed.
+Removed the escalation and new auth-harness records from the isolated demo login. No pre-existing OTP/rate-limit records were deleted.
+Exact cleanup report:
+{
+  "removed": {
+    "field_escalations": 1,
+    "qc_notifications": 0,
+    "audit_events": 0,
+    "users": 0,
+    "project_memberships": 0,
+    "organization_memberships": 0,
+    "otp_codes": 0,
+    "otp_metrics": 2,
+    "otp_rate_limits": 6
+  },
+  "final_counts": {
+    "field_escalations": 0,
+    "qc_notifications": 0,
+    "audit_events": 0,
+    "users": 0,
+    "project_memberships": 0,
+    "organization_memberships": 0,
+    "new_otp_codes": 0,
+    "new_otp_metrics": 0,
+    "new_otp_rate_limits": 0
+  },
+  "unchanged": {
+    "spare_settings": true,
+    "unit_spare": true
+  }
+}
+
+FINAL DIFF NAMES
+Command: git diff --name-only fd9fec2..HEAD
+Captured at HEAD 55c8a6d:
+.agents/agent_assets_metadata.toml
+.agents/memory/MEMORY.md
+.agents/memory/jest-canvas-libuuid.md
+backend/contractor_ops/escalations.py
+backend/contractor_ops/escalations_router.py
+backend/contractor_ops/notification_helpers.py
+backend/contractor_ops/projects_router.py
+backend/contractor_ops/qc_router.py
+backend/server.py
+backend/tests/test_escalations.py
+backend/tests/test_notifications_defect.py
+backend/tests/test_unit_detail.py
+frontend/src/components/NotificationBell.js
+frontend/src/components/dashboard/EscalationsSection.js
+frontend/src/components/spare/EscalationSheet.js
+frontend/src/components/spare/SpareEscalationStatus.js
+frontend/src/pages/ApartmentDashboardPage.js
+frontend/src/pages/ProjectDashboardPage.js
+frontend/src/services/api.js
+frontend/src/utils/__tests__/escalationDraft.test.js
+frontend/src/utils/__tests__/relativeTime.test.js
+frontend/src/utils/escalationDraft.js
+frontend/src/utils/relativeTime.js
+frontend/src/utils/roleLabels.js
+review.txt
+
+All .agents paths above predate FIX-2 and were already present in starting HEAD 53f6f7b. FIX-2 application/test changes are limited to the five files in the A–C diff. The earlier FULL DIFF and FIX-1 sections remain historical evidence for their stated HEADs; this addendum records the current correction.
+Frozen/read-only DashboardFoldSection.js and probe_spare_tiles_http.py remain byte-identical to fd9fec2, as do the frozen spare calculation/router, stats, matrix, and export files. No frontend source, dependency, environment, deployment, or migration file changed.
+Application/test diff --check is clean. Embedded verbatim Git context/CRLF whitespace in review.txt is intentionally preserved, not normalized.
+Final branch: staging
+Final code HEAD: 55c8a6d
+Final working-tree delivery: M review.txt (this addendum is left outside the code commit to avoid a self-referential HEAD).
+No push or deployment performed.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY

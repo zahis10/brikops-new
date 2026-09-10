@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "Batch 598 — FIX-1 review"
-description = "FULL DIFF מלא ונספח FIX-1: תיקון best-effort, בדיקות, ניקוי ותיעוד כשל הצילום."
+title = "Batch 598 — FIX-2 review"
+description = "נספח FIX-2 עם diff מדויק, תוצאות V1 ו־CI build, צילום pk2r0h וראיות ניקוי."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:430e8ea0b429a214ecd0980a4f2d607246d32309346555d10f9480bbf25a3dd2"
-size = 129492
-mtime_ms = 1789023897232
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/fbec8cad-a190-44a6-bdb5-d075d5fc1cbe"
-storage_version_token = "1789023936445455"
+content_hash = "sha256:65cbcee7a23a177bb6365835334b648ec7262a1d92bcc24d112f972bb00d7d65"
+size = 152837
+mtime_ms = 1789025746952
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/82c0b974-7ec3-4417-be9b-65f41460dfad"
+storage_version_token = "1789025779865620"
 content_type = "text/plain"
 
 [[outputs]]
