@@ -122,7 +122,8 @@ def test_unit_detail_open_escalation_wins_and_management_can_escalate():
         (None, None),
     ],
 )
-def test_unit_detail_recent_resolved_or_none_for_pm(resolved, expected):
+@pytest.mark.parametrize('role', ['project_manager', 'management_team'])
+def test_unit_detail_recent_resolved_or_none_for_team(resolved, expected, role):
     db = _unit_detail_db([None, resolved])
 
     async def run():
@@ -132,26 +133,28 @@ def test_unit_detail_recent_resolved_or_none_for_pm(resolved, expected):
             patch.object(
                 projects_router,
                 '_get_project_role',
-                new=AsyncMock(return_value='project_manager'),
+                new=AsyncMock(return_value=role),
             ),
         ):
             return await projects_router.get_unit_detail('unit-1', {'id': 'pm'})
 
     result = asyncio.run(run())
-    assert result['spare_can_escalate'] is False
+    assert result['spare_can_escalate'] is (role == 'management_team')
     assert (
         result['spare_escalation']['id'] if result['spare_escalation'] else None
     ) == expected
     assert db.field_escalations.find_one.await_count == 2
+    assert '$or' not in db.field_escalations.find_one.await_args.args[0]
 
 
-def test_unrelated_management_unit_detail_has_no_escalation_payload_or_leak():
+def test_unrelated_management_unit_detail_sees_open_escalation():
     db = _unit_detail_db([{
         'id': 'other-escalation',
         'status': 'open',
+        'requested_by': {'id': 'another-user'},
+        'assigned_to': None,
         'context': {'short': [], 'borderline': []},
     }])
-    db.field_escalations.find_one = AsyncMock(return_value=None)
 
     async def run():
         with (
@@ -166,14 +169,15 @@ def test_unrelated_management_unit_detail_has_no_escalation_payload_or_leak():
             return await projects_router.get_unit_detail('unit-1', {'id': 'different-user'})
 
     result = asyncio.run(run())
-    assert result['spare_escalation'] is None
-    assert db.field_escalations.find_one.await_args.args[0]['$or'] == [
-        {'requested_by.id': 'different-user'},
-        {'assigned_to.id': 'different-user'},
-    ]
+    assert result['spare_escalation']['id'] == 'other-escalation'
+    assert db.field_escalations.find_one.await_count == 1
+    assert db.field_escalations.find_one.await_args.args[0] == {
+        'unit_id': 'unit-1', 'type': 'spare_tiles', 'status': 'open',
+    }
 
 
-def test_contractor_unit_detail_does_not_query_escalations():
+@pytest.mark.parametrize('role', ['contractor', 'viewer'])
+def test_contractor_or_viewer_unit_detail_does_not_query_escalations(role):
     db = _unit_detail_db([])
     db.field_escalations.find_one = AsyncMock()
 
@@ -184,7 +188,7 @@ def test_contractor_unit_detail_does_not_query_escalations():
             patch.object(
                 projects_router,
                 '_get_project_role',
-                new=AsyncMock(return_value='contractor'),
+                new=AsyncMock(return_value=role),
             ),
         ):
             return await projects_router.get_unit_detail('unit-1', {'id': 'contractor'})

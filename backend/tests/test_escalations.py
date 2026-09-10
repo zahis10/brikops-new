@@ -188,6 +188,14 @@ def test_create_rejects_role_non_short_and_long_text(monkeypatch):
         ))
     assert error.value.detail == 'יש לכתוב הודעה (עד 500 תווים)'
 
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(escalations_router.create_escalation(
+            'project-1', {'unit_id': 'unit-1', 'text': None}, {'id': 'pm'},
+        ))
+    assert error.value.status_code == 422
+    assert error.value.detail == 'יש לכתוב הודעה (עד 500 תווים)'
+    db.field_escalations.insert_one.assert_not_called()
+
 
 def test_second_create_appends_note_and_notifies_assignee(monkeypatch):
     db = MagicMock()
@@ -504,16 +512,19 @@ def test_concurrent_resolution_only_one_request_audits_and_notifies(monkeypatch)
     assert notify.await_count == 1
 
 
-def test_unrelated_management_cannot_append_via_post(monkeypatch):
+@pytest.mark.parametrize('duplicate_race', [False, True])
+def test_unrelated_management_appends_note_via_post(monkeypatch, duplicate_race):
     db = MagicMock()
     db.projects.find_one = AsyncMock(return_value={'id': 'project-1'})
     db.units.find_one = AsyncMock(return_value={'id': 'unit-1', 'project_id': 'project-1'})
     db.buildings.find_one = AsyncMock(return_value={'name': 'בניין א'})
     db.floors.find_one = AsyncMock(return_value={'name': 'קומה 1'})
-    db.field_escalations.find_one = AsyncMock(side_effect=[
-        None,  # visibility-filtered existing lookup
-        None,  # duplicate-key winner lookup (not visible)
-    ])
+    existing = sample_escalation()
+    db.field_escalations.find_one = AsyncMock(
+        side_effect=[None, existing] if duplicate_race else [existing],
+    )
+    db.field_escalations.update_one = AsyncMock()
+    db.project_memberships.find.return_value = Cursor([{'user_id': 'pm'}])
     db.field_escalations.insert_one = AsyncMock(
         side_effect=DuplicateKeyError('duplicate open escalation'),
     )
@@ -524,18 +535,27 @@ def test_unrelated_management_cannot_append_via_post(monkeypatch):
         AsyncMock(return_value={'role': 'management_team', 'sub_role': 'site_manager'}),
     )
     monkeypatch.setattr(escalations_router, 'compute_spare_status', lambda *_: sample_status())
+    monkeypatch.setattr(escalations_router, '_audit', AsyncMock())
+    monkeypatch.setattr(escalations_router, 'create_defect_notification', AsyncMock())
 
-    with pytest.raises(HTTPException) as error:
-        asyncio.run(escalations_router.create_escalation(
-            'project-1',
-            {'unit_id': 'unit-1', 'text': 'הודעה'},
-            {'id': 'unrelated', 'name': 'מנהל אחר'},
-        ))
-    assert error.value.status_code == 403
-    db.field_escalations.update_one.assert_not_called()
+    result = asyncio.run(escalations_router.create_escalation(
+        'project-1',
+        {'unit_id': 'unit-1', 'text': 'הודעה'},
+        {'id': 'unrelated', 'name': 'מנהל אחר'},
+    ))
+    assert result['appended_note'] is True
+    db.field_escalations.update_one.assert_awaited_once()
+    assert existing['notes'][-1]['by']['id'] == 'unrelated'
+    for call in db.field_escalations.find_one.await_args_list:
+        assert call.args[0] == {
+            'unit_id': 'unit-1', 'type': 'spare_tiles', 'status': 'open',
+        }
+    if not duplicate_race:
+        db.field_escalations.insert_one.assert_not_called()
 
 
-def test_open_unique_index_setup_is_best_effort(caplog):
+@pytest.mark.parametrize('failed_index', [0, 1])
+def test_escalation_index_setup_is_best_effort(caplog, failed_index):
     # Index failures must be logged, not propagated into startup.
     from unittest.mock import patch
 
@@ -543,21 +563,29 @@ def test_open_unique_index_setup_is_best_effort(caplog):
         import server
 
     collection = MagicMock()
-    collection.create_index = AsyncMock(side_effect=RuntimeError('index unavailable'))
+    collection.create_index = AsyncMock(
+        side_effect=['project_index'] * failed_index + [RuntimeError('index unavailable')],
+    )
     with patch.object(server, 'db', field_escalations=collection):
-        asyncio.run(server._ensure_field_escalation_open_index())
+        asyncio.run(server._ensure_field_escalation_indexes())
     assert 'index unavailable' in caplog.text
     assert 'non-fatal' in caplog.text
     collection.index_information.assert_not_called()
-    collection.create_index.assert_awaited_once_with(
+    assert collection.create_index.await_count == failed_index + 1
+
+    # Success likewise needs no post-create verification.
+    collection.create_index = AsyncMock(return_value='index')
+    with patch.object(server, 'db', field_escalations=collection):
+        asyncio.run(server._ensure_field_escalation_indexes())
+    assert collection.create_index.await_count == 2
+    assert collection.create_index.await_args_list[0].args == (
+        [('project_id', 1), ('status', 1), ('created_at', -1)],
+    )
+    collection.create_index.assert_awaited_with(
         [('unit_id', 1), ('status', 1)],
         name='uniq_open_spare_escalation_per_unit',
         unique=True,
         partialFilterExpression={'type': 'spare_tiles', 'status': 'open'},
     )
 
-    # Success likewise needs no post-create verification.
-    collection.create_index = AsyncMock(return_value='uniq_open_spare_escalation_per_unit')
-    with patch.object(server, 'db', field_escalations=collection):
-        asyncio.run(server._ensure_field_escalation_open_index())
     collection.index_information.assert_not_called()

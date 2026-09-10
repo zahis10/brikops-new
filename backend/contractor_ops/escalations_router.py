@@ -115,14 +115,8 @@ def _visibility(role, user_id):
     return {}
 
 
-def _visible_unit_escalation(unit_id, role, user_id):
-    query = {'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open'}
-    if role == 'management_team':
-        query['$or'] = [
-            {'requested_by.id': user_id},
-            {'assigned_to.id': user_id},
-        ]
-    return query
+def _open_unit_escalation(unit_id):
+    return {'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open'}
 
 
 async def _append_open_note(db, escalation, actor, text, user_id):
@@ -178,14 +172,14 @@ async def create_escalation(
     urgency = body.get('urgency', 'normal')
     if urgency not in URGENCIES:
         raise HTTPException(status_code=422, detail='דחיפות לא חוקית')
-    text = str(body.get('text', '')).strip()
+    text = str(body.get('text') or '').strip()
     if not 1 <= len(text) <= 500:
         raise HTTPException(status_code=422, detail='יש לכתוב הודעה (עד 500 תווים)')
 
     now = _now()
     actor = {'id': user['id'], 'name': user.get('name', '')}
     existing = await db.field_escalations.find_one(
-        _visible_unit_escalation(unit_id, role, user['id'])
+        _open_unit_escalation(unit_id)
     )
     if existing:
         existing, _ = await _append_open_note(db, existing, actor, text, user['id'])
@@ -226,13 +220,12 @@ async def create_escalation(
     try:
         await db.field_escalations.insert_one(escalation)
     except DuplicateKeyError:
-        # Another request won the unique open-escalation slot.  Only append
-        # when that winner is visible to this sender.
+        # Open escalations are unit state shared by every authorized team sender.
         winner = await db.field_escalations.find_one(
-            _visible_unit_escalation(unit_id, role, user['id'])
+            _open_unit_escalation(unit_id)
         )
         if not winner:
-            raise HTTPException(status_code=403, detail='אין הרשאה להקפצה זו')
+            raise HTTPException(status_code=409, detail='ההקפצה כבר טופלה')
         winner, appended = await _append_open_note(
             db, winner, actor, text, user['id'],
         )

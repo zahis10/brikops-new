@@ -1,6 +1,7 @@
 import re
 import uuid
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, Depends, Query, Body, Request
@@ -1236,17 +1237,9 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
     spare_can_write = spare_role in ('project_manager', 'owner', 'management_team')
     spare_can_assign = spare_role in ('project_manager', 'owner')
     spare_escalation = None
-    if spare_role in ('project_manager', 'owner'):
+    if spare_role in ('project_manager', 'owner', 'management_team'):
         escalation_query = {
             'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open',
-        }
-    elif spare_role == 'management_team':
-        escalation_query = {
-            'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open',
-            '$or': [
-                {'requested_by.id': user['id']},
-                {'assigned_to.id': user['id']},
-            ],
         }
     else:
         escalation_query = None
@@ -1256,8 +1249,7 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
         )
     if not spare_escalation and escalation_query:
         seven_days_ago = (
-            __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
-            - __import__('datetime').timedelta(days=7)
+            datetime.now(timezone.utc) - timedelta(days=7)
         ).isoformat()
         resolved_query = {
             'unit_id': unit_id,
@@ -1265,11 +1257,6 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
             'status': {'$in': ['done', 'dismissed']},
             'resolved_at': {'$gte': seven_days_ago},
         }
-        if spare_role == 'management_team':
-            resolved_query['$or'] = [
-                {'requested_by.id': user['id']},
-                {'assigned_to.id': user['id']},
-            ]
         spare_escalation = await db.field_escalations.find_one(
             resolved_query,
             {'_id': 0},

@@ -567,9 +567,12 @@ transfer_router = create_transfer_router(get_current_user)
 app.include_router(transfer_router)
 
 
-async def _ensure_field_escalation_open_index():
-    """Create the open-escalation index best-effort, without blocking startup."""
+async def _ensure_field_escalation_indexes():
+    """Create escalation indexes best-effort, without blocking startup."""
     try:
+        await db.field_escalations.create_index(
+            [("project_id", 1), ("status", 1), ("created_at", -1)]
+        )
         await db.field_escalations.create_index(
             [("unit_id", 1), ("status", 1)],
             name="uniq_open_spare_escalation_per_unit",
@@ -577,7 +580,7 @@ async def _ensure_field_escalation_open_index():
             partialFilterExpression={"type": "spare_tiles", "status": "open"},
         )
     except Exception:
-        logger.exception("Failed to create field_escalations open uniqueness index (non-fatal)")
+        logger.exception("Failed to create field_escalations indexes (non-fatal)")
 
 
 async def create_indexes():
@@ -597,8 +600,7 @@ async def create_indexes():
             unique=True
         )
         await db.audit_events.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
-        await db.field_escalations.create_index([("project_id", 1), ("status", 1), ("created_at", -1)])
-        await _ensure_field_escalation_open_index()
+        await _ensure_field_escalation_indexes()
         await db.users.create_index("email", unique=True, sparse=True)
         await db.auth_failed_attempts.create_index(
             [("identifier", 1), ("ip", 1)],
