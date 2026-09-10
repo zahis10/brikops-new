@@ -465,3 +465,2287 @@ Open evidence deviations requiring Zahi's review:
    so it does not show an open escalation action row.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+===============================================================================
+FULL DIFF (fd9fec2..HEAD)
+===============================================================================
+
+Captured at HEAD 3938562. Verbatim Git output for exactly the 21 application/test files; excludes review.txt and .agents.
+
+Command:
+  git diff fd9fec2..HEAD -- backend/contractor_ops/escalations.py backend/contractor_ops/escalations_router.py backend/contractor_ops/notification_helpers.py backend/contractor_ops/projects_router.py backend/contractor_ops/qc_router.py backend/server.py backend/tests/test_escalations.py backend/tests/test_notifications_defect.py backend/tests/test_unit_detail.py frontend/src/components/NotificationBell.js frontend/src/components/dashboard/EscalationsSection.js frontend/src/components/spare/EscalationSheet.js frontend/src/components/spare/SpareEscalationStatus.js frontend/src/pages/ApartmentDashboardPage.js frontend/src/pages/ProjectDashboardPage.js frontend/src/services/api.js frontend/src/utils/__tests__/escalationDraft.test.js frontend/src/utils/__tests__/relativeTime.test.js frontend/src/utils/escalationDraft.js frontend/src/utils/relativeTime.js frontend/src/utils/roleLabels.js
+
+diff --git a/backend/contractor_ops/escalations.py b/backend/contractor_ops/escalations.py
+new file mode 100644
+index 0000000..e3c0a70
+--- /dev/null
++++ b/backend/contractor_ops/escalations.py
+@@ -0,0 +1,81 @@
++URGENCIES = ('urgent', 'normal')
++STATUSES = ('open', 'done', 'dismissed')
++ESCALATABLE = ('short', 'borderline')
++
++
++def build_spare_context(spare_status):
++    context = {'short': [], 'borderline': []}
++    for row in (spare_status or {}).get('categories') or []:
++        if row.get('status') == 'short':
++            context['short'].append({
++                'name': row.get('name', ''),
++                'missing': row.get('missing') or 0,
++                'measure': row.get('measure'),
++                'zero': bool(row.get('entered') and row.get('actual') == 0),
++            })
++        elif row.get('status') == 'borderline':
++            context['borderline'].append(row.get('name', ''))
++    return context
++
++
++def can_escalate(spare_status):
++    return (spare_status or {}).get('overall') in ESCALATABLE
++
++
++def context_line(context):
++    context = context or {}
++    short_items = []
++    for row in context.get('short') or []:
++        name = row.get('name', '')
++        missing = row.get('missing') or 0
++        if missing > 0:
++            short_items.append(f"{name} {missing}")
++        elif row.get('zero'):
++            short_items.append(f"{name} (אין ספייר)")
++        else:
++            short_items.append(name)
++    parts = []
++    if short_items:
++        parts.append(f"חסר: {', '.join(short_items)}")
++    borderline = context.get('borderline') or []
++    if borderline:
++        parts.append(f"גבולי: {', '.join(borderline)}")
++    return ' · '.join(parts)
++
++
++def default_text(urgency, unit_label, context):
++    if urgency == 'urgent':
++        count = len((context or {}).get('short') or [])
++        shortage = 'חסר סוג אחד' if count == 1 else f'חסר {count} סוגים'
++        return f"דחוף להזמין ריצוף ספייר לדירה {unit_label} — {shortage}"
++    return f"להשלים ריצוף ספייר לדירה {unit_label} — {context_line(context)}"
++
++
++def escalation_body(esc):
++    kind = 'דחופה' if esc.get('urgency') == 'urgent' else 'חדשה'
++    return (
++        f"הקפצה {kind} מ{esc['requested_by']['name']}: {esc['text']} — "
++        f"{esc['labels']['building']} · דירה {esc['labels']['unit']}"
++    )
++
++
++def note_body(esc, actor_name, note):
++    return f"הערה חדשה מ{actor_name} על ההקפצה בדירה {esc['labels']['unit']}: {note}"
++
++
++def assigned_body(esc, actor_name):
++    return (
++        f"הקפצה הועברה אליך ע״י {actor_name}: {esc['text']} — "
++        f"{esc['labels']['building']} · דירה {esc['labels']['unit']}"
++    )
++
++
++def resolved_body(esc):
++    state = 'טופלה' if esc.get('status') == 'done' else 'סומנה כלא רלוונטית'
++    body = (
++        f"ההקפצה על דירה {esc['labels']['unit']} {state} "
++        f"ע״י {esc['resolved_by']['name']}"
++    )
++    if esc.get('resolution_note'):
++        body += f" — \"{esc['resolution_note']}\""
++    return body
+\ No newline at end of file
+diff --git a/backend/contractor_ops/escalations_router.py b/backend/contractor_ops/escalations_router.py
+new file mode 100644
+index 0000000..b2ca02e
+--- /dev/null
++++ b/backend/contractor_ops/escalations_router.py
+@@ -0,0 +1,444 @@
++import uuid
++from datetime import datetime, timedelta, timezone
++
++from fastapi import APIRouter, Depends, HTTPException, Query, Response
++from pymongo.errors import DuplicateKeyError
++
++from contractor_ops.escalations import (
++    URGENCIES,
++    assigned_body,
++    build_spare_context,
++    can_escalate,
++    escalation_body,
++    note_body,
++    resolved_body,
++)
++from contractor_ops.notification_helpers import create_defect_notification
++from contractor_ops.router import (
++    _audit,
++    _get_project_membership,
++    _get_project_role,
++    get_current_user,
++    get_db,
++)
++from contractor_ops.spare_tiles import compute_spare_status, default_spare_settings
++
++
++router = APIRouter(prefix='/api')
++PM_ROLES = ('project_manager', 'owner')
++TEAM_ROLES = PM_ROLES + ('management_team',)
++
++
++def _now():
++    return datetime.now(timezone.utc).isoformat()
++
++
++async def _project_or_404(db, project_id):
++    project = await db.projects.find_one({'id': project_id}, {'_id': 0})
++    if not project:
++        raise HTTPException(status_code=404, detail='הפרויקט לא נמצא')
++    return project
++
++
++async def _role_or_403(user, project_id):
++    role = await _get_project_role(user, project_id)
++    if role not in TEAM_ROLES:
++        raise HTTPException(status_code=403, detail='אין הרשאה להקפצות בפרויקט זה')
++    membership = await _get_project_membership(user, project_id)
++    return role, membership.get('sub_role')
++
++
++async def _pm_ids(db, project_id):
++    rows = await db.project_memberships.find(
++        {'project_id': project_id, 'role': 'project_manager'},
++        {'_id': 0, 'user_id': 1},
++    ).to_list(1000)
++    return [row['user_id'] for row in rows if row.get('user_id')]
++
++
++async def _recipients(esc):
++    assigned = esc.get('assigned_to')
++    if assigned and assigned.get('id'):
++        return [assigned['id']]
++    return await _pm_ids(get_db(), esc['project_id'])
++
++
++def _serialize(doc):
++    return {key: value for key, value in doc.items() if key != '_id'}
++
++
++async def _notify(db, recipients, ntype, action, esc, actor, body):
++    return await create_defect_notification(
++        db,
++        recipients,
++        notification_type=ntype,
++        action=action,
++        task_id=esc['id'],
++        task_title=esc['text'][:80],
++        project_id=esc['project_id'],
++        actor_id=actor['id'],
++        actor_name=actor.get('name', ''),
++        body=body,
++        extra={
++            'escalation_id': esc['id'],
++            'unit_id': esc['unit_id'],
++            'urgency': esc['urgency'],
++        },
++    )
++
++
++async def _unit_for_project(db, unit_id, project_id):
++    unit = await db.units.find_one(
++        {'id': unit_id, 'project_id': project_id},
++        {'_id': 0},
++    )
++    if unit:
++        return unit
++    candidate = await db.units.find_one({'id': unit_id}, {'_id': 0})
++    if not candidate or candidate.get('project_id'):
++        return None
++    building = await db.buildings.find_one(
++        {'id': candidate.get('building_id'), 'project_id': project_id},
++        {'_id': 0},
++    )
++    return candidate if building else None
++
++
++def _visibility(role, user_id):
++    if role == 'management_team':
++        return {
++            '$or': [
++                {'requested_by.id': user_id},
++                {'assigned_to.id': user_id},
++            ],
++        }
++    return {}
++
++
++def _visible_unit_escalation(unit_id, role, user_id):
++    query = {'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open'}
++    if role == 'management_team':
++        query['$or'] = [
++            {'requested_by.id': user_id},
++            {'assigned_to.id': user_id},
++        ]
++    return query
++
++
++async def _append_open_note(db, escalation, actor, text, user_id):
++    now = _now()
++    note = {'by': actor, 'at': now, 'text': text}
++    result = await db.field_escalations.update_one(
++        {'id': escalation['id'], 'status': 'open'},
++        {'$push': {'notes': note}, '$set': {'updated_at': now}},
++    )
++    modified = getattr(result, 'modified_count', None)
++    # Lightweight test doubles do not provide a Mongo result; real Mongo
++    # always returns an integer here.
++    if isinstance(modified, int) and modified != 1:
++        raise HTTPException(status_code=409, detail='ההקפצה כבר טופלה')
++    escalation.setdefault('notes', []).append(note)
++    escalation['updated_at'] = now
++    await _audit('field_escalation', escalation['id'], 'note', user_id, {'text': text})
++    await _notify(
++        db,
++        await _recipients(escalation),
++        'field_escalation',
++        'escalation_note',
++        escalation,
++        actor,
++        note_body(escalation, actor['name'], text),
++    )
++    return escalation, True
++
++
++@router.post('/projects/{project_id}/escalations')
++async def create_escalation(
++    project_id: str,
++    body: dict,
++    user: dict = Depends(get_current_user),
++    response: Response = None,
++):
++    db = get_db()
++    project = await _project_or_404(db, project_id)
++    role, sub_role = await _role_or_403(user, project_id)
++    unit_id = body.get('unit_id') if isinstance(body, dict) else None
++    unit = await _unit_for_project(db, unit_id, project_id)
++    if not unit:
++        raise HTTPException(status_code=404, detail='הדירה לא נמצאה')
++    spare_status = compute_spare_status(
++        unit,
++        project.get('spare_settings') or default_spare_settings(),
++    )
++    if not can_escalate(spare_status):
++        raise HTTPException(
++            status_code=422,
++            detail='אין מה להקפיץ — אין חוסר או מצב גבולי בדירה',
++        )
++    urgency = body.get('urgency', 'normal')
++    if urgency not in URGENCIES:
++        raise HTTPException(status_code=422, detail='דחיפות לא חוקית')
++    text = str(body.get('text', '')).strip()
++    if not 1 <= len(text) <= 500:
++        raise HTTPException(status_code=422, detail='יש לכתוב הודעה (עד 500 תווים)')
++
++    now = _now()
++    actor = {'id': user['id'], 'name': user.get('name', '')}
++    existing = await db.field_escalations.find_one(
++        _visible_unit_escalation(unit_id, role, user['id'])
++    )
++    if existing:
++        existing, _ = await _append_open_note(db, existing, actor, text, user['id'])
++        return {'escalation': _serialize(existing), 'appended_note': True}
++
++    building = await db.buildings.find_one({'id': unit.get('building_id')}, {'_id': 0})
++    floor = await db.floors.find_one({'id': unit.get('floor_id')}, {'_id': 0})
++    escalation = {
++        'id': str(uuid.uuid4()),
++        'project_id': project_id,
++        'type': 'spare_tiles',
++        'building_id': unit.get('building_id'),
++        'floor_id': unit.get('floor_id'),
++        'unit_id': unit_id,
++        'labels': {
++            'building': (building or {}).get('name', ''),
++            'floor': (floor or {}).get('name', ''),
++            'unit': unit.get('display_label') or unit.get('unit_no', ''),
++        },
++        'urgency': urgency,
++        'text': text,
++        'context': build_spare_context(spare_status),
++        'requested_by': {
++            'id': user['id'],
++            'name': user.get('name', ''),
++            'role': role,
++            'sub_role': sub_role,
++        },
++        'assigned_to': None,
++        'status': 'open',
++        'created_at': now,
++        'updated_at': now,
++        'resolved_by': None,
++        'resolved_at': None,
++        'resolution_note': None,
++        'notes': [],
++    }
++    try:
++        await db.field_escalations.insert_one(escalation)
++    except DuplicateKeyError:
++        # Another request won the unique open-escalation slot.  Only append
++        # when that winner is visible to this sender.
++        winner = await db.field_escalations.find_one(
++            _visible_unit_escalation(unit_id, role, user['id'])
++        )
++        if not winner:
++            raise HTTPException(status_code=403, detail='אין הרשאה להקפצה זו')
++        winner, appended = await _append_open_note(
++            db, winner, actor, text, user['id'],
++        )
++        return {
++            'escalation': _serialize(winner),
++            'appended_note': appended,
++        }
++    await _audit('field_escalation', escalation['id'], 'create', user['id'], {
++        'unit_id': unit_id,
++        'urgency': urgency,
++    })
++    await _notify(
++        db,
++        await _pm_ids(db, project_id),
++        'field_escalation',
++        'escalate',
++        escalation,
++        actor,
++        escalation_body(escalation),
++    )
++    if response is not None:
++        response.status_code = 201
++    return {'escalation': _serialize(escalation), 'appended_note': False}
++
++
++@router.get('/projects/{project_id}/escalations')
++async def list_escalations(
++    project_id: str,
++    status: str = Query(default='open'),
++    user: dict = Depends(get_current_user),
++):
++    if not isinstance(status, str):
++        status = 'open'
++    if status not in ('open', 'resolved', 'all'):
++        raise HTTPException(status_code=422, detail='סטטוס לא חוקי')
++    db = get_db()
++    await _project_or_404(db, project_id)
++    role, _sub_role = await _role_or_403(user, project_id)
++    base = {
++        'project_id': project_id,
++        'type': 'spare_tiles',
++        **_visibility(role, user['id']),
++    }
++    now = datetime.now(timezone.utc)
++    query = dict(base)
++    if status == 'open':
++        query['status'] = 'open'
++    elif status == 'resolved':
++        query['status'] = {'$in': ['done', 'dismissed']}
++        query['resolved_at'] = {'$gte': (now - timedelta(days=30)).isoformat()}
++    items = await db.field_escalations.find(query, {'_id': 0}).to_list(200)
++    if status == 'open':
++        items.sort(key=lambda item: (
++            item.get('urgency') != 'urgent',
++            -(datetime.fromisoformat(item['created_at']).timestamp()),
++        ))
++    elif status == 'resolved':
++        items.sort(key=lambda item: item.get('resolved_at', ''), reverse=True)
++    else:
++        items.sort(key=lambda item: (
++            item.get('status') != 'open',
++            item.get('urgency') != 'urgent',
++            item.get('created_at', ''),
++        ))
++
++    open_query = {**base, 'status': 'open'}
++    urgent_query = {**open_query, 'urgency': 'urgent'}
++    week_query = {
++        **base,
++        'status': {'$in': ['done', 'dismissed']},
++        'resolved_at': {'$gte': (now - timedelta(days=7)).isoformat()},
++    }
++    open_count = await db.field_escalations.count_documents(open_query)
++    urgent_count = await db.field_escalations.count_documents(urgent_query)
++    resolved_week_count = await db.field_escalations.count_documents(week_query)
++    return {
++        'items': [_serialize(item) for item in items],
++        'open_count': open_count,
++        'urgent_count': urgent_count,
++        'resolved_week_count': resolved_week_count,
++        'role': role,
++        'can_assign': role in PM_ROLES,
++    }
++
++
++@router.patch('/escalations/{escalation_id}')
++async def patch_escalation(
++    escalation_id: str,
++    body: dict,
++    user: dict = Depends(get_current_user),
++):
++    db = get_db()
++    esc = await db.field_escalations.find_one({'id': escalation_id})
++    if not esc:
++        raise HTTPException(status_code=404, detail='ההקפצה לא נמצאה')
++    role, _sub_role = await _role_or_403(user, esc['project_id'])
++    action = body.get('action') if isinstance(body, dict) else None
++    actor = {'id': user['id'], 'name': user.get('name', '')}
++    assigned_id = (esc.get('assigned_to') or {}).get('id')
++    requester_id = esc.get('requested_by', {}).get('id')
++    is_pm = role in PM_ROLES
++    now = _now()
++
++    if action in ('done', 'dismiss'):
++        if not is_pm and assigned_id != user['id']:
++            raise HTTPException(status_code=403, detail='אין הרשאה לטפל בהקפצה זו')
++        if esc.get('status') != 'open':
++            raise HTTPException(status_code=409, detail='ההקפצה כבר טופלה')
++        note = str(body.get('note') or '').strip()
++        if len(note) > 300:
++            raise HTTPException(status_code=422, detail='הערת טיפול ארוכה מדי (עד 300 תווים)')
++        status_value = 'done' if action == 'done' else 'dismissed'
++        fields = {
++            'status': status_value,
++            'resolved_by': actor,
++            'resolved_at': now,
++            'resolution_note': note or None,
++            'updated_at': now,
++        }
++        update_result = await db.field_escalations.update_one(
++            {'id': escalation_id, 'status': 'open'},
++            {'$set': fields},
++        )
++        modified = getattr(update_result, 'modified_count', None)
++        if isinstance(modified, int) and modified != 1:
++            raise HTTPException(status_code=409, detail='ההקפצה כבר טופלה')
++        esc.update(fields)
++        audit_action = 'done' if action == 'done' else 'dismissed'
++        await _audit('field_escalation', escalation_id, audit_action, user['id'], {
++            'resolution_note': note or None,
++        })
++        await _notify(
++            db,
++            [requester_id],
++            'field_escalation_resolved',
++            'escalation_done' if action == 'done' else 'escalation_dismissed',
++            esc,
++            actor,
++            resolved_body(esc),
++        )
++    elif action == 'note':
++        if not (is_pm or assigned_id == user['id'] or requester_id == user['id']):
++            raise HTTPException(status_code=403, detail='אין הרשאה להוסיף הערה להקפצה זו')
++        note_text = str(body.get('note') or '').strip()
++        if not 1 <= len(note_text) <= 500:
++            raise HTTPException(status_code=422, detail='יש לכתוב הערה (עד 500 תווים)')
++        note = {'by': actor, 'at': now, 'text': note_text}
++        await db.field_escalations.update_one(
++            {'id': escalation_id},
++            {'$push': {'notes': note}, '$set': {'updated_at': now}},
++        )
++        esc.setdefault('notes', []).append(note)
++        esc['updated_at'] = now
++        await _audit('field_escalation', escalation_id, 'note', user['id'], {
++            'text': note_text,
++        })
++        recipients = (
++            await _recipients(esc)
++            if requester_id == user['id']
++            else [requester_id]
++        )
++        await _notify(
++            db,
++            recipients,
++            'field_escalation',
++            'escalation_note',
++            esc,
++            actor,
++            note_body(esc, actor['name'], note_text),
++        )
++    elif action == 'assign':
++        if not is_pm:
++            raise HTTPException(status_code=403, detail='אין הרשאה להעביר הקפצה זו')
++        if esc.get('status') != 'open':
++            raise HTTPException(status_code=409, detail='ההקפצה כבר טופלה')
++        assignee_id = body.get('assignee_id')
++        assigned_to = None
++        if assignee_id is not None:
++            membership = await db.project_memberships.find_one({
++                'project_id': esc['project_id'],
++                'user_id': assignee_id,
++                'role': {'$in': ['project_manager', 'management_team']},
++            })
++            if not membership:
++                raise HTTPException(
++                    status_code=422,
++                    detail='המשתמש אינו חבר צוות ניהול בפרויקט',
++                )
++            assignee = await db.users.find_one({'id': assignee_id}, {'_id': 0, 'name': 1})
++            assigned_to = {'id': assignee_id, 'name': (assignee or {}).get('name', '')}
++        fields = {'assigned_to': assigned_to, 'updated_at': now}
++        await db.field_escalations.update_one({'id': escalation_id}, {'$set': fields})
++        esc.update(fields)
++        await _audit('field_escalation', escalation_id, 'assign', user['id'], {
++            'assigned_to': assigned_to,
++        })
++        if assigned_to:
++            await _notify(
++                db,
++                [assignee_id],
++                'field_escalation',
++                'escalation_assigned',
++                esc,
++                actor,
++                assigned_body(esc, actor['name']),
++            )
++    else:
++        raise HTTPException(status_code=422, detail='פעולה לא חוקית')
++    return {'escalation': _serialize(esc)}
+\ No newline at end of file
+diff --git a/backend/contractor_ops/notification_helpers.py b/backend/contractor_ops/notification_helpers.py
+index 3ac928c..80f486a 100644
+--- a/backend/contractor_ops/notification_helpers.py
++++ b/backend/contractor_ops/notification_helpers.py
+@@ -19,6 +19,8 @@ NOTIFICATION_TYPES = {
+     'qc',                              # legacy QC stage events (existing)
+     'defect_close_request',            # contractor uploaded proof, PM needs to approve
+     'defect_status_change_by_pm',      # PM approved/rejected, contractor needs to know
++    'field_escalation',
++    'field_escalation_resolved',
+ }
+ 
+ 
+@@ -35,6 +37,7 @@ async def create_defect_notification(
+     actor_name: str,
+     body: str,
+     reason: str = None,
++    extra: dict = None,
+ ):
+     """Insert one notification doc per recipient into qc_notifications.
+ 
+@@ -53,7 +56,7 @@ async def create_defect_notification(
+     for uid in recipients:
+         if not uid or uid == actor_id:
+             continue
+-        docs.append({
++        doc = {
+             "id": str(uuid.uuid4()),
+             "user_id": uid,
+             "notification_type": notification_type,
+@@ -67,7 +70,10 @@ async def create_defect_notification(
+             "reason": reason,
+             "created_at": now,
+             "read_at": None,
+-        })
++        }
++        if extra:
++            doc.update(extra)
++        docs.append(doc)
+     if docs:
+         await db.qc_notifications.insert_many(docs)
+         logger.info(
+diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
+index d1dba31..75635b3 100644
+--- a/backend/contractor_ops/projects_router.py
++++ b/backend/contractor_ops/projects_router.py
+@@ -16,6 +16,7 @@ from contractor_ops.schemas import (
+     BulkFloorRequest, BulkUnitRequest, InsertFloorRequest,
+ )
+ from contractor_ops.spare_tiles import compute_spare_status, default_spare_settings
++from contractor_ops.escalations import context_line
+ 
+ router = APIRouter(prefix="/api")
+ 
+@@ -1234,6 +1235,58 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
+     spare_role = await _get_project_role(user, project_id) if project_id else None
+     spare_can_write = spare_role in ('project_manager', 'owner', 'management_team')
+     spare_can_assign = spare_role in ('project_manager', 'owner')
++    spare_escalation = None
++    if spare_role in ('project_manager', 'owner'):
++        escalation_query = {
++            'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open',
++        }
++    elif spare_role == 'management_team':
++        escalation_query = {
++            'unit_id': unit_id, 'type': 'spare_tiles', 'status': 'open',
++            '$or': [
++                {'requested_by.id': user['id']},
++                {'assigned_to.id': user['id']},
++            ],
++        }
++    else:
++        escalation_query = None
++    if escalation_query:
++        spare_escalation = await db.field_escalations.find_one(
++            escalation_query, {'_id': 0},
++        )
++    if not spare_escalation and escalation_query:
++        seven_days_ago = (
++            __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
++            - __import__('datetime').timedelta(days=7)
++        ).isoformat()
++        resolved_query = {
++            'unit_id': unit_id,
++            'type': 'spare_tiles',
++            'status': {'$in': ['done', 'dismissed']},
++            'resolved_at': {'$gte': seven_days_ago},
++        }
++        if spare_role == 'management_team':
++            resolved_query['$or'] = [
++                {'requested_by.id': user['id']},
++                {'assigned_to.id': user['id']},
++            ]
++        spare_escalation = await db.field_escalations.find_one(
++            resolved_query,
++            {'_id': 0},
++            sort=[('resolved_at', -1)],
++        )
++    serialized_escalation = None
++    if spare_escalation:
++        serialized_escalation = {
++            key: spare_escalation.get(key)
++            for key in (
++                'id', 'status', 'urgency', 'text', 'created_at',
++                'requested_by', 'assigned_to', 'resolved_by', 'resolved_at',
++                'resolution_note',
++            )
++        }
++        serialized_escalation['notes_count'] = len(spare_escalation.get('notes') or [])
++        serialized_escalation['context_line'] = context_line(spare_escalation.get('context'))
+ 
+     return {
+         'unit': {
+@@ -1248,6 +1301,8 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
+         'spare_status': spare_status,
+         'spare_can_write': spare_can_write,
+         'spare_can_assign': spare_can_assign,
++        'spare_can_escalate': spare_role == 'management_team',
++        'spare_escalation': serialized_escalation,
+         'kpi': {
+             'total': len(tasks),
+             'open': by_status.get('open', 0) + by_status.get('assigned', 0) + by_status.get('reopened', 0),
+diff --git a/backend/contractor_ops/qc_router.py b/backend/contractor_ops/qc_router.py
+index c14b466..e56db46 100644
+--- a/backend/contractor_ops/qc_router.py
++++ b/backend/contractor_ops/qc_router.py
+@@ -3896,6 +3896,11 @@ async def list_notifications(
+         "close_request": "defect_close_request",
+         "approve": "defect_approved",
+         "reject": "defect_rejected",
++        "escalate": "field_escalation",
++        "escalation_note": "field_escalation",
++        "escalation_assigned": "field_escalation",
++        "escalation_done": "field_escalation_resolved",
++        "escalation_dismissed": "field_escalation_resolved",
+     }
+ 
+     notifications = []
+@@ -3905,7 +3910,12 @@ async def list_notifications(
+ 
+         # Build body — defect notifications carry a pre-built body field;
+         # QC notifications synthesize from actor + verb + stage_label.
+-        if ntype in ("defect_close_request", "defect_status_change_by_pm") and n.get("body"):
++        if ntype in (
++            "defect_close_request",
++            "defect_status_change_by_pm",
++            "field_escalation",
++            "field_escalation_resolved",
++        ) and n.get("body"):
+             body = n["body"]
+         else:
+             # Legacy QC body composition (preserved verbatim).
+@@ -3919,7 +3929,15 @@ async def list_notifications(
+         # Build link — defect notifications point to /tasks/{id};
+         # QC notifications point to the existing run/stage URL.
+         link = None
+-        if ntype in ("defect_close_request", "defect_status_change_by_pm"):
++        if ntype == "field_escalation":
++            if n.get("project_id"):
++                link = f"/projects/{n['project_id']}/dashboard?focus=escalations"
++        elif ntype == "field_escalation_resolved":
++            if n.get("project_id") and n.get("unit_id"):
++                link = f"/projects/{n['project_id']}/units/{n['unit_id']}/defects"
++            elif n.get("project_id"):
++                link = f"/projects/{n['project_id']}/dashboard?focus=escalations"
++        elif ntype in ("defect_close_request", "defect_status_change_by_pm"):
+             if n.get("task_id"):
+                 link = f"/tasks/{n['task_id']}?src=bell"
+         elif n.get("project_id") and n.get("floor_id") and n.get("run_id") and n.get("stage_id"):
+diff --git a/backend/server.py b/backend/server.py
+index d584e92..0cad528 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -536,6 +536,9 @@ app.include_router(projects_router)
+ from contractor_ops.spare_tiles_router import router as spare_tiles_router
+ app.include_router(spare_tiles_router)
+ 
++from contractor_ops.escalations_router import router as escalations_router
++app.include_router(escalations_router)
++
+ from contractor_ops.tasks_router import router as tasks_router
+ app.include_router(tasks_router)
+ 
+@@ -564,6 +567,19 @@ transfer_router = create_transfer_router(get_current_user)
+ app.include_router(transfer_router)
+ 
+ 
++async def _ensure_field_escalation_open_index():
++    """Create the open-escalation index best-effort, without blocking startup."""
++    try:
++        await db.field_escalations.create_index(
++            [("unit_id", 1), ("status", 1)],
++            name="uniq_open_spare_escalation_per_unit",
++            unique=True,
++            partialFilterExpression={"type": "spare_tiles", "status": "open"},
++        )
++    except Exception:
++        logger.exception("Failed to create field_escalations open uniqueness index (non-fatal)")
++
++
+ async def create_indexes():
+     try:
+         await db.tasks.create_index([
+@@ -581,6 +597,8 @@ async def create_indexes():
+             unique=True
+         )
+         await db.audit_events.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
++        await db.field_escalations.create_index([("project_id", 1), ("status", 1), ("created_at", -1)])
++        await _ensure_field_escalation_open_index()
+         await db.users.create_index("email", unique=True, sparse=True)
+         await db.auth_failed_attempts.create_index(
+             [("identifier", 1), ("ip", 1)],
+diff --git a/backend/tests/test_escalations.py b/backend/tests/test_escalations.py
+new file mode 100644
+index 0000000..41430e2
+--- /dev/null
++++ b/backend/tests/test_escalations.py
+@@ -0,0 +1,563 @@
++import asyncio
++from unittest.mock import AsyncMock, MagicMock
++
++import pytest
++from fastapi import HTTPException
++from pymongo.errors import DuplicateKeyError
++
++from contractor_ops import escalations_router
++from contractor_ops.escalations import (
++    ESCALATABLE,
++    build_spare_context,
++    can_escalate,
++    context_line,
++    default_text,
++)
++
++
++class Cursor:
++    def __init__(self, rows):
++        self.rows = rows
++
++    async def to_list(self, _limit):
++        return self.rows
++
++
++def sample_status(overall='short'):
++    return {
++        'overall': overall,
++        'categories': [
++            {
++                'name': 'ריצוף',
++                'status': 'short',
++                'missing': 2,
++                'measure': 'tiles',
++                'entered': True,
++                'actual': 3,
++            },
++            {
++                'name': 'חיפוי',
++                'status': 'short',
++                'missing': None,
++                'measure': 'sqm',
++                'entered': True,
++                'actual': 0,
++            },
++            {'name': 'מטבח', 'status': 'borderline'},
++        ],
++    }
++
++
++def sample_escalation(**changes):
++    value = {
++        'id': 'esc-1',
++        'project_id': 'project-1',
++        'type': 'spare_tiles',
++        'unit_id': 'unit-1',
++        'urgency': 'urgent',
++        'text': 'להזמין',
++        'labels': {'building': 'בניין א', 'floor': '1', 'unit': '12'},
++        'context': build_spare_context(sample_status()),
++        'requested_by': {
++            'id': 'requester',
++            'name': 'יוסי',
++            'role': 'management_team',
++            'sub_role': 'site_manager',
++        },
++        'assigned_to': None,
++        'status': 'open',
++        'created_at': '2026-09-04T10:00:00+00:00',
++        'updated_at': '2026-09-04T10:00:00+00:00',
++        'resolved_by': None,
++        'resolved_at': None,
++        'resolution_note': None,
++        'notes': [],
++    }
++    value.update(changes)
++    return value
++
++
++def test_spare_context_line_and_default_text_contract():
++    context = build_spare_context(sample_status())
++    assert context == {
++        'short': [
++            {'name': 'ריצוף', 'missing': 2, 'measure': 'tiles', 'zero': False},
++            {'name': 'חיפוי', 'missing': 0, 'measure': 'sqm', 'zero': True},
++        ],
++        'borderline': ['מטבח'],
++    }
++    assert context_line(context) == 'חסר: ריצוף 2, חיפוי (אין ספייר) · גבולי: מטבח'
++    assert default_text('urgent', '12', context) == (
++        'דחוף להזמין ריצוף ספייר לדירה 12 — חסר 2 סוגים'
++    )
++    assert default_text('normal', '12', context) == (
++        'להשלים ריצוף ספייר לדירה 12 — חסר: ריצוף 2, חיפוי (אין ספייר) · גבולי: מטבח'
++    )
++    one = {'short': context['short'][:1], 'borderline': []}
++    assert default_text('urgent', '12', one) == (
++        'דחוף להזמין ריצוף ספייר לדירה 12 — חסר סוג אחד'
++    )
++
++
++@pytest.mark.parametrize(
++    'overall',
++    ['no_profile', 'short', 'borderline', 'not_entered', 'ok', 'recorded', 'no_target'],
++)
++def test_can_escalate_only_short_and_borderline(overall):
++    assert can_escalate({'overall': overall}) is (overall in ESCALATABLE)
++
++
++def test_create_happy_path_snapshots_and_notifies_pm(monkeypatch):
++    db = MagicMock()
++    project = {'id': 'project-1', 'spare_settings': {'profiles': []}}
++    unit = {
++        'id': 'unit-1',
++        'project_id': 'project-1',
++        'building_id': 'building-1',
++        'floor_id': 'floor-1',
++        'display_label': '12א',
++    }
++    db.projects.find_one = AsyncMock(return_value=project)
++    db.units.find_one = AsyncMock(return_value=unit)
++    db.field_escalations.find_one = AsyncMock(return_value=None)
++    db.field_escalations.insert_one = AsyncMock()
++    db.buildings.find_one = AsyncMock(return_value={'id': 'building-1', 'name': 'בניין א'})
++    db.floors.find_one = AsyncMock(return_value={'id': 'floor-1', 'name': 'קומה 1'})
++    db.project_memberships.find.return_value = Cursor([{'user_id': 'pm-1'}])
++    notify = AsyncMock()
++    monkeypatch.setattr(escalations_router, 'get_db', lambda: db)
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='management_team'))
++    monkeypatch.setattr(
++        escalations_router,
++        '_get_project_membership',
++        AsyncMock(return_value={'role': 'management_team', 'sub_role': 'site_manager'}),
++    )
++    monkeypatch.setattr(escalations_router, 'compute_spare_status', lambda *_args: sample_status())
++    monkeypatch.setattr(escalations_router, '_audit', AsyncMock())
++    monkeypatch.setattr(escalations_router, 'create_defect_notification', notify)
++
++    result = asyncio.run(escalations_router.create_escalation(
++        'project-1',
++        {'unit_id': 'unit-1', 'urgency': 'urgent', 'text': '  להזמין  '},
++        {'id': 'requester', 'name': 'יוסי'},
++    ))
++
++    assert result['appended_note'] is False
++    inserted = db.field_escalations.insert_one.await_args.args[0]
++    assert inserted['labels'] == {'building': 'בניין א', 'floor': 'קומה 1', 'unit': '12א'}
++    assert inserted['requested_by']['sub_role'] == 'site_manager'
++    assert inserted['context']['short'][1]['zero'] is True
++    kwargs = notify.await_args.kwargs
++    assert notify.await_args.args[1] == ['pm-1']
++    assert kwargs['notification_type'] == 'field_escalation'
++    assert kwargs['action'] == 'escalate'
++    assert kwargs['extra']['unit_id'] == 'unit-1'
++
++
++def test_create_rejects_role_non_short_and_long_text(monkeypatch):
++    db = MagicMock()
++    db.projects.find_one = AsyncMock(return_value={'id': 'project-1'})
++    monkeypatch.setattr(escalations_router, 'get_db', lambda: db)
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='contractor'))
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(escalations_router.create_escalation(
++            'project-1', {'unit_id': 'unit-1', 'text': 'x'}, {'id': 'c'},
++        ))
++    assert error.value.status_code == 403
++
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='project_manager'))
++    monkeypatch.setattr(
++        escalations_router, '_get_project_membership',
++        AsyncMock(return_value={'role': 'project_manager', 'sub_role': None}),
++    )
++    db.units.find_one = AsyncMock(return_value={'id': 'unit-1', 'project_id': 'project-1'})
++    monkeypatch.setattr(
++        escalations_router, 'compute_spare_status',
++        lambda *_args: {'overall': 'ok', 'categories': []},
++    )
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(escalations_router.create_escalation(
++            'project-1', {'unit_id': 'unit-1', 'text': 'x'}, {'id': 'pm'},
++        ))
++    assert error.value.status_code == 422
++
++    monkeypatch.setattr(escalations_router, 'compute_spare_status', lambda *_args: sample_status())
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(escalations_router.create_escalation(
++            'project-1', {'unit_id': 'unit-1', 'text': 'x' * 501}, {'id': 'pm'},
++        ))
++    assert error.value.detail == 'יש לכתוב הודעה (עד 500 תווים)'
++
++
++def test_second_create_appends_note_and_notifies_assignee(monkeypatch):
++    db = MagicMock()
++    existing = sample_escalation(assigned_to={'id': 'assignee', 'name': 'דנה'})
++    db.projects.find_one = AsyncMock(return_value={'id': 'project-1'})
++    db.units.find_one = AsyncMock(return_value={'id': 'unit-1', 'project_id': 'project-1'})
++    db.buildings.find_one = AsyncMock(return_value={'name': 'בניין א'})
++    db.floors.find_one = AsyncMock(return_value={'name': 'קומה 1'})
++    db.field_escalations.find_one = AsyncMock(return_value=existing)
++    db.field_escalations.update_one = AsyncMock()
++    notify = AsyncMock()
++    monkeypatch.setattr(escalations_router, 'get_db', lambda: db)
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='management_team'))
++    monkeypatch.setattr(
++        escalations_router, '_get_project_membership',
++        AsyncMock(return_value={'role': 'management_team', 'sub_role': 'site_manager'}),
++    )
++    monkeypatch.setattr(escalations_router, 'compute_spare_status', lambda *_args: sample_status())
++    monkeypatch.setattr(escalations_router, '_audit', AsyncMock())
++    monkeypatch.setattr(escalations_router, 'create_defect_notification', notify)
++
++    result = asyncio.run(escalations_router.create_escalation(
++        'project-1',
++        {'unit_id': 'unit-1', 'urgency': 'normal', 'text': 'הערה'},
++        {'id': 'requester', 'name': 'יוסי'},
++    ))
++    assert result['appended_note'] is True
++    db.field_escalations.insert_one.assert_not_called()
++    assert notify.await_args.args[1] == ['assignee']
++    assert notify.await_args.kwargs['action'] == 'escalation_note'
++
++
++def test_patch_done_permissions_conflict_and_notification(monkeypatch):
++    db = MagicMock()
++    esc = sample_escalation()
++    db.field_escalations.find_one = AsyncMock(return_value=esc)
++    db.field_escalations.update_one = AsyncMock()
++    notify = AsyncMock()
++    monkeypatch.setattr(escalations_router, 'get_db', lambda: db)
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='project_manager'))
++    monkeypatch.setattr(
++        escalations_router, '_get_project_membership',
++        AsyncMock(return_value={'role': 'project_manager', 'sub_role': None}),
++    )
++    monkeypatch.setattr(escalations_router, '_audit', AsyncMock())
++    monkeypatch.setattr(escalations_router, 'create_defect_notification', notify)
++    result = asyncio.run(escalations_router.patch_escalation(
++        'esc-1', {'action': 'done', 'note': 'הוזמן'}, {'id': 'pm', 'name': 'מנהל'},
++    ))
++    assert result['escalation']['status'] == 'done'
++    assert result['escalation']['resolved_by'] == {'id': 'pm', 'name': 'מנהל'}
++    assert notify.await_args.args[1] == ['requester']
++    assert notify.await_args.kwargs['notification_type'] == 'field_escalation_resolved'
++    assert 'הוזמן' in notify.await_args.kwargs['body']
++
++    db.field_escalations.find_one = AsyncMock(return_value=sample_escalation(status='done'))
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(escalations_router.patch_escalation(
++            'esc-1', {'action': 'done'}, {'id': 'pm', 'name': 'מנהל'},
++        ))
++    assert error.value.status_code == 409
++
++    db.field_escalations.find_one = AsyncMock(return_value=sample_escalation())
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='management_team'))
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(escalations_router.patch_escalation(
++            'esc-1', {'action': 'done'}, {'id': 'other', 'name': 'אחר'},
++        ))
++    assert error.value.status_code == 403
++
++
++def test_patch_assign_validates_membership_and_notifies(monkeypatch):
++    db = MagicMock()
++    db.field_escalations.find_one = AsyncMock(return_value=sample_escalation())
++    db.field_escalations.update_one = AsyncMock()
++    db.project_memberships.find_one = AsyncMock(return_value=None)
++    notify = AsyncMock()
++    monkeypatch.setattr(escalations_router, 'get_db', lambda: db)
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='project_manager'))
++    monkeypatch.setattr(
++        escalations_router, '_get_project_membership',
++        AsyncMock(return_value={'role': 'project_manager', 'sub_role': None}),
++    )
++    monkeypatch.setattr(escalations_router, '_audit', AsyncMock())
++    monkeypatch.setattr(escalations_router, 'create_defect_notification', notify)
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(escalations_router.patch_escalation(
++            'esc-1', {'action': 'assign', 'assignee_id': 'contractor'}, {'id': 'pm'},
++        ))
++    assert error.value.detail == 'המשתמש אינו חבר צוות ניהול בפרויקט'
++
++    db.project_memberships.find_one = AsyncMock(return_value={'role': 'management_team'})
++    db.users.find_one = AsyncMock(return_value={'name': 'דנה'})
++    result = asyncio.run(escalations_router.patch_escalation(
++        'esc-1',
++        {'action': 'assign', 'assignee_id': 'assignee'},
++        {'id': 'pm', 'name': 'מנהל'},
++    ))
++    assert result['escalation']['assigned_to'] == {'id': 'assignee', 'name': 'דנה'}
++    assert notify.await_args.args[1] == ['assignee']
++    assert notify.await_args.kwargs['action'] == 'escalation_assigned'
++
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='management_team'))
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(escalations_router.patch_escalation(
++            'esc-1', {'action': 'assign', 'assignee_id': None}, {'id': 'requester'},
++        ))
++    assert error.value.status_code == 403
++
++
++def test_patch_notes_route_to_other_side_and_unknown_action(monkeypatch):
++    db = MagicMock()
++    db.field_escalations.find_one = AsyncMock(return_value=sample_escalation())
++    db.field_escalations.update_one = AsyncMock()
++    db.project_memberships.find.return_value = Cursor([{'user_id': 'pm-1'}])
++    notify = AsyncMock()
++    monkeypatch.setattr(escalations_router, 'get_db', lambda: db)
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='management_team'))
++    monkeypatch.setattr(
++        escalations_router, '_get_project_membership',
++        AsyncMock(return_value={'role': 'management_team', 'sub_role': None}),
++    )
++    monkeypatch.setattr(escalations_router, '_audit', AsyncMock())
++    monkeypatch.setattr(escalations_router, 'create_defect_notification', notify)
++    asyncio.run(escalations_router.patch_escalation(
++        'esc-1', {'action': 'note', 'note': 'עוד מידע'}, {'id': 'requester', 'name': 'יוסי'},
++    ))
++    assert notify.await_args.args[1] == ['pm-1']
++
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='project_manager'))
++    asyncio.run(escalations_router.patch_escalation(
++        'esc-1', {'action': 'note', 'note': 'בטיפול'}, {'id': 'pm', 'name': 'מנהל'},
++    ))
++    assert notify.await_args.args[1] == ['requester']
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(escalations_router.patch_escalation(
++            'esc-1', {'action': 'other'}, {'id': 'pm'},
++        ))
++    assert error.value.status_code == 422
++
++
++def test_list_pm_sorts_urgent_first_and_returns_counts(monkeypatch):
++    db = MagicMock()
++    normal = sample_escalation(
++        id='normal',
++        urgency='normal',
++        created_at='2026-09-04T12:00:00+00:00',
++    )
++    urgent_old = sample_escalation(
++        id='urgent-old',
++        created_at='2026-09-04T10:00:00+00:00',
++    )
++    urgent_new = sample_escalation(
++        id='urgent-new',
++        created_at='2026-09-04T11:00:00+00:00',
++    )
++    db.projects.find_one = AsyncMock(return_value={'id': 'project-1'})
++    db.field_escalations.find.return_value = Cursor([normal, urgent_old, urgent_new])
++    db.field_escalations.count_documents = AsyncMock(side_effect=[3, 2, 1])
++    monkeypatch.setattr(escalations_router, 'get_db', lambda: db)
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='project_manager'))
++    monkeypatch.setattr(
++        escalations_router, '_get_project_membership',
++        AsyncMock(return_value={'role': 'project_manager', 'sub_role': None}),
++    )
++    result = asyncio.run(escalations_router.list_escalations(
++        'project-1', 'open', {'id': 'pm'},
++    ))
++    assert [item['id'] for item in result['items']] == [
++        'urgent-new', 'urgent-old', 'normal',
++    ]
++    assert (result['open_count'], result['urgent_count'], result['resolved_week_count']) == (3, 2, 1)
++    assert result['can_assign'] is True
++    find_query = db.field_escalations.find.call_args.args[0]
++    assert find_query == {
++        'project_id': 'project-1', 'type': 'spare_tiles', 'status': 'open',
++    }
++
++
++def test_list_management_visibility_and_contractor_rejected(monkeypatch):
++    db = MagicMock()
++    db.projects.find_one = AsyncMock(return_value={'id': 'project-1'})
++    db.field_escalations.find.return_value = Cursor([])
++    db.field_escalations.count_documents = AsyncMock(return_value=0)
++    monkeypatch.setattr(escalations_router, 'get_db', lambda: db)
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='management_team'))
++    monkeypatch.setattr(
++        escalations_router, '_get_project_membership',
++        AsyncMock(return_value={'role': 'management_team', 'sub_role': 'site_manager'}),
++    )
++    result = asyncio.run(escalations_router.list_escalations(
++        'project-1', 'open', {'id': 'member'},
++    ))
++    assert result['role'] == 'management_team'
++    assert result['can_assign'] is False
++    assert db.field_escalations.find.call_args.args[0]['$or'] == [
++        {'requested_by.id': 'member'},
++        {'assigned_to.id': 'member'},
++    ]
++
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='contractor'))
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(escalations_router.list_escalations(
++            'project-1', 'open', {'id': 'contractor'},
++        ))
++    assert error.value.status_code == 403
++
++
++def test_concurrent_creates_leave_one_document_and_append_winner_note(monkeypatch):
++    class Field:
++        def __init__(self):
++            self.document = None
++            self.insert_calls = 0
++
++        async def find_one(self, query, *_args, **_kwargs):
++            await asyncio.sleep(0)
++            return self.document
++
++        async def insert_one(self, document):
++            self.insert_calls += 1
++            await asyncio.sleep(0)
++            if self.document is not None:
++                raise DuplicateKeyError('duplicate open escalation')
++            self.document = document
++
++        async def update_one(self, _query, update):
++            self.document['updated_at'] = update['$set']['updated_at']
++            return type('Result', (), {'modified_count': 1})()
++
++    db = MagicMock()
++    field = Field()
++    db.field_escalations = field
++    db.projects.find_one = AsyncMock(return_value={'id': 'project-1'})
++    db.units.find_one = AsyncMock(return_value={'id': 'unit-1', 'project_id': 'project-1'})
++    db.buildings.find_one = AsyncMock(return_value={'name': 'בניין א'})
++    db.floors.find_one = AsyncMock(return_value={'name': 'קומה 1'})
++    db.project_memberships.find.return_value = Cursor([{'user_id': 'pm'}])
++    notify = AsyncMock()
++    monkeypatch.setattr(escalations_router, 'get_db', lambda: db)
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='management_team'))
++    monkeypatch.setattr(
++        escalations_router, '_get_project_membership',
++        AsyncMock(return_value={'role': 'management_team', 'sub_role': 'site_manager'}),
++    )
++    monkeypatch.setattr(escalations_router, 'compute_spare_status', lambda *_: sample_status())
++    monkeypatch.setattr(escalations_router, '_audit', AsyncMock())
++    monkeypatch.setattr(escalations_router, 'create_defect_notification', notify)
++
++    async def run():
++        return await asyncio.gather(
++            escalations_router.create_escalation(
++                'project-1', {'unit_id': 'unit-1', 'text': 'הודעה אחת'},
++                {'id': 'requester', 'name': 'יוסי'},
++            ),
++            escalations_router.create_escalation(
++                'project-1', {'unit_id': 'unit-1', 'text': 'הודעה שתיים'},
++                {'id': 'requester', 'name': 'יוסי'},
++            ),
++        )
++
++    results = asyncio.run(run())
++    assert field.insert_calls == 2
++    assert field.document is not None
++    assert len(field.document['notes']) == 1
++    assert sorted([result['appended_note'] for result in results]) == [False, True]
++
++
++def test_concurrent_resolution_only_one_request_audits_and_notifies(monkeypatch):
++    class Field:
++        def __init__(self):
++            self.document = sample_escalation()
++
++        async def find_one(self, *_args, **_kwargs):
++            await asyncio.sleep(0)
++            return self.document
++
++        async def update_one(self, _query, update):
++            await asyncio.sleep(0)
++            if self.document['status'] != 'open':
++                return type('Result', (), {'modified_count': 0})()
++            self.document.update(update['$set'])
++            return type('Result', (), {'modified_count': 1})()
++
++    db = MagicMock()
++    db.field_escalations = Field()
++    audit = AsyncMock()
++    notify = AsyncMock()
++    monkeypatch.setattr(escalations_router, 'get_db', lambda: db)
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='project_manager'))
++    monkeypatch.setattr(
++        escalations_router, '_get_project_membership',
++        AsyncMock(return_value={'role': 'project_manager', 'sub_role': None}),
++    )
++    monkeypatch.setattr(escalations_router, '_audit', audit)
++    monkeypatch.setattr(escalations_router, 'create_defect_notification', notify)
++
++    async def run():
++        return await asyncio.gather(
++            escalations_router.patch_escalation(
++                'esc-1', {'action': 'done'}, {'id': 'pm-1', 'name': 'מנהל 1'},
++            ),
++            escalations_router.patch_escalation(
++                'esc-1', {'action': 'done'}, {'id': 'pm-2', 'name': 'מנהל 2'},
++            ),
++            return_exceptions=True,
++        )
++
++    # The first caller wins the conditional status=open update; the loser
++    # must return the documented conflict and produce no second side effect.
++    results = asyncio.run(run())
++    assert sum(not isinstance(result, HTTPException) for result in results) == 1
++    assert sum(isinstance(result, HTTPException) and result.status_code == 409 for result in results) == 1
++    assert audit.await_count == 1
++    assert notify.await_count == 1
++
++
++def test_unrelated_management_cannot_append_via_post(monkeypatch):
++    db = MagicMock()
++    db.projects.find_one = AsyncMock(return_value={'id': 'project-1'})
++    db.units.find_one = AsyncMock(return_value={'id': 'unit-1', 'project_id': 'project-1'})
++    db.buildings.find_one = AsyncMock(return_value={'name': 'בניין א'})
++    db.floors.find_one = AsyncMock(return_value={'name': 'קומה 1'})
++    db.field_escalations.find_one = AsyncMock(side_effect=[
++        None,  # visibility-filtered existing lookup
++        None,  # duplicate-key winner lookup (not visible)
++    ])
++    db.field_escalations.insert_one = AsyncMock(
++        side_effect=DuplicateKeyError('duplicate open escalation'),
++    )
++    monkeypatch.setattr(escalations_router, 'get_db', lambda: db)
++    monkeypatch.setattr(escalations_router, '_get_project_role', AsyncMock(return_value='management_team'))
++    monkeypatch.setattr(
++        escalations_router, '_get_project_membership',
++        AsyncMock(return_value={'role': 'management_team', 'sub_role': 'site_manager'}),
++    )
++    monkeypatch.setattr(escalations_router, 'compute_spare_status', lambda *_: sample_status())
++
++    with pytest.raises(HTTPException) as error:
++        asyncio.run(escalations_router.create_escalation(
++            'project-1',
++            {'unit_id': 'unit-1', 'text': 'הודעה'},
++            {'id': 'unrelated', 'name': 'מנהל אחר'},
++        ))
++    assert error.value.status_code == 403
++    db.field_escalations.update_one.assert_not_called()
++
++
++def test_open_unique_index_setup_is_best_effort(caplog):
++    # Index failures must be logged, not propagated into startup.
++    from unittest.mock import patch
++
++    with patch('motor.motor_asyncio.AsyncIOMotorClient', return_value=MagicMock()):
++        import server
++
++    collection = MagicMock()
++    collection.create_index = AsyncMock(side_effect=RuntimeError('index unavailable'))
++    with patch.object(server, 'db', field_escalations=collection):
++        asyncio.run(server._ensure_field_escalation_open_index())
++    assert 'index unavailable' in caplog.text
++    assert 'non-fatal' in caplog.text
++    collection.index_information.assert_not_called()
++    collection.create_index.assert_awaited_once_with(
++        [('unit_id', 1), ('status', 1)],
++        name='uniq_open_spare_escalation_per_unit',
++        unique=True,
++        partialFilterExpression={'type': 'spare_tiles', 'status': 'open'},
++    )
++
++    # Success likewise needs no post-create verification.
++    collection.create_index = AsyncMock(return_value='uniq_open_spare_escalation_per_unit')
++    with patch.object(server, 'db', field_escalations=collection):
++        asyncio.run(server._ensure_field_escalation_open_index())
++    collection.index_information.assert_not_called()
+\ No newline at end of file
+diff --git a/backend/tests/test_notifications_defect.py b/backend/tests/test_notifications_defect.py
+index 1dae80e..64c3dbb 100644
+--- a/backend/tests/test_notifications_defect.py
++++ b/backend/tests/test_notifications_defect.py
+@@ -12,11 +12,12 @@ test_billing_v1.py:307,336,366 — codebase has no pytest-asyncio plugin
+ """
+ import asyncio
+ import sys
+-from unittest.mock import AsyncMock, MagicMock
++from unittest.mock import AsyncMock, MagicMock, patch
+ 
+ sys.path.insert(0, "/home/runner/workspace/backend")
+ 
+ from contractor_ops import notification_helpers
++from contractor_ops import qc_router
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -120,6 +121,30 @@ def test_create_defect_notification_empty_recipients_no_insert():
+     asyncio.run(run())
+ 
+ 
++def test_create_field_escalation_notification_copies_extra_fields():
++    async def run():
++        db = MagicMock()
++        db.qc_notifications.insert_many = AsyncMock()
++        await notification_helpers.create_defect_notification(
++            db,
++            ["pm"],
++            notification_type="field_escalation",
++            action="escalate",
++            task_id="esc-1",
++            task_title="להזמין",
++            project_id="project-1",
++            actor_id="sender",
++            actor_name="יוסי",
++            body="גוף מוכן",
++            extra={"escalation_id": "esc-1", "unit_id": "unit-1", "urgency": "urgent"},
++        )
++        doc = db.qc_notifications.insert_many.await_args.args[0][0]
++        assert doc["escalation_id"] == "esc-1"
++        assert doc["unit_id"] == "unit-1"
++        assert doc["urgency"] == "urgent"
++    asyncio.run(run())
++
++
+ # ---------------------------------------------------------------------------
+ # get_defect_recipients_for_close_request — 1 test
+ # ---------------------------------------------------------------------------
+@@ -177,3 +202,60 @@ def test_build_status_change_body_reject_with_reason():
+     body2 = notification_helpers.build_status_change_body("reject", "x")
+     assert body2 == "המנהל דחה את התיקון של \"x\""
+     assert not body2.endswith("—")
++
++
++class _NotificationCursor:
++    def __init__(self, rows):
++        self.rows = rows
++
++    def sort(self, *_args):
++        return self
++
++    def skip(self, *_args):
++        return self
++
++    def limit(self, *_args):
++        return self
++
++    async def to_list(self, _limit):
++        return self.rows
++
++
++def test_list_notifications_field_escalation_links_and_prebuilt_bodies():
++    async def run():
++        db = MagicMock()
++        db.qc_notifications.count_documents = AsyncMock(return_value=2)
++        db.qc_notifications.find.return_value = _NotificationCursor([
++            {
++                "id": "n1",
++                "user_id": "pm",
++                "notification_type": "field_escalation",
++                "action": "escalate",
++                "body": "גוף הקפצה מוכן",
++                "project_id": "project-1",
++                "created_at": "2026-09-04T10:00:00+00:00",
++                "read_at": None,
++            },
++            {
++                "id": "n2",
++                "user_id": "sender",
++                "notification_type": "field_escalation_resolved",
++                "action": "escalation_done",
++                "body": "גוף טיפול מוכן",
++                "project_id": "project-1",
++                "unit_id": "unit-1",
++                "created_at": "2026-09-04T11:00:00+00:00",
++                "read_at": None,
++            },
++        ])
++        with patch.object(qc_router, 'get_db', return_value=db):
++            return await qc_router.list_notifications(user={"id": "pm"})
++
++    result = asyncio.run(run())
++    first, second = result["notifications"]
++    assert first["action"] == "field_escalation"
++    assert first["body"] == "גוף הקפצה מוכן"
++    assert first["link"] == "/projects/project-1/dashboard?focus=escalations"
++    assert second["action"] == "field_escalation_resolved"
++    assert second["body"] == "גוף טיפול מוכן"
++    assert second["link"] == "/projects/project-1/units/unit-1/defects"
+diff --git a/backend/tests/test_unit_detail.py b/backend/tests/test_unit_detail.py
+index 4e3c631..3ddbbaa 100644
+--- a/backend/tests/test_unit_detail.py
++++ b/backend/tests/test_unit_detail.py
+@@ -35,4 +35,160 @@ def test_unit_without_resolvable_project_returns_404():
+ 
+     error = asyncio.run(run())
+     assert error.status_code == 404
+-    assert error.detail == 'Unit not found'
+\ No newline at end of file
++    assert error.detail == 'Unit not found'
++
++
++class _Cursor:
++    async def to_list(self, _limit):
++        return []
++
++
++def _unit_detail_db(escalations):
++    db = MagicMock()
++    db.units.find_one = AsyncMock(return_value={
++        'id': 'unit-1',
++        'project_id': 'project-1',
++        'building_id': 'building-1',
++        'floor_id': 'floor-1',
++        'unit_no': '12',
++    })
++    db.floors.find_one = AsyncMock(return_value={'id': 'floor-1', 'name': 'קומה 1'})
++    db.buildings.find_one = AsyncMock(return_value={
++        'id': 'building-1', 'name': 'בניין א', 'project_id': 'project-1',
++    })
++    db.projects.find_one = AsyncMock(return_value={'id': 'project-1', 'name': 'פרויקט'})
++    db.tasks.find.return_value = _Cursor()
++    db.field_escalations.find_one = AsyncMock(side_effect=escalations)
++    return db
++
++
++def test_unit_detail_open_escalation_wins_and_management_can_escalate():
++    open_escalation = {
++        'id': 'esc-open',
++        'status': 'open',
++        'urgency': 'urgent',
++        'text': 'להזמין',
++        'created_at': '2026-09-04T10:00:00+00:00',
++        'requested_by': {'id': 'sender', 'name': 'יוסי'},
++        'assigned_to': {'id': 'assignee', 'name': 'דנה'},
++        'resolved_by': None,
++        'resolved_at': None,
++        'resolution_note': None,
++        'notes': [{}, {}],
++        'context': {
++            'short': [{'name': 'ריצוף', 'missing': 2, 'zero': False}],
++            'borderline': ['מטבח'],
++        },
++    }
++    db = _unit_detail_db([open_escalation])
++
++    async def run():
++        with (
++            patch.object(projects_router, 'get_db', return_value=db),
++            patch.object(projects_router, '_check_project_read_access', new=AsyncMock()),
++            patch.object(
++                projects_router,
++                '_get_project_role',
++                new=AsyncMock(return_value='management_team'),
++            ),
++        ):
++            return await projects_router.get_unit_detail('unit-1', {'id': 'sender'})
++
++    result = asyncio.run(run())
++    assert result['spare_can_escalate'] is True
++    assert result['spare_escalation']['id'] == 'esc-open'
++    assert result['spare_escalation']['notes_count'] == 2
++    assert result['spare_escalation']['context_line'] == 'חסר: ריצוף 2 · גבולי: מטבח'
++    assert db.field_escalations.find_one.await_count == 1
++
++
++@pytest.mark.parametrize(
++    ('resolved', 'expected'),
++    [
++        ({
++            'id': 'esc-done',
++            'status': 'done',
++            'urgency': 'normal',
++            'text': 'להשלים',
++            'created_at': '2026-09-01T10:00:00+00:00',
++            'requested_by': {'id': 'sender', 'name': 'יוסי'},
++            'assigned_to': None,
++            'resolved_by': {'id': 'pm', 'name': 'מנהל'},
++            'resolved_at': '2099-09-04T10:00:00+00:00',
++            'resolution_note': 'הוזמן',
++            'notes': [],
++            'context': {'short': [], 'borderline': ['מטבח']},
++        }, 'esc-done'),
++        (None, None),
++    ],
++)
++def test_unit_detail_recent_resolved_or_none_for_pm(resolved, expected):
++    db = _unit_detail_db([None, resolved])
++
++    async def run():
++        with (
++            patch.object(projects_router, 'get_db', return_value=db),
++            patch.object(projects_router, '_check_project_read_access', new=AsyncMock()),
++            patch.object(
++                projects_router,
++                '_get_project_role',
++                new=AsyncMock(return_value='project_manager'),
++            ),
++        ):
++            return await projects_router.get_unit_detail('unit-1', {'id': 'pm'})
++
++    result = asyncio.run(run())
++    assert result['spare_can_escalate'] is False
++    assert (
++        result['spare_escalation']['id'] if result['spare_escalation'] else None
++    ) == expected
++    assert db.field_escalations.find_one.await_count == 2
++
++
++def test_unrelated_management_unit_detail_has_no_escalation_payload_or_leak():
++    db = _unit_detail_db([{
++        'id': 'other-escalation',
++        'status': 'open',
++        'context': {'short': [], 'borderline': []},
++    }])
++    db.field_escalations.find_one = AsyncMock(return_value=None)
++
++    async def run():
++        with (
++            patch.object(projects_router, 'get_db', return_value=db),
++            patch.object(projects_router, '_check_project_read_access', new=AsyncMock()),
++            patch.object(
++                projects_router,
++                '_get_project_role',
++                new=AsyncMock(return_value='management_team'),
++            ),
++        ):
++            return await projects_router.get_unit_detail('unit-1', {'id': 'different-user'})
++
++    result = asyncio.run(run())
++    assert result['spare_escalation'] is None
++    assert db.field_escalations.find_one.await_args.args[0]['$or'] == [
++        {'requested_by.id': 'different-user'},
++        {'assigned_to.id': 'different-user'},
++    ]
++
++
++def test_contractor_unit_detail_does_not_query_escalations():
++    db = _unit_detail_db([])
++    db.field_escalations.find_one = AsyncMock()
++
++    async def run():
++        with (
++            patch.object(projects_router, 'get_db', return_value=db),
++            patch.object(projects_router, '_check_project_read_access', new=AsyncMock()),
++            patch.object(
++                projects_router,
++                '_get_project_role',
++                new=AsyncMock(return_value='contractor'),
++            ),
++        ):
++            return await projects_router.get_unit_detail('unit-1', {'id': 'contractor'})
++
++    result = asyncio.run(run())
++    assert result['spare_escalation'] is None
++    db.field_escalations.find_one.assert_not_called()
+\ No newline at end of file
+diff --git a/frontend/src/components/NotificationBell.js b/frontend/src/components/NotificationBell.js
+index 35430fa..3d00341 100644
+--- a/frontend/src/components/NotificationBell.js
++++ b/frontend/src/components/NotificationBell.js
+@@ -1,5 +1,5 @@
+ import React, { useState, useEffect, useCallback } from 'react';
+-import { Bell, CheckCheck, Clock, ShieldCheck, ShieldX, Send, RotateCcw, X } from 'lucide-react';
++import { Bell, CheckCheck, Clock, ShieldCheck, ShieldX, Send, RotateCcw, X, Megaphone, CheckCircle2 } from 'lucide-react';
+ import { qcNotificationService } from '../services/api';
+ import { useNavigate } from 'react-router-dom';
+ import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
+@@ -14,6 +14,8 @@ const ACTION_ICONS = {
+   defect_close_request: { icon: Send, color: 'text-blue-500' },
+   defect_approved: { icon: ShieldCheck, color: 'text-emerald-500' },
+   defect_rejected: { icon: ShieldX, color: 'text-red-500' },
++  field_escalation: { icon: Megaphone, color: 'text-amber-500' },
++  field_escalation_resolved: { icon: CheckCircle2, color: 'text-emerald-500' },
+ };
+ 
+ const formatTimeAgo = (dateStr) => {
+diff --git a/frontend/src/components/dashboard/EscalationsSection.js b/frontend/src/components/dashboard/EscalationsSection.js
+new file mode 100644
+index 0000000..f2c8547
+--- /dev/null
++++ b/frontend/src/components/dashboard/EscalationsSection.js
+@@ -0,0 +1,75 @@
++import React, { useEffect, useState } from 'react';
++import { useNavigate } from 'react-router-dom';
++import { toast } from 'sonner';
++import { escalationService, projectService } from '../../services/api';
++import { contextLine } from '../../utils/escalationDraft';
++import { formatRelativeHe } from '../../utils/relativeTime';
++import { subRoleLabel } from '../../utils/roleLabels';
++
++export default function EscalationsSection({ projectId, escalations, canAssign, currentUserId, onChanged }) {
++  const navigate = useNavigate();
++  const [doneId, setDoneId] = useState(null);
++  const [note, setNote] = useState('');
++  const [assignId, setAssignId] = useState(null);
++  const [members, setMembers] = useState([]);
++  const [resolved, setResolved] = useState(null);
++
++  useEffect(() => {
++    if (canAssign) projectService.getMemberships(projectId)
++      .then(data => setMembers((data.items || data || []).filter(m => ['project_manager', 'management_team'].includes(m.role))))
++      .catch(() => {});
++  }, [canAssign, projectId]);
++
++  const patch = async (esc, body, success) => {
++    try {
++      await escalationService.patch(esc.id, body);
++      toast.success(success);
++      onChanged();
++      setDoneId(null);
++    } catch (err) {
++      toast.error(err.response?.data?.detail || 'שגיאה בעדכון ההקפצה');
++    }
++  };
++
++  const items = escalations?.items || [];
++  const touch = 'min-h-[44px]';
++
++  return <div className="space-y-2 pt-1">
++    {items.map(esc => {
++      const mayResolve = canAssign || esc.assigned_to?.id === currentUserId;
++      const selectedAssignee = assignId?.id === esc.id ? assignId.value : '';
++      return <article key={esc.id} className={`rounded-lg border bg-slate-50 p-3 ${esc.urgency === 'urgent' ? 'border-r-[3px] border-r-red-400 border-red-100' : 'border-slate-200'}`}>
++        <div className="flex items-center gap-2 text-[11px]">
++          <span className={`rounded-full px-2 py-0.5 font-bold ${esc.urgency === 'urgent' ? 'bg-red-100 text-red-700' : 'bg-slate-200 text-slate-600'}`}>{esc.urgency === 'urgent' ? 'דחוף' : 'רגיל'}</span>
++          <span className="text-slate-400">{formatRelativeHe(esc.created_at)}</span>
++        </div>
++        <p className="mt-1.5 text-sm font-bold text-slate-800">{esc.text}</p>
++        <p className="mt-1 text-xs text-slate-500">{esc.labels?.building} · דירה {esc.labels?.unit} · {contextLine(esc.context)}</p>
++        <p className="mt-1 text-xs text-slate-500">{esc.requested_by?.name}{subRoleLabel(esc.requested_by?.sub_role) ? ` · ${subRoleLabel(esc.requested_by.sub_role)}` : ''}{esc.assigned_to ? ` · אצל ${esc.assigned_to.name}` : ''}</p>
++        {esc.notes?.length > 0 && <div className="mt-2 border-t border-slate-200 pt-2">
++          <p className="text-[11px] font-bold text-slate-600">הערות ({esc.notes.length})</p>
++          {esc.notes.map((entry, index) => <p key={`${entry.at || index}-${index}`} className="mt-1 text-xs text-slate-600"><span className="font-semibold">{entry.by?.name}:</span> {entry.text}</p>)}
++        </div>}
++        <div className="mt-3 flex flex-wrap items-center gap-2">
++          {mayResolve && <button onClick={() => setDoneId(esc.id)} className={`${touch} rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white`}>✓ טופל</button>}
++          {mayResolve && <button onClick={() => window.confirm('לסמן את ההקפצה כלא רלוונטית?') && patch(esc, { action: 'dismiss' }, 'סומן כלא רלוונטי')} className={`${touch} rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-700`}>לא רלוונטי</button>}
++          {canAssign && <select aria-label="העבר ל" value={selectedAssignee} onChange={e => setAssignId({ id: esc.id, value: e.target.value })} className={`${touch} rounded-md border border-slate-300 px-2 py-1 text-xs`}>
++            <option value="">העבר ל…</option>
++            {members.filter(m => m.user_id !== esc.assigned_to?.id).map(m => <option key={m.user_id} value={m.user_id}>{m.user_name}{subRoleLabel(m.sub_role) ? ` · ${subRoleLabel(m.sub_role)}` : ''}</option>)}
++          </select>}
++          {canAssign && selectedAssignee && <button onClick={() => patch(esc, { action: 'assign', assignee_id: selectedAssignee }, `הועבר ל${members.find(m => m.user_id === selectedAssignee)?.user_name || ''}`)} className={`${touch} rounded-md bg-amber-500 px-2 py-1 text-xs font-bold text-white`}>העבר</button>}
++          <button onClick={() => navigate(`/projects/${projectId}/units/${esc.unit_id}/defects`, { state: { returnTo: `/projects/${projectId}/dashboard` } })} className={`${touch} px-1 text-xs font-bold text-amber-700`}>פתח דירה ›</button>
++        </div>
++        {doneId === esc.id && <div className="mt-2 flex gap-2">
++          <input aria-label="הערה קצרה (רשות)" maxLength={300} value={note} onChange={e => setNote(e.target.value)} placeholder="הערה קצרה (רשות)" className={`${touch} min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-xs`} />
++          <button onClick={() => patch(esc, { action: 'done', note }, 'סומן כטופל')} className={`${touch} rounded-md bg-emerald-600 px-3 text-xs font-bold text-white`}>אשר</button>
++        </div>}
++      </article>;
++    })}
++    {!items.length && <p className="py-4 text-center text-xs text-slate-400">אין הקפצות פתוחות</p>}
++    {escalations?.resolved_week_count > 0 && <div className="border-t border-slate-200 pt-3">
++      <button onClick={() => resolved ? setResolved(null) : escalationService.list(projectId, 'resolved').then(setResolved).catch(() => toast.error('שגיאה בטעינת היסטוריה'))} className={`${touch} text-xs font-bold text-amber-700`}>טופלו השבוע: {escalations.resolved_week_count} · הצג</button>
++      {resolved?.items?.map(esc => <div key={esc.id} className="mt-2 rounded-lg border border-slate-200 p-2 text-xs text-slate-500 opacity-60">{esc.labels?.building} · דירה {esc.labels?.unit} · {esc.status === 'done' ? 'טופל' : 'לא רלוונטי'} ע״י {esc.resolved_by?.name} · {esc.resolved_at ? new Date(esc.resolved_at).toLocaleDateString('he-IL') : ''}{esc.resolution_note ? ` · "${esc.resolution_note}"` : ''}</div>)}
++    </div>}
++  </div>;
++}
+\ No newline at end of file
+diff --git a/frontend/src/components/spare/EscalationSheet.js b/frontend/src/components/spare/EscalationSheet.js
+new file mode 100644
+index 0000000..ec99ce7
+--- /dev/null
++++ b/frontend/src/components/spare/EscalationSheet.js
+@@ -0,0 +1,48 @@
++import React, { useEffect, useMemo, useState } from 'react';
++import { toast } from 'sonner';
++import { escalationService } from '../../services/api';
++import { buildSpareContext, contextLine, defaultText } from '../../utils/escalationDraft';
++import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
++
++export default function EscalationSheet({ open, onClose, projectId, unit, buildingName, spareStatus, mode = 'new', onSent }) {
++  const context = useMemo(() => buildSpareContext(spareStatus), [spareStatus]);
++  const [urgency, setUrgency] = useState(context.short.length ? 'urgent' : 'normal');
++  const [text, setText] = useState('');
++  const [edited, setEdited] = useState(false);
++  const [sending, setSending] = useState(false);
++  useEffect(() => {
++    if (open) { const initialUrgency = context.short.length ? 'urgent' : 'normal'; setUrgency(initialUrgency); setText(mode === 'note' ? '' : defaultText(initialUrgency, unit?.label || '', context)); setEdited(false); }
++  }, [open, mode, unit?.label, context]);
++  const chooseUrgency = (next) => { setUrgency(next); if (!edited) setText(defaultText(next, unit?.label || '', context)); };
++  const submit = async (event) => {
++    event.preventDefault();
++    if (!text.trim()) return;
++    setSending(true);
++    try {
++      const result = await escalationService.create(projectId, { unit_id: unit.id, urgency, text: text.trim() });
++      toast.success(result.appended_note ? 'ההערה נוספה' : 'ההקפצה נשלחה');
++      onSent(result);
++      onClose();
++    } catch (err) {
++      toast.error(err.response?.data?.detail || 'שגיאה בשליחת ההקפצה');
++    } finally { setSending(false); }
++  };
++  return <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
++    <DialogContent className="max-w-md p-0 overflow-hidden" dir="rtl">
++      <form onSubmit={submit}>
++        <DialogHeader className="p-5 pb-3 text-right">
++          <DialogTitle>הקפצה למנהל הפרויקט</DialogTitle>
++          <DialogDescription>ריצוף ספייר · {buildingName} · דירה {unit?.label}</DialogDescription>
++        </DialogHeader>
++        <div className="px-5 space-y-4">
++          {mode === 'new' && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950"><p className="font-bold mb-1">מה מצורף אוטומטית</p>{contextLine(context) || 'ללא פרטים נוספים'}</div>}
++          {mode === 'new' && <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => chooseUrgency('urgent')} className={`min-h-[44px] rounded-lg py-2 text-sm font-bold border ${urgency === 'urgent' ? 'bg-red-600 text-white border-red-600' : 'border-slate-200 text-slate-600'}`}>דחוף</button><button type="button" onClick={() => chooseUrgency('normal')} className={`min-h-[44px] rounded-lg py-2 text-sm font-bold border ${urgency === 'normal' ? 'bg-amber-500 text-white border-amber-500' : 'border-slate-200 text-slate-600'}`}>רגיל</button></div>}
++          <label className="block text-sm font-semibold text-slate-700">{mode === 'note' ? 'הערה' : 'הודעה (אפשר לשנות)'}<textarea value={text} onChange={e => { setEdited(true); setText(e.target.value); }} maxLength={500} rows={4} className="mt-1.5 w-full resize-none rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" /></label>
++          <p className="text-left text-[11px] text-slate-400">{text.length}/500</p>
++          <p className="text-xs leading-relaxed text-slate-500">{mode === 'note' ? 'ההערה תצורף להקפצה הפתוחה.' : 'ההקפצה תופיע למנהל הפרויקט באפליקציה — בפעמון וברשימת "לטיפולי" בדשבורד. לא נשלח וואטסאפ.'}</p>
++        </div>
++        <DialogFooter className="p-5 pt-4"><button disabled={sending || !text.trim()} className="min-h-[44px] w-full rounded-lg bg-amber-500 py-2.5 text-sm font-bold text-white disabled:opacity-50">{sending ? 'שולח...' : mode === 'note' ? 'הוסף הערה' : 'שלח למנהל הפרויקט'}</button></DialogFooter>
++      </form>
++    </DialogContent>
++  </Dialog>;
++}
+\ No newline at end of file
+diff --git a/frontend/src/components/spare/SpareEscalationStatus.js b/frontend/src/components/spare/SpareEscalationStatus.js
+new file mode 100644
+index 0000000..c05161b
+--- /dev/null
++++ b/frontend/src/components/spare/SpareEscalationStatus.js
+@@ -0,0 +1,11 @@
++import React from 'react';
++import { Bell } from 'lucide-react';
++import { canEscalate } from '../../utils/escalationDraft';
++import { formatRelativeHe } from '../../utils/relativeTime';
++
++export default function SpareEscalationStatus({ unitData, onOpenSheet }) {
++  const esc = unitData.spare_escalation;
++  const canSend = unitData.spare_can_escalate && canEscalate(unitData.spare_status);
++  if (esc?.status === 'open') return <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"><span>נשלחה הקפצה{esc.urgency === 'urgent' ? ' דחופה' : ''} {formatRelativeHe(esc.created_at)} · ממתינה אצל {esc.assigned_to?.name || 'מנהל הפרויקט'}</span>{(unitData.spare_can_escalate || unitData.spare_can_assign) && <button onClick={() => onOpenSheet('note')} className="mr-2 min-h-[44px] font-bold underline">הוסף הערה</button>}</div>;
++  return <div className="mb-3 flex flex-wrap items-center gap-2">{esc && <p className="text-xs text-slate-500">{esc.status === 'done' ? 'טופל' : 'סומן כלא רלוונטי'} ע״י {esc.resolved_by?.name} · {esc.resolved_at ? new Date(esc.resolved_at).toLocaleDateString('he-IL') : ''}{esc.resolution_note ? ` · "${esc.resolution_note}"` : ''}</p>}{canSend && <button onClick={() => onOpenSheet('new')} className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-50"><Bell className="h-3.5 w-3.5" />הקפץ למנהל הפרויקט</button>}</div>;
++}
+\ No newline at end of file
+diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
+index fd0f7e7..fdbdcaa 100644
+--- a/frontend/src/pages/ApartmentDashboardPage.js
++++ b/frontend/src/pages/ApartmentDashboardPage.js
+@@ -15,6 +15,8 @@ import CategoryPill from '../components/CategoryPill';
+ import Breadcrumbs from '../components/Breadcrumbs';
+ import TaskCardSkeleton from '../components/TaskCardSkeleton';
+ import { spareSummaryText } from '../components/matrix/SparePill';
++import EscalationSheet from '../components/spare/EscalationSheet';
++import SpareEscalationStatus from '../components/spare/SpareEscalationStatus';
+ import { arraysEqualAsSets } from '../utils/filterHelpers';
+ import { FEATURES } from '../config/features';
+ import { getDefectCreatesForUnit } from '../services/offlineOutbox';
+@@ -123,6 +125,7 @@ const ApartmentDashboardPage = () => {
+   const [spareTilesEditing, setSpareTilesEditing] = useState(false);
+   const [spareTilesEntries, setSpareTilesEntries] = useState([]);
+   const [spareTilesSaving, setSpareTilesSaving] = useState(false);
++  const [sheetMode, setSheetMode] = useState(null);
+   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
+   const spareCanWrite = unitData?.spare_can_write === true;
+   const spareCanAssign = unitData?.spare_can_assign === true;
+@@ -817,12 +820,13 @@ const ApartmentDashboardPage = () => {
+                     </div>
+                     <div className="flex gap-2"><button onClick={saveSpareTiles} disabled={spareTilesSaving} className="flex-1 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium">{spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin inline" /> : 'שמור'}</button><button onClick={() => setSpareTilesEditing(false)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600">ביטול</button></div>
+                   </div>
+-                ) : spareCanWrite && <button onClick={startSpareTilesEdit} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Pencil className="w-3.5 h-3.5" />עדכון מלאי</button>}
++                ) : <><SpareEscalationStatus unitData={unitData} onOpenSheet={setSheetMode} />{spareCanWrite && <button onClick={startSpareTilesEdit} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Pencil className="w-3.5 h-3.5" />עדכון מלאי</button>}</>}
+               </div>
+             )}
+           </div>
+         </div>
+       )}
++      <EscalationSheet open={!!sheetMode} onClose={() => setSheetMode(null)} projectId={projectId} unit={{ id: unitId, label: effectiveLabel }} buildingName={building?.name || ''} spareStatus={unitData.spare_status} mode={sheetMode || 'new'} onSent={loadUnit} />
+       {!unitData.spare_profiles_exist && (
+       <div className="max-w-lg mx-auto px-4 mt-3">
+         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+diff --git a/frontend/src/pages/ProjectDashboardPage.js b/frontend/src/pages/ProjectDashboardPage.js
+index 48dab7a..28241f5 100644
+--- a/frontend/src/pages/ProjectDashboardPage.js
++++ b/frontend/src/pages/ProjectDashboardPage.js
+@@ -1,12 +1,13 @@
+ import React, { useState, useEffect, useCallback, useRef } from 'react';
+-import { useParams, useNavigate } from 'react-router-dom';
+-import { projectService, buildingService, qcService, handoverService } from '../services/api';
++import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
++import { projectService, buildingService, qcService, handoverService, escalationService } from '../services/api';
+ import { qcFloorStatusLabel } from '../utils/qcLabels';
+ import { useAuth } from '../contexts/AuthContext';
+ import ProjectSwitcher from '../components/ProjectSwitcher';
+ import NotificationBell from '../components/NotificationBell';
+ import HamburgerMenu from '../components/HamburgerMenu';
+ import DashboardFoldSection from '../components/DashboardFoldSection';
++import EscalationsSection from '../components/dashboard/EscalationsSection';
+ import ProjectsLightSkyline from '../components/ProjectsLightSkyline';
+ import { tRole } from '../i18n';
+ import { toast } from 'sonner';
+@@ -14,7 +15,7 @@ import {
+   ArrowRight, AlertTriangle, Clock, CheckCircle2, Users, Timer,
+   ChevronLeft, ChevronDown, Building2, HardHat, Loader2, RefreshCw,
+   ExternalLink, BarChart3, AlertCircle, Shield, ClipboardCheck,
+-  Construction, FileSignature, Send, MessageSquare
++  Construction, FileSignature, Send, MessageSquare, Megaphone
+ } from 'lucide-react';
+ 
+ import OfflineState from '../components/OfflineState';
+@@ -118,6 +119,7 @@ const getBarTextColor = (index, total) => {
+ export default function ProjectDashboardPage() {
+   const { projectId } = useParams();
+   const navigate = useNavigate();
++  const [searchParams] = useSearchParams();
+   const { user, logout } = useAuth();
+   const [data, setData] = useState(null);
+   const [project, setProject] = useState(null);
+@@ -130,6 +132,7 @@ export default function ProjectDashboardPage() {
+   const [alertsExpanded, setAlertsExpanded] = useState(false);
+   const [highlightEntity, setHighlightEntity] = useState(null);
+   const [handoverSummary, setHandoverSummary] = useState(null);
++  const [escalations, setEscalations] = useState(null);
+   const [sendingDigest, setSendingDigest] = useState(false);
+   const [sendingReminder, setSendingReminder] = useState({});
+   const stageRefs = useRef({});
+@@ -153,7 +156,7 @@ export default function ProjectDashboardPage() {
+     setExecSummary(null);
+     setHandoverSummary(null);
+     try {
+-      const [dashResult, projResult, hierarchyResult, execResult, handoverResult] = await Promise.allSettled([
++      const [dashResult, projResult, hierarchyResult, execResult, handoverResult, escalationsResult] = await Promise.allSettled([
+         projectService.getDashboard(projectId),
+         projectService.get(projectId),
+         (async () => {
+@@ -170,6 +173,7 @@ export default function ProjectDashboardPage() {
+         })(),
+         qcService.getExecutionSummary(projectId),
+         handoverService.getSummary(projectId),
++        escalationService.list(projectId, 'open'),
+       ]);
+ 
+       if (dashResult.status === 'rejected' || projResult.status === 'rejected') {
+@@ -181,6 +185,7 @@ export default function ProjectDashboardPage() {
+       if (hierarchyResult.status === 'fulfilled') setQcSummary(hierarchyResult.value);
+       if (execResult.status === 'fulfilled') setExecSummary(execResult.value);
+       if (handoverResult.status === 'fulfilled') setHandoverSummary(handoverResult.value);
++      setEscalations(escalationsResult.status === 'fulfilled' ? escalationsResult.value : null);
+     } catch (err) {
+       if (err.response?.status === 403) {
+         toast.error('אין לך הרשאה למרכז ניהול זה');
+@@ -196,6 +201,7 @@ export default function ProjectDashboardPage() {
+   }, [projectId, navigate]);
+ 
+   useEffect(() => { load(); }, [load]);
++  useEffect(() => { if (escalations && searchParams.get('focus') === 'escalations') openAndScroll('escalations'); }, [escalations, searchParams]);
+ 
+   const handleSendDigest = async () => {
+     setSendingDigest(true);
+@@ -264,12 +270,14 @@ export default function ProjectDashboardPage() {
+   const totalStuck = stuck_contractors.reduce((sum, c) => sum + c.stuck_count, 0);
+   const openHandoverDefects = (handoverSummary && handoverSummary.total_units > 0 && handoverSummary.open_handover_defects) || 0;
+   const expiringCertsTotal = safety ? (safety.expiring_certs_7 || 0) + (safety.expiring_certs_30 || 0) : 0;
++  const urgentEscalation = escalations?.items?.find(item => item.urgency === 'urgent');
++  const normalEscalation = escalations?.items?.find(item => item.urgency !== 'urgent');
+   const hasSla = [kpis.sla_response_7d, kpis.sla_close_7d, kpis.sla_response_30d, kpis.sla_close_30d].some(v => v && v > 0);
+   const showFocus = (safety && safety.open_incidents > 0)
+     || showPendingApprovals
+     || totalStuck > 0
+     || openHandoverDefects > 0
+-    || expiringCertsTotal > 0;
++    || expiringCertsTotal > 0 || (escalations?.open_count || 0) > 0;
+ 
+   return (
+     <div className="min-h-screen pb-24" dir="rtl" style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #eef2f8 60%, #e9eef6 100%)' }}>
+@@ -370,6 +378,8 @@ export default function ProjectDashboardPage() {
+           <div className="bg-white rounded-xl border shadow-sm p-4 border-r-4" style={{ borderRightColor: '#f59e0b' }}>
+             <h3 className="text-sm font-bold text-slate-700 mb-2">🎯 איפה להתמקד עכשיו</h3>
+             <div className="space-y-1.5">
++              {urgentEscalation && <button onClick={() => openAndScroll('escalations')} className="w-full flex items-center gap-2.5 p-2.5 rounded-lg border border-red-200 bg-red-50 text-right"><span className="text-xs font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">{escalations.urgent_count}</span><div className="flex-1 min-w-0"><p className="text-sm font-bold text-red-700">הקפצות דחופות מהשטח</p><p className="text-xs text-red-400 truncate">{urgentEscalation.requested_by?.name} · ריצוף ספייר · {urgentEscalation.labels?.building} דירה {urgentEscalation.labels?.unit}</p></div><ChevronLeft className="w-4 h-4 text-red-300" /></button>}
++              {normalEscalation && <button onClick={() => openAndScroll('escalations')} className="w-full flex items-center gap-2.5 p-2.5 rounded-lg border border-amber-200 bg-amber-50 text-right"><span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{escalations.open_count - escalations.urgent_count}</span><div className="flex-1 min-w-0"><p className="text-sm font-bold text-slate-700">הקפצות מהשטח</p><p className="text-xs text-slate-400 truncate">{normalEscalation.requested_by?.name} · ריצוף ספייר · {normalEscalation.labels?.building} דירה {normalEscalation.labels?.unit}</p></div><ChevronLeft className="w-4 h-4 text-slate-300" /></button>}
+               {safety && safety.open_incidents > 0 && (
+                 <button
+                   onClick={() => navigate(`/projects/${projectId}/safety?tab=incidents`)}
+@@ -442,6 +452,8 @@ export default function ProjectDashboardPage() {
+           </div>
+         )}
+ 
++        {escalations && (escalations.open_count > 0 || escalations.resolved_week_count > 0) && <div ref={el => { foldRefs.current.escalations = el; }}><DashboardFoldSection id="escalations" projectId={projectId} icon={Megaphone} iconColor="text-amber-500" title="הקפצות מהשטח · לטיפולי" summary={`${escalations.open_count} פתוחות`} forceOpen={foldForce.escalations || 0}><EscalationsSection projectId={projectId} escalations={escalations} canAssign={escalations.can_assign} currentUserId={user?.id} onChanged={() => escalationService.list(projectId, 'open').then(setEscalations).catch(() => {})} /></DashboardFoldSection></div>}
++
+         <div ref={handoverRef}>
+         {handoverSummary && handoverSummary.total_units > 0 && (() => {
+           const hs = handoverSummary;
+diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+index 425e940..c0f4ece 100644
+--- a/frontend/src/services/api.js
++++ b/frontend/src/services/api.js
+@@ -1086,6 +1086,21 @@ export const spareTilesService = {
+   },
+ };
+ 
++export const escalationService = {
++  async create(projectId, body) {
++    const response = await axios.post(`${API}/projects/${projectId}/escalations`, body, { headers: getAuthHeader() });
++    return response.data;
++  },
++  async list(projectId, status = 'open') {
++    const response = await axios.get(`${API}/projects/${projectId}/escalations?status=${status}`, { headers: getAuthHeader() });
++    return response.data;
++  },
++  async patch(escalationId, body) {
++    const response = await axios.patch(`${API}/escalations/${escalationId}`, body, { headers: getAuthHeader() });
++    return response.data;
++  },
++};
++
+ export const archiveService = {
+   async archiveBuilding(buildingId, reason) {
+     const response = await axios.post(`${API}/buildings/${buildingId}/archive`, { reason }, { headers: getAuthHeader() });
+diff --git a/frontend/src/utils/__tests__/escalationDraft.test.js b/frontend/src/utils/__tests__/escalationDraft.test.js
+new file mode 100644
+index 0000000..2aea3d9
+--- /dev/null
++++ b/frontend/src/utils/__tests__/escalationDraft.test.js
+@@ -0,0 +1,9 @@
++import { buildSpareContext, canEscalate, contextLine, defaultText } from '../escalationDraft';
++const context = { short: [{ name: 'א', missing: 2, measure: 'tiles', zero: false }, { name: 'ב', missing: 0, measure: 'tiles', zero: true }], borderline: ['ג'] };
++test('builds escalation context and normative copy', () => {
++  expect(buildSpareContext({ categories: [{ name: 'א', status: 'short', missing: 2, measure: 'tiles', entered: true, actual: 1 }, { name: 'ג', status: 'borderline' }] })).toEqual({ short: [{ name: 'א', missing: 2, measure: 'tiles', zero: false }], borderline: ['ג'] });
++  expect(contextLine(context)).toBe('חסר: א 2, ב (אין ספייר) · גבולי: ג');
++  expect(defaultText('urgent', '12', { ...context, short: [context.short[0]] })).toBe('דחוף להזמין ריצוף ספייר לדירה 12 — חסר סוג אחד');
++  expect(defaultText('normal', '12', context)).toBe('להשלים ריצוף ספייר לדירה 12 — חסר: א 2, ב (אין ספייר) · גבולי: ג');
++  expect(canEscalate({ overall: 'short' })).toBe(true); expect(canEscalate({ overall: 'ok' })).toBe(false);
++});
+\ No newline at end of file
+diff --git a/frontend/src/utils/__tests__/relativeTime.test.js b/frontend/src/utils/__tests__/relativeTime.test.js
+new file mode 100644
+index 0000000..34e6033
+--- /dev/null
++++ b/frontend/src/utils/__tests__/relativeTime.test.js
+@@ -0,0 +1,11 @@
++import { formatRelativeHe } from '../relativeTime';
++const now = new Date('2026-09-10T12:00:00Z').getTime();
++test('formats relative Hebrew time buckets', () => {
++  expect(formatRelativeHe(new Date(now - 30000).toISOString(), now)).toBe('עכשיו');
++  expect(formatRelativeHe(new Date(now - 60000).toISOString(), now)).toBe('לפני דקה');
++  expect(formatRelativeHe(new Date(now - 120000).toISOString(), now)).toBe('לפני 2 דקות');
++  expect(formatRelativeHe(new Date(now - 3600000).toISOString(), now)).toBe('לפני שעה');
++  expect(formatRelativeHe(new Date(now - 7200000).toISOString(), now)).toBe('לפני 2 שעות');
++  expect(formatRelativeHe(new Date(now - 86400000).toISOString(), now)).toBe('אתמול');
++  expect(formatRelativeHe(new Date(now - 3 * 86400000).toISOString(), now)).toBe('לפני 3 ימים');
++});
+\ No newline at end of file
+diff --git a/frontend/src/utils/escalationDraft.js b/frontend/src/utils/escalationDraft.js
+new file mode 100644
+index 0000000..814b58c
+--- /dev/null
++++ b/frontend/src/utils/escalationDraft.js
+@@ -0,0 +1,26 @@
++export const buildSpareContext = (spareStatus = {}) => {
++  const categories = spareStatus.categories || [];
++  return {
++    short: categories.filter(row => row.status === 'short').map(row => ({
++      name: row.name,
++      missing: row.missing || 0,
++      measure: row.measure,
++      zero: Boolean(row.entered && row.actual === 0),
++    })),
++    borderline: categories.filter(row => row.status === 'borderline').map(row => row.name),
++  };
++};
++
++export const contextLine = (context = {}) => {
++  const short = (context.short || []).map(({ name, missing, zero }) =>
++    missing > 0 ? `${name} ${missing}` : zero ? `${name} (אין ספייר)` : name
++  );
++  const borderline = context.borderline || [];
++  return [short.length && `חסר: ${short.join(', ')}`, borderline.length && `גבולי: ${borderline.join(', ')}`].filter(Boolean).join(' · ');
++};
++
++export const defaultText = (urgency, unitLabel, context) => urgency === 'urgent'
++  ? `דחוף להזמין ריצוף ספייר לדירה ${unitLabel} — חסר ${context.short.length === 1 ? 'סוג אחד' : `${context.short.length} סוגים`}`
++  : `להשלים ריצוף ספייר לדירה ${unitLabel} — ${contextLine(context)}`;
++
++export const canEscalate = (spareStatus = {}) => ['short', 'borderline'].includes(spareStatus.overall);
+\ No newline at end of file
+diff --git a/frontend/src/utils/relativeTime.js b/frontend/src/utils/relativeTime.js
+new file mode 100644
+index 0000000..989517c
+--- /dev/null
++++ b/frontend/src/utils/relativeTime.js
+@@ -0,0 +1,16 @@
++export const formatRelativeHe = (iso, now = Date.now()) => {
++  const date = new Date(iso);
++  if (Number.isNaN(date.getTime())) return '';
++  const diff = Math.max(0, now - date.getTime());
++  const minutes = Math.floor(diff / 60000);
++  if (minutes < 1) return 'עכשיו';
++  if (minutes < 60) return minutes === 1 ? 'לפני דקה' : `לפני ${minutes} דקות`;
++  const hours = Math.floor(minutes / 60);
++  if (hours < 24) return hours === 1 ? 'לפני שעה' : `לפני ${hours} שעות`;
++  const days = Math.floor(hours / 24);
++  const yesterday = new Date(now);
++  yesterday.setDate(yesterday.getDate() - 1);
++  if (date.toDateString() === yesterday.toDateString()) return 'אתמול';
++  if (days < 7) return `לפני ${days} ימים`;
++  return date.toLocaleDateString('he-IL');
++};
+\ No newline at end of file
+diff --git a/frontend/src/utils/roleLabels.js b/frontend/src/utils/roleLabels.js
+index 2f23b54..15f75e5 100644
+--- a/frontend/src/utils/roleLabels.js
++++ b/frontend/src/utils/roleLabels.js
+@@ -14,3 +14,13 @@ export function getRoleLabel(role) {
+ }
+ 
+ export const CONTRACTOR_ROLE = 'contractor';
++
++export const SUB_ROLE_LABELS = {
++  site_manager: 'מנהל אתר',
++  execution_engineer: 'מהנדס ביצוע',
++  safety_assistant: 'עוזר בטיחות',
++  work_manager: 'מנהל עבודה',
++  safety_officer: 'ממונה בטיחות',
++};
++
++export const subRoleLabel = (code) => SUB_ROLE_LABELS[code] || '';
+
+===============================================================================
+FIX-1 (10.9)
+===============================================================================
+
+STEP 0 — 2026-09-10
+Branch: staging
+Starting HEAD: 53452fe
+Starting working tree: clean
+origin/staging: fd9fec2
+The starting HEAD already included the earlier feature commit 9dc2b7b and the platform metadata/memory checkpoint 53452fe. No reset, rebase, amend, push, deploy, or main work was performed.
+
+CODE CHANGE — item 2
+Local fix commit: 3938562 (fix(escalations): make open index setup best-effort)
+The unique partial index creation now requests the explicit name uniq_open_spare_escalation_per_unit. The helper catches and logs index-creation errors and returns normally. It is called only inside create_indexes in deferred DB initialization. Index inspection, post-create verification, index dropping, and the pre-traffic blocking call were removed. The existing find-then-insert / DuplicateKeyError-to-note code is unchanged.
+Availability tradeoff explicitly requested by review: if the unique index is absent and creation fails, concurrent creates can still produce duplicates; the code-level precheck alone does not guarantee uniqueness. Startup remains available.
+
+Verbatim diff for item 2 (53452fe..3938562):
+
+diff --git a/backend/server.py b/backend/server.py
+index 99bdaa1..0cad528 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -568,39 +568,16 @@ app.include_router(transfer_router)
+ 
+ 
+ async def _ensure_field_escalation_open_index():
+-    """Establish the invariant required by escalation creation.
+-
+-    This is deliberately outside the best-effort index block below: allowing
+-    startup to continue without this partial unique index would reintroduce
+-    duplicate open escalations under concurrent POSTs.
+-    """
+-    collection = db.field_escalations
+-    partial = {"type": "spare_tiles", "status": "open"}
+-    key = [("unit_id", 1), ("status", 1)]
+-    indexes = await collection.index_information()
+-    for name, info in indexes.items():
+-        if name == "_id_":
+-            continue
+-        if info.get("key") == key and (
+-            not info.get("unique")
+-            or info.get("partialFilterExpression") != partial
+-        ):
+-            await collection.drop_index(name)
+-    index_name = await collection.create_index(
+-        key,
+-        unique=True,
+-        partialFilterExpression=partial,
+-    )
+-    verified = (await collection.index_information()).get(index_name)
+-    if (
+-        not verified
+-        or verified.get("key") != key
+-        or verified.get("unique") is not True
+-        or verified.get("partialFilterExpression") != partial
+-    ):
+-        raise RuntimeError(
+-            "field_escalations open uniqueness index could not be verified"
++    """Create the open-escalation index best-effort, without blocking startup."""
++    try:
++        await db.field_escalations.create_index(
++            [("unit_id", 1), ("status", 1)],
++            name="uniq_open_spare_escalation_per_unit",
++            unique=True,
++            partialFilterExpression={"type": "spare_tiles", "status": "open"},
+         )
++    except Exception:
++        logger.exception("Failed to create field_escalations open uniqueness index (non-fatal)")
+ 
+ 
+ async def create_indexes():
+@@ -621,6 +598,7 @@ async def create_indexes():
+         )
+         await db.audit_events.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
+         await db.field_escalations.create_index([("project_id", 1), ("status", 1), ("created_at", -1)])
++        await _ensure_field_escalation_open_index()
+         await db.users.create_index("email", unique=True, sparse=True)
+         await db.auth_failed_attempts.create_index(
+             [("identifier", 1), ("ip", 1)],
+@@ -1401,10 +1379,6 @@ async def startup():
+     else:
+         logger.info("[STARTUP] Reminder scheduler DISABLED by config")
+ 
+-    # This invariant is correctness-critical and must be established before
+-    # the server starts accepting traffic; unlike the neighboring indexes, a
+-    # failure here is intentionally fatal rather than best-effort.
+-    await _ensure_field_escalation_open_index()
+     asyncio.create_task(_deferred_db_init())
+ 
+     logger.info("[STARTUP] Server accepting connections — DB init running in background.")
+diff --git a/backend/tests/test_escalations.py b/backend/tests/test_escalations.py
+index 023ee04..41430e2 100644
+--- a/backend/tests/test_escalations.py
++++ b/backend/tests/test_escalations.py
+@@ -535,30 +535,29 @@ def test_unrelated_management_cannot_append_via_post(monkeypatch):
+     db.field_escalations.update_one.assert_not_called()
+ 
+ 
+-def test_open_unique_index_setup_fails_closed_and_verifies_options():
+-    # Import server with its network client constructor neutralized; the
+-    # ensure helper itself must still propagate both inspection and
+-    # post-create verification failures.
++def test_open_unique_index_setup_is_best_effort(caplog):
++    # Index failures must be logged, not propagated into startup.
+     from unittest.mock import patch
+ 
+     with patch('motor.motor_asyncio.AsyncIOMotorClient', return_value=MagicMock()):
+         import server
+ 
+     collection = MagicMock()
+-    server.db = MagicMock()
+-    server.db.field_escalations = collection
+-    collection.index_information = AsyncMock(side_effect=RuntimeError('index unavailable'))
+-    with pytest.raises(RuntimeError, match='index unavailable'):
++    collection.create_index = AsyncMock(side_effect=RuntimeError('index unavailable'))
++    with patch.object(server, 'db', field_escalations=collection):
+         asyncio.run(server._ensure_field_escalation_open_index())
++    assert 'index unavailable' in caplog.text
++    assert 'non-fatal' in caplog.text
++    collection.index_information.assert_not_called()
++    collection.create_index.assert_awaited_once_with(
++        [('unit_id', 1), ('status', 1)],
++        name='uniq_open_spare_escalation_per_unit',
++        unique=True,
++        partialFilterExpression={'type': 'spare_tiles', 'status': 'open'},
++    )
+ 
+-    collection.index_information = AsyncMock(side_effect=[
+-        {},
+-        {'unit_id_1_status_1': {
+-            'key': [('unit_id', 1), ('status', 1)],
+-            'unique': False,
+-            'partialFilterExpression': {'type': 'spare_tiles', 'status': 'open'},
+-        }},
+-    ])
+-    collection.create_index = AsyncMock(return_value='unit_id_1_status_1')
+-    with pytest.raises(RuntimeError, match='could not be verified'):
+-        asyncio.run(server._ensure_field_escalation_open_index())
+\ No newline at end of file
++    # Success likewise needs no post-create verification.
++    collection.create_index = AsyncMock(return_value='uniq_open_spare_escalation_per_unit')
++    with patch.object(server, 'db', field_escalations=collection):
++        asyncio.run(server._ensure_field_escalation_open_index())
++    collection.index_information.assert_not_called()
+\ No newline at end of file
+
+V1 RERUN
+Command:
+  cd backend && MONGO_URL=mongodb://localhost:27017 DB_NAME=contractor_ops PYTHONPATH=. pytest -q tests/test_escalations.py tests/test_unit_detail.py tests/test_notifications_defect.py tests/test_spare_tiles.py
+Result: 71 passed, 6 warnings in 11.45s.
+Warnings remain the Pydantic validator and FastAPI on_event deprecations. The updated index-helper test proves creation failure is logged without raising; no index inspection/verification is called.
+
+CI BUILD RERUN
+Command:
+  cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+Result: Compiled successfully (24.39s).
+Bundle: build/static/js/main.4d4bd2c2.js
+CSS: build/static/css/main.1ad71a6c.css
+Non-failing notices: fs.F_OK deprecation and outdated Browserslist database.
+
+STARTUP / ACTUAL FAILURE EVIDENCE
+Restarted Start application once after the coherent changes.
+06:52:09 startup: Server accepting connections — DB init running in background.
+06:52:09 index creation logged non-fatal IndexOptionsConflict (code 85): Index already exists with a different name: unit_id_1_status_1.
+The prior equivalent unique partial index remains intact; no local index was dropped merely to change its name. Fresh databases request the new explicit name.
+06:52:10 Deferred DB init completed.
+GET /api/health: 200 after the actual index failure.
+Existing unrelated startup log: no configured super-admin user found.
+
+ONE SCREENSHOT REQUEST — NOT SATISFIED
+Screenshot ID: 9ozyc0 (390x844). This is NOT acceptable dashboard evidence.
+The browser harness opened the Replit proxied Mockup Sandbox instead of the application on port 5000. Visible text: Component Preview Server / This server renders individual components for the workspace canvas. Access component previews at /preview/ComponentName.
+The first harness observation contained no screenshot after premature context close. Continuation produced exactly one image, but of the wrong service. No login occurred and no escalation action was clicked. No further screenshot or browser testing was performed because the user limited this request to one image.
+The requested PM open-item action-row evidence is still pending authorization for a replacement capture against the correct service. This report does not mark the screenshot requirement passed.
+
+FIXTURE CLEANUP — local Mongo only
+Seeded exactly one open escalation for the existing demo unit. No user, membership, notification, project spare setting, or unit field was created/modified.
+Removed: field_escalations=1.
+Final fixture counts: field_escalations=0, qc_notifications=0, audit_events=0, users=0, project_memberships=0, organization_memberships=0.
+New test OTP/rate-limit records against pre-capture baseline: otp_codes=0, otp_metrics=0, otp_rate_limits=0.
+Project spare_settings unchanged=true; unit spare fields unchanged=true.
+
+FINAL DIFF NAMES
+Command: git diff --name-only fd9fec2..HEAD
+Captured at HEAD 3938562:
+.agents/agent_assets_metadata.toml
+.agents/memory/MEMORY.md
+.agents/memory/jest-canvas-libuuid.md
+backend/contractor_ops/escalations.py
+backend/contractor_ops/escalations_router.py
+backend/contractor_ops/notification_helpers.py
+backend/contractor_ops/projects_router.py
+backend/contractor_ops/qc_router.py
+backend/server.py
+backend/tests/test_escalations.py
+backend/tests/test_notifications_defect.py
+backend/tests/test_unit_detail.py
+frontend/src/components/NotificationBell.js
+frontend/src/components/dashboard/EscalationsSection.js
+frontend/src/components/spare/EscalationSheet.js
+frontend/src/components/spare/SpareEscalationStatus.js
+frontend/src/pages/ApartmentDashboardPage.js
+frontend/src/pages/ProjectDashboardPage.js
+frontend/src/services/api.js
+frontend/src/utils/__tests__/escalationDraft.test.js
+frontend/src/utils/__tests__/relativeTime.test.js
+frontend/src/utils/escalationDraft.js
+frontend/src/utils/relativeTime.js
+frontend/src/utils/roleLabels.js
+review.txt
+
+The .agents paths above were already present in starting HEAD 53452fe. FIX-1 changes only backend/server.py and backend/tests/test_escalations.py, plus this uncommitted review.txt addendum. The FULL DIFF section excludes all .agents paths as requested.
+Frozen/read-only files remain unchanged from fd9fec2. Application/test git diff --check is clean. review.txt intentionally preserves literal Git context lines, including space-only lines and original CRLF bytes; whitespace warnings in the embedded verbatim patch must not be fixed by altering that evidence.
+Final branch: staging. Final code HEAD: 3938562. Working-tree delivery: M review.txt.
+No push or deployment. Screenshot acceptance remains blocked as stated above.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
