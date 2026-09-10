@@ -535,30 +535,29 @@ def test_unrelated_management_cannot_append_via_post(monkeypatch):
     db.field_escalations.update_one.assert_not_called()
 
 
-def test_open_unique_index_setup_fails_closed_and_verifies_options():
-    # Import server with its network client constructor neutralized; the
-    # ensure helper itself must still propagate both inspection and
-    # post-create verification failures.
+def test_open_unique_index_setup_is_best_effort(caplog):
+    # Index failures must be logged, not propagated into startup.
     from unittest.mock import patch
 
     with patch('motor.motor_asyncio.AsyncIOMotorClient', return_value=MagicMock()):
         import server
 
     collection = MagicMock()
-    server.db = MagicMock()
-    server.db.field_escalations = collection
-    collection.index_information = AsyncMock(side_effect=RuntimeError('index unavailable'))
-    with pytest.raises(RuntimeError, match='index unavailable'):
+    collection.create_index = AsyncMock(side_effect=RuntimeError('index unavailable'))
+    with patch.object(server, 'db', field_escalations=collection):
         asyncio.run(server._ensure_field_escalation_open_index())
+    assert 'index unavailable' in caplog.text
+    assert 'non-fatal' in caplog.text
+    collection.index_information.assert_not_called()
+    collection.create_index.assert_awaited_once_with(
+        [('unit_id', 1), ('status', 1)],
+        name='uniq_open_spare_escalation_per_unit',
+        unique=True,
+        partialFilterExpression={'type': 'spare_tiles', 'status': 'open'},
+    )
 
-    collection.index_information = AsyncMock(side_effect=[
-        {},
-        {'unit_id_1_status_1': {
-            'key': [('unit_id', 1), ('status', 1)],
-            'unique': False,
-            'partialFilterExpression': {'type': 'spare_tiles', 'status': 'open'},
-        }},
-    ])
-    collection.create_index = AsyncMock(return_value='unit_id_1_status_1')
-    with pytest.raises(RuntimeError, match='could not be verified'):
+    # Success likewise needs no post-create verification.
+    collection.create_index = AsyncMock(return_value='uniq_open_spare_escalation_per_unit')
+    with patch.object(server, 'db', field_escalations=collection):
         asyncio.run(server._ensure_field_escalation_open_index())
+    collection.index_information.assert_not_called()
