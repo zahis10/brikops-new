@@ -3227,3 +3227,283 @@ Final working-tree delivery: M review.txt (this addendum is left outside the cod
 No push or deployment performed.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+
+===============================================================================
+#600 (10.9)
+===============================================================================
+
+STEP 0
+Initial branch was main at 544419e, working tree clean. Ran git switch staging before editing any file.
+Output:
+Switched to branch 'staging'
+Your branch is up to date with 'origin/staging'.
+
+$ git branch --show-current
+staging
+
+$ git fetch origin && git log --oneline -1 origin/staging
+544419e (HEAD -> staging, origin/staging, origin/main, origin/HEAD, main) Merge branch 'main' into staging
+
+$ git log --oneline -1
+544419e (HEAD -> staging, origin/staging, origin/main, origin/HEAD, main) Merge branch 'main' into staging
+
+$ git status --short
+(empty; clean)
+
+SCOPE
+Only the two approved frontend components changed. Done history rows use emerald border/background/text and ✓ טופל; dismissed rows retain their original slate classes and opacity-60. Done unit-card text uses text-xs font-medium text-emerald-700 and ✓ טופל; dismissed text remains unchanged. Building/unit prefix, resolver name/date/note, open states, actions, amber history toggle, API/logic and backend remain unchanged.
+No tests/dependencies/environment/configuration files added or changed. Temporary local Mongo fixtures were used only for V3 and fully restored afterward.
+
+V1 — EXACT FILE SCOPE AND FULL DIFF
+$ git diff --name-only 544419e
+(Output before appending this permitted review.txt section)
+frontend/src/components/dashboard/EscalationsSection.js
+frontend/src/components/spare/SpareEscalationStatus.js
+
+$ git diff 544419e -- frontend/src/components/dashboard/EscalationsSection.js frontend/src/components/spare/SpareEscalationStatus.js
+diff --git a/frontend/src/components/dashboard/EscalationsSection.js b/frontend/src/components/dashboard/EscalationsSection.js
+index f2c8547..8aee100 100644
+--- a/frontend/src/components/dashboard/EscalationsSection.js
++++ b/frontend/src/components/dashboard/EscalationsSection.js
+@@ -6,6 +6,10 @@ import { contextLine } from '../../utils/escalationDraft';
+ import { formatRelativeHe } from '../../utils/relativeTime';
+ import { subRoleLabel } from '../../utils/roleLabels';
+ 
++const resolvedRowClass = (status) => status === 'done'
++  ? 'mt-2 rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800'
++  : 'mt-2 rounded-lg border border-slate-200 p-2 text-xs text-slate-500 opacity-60';
++
+ export default function EscalationsSection({ projectId, escalations, canAssign, currentUserId, onChanged }) {
+   const navigate = useNavigate();
+   const [doneId, setDoneId] = useState(null);
+@@ -69,7 +73,7 @@ export default function EscalationsSection({ projectId, escalations, canAssign,
+     {!items.length && <p className="py-4 text-center text-xs text-slate-400">אין הקפצות פתוחות</p>}
+     {escalations?.resolved_week_count > 0 && <div className="border-t border-slate-200 pt-3">
+       <button onClick={() => resolved ? setResolved(null) : escalationService.list(projectId, 'resolved').then(setResolved).catch(() => toast.error('שגיאה בטעינת היסטוריה'))} className={`${touch} text-xs font-bold text-amber-700`}>טופלו השבוע: {escalations.resolved_week_count} · הצג</button>
+-      {resolved?.items?.map(esc => <div key={esc.id} className="mt-2 rounded-lg border border-slate-200 p-2 text-xs text-slate-500 opacity-60">{esc.labels?.building} · דירה {esc.labels?.unit} · {esc.status === 'done' ? 'טופל' : 'לא רלוונטי'} ע״י {esc.resolved_by?.name} · {esc.resolved_at ? new Date(esc.resolved_at).toLocaleDateString('he-IL') : ''}{esc.resolution_note ? ` · "${esc.resolution_note}"` : ''}</div>)}
++      {resolved?.items?.map(esc => <div key={esc.id} className={resolvedRowClass(esc.status)}>{esc.labels?.building} · דירה {esc.labels?.unit} · {esc.status === 'done' ? '✓ טופל' : 'לא רלוונטי'} ע״י {esc.resolved_by?.name} · {esc.resolved_at ? new Date(esc.resolved_at).toLocaleDateString('he-IL') : ''}{esc.resolution_note ? ` · "${esc.resolution_note}"` : ''}</div>)}
+     </div>}
+   </div>;
+ }
+\ No newline at end of file
+diff --git a/frontend/src/components/spare/SpareEscalationStatus.js b/frontend/src/components/spare/SpareEscalationStatus.js
+index c05161b..83c7628 100644
+--- a/frontend/src/components/spare/SpareEscalationStatus.js
++++ b/frontend/src/components/spare/SpareEscalationStatus.js
+@@ -7,5 +7,5 @@ export default function SpareEscalationStatus({ unitData, onOpenSheet }) {
+   const esc = unitData.spare_escalation;
+   const canSend = unitData.spare_can_escalate && canEscalate(unitData.spare_status);
+   if (esc?.status === 'open') return <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"><span>נשלחה הקפצה{esc.urgency === 'urgent' ? ' דחופה' : ''} {formatRelativeHe(esc.created_at)} · ממתינה אצל {esc.assigned_to?.name || 'מנהל הפרויקט'}</span>{(unitData.spare_can_escalate || unitData.spare_can_assign) && <button onClick={() => onOpenSheet('note')} className="mr-2 min-h-[44px] font-bold underline">הוסף הערה</button>}</div>;
+-  return <div className="mb-3 flex flex-wrap items-center gap-2">{esc && <p className="text-xs text-slate-500">{esc.status === 'done' ? 'טופל' : 'סומן כלא רלוונטי'} ע״י {esc.resolved_by?.name} · {esc.resolved_at ? new Date(esc.resolved_at).toLocaleDateString('he-IL') : ''}{esc.resolution_note ? ` · "${esc.resolution_note}"` : ''}</p>}{canSend && <button onClick={() => onOpenSheet('new')} className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-50"><Bell className="h-3.5 w-3.5" />הקפץ למנהל הפרויקט</button>}</div>;
++  return <div className="mb-3 flex flex-wrap items-center gap-2">{esc && <p className={esc.status === 'done' ? 'text-xs font-medium text-emerald-700' : 'text-xs text-slate-500'}>{esc.status === 'done' ? '✓ טופל' : 'סומן כלא רלוונטי'} ע״י {esc.resolved_by?.name} · {esc.resolved_at ? new Date(esc.resolved_at).toLocaleDateString('he-IL') : ''}{esc.resolution_note ? ` · "${esc.resolution_note}"` : ''}</p>}{canSend && <button onClick={() => onOpenSheet('new')} className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-50"><Bell className="h-3.5 w-3.5" />הקפץ למנהל הפרויקט</button>}</div>;
+ }
+\ No newline at end of file
+
+V2 — BUILD AND JEST
+Build uses yarn build with CI=true to enforce the project warning-as-error verification rule.
+$ cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+yarn run v1.22.22
+$ craco build
+(node:690) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Creating an optimized production build...
+Browserslist: browsers data (caniuse-lite) is 7 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Browserslist: browsers data (caniuse-lite) is 7 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Compiled successfully.
+
+File sizes after gzip:
+
+  216.96 kB (-22 B)   build/static/js/main.299862f0.js
+  127.15 kB           build/static/js/3421.df72f0b6.chunk.js
+  110.41 kB           build/static/js/2116.e7e66a46.chunk.js
+  110.15 kB           build/static/js/4731.713418f6.chunk.js
+  47.62 kB            build/static/js/9359.ebef9fbf.chunk.js
+  46.24 kB            build/static/js/2570.372dab5d.chunk.js
+  45.89 kB            build/static/js/8671.8b55820c.chunk.js
+  45.44 kB            build/static/js/6985.ce305e65.chunk.js
+  42.94 kB            build/static/js/2239.ed3f5604.chunk.js
+  25.48 kB            build/static/js/8298.ce203f46.chunk.js
+  25.4 kB             build/static/js/3900.647b9ab6.chunk.js
+  22.79 kB (-42 B)    build/static/css/main.1ad71a6c.css
+  18.87 kB            build/static/js/1576.4b5bb923.chunk.js
+  18.3 kB             build/static/js/2089.4f9c3b73.chunk.js
+  17.08 kB            build/static/js/2434.fc02a0ce.chunk.js
+  16.9 kB             build/static/js/6703.c0528286.chunk.js
+  16.44 kB            build/static/js/1545.0e02808f.chunk.js
+  15.37 kB            build/static/js/493.e5ec3b19.chunk.js
+  14.41 kB            build/static/js/1494.7b1b92b2.chunk.js
+  13.7 kB             build/static/js/3931.2174cafe.chunk.js
+  12.79 kB            build/static/js/9397.3a317a65.chunk.js
+  11.8 kB             build/static/js/4355.f5198ebb.chunk.js
+  10.86 kB            build/static/js/7082.2bc11ba7.chunk.js
+  10.84 kB            build/static/js/7268.1fd02f2d.chunk.js
+  10.73 kB            build/static/js/9189.b414a9f1.chunk.js
+  9.85 kB             build/static/js/3805.1ff41c40.chunk.js
+  9.66 kB             build/static/js/32.a2e77e59.chunk.js
+  9.56 kB             build/static/js/3396.175ec191.chunk.js
+  9.28 kB             build/static/js/9466.4864e9f7.chunk.js
+  9.23 kB             build/static/js/6900.78a9e7b9.chunk.js
+  9.08 kB             build/static/js/130.0c47bc55.chunk.js
+  9.04 kB             build/static/js/8501.f4de84cd.chunk.js
+  8.8 kB              build/static/js/8680.c68735ae.chunk.js
+  8.2 kB              build/static/js/3100.f56e3b54.chunk.js
+  7.94 kB             build/static/js/6621.a6ca8686.chunk.js
+  7.53 kB             build/static/js/3559.1fff5864.chunk.js
+  7.1 kB              build/static/js/8844.01a42720.chunk.js
+  7.1 kB              build/static/js/8223.f7b16794.chunk.js
+  6.93 kB             build/static/js/4684.65de726f.chunk.js
+  6.86 kB             build/static/js/7459.1715588f.chunk.js
+  6.67 kB             build/static/js/2631.b1e21e5b.chunk.js
+  6.22 kB             build/static/js/1993.0fdb2a80.chunk.js
+  6.21 kB             build/static/js/1848.563accdb.chunk.js
+  5.93 kB             build/static/js/5226.26aec16e.chunk.js
+  5.47 kB             build/static/js/1990.9727520c.chunk.js
+  5.44 kB             build/static/js/3803.9bcefd25.chunk.js
+  5.24 kB             build/static/js/7959.ff6f6fdb.chunk.js
+  5.13 kB             build/static/js/1052.39bffe85.chunk.js
+  5.07 kB             build/static/js/3022.07d4a3bb.chunk.js
+  5.03 kB             build/static/js/5055.2eb7c205.chunk.js
+  5.02 kB             build/static/js/3447.87971734.chunk.js
+  4.93 kB             build/static/js/3330.0321740e.chunk.js
+  4.9 kB              build/static/js/5828.532efb88.chunk.js
+  4.66 kB             build/static/js/7761.f7f29f07.chunk.js
+  4.57 kB             build/static/js/7341.2718d69c.chunk.js
+  4.36 kB             build/static/js/6141.02dbce71.chunk.js
+  4.36 kB             build/static/js/283.69d8d10d.chunk.js
+  4.32 kB             build/static/js/2202.e191d1a0.chunk.js
+  4.25 kB             build/static/js/5993.619d62ed.chunk.js
+  4.09 kB             build/static/js/5198.6cd5cb2c.chunk.js
+  4 kB                build/static/js/1960.94f92370.chunk.js
+  3.86 kB             build/static/js/7387.c18565e4.chunk.js
+  3.82 kB             build/static/js/6494.f000bf3b.chunk.js
+  3.78 kB             build/static/js/5757.61d1107c.chunk.js
+  3.69 kB (-1.01 kB)  build/static/js/6146.5dece4b1.chunk.js
+  3.49 kB             build/static/js/2626.afdfa8fc.chunk.js
+  2.98 kB             build/static/js/5126.e58e6860.chunk.js
+  2.93 kB             build/static/js/3557.645d0f46.chunk.js
+  2.88 kB             build/static/js/33.b7f0ca86.chunk.js
+  2.77 kB             build/static/js/7753.b623070c.chunk.js
+  2.31 kB             build/static/js/1987.a64aed1b.chunk.js
+  1.47 kB             build/static/js/5373.df496ce0.chunk.js
+  1.05 kB             build/static/js/133.c889e72b.chunk.js
+  626 B               build/static/js/9789.7487b0f3.chunk.js
+  404 B               build/static/js/6970.57873c2e.chunk.js
+  307 B               build/static/js/722.75da6952.chunk.js
+  247 B               build/static/js/7948.dda5190a.chunk.js
+  247 B               build/static/js/746.fd7f0321.chunk.js
+  194 B               build/static/js/6767.2cf9a575.chunk.js
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  yarn global add serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+
+Done in 20.69s.
+EXIT 0
+
+Same full Jest command as #598, with the documented /tmp-only libuuid shim (no dependency or environment file changes):
+$ cd frontend && LD_LIBRARY_PATH=/tmp/batch598-libs CI=true yarn test --watchAll=false --runInBand
+yarn run v1.22.22
+$ craco test --watchAll=false --runInBand
+PASS src/components/__tests__/PhotoAnnotation.pendingtext.test.js
+PASS src/hooks/__tests__/useMatrixFilters.test.js
+PASS src/utils/__tests__/domGuard.test.js
+PASS src/utils/__tests__/fileDownload.web.test.js
+PASS src/i18n/__tests__/index.test.js
+PASS src/components/matrix/SparePill.test.js
+PASS src/utils/__tests__/escalationDraft.test.js
+PASS src/utils/__tests__/relativeTime.test.js
+
+Test Suites: 8 passed, 8 total
+Tests:       43 passed, 43 total
+Snapshots:   0 total
+Time:        6.185 s
+Ran all test suites.
+Done in 7.18s.
+EXIT 0
+
+V3 — LOCAL WORKFLOW SCREENSHOTS
+One focused visual pass using http://localhost:5000 explicitly, not the Mockup Sandbox/proxied default host. Logged in as the existing demo PM via local development OTP.
+Exactly one done and one dismissed escalation were seeded in the existing demo project. The done resolution note was הספייר הגיע ונבדק; the dismissed note was אין צורך בהזמנה נוספת. Both use resolver מנהל הפרויקט and date 10.9.2026. A temporary one-category spare profile and unit entries were backed up/set to expose the real spare card; original field presence and values were restored after screenshots. No real users, notifications, or memberships created.
+
+a) 390x844 dashboard, treated-this-week opened: euiw7i — PASS.
+Both rows fully visible together: green ✓ טופל and grey/faded לא רלוונטי; building/unit, resolver, date and note present; no clipping.
+b) 390x844 done-unit spare card: gvk4a6 — PASS.
+Green ✓ טופל ע״י מנהל הפרויקט · 10.9.2026 · "הספייר הגיע ונבדק" visible together with עדכון מלאי; no clipping.
+c) 1440x900 dashboard: i2kaio — PASS. Same two rows/colors/structure fully visible.
+d) 1440x900 done-unit spare card: shss6x — PASS. Green resolution, date/note, and עדכון מלאי fully visible.
+All four images inspected by the parent agent. No extra browser regression pass or data-changing UI action.
+
+URLs:
+http://localhost:5000/projects/ee134483-75d4-4e7a-a942-399fc4f1dfd3/dashboard?focus=escalations
+http://localhost:5000/projects/ee134483-75d4-4e7a-a942-399fc4f1dfd3/units/5aaf7561-83f3-4cc6-93b1-6e00b041fab7/defects
+
+Console: known baseline CSP refusals for Google Fonts, inline styles/scripts, Google Identity and Emergent; no visual regression. Workflow restarted once after the build and serves the updated frontend. Existing non-fatal duplicate index-name and missing configured super-admin notices remain; no backend changes were made for this visual batch.
+
+Cleanup output, local Mongo contractor_ops only:
+Seed ids: ["batch600-done-14d023b7-3a51-448f-b674-72bb5d9bc8a4", "batch600-dismissed-d44a2a1c-d16b-432b-85e5-9672c928fca8"]
+removed escalations: 2
+removed notifications: 0
+removed new screenshot-login records otp_codes 0
+remaining new records otp_codes 0
+removed new screenshot-login records otp_metrics 2
+remaining new records otp_metrics 0
+removed new screenshot-login records otp_rate_limits 6
+remaining new records otp_rate_limits 0
+{
+  "field_escalations.count_documents({id: {$in: seed_ids}})": 0,
+  "qc_notifications.count_documents({escalation_id: {$in: seed_ids}})": 0,
+  "audit_events.count_documents({entity_id: {$in: seed_ids}})": 0,
+  "users.count_documents({id: batch600-requester})": 0,
+  "project_memberships.count_documents({user_id: batch600-requester})": 0,
+  "organization_memberships.count_documents({user_id: batch600-requester})": 0
+}
+project spare settings restored exactly: true
+both unit spare fields restored exactly: true
+
+Zero-count queries (seed_ids are the two IDs printed above):
+db.field_escalations.count_documents({"id": {"$in": seed_ids}}) == 0
+db.qc_notifications.count_documents({"escalation_id": {"$in": seed_ids}}) == 0
+db.audit_events.count_documents({"entity_id": {"$in": seed_ids}}) == 0
+New screenshot-login OTP/metric/rate-limit records were removed by exact IDs not present in the pre-run baseline; prior records were preserved.
+
+V4 — COLOUR/OPACITY CHECKS
+$ grep -n "opacity-60" frontend/src/components/dashboard/EscalationsSection.js
+11:  : 'mt-2 rounded-lg border border-slate-200 p-2 text-xs text-slate-500 opacity-60';
+Only the dismissed fallback branch of resolvedRowClass contains opacity-60.
+
+$ grep -c "emerald" frontend/src/components/spare/SpareEscalationStatus.js
+1
+
+FINAL STATE
+$ git status --short
+ M frontend/src/components/dashboard/EscalationsSection.js
+ M frontend/src/components/spare/SpareEscalationStatus.js
+ M review.txt
+
+$ git branch --show-current
+staging
+
+$ git rev-parse --short HEAD
+544419e
+
+.local/.commit_message:
+escalations: resolved rows read green (#600)
+
+No local commit yet: waiting for Zahi approval as specified. No commit on main, no push, no deployment.
+Application-source git diff --check is clean; verbatim diff whitespace in this review is preserved intentionally.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY

@@ -6,6 +6,10 @@ import { contextLine } from '../../utils/escalationDraft';
 import { formatRelativeHe } from '../../utils/relativeTime';
 import { subRoleLabel } from '../../utils/roleLabels';
 
+const resolvedRowClass = (status) => status === 'done'
+  ? 'mt-2 rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800'
+  : 'mt-2 rounded-lg border border-slate-200 p-2 text-xs text-slate-500 opacity-60';
+
 export default function EscalationsSection({ projectId, escalations, canAssign, currentUserId, onChanged }) {
   const navigate = useNavigate();
   const [doneId, setDoneId] = useState(null);
@@ -69,7 +73,7 @@ export default function EscalationsSection({ projectId, escalations, canAssign, 
     {!items.length && <p className="py-4 text-center text-xs text-slate-400">אין הקפצות פתוחות</p>}
     {escalations?.resolved_week_count > 0 && <div className="border-t border-slate-200 pt-3">
       <button onClick={() => resolved ? setResolved(null) : escalationService.list(projectId, 'resolved').then(setResolved).catch(() => toast.error('שגיאה בטעינת היסטוריה'))} className={`${touch} text-xs font-bold text-amber-700`}>טופלו השבוע: {escalations.resolved_week_count} · הצג</button>
-      {resolved?.items?.map(esc => <div key={esc.id} className="mt-2 rounded-lg border border-slate-200 p-2 text-xs text-slate-500 opacity-60">{esc.labels?.building} · דירה {esc.labels?.unit} · {esc.status === 'done' ? 'טופל' : 'לא רלוונטי'} ע״י {esc.resolved_by?.name} · {esc.resolved_at ? new Date(esc.resolved_at).toLocaleDateString('he-IL') : ''}{esc.resolution_note ? ` · "${esc.resolution_note}"` : ''}</div>)}
+      {resolved?.items?.map(esc => <div key={esc.id} className={resolvedRowClass(esc.status)}>{esc.labels?.building} · דירה {esc.labels?.unit} · {esc.status === 'done' ? '✓ טופל' : 'לא רלוונטי'} ע״י {esc.resolved_by?.name} · {esc.resolved_at ? new Date(esc.resolved_at).toLocaleDateString('he-IL') : ''}{esc.resolution_note ? ` · "${esc.resolution_note}"` : ''}</div>)}
     </div>}
   </div>;
 }
