@@ -518,6 +518,10 @@ app.include_router(admin_dashboard_router)
 from contractor_ops.admin_analytics import router as admin_analytics_router
 app.include_router(admin_analytics_router)
 
+from contractor_ops.admin_activity_router import router as admin_activity_router
+from contractor_ops import activity_hours
+app.include_router(admin_activity_router)
+
 from contractor_ops.invites_router import router as invites_router
 app.include_router(invites_router)
 
@@ -601,6 +605,7 @@ async def create_indexes():
         )
         await db.audit_events.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
         await _ensure_field_escalation_indexes()
+        await activity_hours.ensure_indexes(db)
         await db.users.create_index("email", unique=True, sparse=True)
         await db.auth_failed_attempts.create_index(
             [("identifier", 1), ("ip", 1)],

@@ -2614,6 +2614,18 @@ export const adminAnalyticsService = {
     });
     return response.data;
   },
+  async getActiveNow(minutes = 15) {
+    const response = await axios.get(`${API}/admin/analytics/active-now`, {
+      headers: getAuthHeader(), params: { minutes },
+    });
+    return response.data;
+  },
+  async getHourly(params) {
+    const response = await axios.get(`${API}/admin/analytics/hourly`, {
+      headers: getAuthHeader(), params,
+    });
+    return response.data;
+  },
   async getFeatureUsage(period) {
     const response = await axios.get(`${API}/admin/analytics/feature-usage`, {
       headers: getAuthHeader(), params: { period },

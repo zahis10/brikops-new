@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { adminAnalyticsService } from '../services/api';
+import ActiveNowChip from '../components/admin/ActiveNowChip';
+import ActivityHeatmap from '../components/admin/ActivityHeatmap';
+import UserHoursStrip from '../components/admin/UserHoursStrip';
 import {
   Loader2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   Search, TrendingUp, TrendingDown,
@@ -111,7 +114,7 @@ function AdminScoreTooltip() {
   );
 }
 
-function MobileUserCard({ user }) {
+function MobileUserCard({ user, today }) {
   const [expanded, setExpanded] = useState(false);
   const m = user.metrics || {};
   const statusDot = STATUS_DOTS[user.status] || 'bg-slate-300';
@@ -179,6 +182,7 @@ function MobileUserCard({ user }) {
             <span>·</span>
             <span>כניסה אחרונה: {formatLoginDate(user.last_login)}</span>
           </div>
+          <UserHoursStrip hours={user.hours} today={today} compact />
         </div>
       )}
     </div>
@@ -258,6 +262,7 @@ export default function AdminActivityPage() {
           </button>
           <Users className="w-5 h-5 text-amber-400" />
           <h1 className="text-base font-bold">פעילות משתמשים</h1>
+          <ActiveNowChip />
         </div>
       </header>
 
@@ -306,6 +311,8 @@ export default function AdminActivityPage() {
           </select>
         </div>
 
+        <ActivityHeatmap days={period === 7 ? 7 : 30} orgId={orgId} />
+
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
             <h2 className="text-sm font-bold text-slate-800">פעילות משתמשים</h2>
@@ -319,7 +326,7 @@ export default function AdminActivityPage() {
             <>
               <div className="md:hidden">
                 {(data?.users || []).map(u => (
-                  <MobileUserCard key={u.user_id} user={u} />
+                  <MobileUserCard key={u.user_id} user={u} today={data?.today} />
                 ))}
                 {(!data?.users || data.users.length === 0) && (
                   <div className="px-4 py-8 text-center text-slate-400 text-sm">אין תוצאות</div>
@@ -333,6 +340,7 @@ export default function AdminActivityPage() {
                       <th className="px-3 py-2 text-right font-medium">תפקיד</th>
                       <th className="px-3 py-2 text-right font-medium">ארגון</th>
                       <SortHeader label="כניסה אחרונה" col="last_login" current={sort} order={order} onSort={toggleSort} />
+                      <th className="px-3 py-2 text-center font-medium">שעות היום</th>
                       <SortHeader label="כניסות" col="login_count" current={sort} order={order} onSort={toggleSort} />
                       <th className="px-3 py-2 text-center font-medium">ליקויים</th>
                       <th className="px-3 py-2 text-center font-medium">בק״ב</th>
@@ -358,6 +366,7 @@ export default function AdminActivityPage() {
                         </td>
                         <td className="px-3 py-2 text-slate-600 whitespace-nowrap text-xs">{u.org_name || '—'}</td>
                         <td className="px-3 py-2 text-slate-500 whitespace-nowrap text-xs">{formatLoginDate(u.last_login)}</td>
+                        <td className="px-3 py-2 min-w-[150px]"><UserHoursStrip hours={u.hours} today={data.today} compact /></td>
                         <td className="px-3 py-2 text-center text-slate-600">{u.login_count || 0}</td>
                         <td className="px-3 py-2 text-center">
                           <span className="text-xs">{u.metrics?.defects_created || 0}/{u.metrics?.defects_closed || 0}</span>
@@ -381,7 +390,7 @@ export default function AdminActivityPage() {
                       </tr>
                     ))}
                     {(!data?.users || data.users.length === 0) && (
-                      <tr><td colSpan={11} className="px-4 py-8 text-center text-slate-400 text-sm">אין תוצאות</td></tr>
+                      <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-400 text-sm">אין תוצאות</td></tr>
                     )}
                   </tbody>
                 </table>

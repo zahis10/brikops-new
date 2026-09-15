@@ -3507,3 +3507,1395 @@ No local commit yet: waiting for Zahi approval as specified. No commit on main, 
 Application-source git diff --check is clean; verbatim diff whitespace in this review is preserved intentionally.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+
+===============================================================================
+#601 (10.9)
+===============================================================================
+
+STEP 0
+Initial branch main; git switch staging executed BEFORE implementation edits.
+Output: Switched to branch staging. Your branch is up to date with origin/staging.
+The following four commands ran in order:
+git branch --show-current
+git fetch origin && git log --oneline -1 origin/staging
+git log --oneline -3
+git status --short
+Combined output (status was empty/clean):
+staging
+3e2decd Update escalation metadata and dashboard components
+3e2decd Update escalation metadata and dashboard components
+544419e Merge branch 'main' into staging
+35be06e deploy: update frontend and backend
+
+Base: 3e2decd, verified containing completed Batch #600 green-resolved source changes. No batch interleaving.
+
+IMPLEMENTATION
+New UTC hourly history with 90-day BSON TTL; safe throttled upsert and new-UTC-hour stamp; server-side Asia/Jerusalem aggregation with DST deduplication; aggregate demo/super-admin exclusion; organization membership filter. Active-now total count and capped 200 users. Two super-admin endpoints, additive table fields including empty response. Three isolated admin components, scoped wiring and API methods. Empty/error states, polling cleanup/stale-result guards, 7/30-day heatmap, 7-day user strips, local LTR styles overriding existing universal RTL CSS. No dependencies/config/spare/escalation changes.
+
+File line counts (whole files, not changed-line counts):
+   371 backend/contractor_ops/activity_hours.py
+    39 backend/contractor_ops/admin_activity_router.py
+   787 backend/contractor_ops/router.py
+   525 backend/contractor_ops/admin_analytics.py
+  1636 backend/server.py
+   414 backend/tests/test_activity_hours.py
+  2635 frontend/src/services/api.js
+   107 frontend/src/components/admin/ActiveNowChip.js
+   161 frontend/src/components/admin/ActivityHeatmap.js
+   110 frontend/src/components/admin/UserHoursStrip.js
+   484 frontend/src/pages/AdminActivityPage.js
+  7269 total
+IMPORTANT EXCEPTIONS FOR APPROVAL
+1. router.py has 15 changed lines (5 added / 10 removed), exceeding the requested 8. Replacing the old parsing/throttle block cleanly with should_stamp avoids leaving duplicate or malformed-value-sensitive parsing. Explicit approval of this exception is still pending. AdminActivityPage has 15 changed lines; admin_analytics has 9 additive lines; server has 5; API methods add 12 versus the specification's approximate +10.
+2. No commit was made, as the AFTER APPROVAL instruction takes precedence. Thus V1 uses base-to-working-tree evidence plus new-file list, not base..HEAD (which would falsely be empty); V7 correctly reports uncommitted implementation files rather than claiming a clean tree. No commit/push/deploy has been executed.
+
+V1 — SCOPE AND WIRING
+Exact implementation file list (modified + new):
+backend/contractor_ops/activity_hours.py
+backend/contractor_ops/admin_activity_router.py
+backend/contractor_ops/router.py
+backend/contractor_ops/admin_analytics.py
+backend/server.py
+backend/tests/test_activity_hours.py
+frontend/src/services/api.js
+frontend/src/components/admin/ActiveNowChip.js
+frontend/src/components/admin/ActivityHeatmap.js
+frontend/src/components/admin/UserHoursStrip.js
+frontend/src/pages/AdminActivityPage.js
+Additional permitted files: review.txt, .agents/memory/MEMORY.md, .agents/memory/presence-fixture-cleanup.md. Prepared ignored .local/.commit_message. Temporary proof scripts/logs only in /tmp.
+
+$ git diff --stat -- backend/contractor_ops/router.py frontend/src/pages/AdminActivityPage.js
+ backend/contractor_ops/router.py        | 15 +++++----------
+ frontend/src/pages/AdminActivityPage.js | 15 ++++++++++++---
+ 2 files changed, 17 insertions(+), 13 deletions(-)
+
+Full raw wiring diff (router.py / admin_analytics.py / server.py / AdminActivityPage.js):
+diff --git a/backend/contractor_ops/admin_analytics.py b/backend/contractor_ops/admin_analytics.py
+index 1aa7eb3..d0dc3a4 100644
+--- a/backend/contractor_ops/admin_analytics.py
++++ b/backend/contractor_ops/admin_analytics.py
+@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
+ from fastapi import APIRouter, Depends, HTTPException, Query
+ from contractor_ops.router import get_db, get_current_user
+ from contractor_ops.constants import TERMINAL_TASK_STATUSES
++from contractor_ops.activity_hours import IL_TZ, hours_by_user
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -160,6 +161,8 @@ async def user_activity(
+             'page': page,
+             'limit': limit,
+             'orgs': [{'id': o['id'], 'name': o.get('name', '')} for o in orgs],
++            'today': now.astimezone(IL_TZ).date().isoformat(),
++            'tz': 'Asia/Jerusalem',
+         }
+ 
+     start = (page - 1) * limit
+@@ -167,6 +170,8 @@ async def user_activity(
+ 
+     page_user_ids = [u['id'] for u in page_users]
+     user_map = {u['id']: u for u in page_users}
++    hours_map = await hours_by_user(db, page_user_ids, 7, now)
++    today_il = now.astimezone(IL_TZ).date().isoformat()
+ 
+     defects_created_agg = await db.tasks.aggregate([
+         {'$match': {'created_by': {'$in': page_user_ids}, 'created_at': {'$gte': period_start}}},
+@@ -260,6 +265,8 @@ async def user_activity(
+             'login_count': u.get('login_count', 0),
+             'activity_score': activity_score,
+             'status': status,
++            'hours': hours_map.get(uid, {}),
++            'hours_today': hours_map.get(uid, {}).get(today_il, []),
+             'metrics': {
+                 'defects_created': metrics['defects_created'],
+                 'defects_closed': metrics['defects_closed'],
+@@ -279,6 +286,8 @@ async def user_activity(
+         'page': page,
+         'limit': limit,
+         'orgs': [{'id': o['id'], 'name': o.get('name', '')} for o in orgs],
++        'today': today_il,
++        'tz': 'Asia/Jerusalem',
+     }
+ 
+ 
+diff --git a/backend/contractor_ops/router.py b/backend/contractor_ops/router.py
+index 06ec8ff..ace2f18 100644
+--- a/backend/contractor_ops/router.py
++++ b/backend/contractor_ops/router.py
+@@ -25,6 +25,7 @@ from contractor_ops.stepup_service import (
+     has_valid_grant as stepup_has_valid_grant,
+     ensure_indexes as stepup_ensure_indexes,
+ )
++from contractor_ops.activity_hours import record_presence, should_stamp
+ 
+ _router_otp_service = None
+ 
+@@ -219,19 +220,13 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
+         # Presence stamp (best-effort, throttled): real "last seen" for
+         # team-activity / admin recency. Never blocks or fails auth.
+         try:
+-            _seen_raw = user.get('last_seen_at')
+-            _stale = True
+-            if _seen_raw:
+-                _seen_dt = datetime.fromisoformat(str(_seen_raw).replace('Z', '+00:00'))
+-                if _seen_dt.tzinfo is None:
+-                    _seen_dt = _seen_dt.replace(tzinfo=timezone.utc)
+-                else:
+-                    _seen_dt = _seen_dt.astimezone(timezone.utc)
+-                _stale = (datetime.now(timezone.utc) - _seen_dt) > timedelta(minutes=10)
++            _now_dt = datetime.now(timezone.utc)
++            _stale = should_stamp(user.get('last_seen_at'), _now_dt)
+             if _stale:
+-                _now_iso = datetime.now(timezone.utc).isoformat()
++                _now_iso = _now_dt.isoformat()
+                 await db.users.update_one({'id': user['id']}, {'$set': {'last_seen_at': _now_iso}})
+                 user['last_seen_at'] = _now_iso
++                await record_presence(db, user['id'], _now_dt)
+         except Exception:
+             pass
+         return user
+diff --git a/backend/server.py b/backend/server.py
+index 8b832ae..3146598 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -518,6 +518,10 @@ app.include_router(admin_dashboard_router)
+ from contractor_ops.admin_analytics import router as admin_analytics_router
+ app.include_router(admin_analytics_router)
+ 
++from contractor_ops.admin_activity_router import router as admin_activity_router
++from contractor_ops import activity_hours
++app.include_router(admin_activity_router)
++
+ from contractor_ops.invites_router import router as invites_router
+ app.include_router(invites_router)
+ 
+@@ -601,6 +605,7 @@ async def create_indexes():
+         )
+         await db.audit_events.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
+         await _ensure_field_escalation_indexes()
++        await activity_hours.ensure_indexes(db)
+         await db.users.create_index("email", unique=True, sparse=True)
+         await db.auth_failed_attempts.create_index(
+             [("identifier", 1), ("ip", 1)],
+diff --git a/frontend/src/pages/AdminActivityPage.js b/frontend/src/pages/AdminActivityPage.js
+index a6a3233..d48a933 100644
+--- a/frontend/src/pages/AdminActivityPage.js
++++ b/frontend/src/pages/AdminActivityPage.js
+@@ -1,6 +1,9 @@
+ import React, { useState, useEffect, useCallback, useRef } from 'react';
+ import { useNavigate } from 'react-router-dom';
+ import { adminAnalyticsService } from '../services/api';
++import ActiveNowChip from '../components/admin/ActiveNowChip';
++import ActivityHeatmap from '../components/admin/ActivityHeatmap';
++import UserHoursStrip from '../components/admin/UserHoursStrip';
+ import {
+   Loader2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
+   Search, TrendingUp, TrendingDown,
+@@ -111,7 +114,7 @@ function AdminScoreTooltip() {
+   );
+ }
+ 
+-function MobileUserCard({ user }) {
++function MobileUserCard({ user, today }) {
+   const [expanded, setExpanded] = useState(false);
+   const m = user.metrics || {};
+   const statusDot = STATUS_DOTS[user.status] || 'bg-slate-300';
+@@ -179,6 +182,7 @@ function MobileUserCard({ user }) {
+             <span>·</span>
+             <span>כניסה אחרונה: {formatLoginDate(user.last_login)}</span>
+           </div>
++          <UserHoursStrip hours={user.hours} today={today} compact />
+         </div>
+       )}
+     </div>
+@@ -258,6 +262,7 @@ export default function AdminActivityPage() {
+           </button>
+           <Users className="w-5 h-5 text-amber-400" />
+           <h1 className="text-base font-bold">פעילות משתמשים</h1>
++          <ActiveNowChip />
+         </div>
+       </header>
+ 
+@@ -306,6 +311,8 @@ export default function AdminActivityPage() {
+           </select>
+         </div>
+ 
++        <ActivityHeatmap days={period === 7 ? 7 : 30} orgId={orgId} />
++
+         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+           <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+             <h2 className="text-sm font-bold text-slate-800">פעילות משתמשים</h2>
+@@ -319,7 +326,7 @@ export default function AdminActivityPage() {
+             <>
+               <div className="md:hidden">
+                 {(data?.users || []).map(u => (
+-                  <MobileUserCard key={u.user_id} user={u} />
++                  <MobileUserCard key={u.user_id} user={u} today={data?.today} />
+                 ))}
+                 {(!data?.users || data.users.length === 0) && (
+                   <div className="px-4 py-8 text-center text-slate-400 text-sm">אין תוצאות</div>
+@@ -333,6 +340,7 @@ export default function AdminActivityPage() {
+                       <th className="px-3 py-2 text-right font-medium">תפקיד</th>
+                       <th className="px-3 py-2 text-right font-medium">ארגון</th>
+                       <SortHeader label="כניסה אחרונה" col="last_login" current={sort} order={order} onSort={toggleSort} />
++                      <th className="px-3 py-2 text-center font-medium">שעות היום</th>
+                       <SortHeader label="כניסות" col="login_count" current={sort} order={order} onSort={toggleSort} />
+                       <th className="px-3 py-2 text-center font-medium">ליקויים</th>
+                       <th className="px-3 py-2 text-center font-medium">בק״ב</th>
+@@ -358,6 +366,7 @@ export default function AdminActivityPage() {
+                         </td>
+                         <td className="px-3 py-2 text-slate-600 whitespace-nowrap text-xs">{u.org_name || '—'}</td>
+                         <td className="px-3 py-2 text-slate-500 whitespace-nowrap text-xs">{formatLoginDate(u.last_login)}</td>
++                        <td className="px-3 py-2 min-w-[150px]"><UserHoursStrip hours={u.hours} today={data.today} compact /></td>
+                         <td className="px-3 py-2 text-center text-slate-600">{u.login_count || 0}</td>
+                         <td className="px-3 py-2 text-center">
+                           <span className="text-xs">{u.metrics?.defects_created || 0}/{u.metrics?.defects_closed || 0}</span>
+@@ -381,7 +390,7 @@ export default function AdminActivityPage() {
+                       </tr>
+                     ))}
+                     {(!data?.users || data.users.length === 0) && (
+-                      <tr><td colSpan={11} className="px-4 py-8 text-center text-slate-400 text-sm">אין תוצאות</td></tr>
++                      <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-400 text-sm">אין תוצאות</td></tr>
+                     )}
+                   </tbody>
+                 </table>
+
+V2 — BACKEND TESTS AND SPARE PROBE
+Final command: cd backend && PYTHONPATH=/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages MONGO_URL=mongodb://127.0.0.1:27017 python -m pytest -q tests/test_activity_hours.py tests/test_escalations.py tests/test_unit_detail.py tests/test_notifications_defect.py
+EXIT 0; 11 activity tests + 41 regression tests.
+....................................................                     [100%]
+=============================== warnings summary ===============================
+contractor_ops/schemas.py:209
+  /home/runner/workspace/backend/contractor_ops/schemas.py:209: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    @validator('trade', pre=True, always=True)
+
+contractor_ops/schemas.py:612
+  /home/runner/workspace/backend/contractor_ops/schemas.py:612: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    @validator('trade', pre=True, always=True)
+
+backend/tests/test_activity_hours.py::test_admin_activity_api_enforces_role_and_parameter_contract
+  /home/runner/workspace/backend/server.py:1349: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+backend/tests/test_activity_hours.py::test_admin_activity_api_enforces_role_and_parameter_contract
+backend/tests/test_activity_hours.py::test_admin_activity_api_enforces_role_and_parameter_contract
+  /home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/fastapi/applications.py:4495: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)
+
+backend/tests/test_activity_hours.py::test_admin_activity_api_enforces_role_and_parameter_contract
+  /home/runner/workspace/backend/server.py:1394: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("shutdown")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+52 passed, 6 warnings in 2.31s
+
+The initial combined run failed importing Nix Python3.12 NumPy under Python3.11; using the existing backend/start.sh PYTHONPATH ordering resolved it without installing/changing packages. New tests cover successful/failing indexes, missing/malformed/new-hour throttle, upserts/TTL, Israel/DST counts/org/demo exclusions, active-now sort/cap, real no-token401, role/parameter checks, additive user_activity including empty state.
+
+Unchanged live spare probe executed through /tmp wrapper, which removes exact new probe-user hourly buckets because the legacy probe predates hourly history. EXIT 0: all 99 checks pass. Complete output:
+[SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****0001,****9991
+[PASS] live server reachable without ASGITransport — status=200
+[PASS] GET /api/units/probe-spare-unit-1-9675150f17 -> 200 — status=200
+[PASS] V3 absent settings has no profiles
+[PASS] V3 absent settings status is no_profile
+[PASS] V3 baseline existing top-level keys captured
+[PASS] V3 baseline existing unit keys captured
+[PASS] GET /api/execution-matrix/probe-spare-project-9675150f17 -> 200 — status=200
+[PASS] V2 matrix without settings disables spare
+[PASS] POST /api/execution-matrix/probe-spare-project-9675150f17/export.xlsx -> 200 — status=200
+[PASS] V2 matrix export without settings has no spare header
+[PASS] V7 seeded legacy spare_tiles exact array
+[PASS] V7 seeded legacy aggregate fields exact
+[PASS] GET /api/projects/probe-spare-project-9675150f17/handover/overview -> 200 — status=200
+[PASS] POST /api/defects/export -> 200 — status=200
+[PASS] GET /api/projects/probe-spare-project-9675150f17/spare-settings -> 200 — status=200
+[PASS] V2 viewer GET settings allowed and read-only
+[PASS] GET /api/projects/probe-spare-project-9675150f17/spare-settings -> 200 — status=200
+[PASS] V2 management team GET settings is read-only
+[PASS] GET /api/projects/probe-spare-project-9675150f17/spare-assignments -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-9675150f17/spare-settings -> 403 — status=403
+[PASS] PUT /api/projects/probe-spare-project-9675150f17/spare-settings -> 403 — status=403
+[PASS] V2 management team settings rejection message is exact
+[PASS] PATCH /api/projects/probe-spare-project-9675150f17/spare-profiles/55822f74-5750-4328-860d-5cc99a712ce3/units -> 403 — status=403
+[PASS] PATCH /api/projects/probe-spare-project-9675150f17/spare-profiles/55822f74-5750-4328-860d-5cc99a712ce3/units -> 403 — status=403
+[PASS] PUT /api/projects/probe-spare-project-9675150f17/spare-settings -> 200 — status=200
+[PASS] V2 PM saved two profiles
+
+[V7 JSON] settings save BEFORE
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[V7 JSON] settings save AFTER
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[PASS] V7 whole unit unchanged after settings/profile save
+[PASS] PUT /api/projects/probe-spare-project-9675150f17/spare-settings -> 200 — status=200
+[PASS] V2 owner project-scoped write allowed
+[PASS] PUT /api/projects/probe-spare-project-9675150f17/spare-settings -> 200 — status=200
+[PASS] V3 cartons measure coerced to tiles
+[PASS] PUT /api/projects/probe-spare-project-9675150f17/spare-settings -> 409 — status=409
+[PASS] GET /api/projects/probe-spare-project-9675150f17/spare-assignments?building_id=probe-spare-building-main-9675150f17 -> 200 — status=200
+[PASS] V2 buildings preserve structure ordering
+[PASS] V2 floors preserve sort_index ordering
+[PASS] V2 units preserve sort_index ordering
+[PASS] V2 assignment unit payload is exact
+[PASS] GET /api/units/probe-spare-unit-1-9675150f17 -> 200 — status=200
+[PASS] V3 management team can update inventory but cannot assign profiles
+[PASS] GET /api/units/probe-spare-unit-1-9675150f17 -> 200 — status=200
+[PASS] V3 PM can update inventory and assign profiles
+[PASS] PATCH /api/units/probe-spare-unit-1-9675150f17/spare-tiles -> 200 — status=200
+[PASS] V3 management team inventory no-op preserves whole unit
+[PASS] PATCH /api/projects/probe-spare-project-9675150f17/spare-profiles/55822f74-5750-4328-860d-5cc99a712ce3/units -> 200 — status=200
+[PASS] V2 assignment add exact count
+
+[V7 JSON] profile assignment BEFORE
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[V7 JSON] profile assignment AFTER
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": "55822f74-5750-4328-860d-5cc99a712ce3",
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[PASS] V7 assignment changes only spare_profile_id
+[PASS] PATCH /api/projects/probe-spare-project-9675150f17/spare-profiles/dc1981ae-9a90-45d7-a4d7-145084bb08e2/units -> 200 — status=200
+[PASS] V2 assignment move exact count
+[PASS] PATCH /api/projects/probe-spare-project-9675150f17/spare-profiles/dc1981ae-9a90-45d7-a4d7-145084bb08e2/units -> 200 — status=200
+[PASS] V2 assignment remove exact count
+
+[V7 JSON] profile removal BEFORE
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": "55822f74-5750-4328-860d-5cc99a712ce3",
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[V7 JSON] profile removal AFTER
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[PASS] V7 removal restores whole unit with spare_profile_id None
+[PASS] PATCH /api/projects/probe-spare-project-9675150f17/spare-profiles/dc1981ae-9a90-45d7-a4d7-145084bb08e2/units -> 200 — status=200
+[PASS] V2 no-op removal reports zero
+[PASS] PUT /api/projects/probe-spare-project-9675150f17/spare-settings -> 409 — status=409
+[PASS] PATCH /api/projects/probe-spare-project-9675150f17/spare-profiles/dc1981ae-9a90-45d7-a4d7-145084bb08e2/units -> 422 — status=422
+[PASS] PATCH /api/units/probe-spare-unit-1-9675150f17/spare-tiles -> 200 — status=200
+
+[V7 JSON] profile-aware unchanged inventory save BEFORE
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[V7 JSON] profile-aware unchanged inventory save AFTER
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[PASS] V7 profile-aware unchanged save preserves whole unit
+[PASS] PATCH /api/projects/probe-spare-project-9675150f17/spare-profiles/55822f74-5750-4328-860d-5cc99a712ce3/units -> 200 — status=200
+[PASS] PATCH /api/units/probe-spare-unit-1-9675150f17/spare-tiles -> 200 — status=200
+
+[V7 JSON] explicit confirmed zero BEFORE
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[V7 JSON] explicit confirmed zero AFTER
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": "55822f74-5750-4328-860d-5cc99a712ce3",
+  "spare_tiles": [
+    {
+      "count": 0,
+      "entered": true,
+      "notes": "",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 0,
+      "entered": true,
+      "notes": "",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 3,
+  "spare_tiles_notes": "ריצוף מרפסות: קרטון",
+  "status": "available",
+  "unit_no": "101"
+}
+[PASS] V1 confirmed zero stored exactly
+[PASS] GET /api/units/probe-spare-unit-1-9675150f17 -> 200 — status=200
+[PASS] V1 confirmed zero is short with full target missing
+[PASS] V1 confirmed zero without target is short with unknown missing
+[PASS] GET /api/execution-matrix/probe-spare-project-9675150f17 -> 200 — status=200
+[PASS] V2 matrix includes confirmed zero without target as short
+[PASS] POST /api/execution-matrix/probe-spare-project-9675150f17/export.xlsx -> 200 — status=200
+[PASS] V2 matrix export prints confirmed zero without target honestly
+[PASS] PATCH /api/units/probe-spare-unit-1-9675150f17/spare-tiles -> 200 — status=200
+
+[V7 JSON] legacy array after confirmed zero BEFORE
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": "55822f74-5750-4328-860d-5cc99a712ce3",
+  "spare_tiles": [
+    {
+      "count": 0,
+      "entered": true,
+      "notes": "",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 0,
+      "entered": true,
+      "notes": "",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 3,
+  "spare_tiles_notes": "ריצוף מרפסות: קרטון",
+  "status": "available",
+  "unit_no": "101"
+}
+[V7 JSON] legacy array after confirmed zero AFTER
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": "55822f74-5750-4328-860d-5cc99a712ce3",
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[PASS] V7 legacy array restored without entered keys
+[PASS] PATCH /api/projects/probe-spare-project-9675150f17/spare-profiles/55822f74-5750-4328-860d-5cc99a712ce3/units -> 200 — status=200
+[PASS] PUT /api/projects/probe-spare-project-9675150f17/spare-settings -> 200 — status=200
+[PASS] V7 category deletion persisted
+[PASS] PATCH /api/units/probe-spare-unit-1-9675150f17/spare-tiles -> 200 — status=200
+
+[V7 JSON] save after category deletion BEFORE
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[V7 JSON] save after category deletion AFTER
+{
+  "archived": false,
+  "building_id": "probe-spare-building-main-9675150f17",
+  "display_label": "דירה 101",
+  "floor_id": "probe-spare-floor-low-9675150f17",
+  "id": "probe-spare-unit-1-9675150f17",
+  "project_id": "probe-spare-project-9675150f17",
+  "sort_index": 10,
+  "spare_profile_id": null,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "101"
+}
+[PASS] V7 deleted configured category remains exact custom entry
+[PASS] PATCH /api/units/probe-spare-cross-unit-9675150f17/spare-tiles -> 200 — status=200
+
+[V7 JSON] legacy no-profile unchanged save BEFORE
+{
+  "archived": false,
+  "building_id": "probe-cross-building-9675150f17",
+  "floor_id": "probe-cross-floor-9675150f17",
+  "id": "probe-spare-cross-unit-9675150f17",
+  "project_id": "probe-spare-other-project-9675150f17",
+  "sort_index": 1,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "X1"
+}
+[V7 JSON] legacy no-profile unchanged save AFTER
+{
+  "archived": false,
+  "building_id": "probe-cross-building-9675150f17",
+  "floor_id": "probe-cross-floor-9675150f17",
+  "id": "probe-spare-cross-unit-9675150f17",
+  "project_id": "probe-spare-other-project-9675150f17",
+  "sort_index": 1,
+  "spare_tiles": [
+    {
+      "count": 8,
+      "notes": "אריחים",
+      "type": "ריצוף יבש"
+    },
+    {
+      "count": 3,
+      "notes": "קרטון",
+      "type": "ריצוף מרפסות"
+    },
+    {
+      "count": 2,
+      "notes": "",
+      "type": "סוג מותאם"
+    },
+    {
+      "count": 0,
+      "notes": "נבדק",
+      "type": "חיפוי מטבח"
+    }
+  ],
+  "spare_tiles_count": 13,
+  "spare_tiles_notes": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+  "status": "available",
+  "unit_no": "X1"
+}
+[PASS] V7 no-profile legacy branch preserves whole unit
+[PASS] PATCH /api/projects/probe-spare-project-9675150f17/spare-profiles/55822f74-5750-4328-860d-5cc99a712ce3/units -> 200 — status=200
+[PASS] V3 final profile assignment exact count
+[PASS] GET /api/units/probe-spare-unit-1-9675150f17 -> 200 — status=200
+[PASS] V3 existing top-level keys unchanged
+[PASS] V3 existing nested unit keys unchanged
+[PASS] V3 assigned profile returned
+[PASS] V3 status reflects actual 8 against target 10
+[PASS] V3 viewer unit capabilities are false
+[PASS] GET /api/execution-matrix/probe-spare-project-9675150f17 -> 200 — status=200
+[PASS] V2 matrix existing key set unchanged
+[PASS] V2 matrix unit A short summary counts every category
+[PASS] V2 matrix unit B not entered
+[PASS] V2 matrix unit C no profile
+[PASS] POST /api/execution-matrix/probe-spare-project-9675150f17/export.xlsx -> 200 — status=200
+[PASS] V2 matrix export spare header is last
+[PASS] V2 matrix export short text and fill
+[PASS] V2 matrix export not-entered and no-profile values
+
+[V2 JSON] execution matrix spare
+{
+  "by_unit": {
+    "probe-spare-unit-1-9675150f17": {
+      "applicable_count": 4,
+      "borderline": [
+        "ריצוף מרפסות"
+      ],
+      "categories_total": 4,
+      "entered_count": 4,
+      "missing_total": 2,
+      "not_entered": [],
+      "overall": "short",
+      "profile": "3 חדרים",
+      "recorded": [
+        "סוג מותאם"
+      ],
+      "short": [
+        {
+          "measure": "tiles",
+          "missing": 2,
+          "name": "ריצוף יבש"
+        }
+      ],
+      "unfilled": []
+    },
+    "probe-spare-unit-2-9675150f17": {
+      "applicable_count": 2,
+      "borderline": [],
+      "categories_total": 2,
+      "entered_count": 0,
+      "missing_total": 0,
+      "not_entered": [
+        "ריצוף יבש",
+        "ריצוף מרפסות"
+      ],
+      "overall": "not_entered",
+      "profile": "3 חדרים",
+      "recorded": [],
+      "short": [],
+      "unfilled": [
+        "ריצוף יבש",
+        "ריצוף מרפסות"
+      ]
+    },
+    "probe-spare-unit-3-9675150f17": {
+      "applicable_count": 2,
+      "borderline": [],
+      "categories_total": 2,
+      "entered_count": 0,
+      "missing_total": 0,
+      "not_entered": [],
+      "overall": "no_profile",
+      "profile": null,
+      "recorded": [],
+      "short": [],
+      "unfilled": [
+        "ריצוף יבש",
+        "ריצוף מרפסות"
+      ]
+    }
+  },
+  "enabled": true
+}
+[PASS] GET /api/projects/probe-spare-project-9675150f17/handover/overview -> 200 — status=200
+[PASS] POST /api/defects/export -> 200 — status=200
+
+[V7 JSON] handover/export BEFORE
+{
+  "export": {
+    "ספייר: הערות": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+    "ספייר: חיפוי אמבטיות": null,
+    "ספייר: חיפוי מטבח": 0,
+    "ספייר: סוגים נוספים": "סוג מותאם: 2",
+    "ספייר: ריצוף אמבטיות": null,
+    "ספייר: ריצוף יבש": 8,
+    "ספייר: ריצוף מרפסות": 3
+  },
+  "handover": {
+    "spare_tiles": [
+      {
+        "count": 8,
+        "notes": "אריחים",
+        "type": "ריצוף יבש"
+      },
+      {
+        "count": 3,
+        "notes": "קרטון",
+        "type": "ריצוף מרפסות"
+      },
+      {
+        "count": 2,
+        "notes": "",
+        "type": "סוג מותאם"
+      },
+      {
+        "count": 0,
+        "notes": "נבדק",
+        "type": "חיפוי מטבח"
+      }
+    ],
+    "spare_tiles_count": 13
+  }
+}
+[V7 JSON] handover/export AFTER
+{
+  "export": {
+    "ספייר: הערות": "ריצוף יבש: אריחים, ריצוף מרפסות: קרטון, חיפוי מטבח: נבדק",
+    "ספייר: חיפוי אמבטיות": null,
+    "ספייר: חיפוי מטבח": 0,
+    "ספייר: סוגים נוספים": "סוג מותאם: 2",
+    "ספייר: ריצוף אמבטיות": null,
+    "ספייר: ריצוף יבש": 8,
+    "ספייר: ריצוף מרפסות": 3
+  },
+  "handover": {
+    "spare_tiles": [
+      {
+        "count": 8,
+        "notes": "אריחים",
+        "type": "ריצוף יבש"
+      },
+      {
+        "count": 3,
+        "notes": "קרטון",
+        "type": "ריצוף מרפסות"
+      },
+      {
+        "count": 2,
+        "notes": "",
+        "type": "סוג מותאם"
+      },
+      {
+        "count": 0,
+        "notes": "נבדק",
+        "type": "חיפוי מטבח"
+      }
+    ],
+    "spare_tiles_count": 13
+  }
+}
+[PASS] V7 handover overview spare values unchanged
+[PASS] V7 export spare columns unchanged
+[PASS] V2 settings audit action recorded
+[PASS] V2 assignment audit action recorded
+
+All 99 live HTTP checks passed.
+SPARE_PROBE_WRAPPER returncode=0 new_probe_user_ids=4 deleted_presence_buckets=4
+SPARE_PROBE_WRAPPER report=/tmp/batch601/spare-probe-presence-cleanup.json source_unchanged=true
+
+V3 — LIVE LOCAL PRESENCE WRITE AND INDEX PROOF
+Actual demo password login and authenticated endpoint through local workflow. No credentials/token values printed. Full bucket and index_information below:
+[SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****0001,****9991
+V3_OK demo_login=200 endpoint=GET /api/projects status=200 user_id=e463c02b-3009-4b97-9198-0c133ed5cfe3
+V3_BUCKET_OK hour_utc=2026-09-15T09 hits=1 current_utc_hour=2026-09-15T09
+V3_INDEX_OK names=hour_user,ttl_expires_at,uniq_user_hour ttl_expireAfterSeconds=0
+V3_EVIDENCE_BEGIN
+V3_EVIDENCE_BUCKET_JSON {"expires_at": {"$date": "2026-12-14T09:00:00Z"}, "first_seen_at": "2026-09-15T09:08:46.069061+00:00", "hits": 1, "hour_utc": "2026-09-15T09", "id": "4f4ae963-0c71-4404-8d64-e554d2e75134", "last_seen_at": "2026-09-15T09:08:46.069061+00:00", "user_id": "e463c02b-3009-4b97-9198-0c133ed5cfe3"}
+V3_EVIDENCE_INDEX_INFORMATION_JSON {"_id_": {"key": [["_id", 1]], "v": 2}, "hour_user": {"key": [["hour_utc", 1], ["user_id", 1]], "v": 2}, "ttl_expires_at": {"expireAfterSeconds": 0, "key": [["expires_at", 1]], "v": 2}, "uniq_user_hour": {"key": [["user_id", 1], ["hour_utc", 1]], "unique": true, "v": 2}}
+V3_EVIDENCE_END
+
+V4 — SEEDED VISUAL EVIDENCE AND CLEANUP
+Local Mongo only; backed up original fields and exact auth/presence preimages before modifications. Three synthetic non-demo users, one organization, memberships, seven Israel calendar days.
+SEED_OK tag=3464f083d3 users=3 buckets=70 il_days=7
+SEED_OK active-now expectation: two users are within the default 15-minute window
+
+Final corrected screenshot evidence, http://localhost:5000/admin/activity:
+- x52ggc — 1440x1000: active-now chip open with two users and full wrapped organization/role/relative time; 7-day heatmap, today, counts/totals/peak, and table hours column. PASS.
+- a2ozhe — 390x844: chip open and 7-day heatmap inside horizontally scrolling card; no page overflow. PASS.
+- a9np4e — 390x844: fake user card expanded and independent seven-day strip open, labels on left and green hourly cells. PASS.
+All three final screenshots inspected by parent agent. Computed grid direction ltr, 00 x=127 < 23 x=713.5 in measured grid; strip computed ltr with 168 title-backed cells; document/body scrollWidth375 <=390. Native title attributes verified; no requirement for browser-native hover tooltip to appear in screenshot.
+Initial complete visual pass also verified 30-day rows and organization filter narrowing table to three synthetic users (zbesk1, prior to LTR correction); these behaviors were not retested after presentation-only changes. Original screenshots uhzp58/xlmz5c/fynp6b are superseded by the corrected final three, not final evidence.
+The first browser attempt was blocked by baseline startup resetting the temporary SA role; after reapplying the recorded local SA fixture it succeeded. A bootstrap403 was observed before successful final rendering, and existing CSP noise was separate from feature behavior. No production requests or UI data mutations.
+
+Cleanup: screenshots captured, browser context closed to stop polling; restore exact original user/auth/presence fields. Fixture and probe hourly counts zero. One late poll during initial cleanup recreated an SA bucket; recorded preimage restored again and post-browser-close proof confirms clean. Complete cleanup output and zero queries:
+PRE_CLEANUP_BEGIN
+PRE_CLEANUP_FIXTURE_TAG 3464f083d3
+PRE_CLEANUP_FIXTURE_USER_IDS ["batch601-user-3464f083d3-1","batch601-user-3464f083d3-2","batch601-user-3464f083d3-3"]
+PRE_CLEANUP_FIXTURE_MEMBER_IDS ["batch601-orgmem-3464f083d3-1","batch601-orgmem-3464f083d3-2","batch601-orgmem-3464f083d3-3"]
+PRE_CLEANUP_SEEDED_BUCKET_ID_COUNT 70
+PRE_CLEANUP_SPARE_PROBE_USER_IDS ["probe-spare-management-9675150f17","probe-spare-owner-9675150f17","probe-spare-pm-9675150f17","probe-spare-viewer-9675150f17"]
+PRE_CLEANUP_FIXTURE_USER_BUCKET_QUERY_COUNT 70
+PRE_CLEANUP_SPARE_PROBE_BUCKET_QUERY_COUNT 0
+PRE_CLEANUP_FIXTURE_USER_BUCKETS_DELETED 70
+PRE_CLEANUP_SPARE_PROBE_BUCKETS_DELETED 0
+PRE_CLEANUP_END
+CLEANUP_OK zero_count_queries={'fixture_users': 0, 'fixture_buckets': 0, 'fixture_memberships': 0, 'fixture_org': 0}
+RESTORE_PROOF auth_and_presence=True zero_fixture_records=True touches=2
+cleanup_command_exit=0
+TEMP_SESSION_FILE_DELETE path=/tmp/batch601/sa-session.json deleted=True
+POST_CLEANUP_ZERO_QUERY_BEGIN
+ZERO_QUERY users_exact_fixture_ids collection=users query={"id":{"$in":["batch601-user-3464f083d3-1","batch601-user-3464f083d3-2","batch601-user-3464f083d3-3"]}} count=0
+ZERO_QUERY users_fixture_marker collection=users query={"batch601_fixture":"3464f083d3"} count=0
+ZERO_QUERY organization_memberships_exact_fixture_ids collection=organization_memberships query={"id":{"$in":["batch601-orgmem-3464f083d3-1","batch601-orgmem-3464f083d3-2","batch601-orgmem-3464f083d3-3"]}} count=0
+ZERO_QUERY organization_memberships_fixture_marker collection=organization_memberships query={"batch601_fixture":"3464f083d3"} count=0
+ZERO_QUERY organizations_exact_fixture_id collection=organizations query={"id":"batch601-org-3464f083d3"} count=0
+ZERO_QUERY organizations_fixture_marker collection=organizations query={"batch601_fixture":"3464f083d3"} count=0
+ZERO_QUERY user_activity_hours_any_fixture_user_id collection=user_activity_hours query={"user_id":{"$in":["batch601-user-3464f083d3-1","batch601-user-3464f083d3-2","batch601-user-3464f083d3-3"]}} count=0
+ZERO_QUERY user_activity_hours_fixture_marker_any_id collection=user_activity_hours query={"batch601_fixture":"3464f083d3"} count=0
+ZERO_QUERY user_activity_hours_new_spare_probe_user_ids collection=user_activity_hours query={"user_id":{"$in":["probe-spare-management-9675150f17","probe-spare-owner-9675150f17","probe-spare-pm-9675150f17","probe-spare-viewer-9675150f17"]}} count=0
+ZERO_QUERY recorded_presence_touch_keys collection=user_activity_hours query=[{"hour_utc":"2026-09-15T09","user_id":"e463c02b-3009-4b97-9198-0c133ed5cfe3"},{"hour_utc":"2026-09-15T09","user_id":"0cd08e8d-bda6-4dbe-9d88-490b7dd9bad3"}] count=1
+RESTORE_PROOF_STATE auth_and_presence_rows=7 all_restored=True
+POST_CLEANUP_ZERO_QUERY_END
+POST_CLEANUP_RESTORE_RETRY_BEGIN
+POST_CLEANUP_RETRY_PRE key={"user_id":"e463c02b-3009-4b97-9198-0c133ed5cfe3","hour_utc":"2026-09-15T09"} present=False
+POST_CLEANUP_RETRY_PRE key={"user_id":"0cd08e8d-bda6-4dbe-9d88-490b7dd9bad3","hour_utc":"2026-09-15T09"} present=True
+POST_CLEANUP_RETRY_PROOF [{"action":"deleted_new","delete_count":0,"hour_utc":"2026-09-15T09","restored":true,"user_id":"e463c02b-3009-4b97-9198-0c133ed5cfe3"},{"action":"deleted_new","delete_count":1,"hour_utc":"2026-09-15T09","restored":true,"user_id":"0cd08e8d-bda6-4dbe-9d88-490b7dd9bad3"}]
+POST_CLEANUP_RESTORE_RETRY_END
+post_cleanup_restore_retry_exit=0
+FINAL_ZERO_VERIFICATION_BEGIN
+FINAL_ZERO_RESTORE_ATTEMPTS 1
+FINAL_ZERO_QUERY fixture_users_exact_ids collection=users query={"id":{"$in":["batch601-user-3464f083d3-1","batch601-user-3464f083d3-2","batch601-user-3464f083d3-3"]}} count=0
+FINAL_ZERO_QUERY fixture_users_marker_any_id collection=users query={"batch601_fixture":"3464f083d3"} count=0
+FINAL_ZERO_QUERY fixture_memberships_exact_ids collection=organization_memberships query={"id":{"$in":["batch601-orgmem-3464f083d3-1","batch601-orgmem-3464f083d3-2","batch601-orgmem-3464f083d3-3"]}} count=0
+FINAL_ZERO_QUERY fixture_memberships_marker_any_id collection=organization_memberships query={"batch601_fixture":"3464f083d3"} count=0
+FINAL_ZERO_QUERY fixture_org_exact_id collection=organizations query={"id":"batch601-org-3464f083d3"} count=0
+FINAL_ZERO_QUERY fixture_org_marker_any_id collection=organizations query={"batch601_fixture":"3464f083d3"} count=0
+FINAL_ZERO_QUERY fixture_user_hourly_buckets_any_id collection=user_activity_hours query={"user_id":{"$in":["batch601-user-3464f083d3-1","batch601-user-3464f083d3-2","batch601-user-3464f083d3-3"]}} count=0
+FINAL_ZERO_QUERY fixture_hourly_buckets_marker_any_id collection=user_activity_hours query={"batch601_fixture":"3464f083d3"} count=0
+FINAL_ZERO_QUERY new_spare_probe_hourly_buckets collection=user_activity_hours query={"user_id":{"$in":["probe-spare-management-9675150f17","probe-spare-owner-9675150f17","probe-spare-pm-9675150f17","probe-spare-viewer-9675150f17"]}} count=0
+FINAL_ZERO_QUERY recorded_presence_touch_keys collection=user_activity_hours query=[{"hour_utc":"2026-09-15T09","user_id":"e463c02b-3009-4b97-9198-0c133ed5cfe3"},{"hour_utc":"2026-09-15T09","user_id":"0cd08e8d-bda6-4dbe-9d88-490b7dd9bad3"}] count=0
+FINAL_RESTORE_PROOF auth_and_presence_rows=7 all_restored=True
+FINAL_ZERO_VERIFICATION_OK True
+FINAL_ZERO_VERIFICATION_END
+final_zero_verification_exit=0
+AFTER_BROWSER_CLOSED auth/presence recorded rows: 7 all_restored: True
+AFTER_BROWSER_CLOSED users count= 0
+AFTER_BROWSER_CLOSED user_activity_hours count= 0
+AFTER_BROWSER_CLOSED user_activity_hours count= 0
+
+V5 — ROLE CHECKS
+Actual curl commands use token only via private in-memory stdin configuration; printed commands redact it.
+[SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****0001,****9991
+V5_ROLE_OK contractor active-now=403 hourly=403 no-token active-now=401 hourly=401
+V5_SA_OK active-now=200 hourly=200 shape=true user-activity=200 shape=true
+[SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****0001,****9991
+V5_CURL_EVIDENCE_BEGIN
+V5_CURL_CONTRACTOR_ACTIVE-NOW_COMMAND curl -s -o /dev/null -w '%{http_code}' --config -
+V5_CURL_CONTRACTOR_ACTIVE-NOW_CONFIG_REDACTED url = "http://localhost:5000/api/admin/analytics/active-now"; header = "Authorization: Bearer <REDACTED_PRIVATE_TOKEN>"
+V5_CURL_CONTRACTOR_ACTIVE-NOW_OUTPUT 403
+V5_CURL_NO_TOKEN_ACTIVE-NOW_COMMAND curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/api/admin/analytics/active-now
+V5_CURL_NO_TOKEN_ACTIVE-NOW_OUTPUT 401
+V5_CURL_CONTRACTOR_HOURLY_COMMAND curl -s -o /dev/null -w '%{http_code}' --config -
+V5_CURL_CONTRACTOR_HOURLY_CONFIG_REDACTED url = "http://localhost:5000/api/admin/analytics/hourly"; header = "Authorization: Bearer <REDACTED_PRIVATE_TOKEN>"
+V5_CURL_CONTRACTOR_HOURLY_OUTPUT 403
+V5_CURL_NO_TOKEN_HOURLY_COMMAND curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/api/admin/analytics/hourly
+V5_CURL_NO_TOKEN_HOURLY_OUTPUT 401
+V5_CURL_EVIDENCE_END
+
+V6 — FRONTEND BUILD AND JEST
+Final build: cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+Local workflow/tester uses localhost:5000; no production backend URL in compiled JS. Build-only URL selection did not change any configuration/source file.
+yarn run v1.22.22
+$ craco build
+(node:4384) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Creating an optimized production build...
+Browserslist: browsers data (caniuse-lite) is 7 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Browserslist: browsers data (caniuse-lite) is 7 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Compiled successfully.
+
+File sizes after gzip:
+
+  217.01 kB (+1 B)  build/static/js/main.7ede728b.js
+  127.15 kB         build/static/js/3421.df72f0b6.chunk.js
+  110.41 kB         build/static/js/2116.e7e66a46.chunk.js
+  110.15 kB         build/static/js/4731.713418f6.chunk.js
+  47.62 kB          build/static/js/9359.ebef9fbf.chunk.js
+  46.24 kB          build/static/js/2570.372dab5d.chunk.js
+  45.89 kB          build/static/js/8671.8b55820c.chunk.js
+  45.44 kB          build/static/js/6985.ce305e65.chunk.js
+  42.94 kB          build/static/js/2239.ed3f5604.chunk.js
+  25.48 kB          build/static/js/8298.ce203f46.chunk.js
+  25.4 kB           build/static/js/3900.647b9ab6.chunk.js
+  22.91 kB          build/static/css/main.71f50489.css
+  18.87 kB          build/static/js/1576.4b5bb923.chunk.js
+  18.3 kB           build/static/js/2089.4f9c3b73.chunk.js
+  17.08 kB          build/static/js/2434.fc02a0ce.chunk.js
+  16.9 kB           build/static/js/6703.c0528286.chunk.js
+  16.44 kB          build/static/js/1545.0e02808f.chunk.js
+  15.37 kB          build/static/js/493.e5ec3b19.chunk.js
+  14.41 kB          build/static/js/1494.7b1b92b2.chunk.js
+  13.7 kB           build/static/js/3931.2174cafe.chunk.js
+  12.79 kB          build/static/js/9397.3a317a65.chunk.js
+  11.8 kB           build/static/js/4355.f5198ebb.chunk.js
+  10.86 kB          build/static/js/7082.2bc11ba7.chunk.js
+  10.84 kB          build/static/js/7268.1fd02f2d.chunk.js
+  10.73 kB          build/static/js/9189.b414a9f1.chunk.js
+  9.85 kB           build/static/js/3805.1ff41c40.chunk.js
+  9.66 kB           build/static/js/32.a2e77e59.chunk.js
+  9.56 kB           build/static/js/3396.175ec191.chunk.js
+  9.28 kB           build/static/js/9466.4864e9f7.chunk.js
+  9.23 kB           build/static/js/6900.78a9e7b9.chunk.js
+  9.08 kB           build/static/js/130.0c47bc55.chunk.js
+  9.04 kB           build/static/js/8501.f4de84cd.chunk.js
+  8.8 kB            build/static/js/8680.c68735ae.chunk.js
+  8.45 kB (+23 B)   build/static/js/1034.755c435c.chunk.js
+  8.2 kB            build/static/js/3100.f56e3b54.chunk.js
+  7.94 kB           build/static/js/6621.a6ca8686.chunk.js
+  7.53 kB           build/static/js/3559.1fff5864.chunk.js
+  7.1 kB            build/static/js/8844.01a42720.chunk.js
+  7.1 kB            build/static/js/8223.f7b16794.chunk.js
+  6.93 kB           build/static/js/4684.65de726f.chunk.js
+  6.86 kB           build/static/js/7459.1715588f.chunk.js
+  6.67 kB           build/static/js/2631.b1e21e5b.chunk.js
+  6.22 kB           build/static/js/1993.0fdb2a80.chunk.js
+  6.21 kB           build/static/js/1848.563accdb.chunk.js
+  5.93 kB           build/static/js/5226.26aec16e.chunk.js
+  5.47 kB           build/static/js/1990.9727520c.chunk.js
+  5.24 kB           build/static/js/7959.ff6f6fdb.chunk.js
+  5.13 kB           build/static/js/1052.39bffe85.chunk.js
+  5.07 kB           build/static/js/3022.07d4a3bb.chunk.js
+  5.03 kB           build/static/js/5055.2eb7c205.chunk.js
+  5.02 kB           build/static/js/3447.87971734.chunk.js
+  4.93 kB           build/static/js/3330.0321740e.chunk.js
+  4.9 kB            build/static/js/5828.532efb88.chunk.js
+  4.66 kB           build/static/js/7761.f7f29f07.chunk.js
+  4.57 kB           build/static/js/7341.2718d69c.chunk.js
+  4.36 kB           build/static/js/6141.02dbce71.chunk.js
+  4.36 kB           build/static/js/283.69d8d10d.chunk.js
+  4.32 kB           build/static/js/2202.e191d1a0.chunk.js
+  4.25 kB           build/static/js/5993.619d62ed.chunk.js
+  4.09 kB           build/static/js/5198.6cd5cb2c.chunk.js
+  4 kB              build/static/js/1960.94f92370.chunk.js
+  3.86 kB           build/static/js/7387.c18565e4.chunk.js
+  3.82 kB           build/static/js/6494.f000bf3b.chunk.js
+  3.78 kB           build/static/js/5757.61d1107c.chunk.js
+  3.69 kB           build/static/js/6146.5dece4b1.chunk.js
+  3.49 kB           build/static/js/2626.afdfa8fc.chunk.js
+  2.98 kB           build/static/js/5126.e58e6860.chunk.js
+  2.93 kB           build/static/js/3557.645d0f46.chunk.js
+  2.88 kB           build/static/js/33.b7f0ca86.chunk.js
+  2.77 kB           build/static/js/7753.b623070c.chunk.js
+  2.31 kB           build/static/js/1987.a64aed1b.chunk.js
+  1.47 kB           build/static/js/5373.df496ce0.chunk.js
+  1.05 kB           build/static/js/133.c889e72b.chunk.js
+  626 B             build/static/js/9789.7487b0f3.chunk.js
+  404 B             build/static/js/6970.57873c2e.chunk.js
+  307 B             build/static/js/722.75da6952.chunk.js
+  247 B             build/static/js/7948.dda5190a.chunk.js
+  247 B             build/static/js/746.fd7f0321.chunk.js
+  194 B             build/static/js/6767.2cf9a575.chunk.js
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  yarn global add serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+
+Done in 32.25s.
+EXIT 0
+
+Existing Jest suites with documented libuuid-only /tmp shim, CI=true yarn test --watchAll=false (no tests/dependencies added), EXIT 0:
+yarn run v1.22.22
+$ craco test --watchAll=false
+PASS src/utils/__tests__/escalationDraft.test.js
+PASS src/utils/__tests__/domGuard.test.js
+PASS src/i18n/__tests__/index.test.js
+PASS src/hooks/__tests__/useMatrixFilters.test.js
+PASS src/utils/__tests__/fileDownload.web.test.js
+PASS src/components/matrix/SparePill.test.js
+PASS src/utils/__tests__/relativeTime.test.js
+PASS src/components/__tests__/PhotoAnnotation.pendingtext.test.js
+
+Test Suites: 8 passed, 8 total
+Tests:       43 passed, 43 total
+Snapshots:   0 total
+Time:        3.887 s
+Ran all test suites.
+Done in 5.33s.
+
+V7 — FINAL STATE (NO COMMIT BEFORE APPROVAL)
+$ git status --short; git branch --show-current; git rev-parse --short HEAD
+Refresh index: 100% (1279/1279), done.
+ M .agents/memory/MEMORY.md
+ M backend/contractor_ops/admin_analytics.py
+ M backend/contractor_ops/router.py
+ M backend/server.py
+ M frontend/src/pages/AdminActivityPage.js
+ M frontend/src/services/api.js
+?? .agents/memory/presence-fixture-cleanup.md
+?? backend/contractor_ops/activity_hours.py
+?? backend/contractor_ops/admin_activity_router.py
+?? backend/tests/test_activity_hours.py
+?? frontend/src/components/admin/
+staging
+3e2decd
+review.txt is additionally modified by this appended section. Source diff --check passed before adding verbatim review evidence; whitespace within raw diff evidence is intentionally preserved.
+
+.local/.commit_message:
+admin: user activity by hours — active now, heatmap, hour strips (#601)
+
+No follow-up tasks proposed: no intentionally deferred functional scope; the documented wiring-cap exception and approval are part of this delivery, not a separate task. Existing startup warnings and unrelated project work remain out of scope.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY

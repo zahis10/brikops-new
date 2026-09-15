@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from contractor_ops.router import get_db, get_current_user
 from contractor_ops.constants import TERMINAL_TASK_STATUSES
+from contractor_ops.activity_hours import IL_TZ, hours_by_user
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,8 @@ async def user_activity(
             'page': page,
             'limit': limit,
             'orgs': [{'id': o['id'], 'name': o.get('name', '')} for o in orgs],
+            'today': now.astimezone(IL_TZ).date().isoformat(),
+            'tz': 'Asia/Jerusalem',
         }
 
     start = (page - 1) * limit
@@ -167,6 +170,8 @@ async def user_activity(
 
     page_user_ids = [u['id'] for u in page_users]
     user_map = {u['id']: u for u in page_users}
+    hours_map = await hours_by_user(db, page_user_ids, 7, now)
+    today_il = now.astimezone(IL_TZ).date().isoformat()
 
     defects_created_agg = await db.tasks.aggregate([
         {'$match': {'created_by': {'$in': page_user_ids}, 'created_at': {'$gte': period_start}}},
@@ -260,6 +265,8 @@ async def user_activity(
             'login_count': u.get('login_count', 0),
             'activity_score': activity_score,
             'status': status,
+            'hours': hours_map.get(uid, {}),
+            'hours_today': hours_map.get(uid, {}).get(today_il, []),
             'metrics': {
                 'defects_created': metrics['defects_created'],
                 'defects_closed': metrics['defects_closed'],
@@ -279,6 +286,8 @@ async def user_activity(
         'page': page,
         'limit': limit,
         'orgs': [{'id': o['id'], 'name': o.get('name', '')} for o in orgs],
+        'today': today_il,
+        'tz': 'Asia/Jerusalem',
     }
 
 

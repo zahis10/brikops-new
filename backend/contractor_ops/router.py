@@ -25,6 +25,7 @@ from contractor_ops.stepup_service import (
     has_valid_grant as stepup_has_valid_grant,
     ensure_indexes as stepup_ensure_indexes,
 )
+from contractor_ops.activity_hours import record_presence, should_stamp
 
 _router_otp_service = None
 
@@ -219,19 +220,13 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         # Presence stamp (best-effort, throttled): real "last seen" for
         # team-activity / admin recency. Never blocks or fails auth.
         try:
-            _seen_raw = user.get('last_seen_at')
-            _stale = True
-            if _seen_raw:
-                _seen_dt = datetime.fromisoformat(str(_seen_raw).replace('Z', '+00:00'))
-                if _seen_dt.tzinfo is None:
-                    _seen_dt = _seen_dt.replace(tzinfo=timezone.utc)
-                else:
-                    _seen_dt = _seen_dt.astimezone(timezone.utc)
-                _stale = (datetime.now(timezone.utc) - _seen_dt) > timedelta(minutes=10)
+            _now_dt = datetime.now(timezone.utc)
+            _stale = should_stamp(user.get('last_seen_at'), _now_dt)
             if _stale:
-                _now_iso = datetime.now(timezone.utc).isoformat()
+                _now_iso = _now_dt.isoformat()
                 await db.users.update_one({'id': user['id']}, {'$set': {'last_seen_at': _now_iso}})
                 user['last_seen_at'] = _now_iso
+                await record_presence(db, user['id'], _now_dt)
         except Exception:
             pass
         return user
