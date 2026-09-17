@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "Batch #601 — review.txt"
-description = "מימוש פעילות לפי שעות, ראיות V1–V7, צילומים, ניקוי נתוני בדיקה וחריגת שורות לאישור."
+title = "review.txt"
+description = "קובץ הסקירה המלא, כולל תיעוד Batch #603."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:59a746c5395f2f2e57ed12d95e7c1713f442d9cb7fd4fdad6c32d9bf79814073"
-size = 231331
-mtime_ms = 1789464909508
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/5abf455c-c2be-45ac-8883-d4862a10932b"
-storage_version_token = "1789464923720839"
+content_hash = "sha256:99081c1371b9e7a400dd8a29be12b1cbf65d4ddbf65ca66a80444e90e3a4152f"
+size = 271130
+mtime_ms = 1789643851965
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/16759b25-1595-4d4c-a4e7-87eadc840f03"
+storage_version_token = "1789644426243922"
 content_type = "text/plain"
 
 [[outputs]]
