@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Camera, Loader2, X } from 'lucide-react';
+import { Camera, Loader2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import sparePhotoService from '../../services/sparePhotoService';
 import { compressImage } from '../../utils/imageCompress';
@@ -72,26 +72,13 @@ const SpareCategoryPhotos = ({
     <>
       <div className="flex items-center gap-2 flex-wrap mt-1 mb-1.5" dir="rtl">
         {photos.map(photo => (
-          <div key={photo.id} className="relative w-11 h-11">
-            <button
-              type="button"
-              onClick={() => setLightboxPhoto(photo)}
-              className="w-11 h-11 rounded-lg overflow-hidden border border-slate-200"
-              aria-label={`תיעוד ריצוף — ${category}`}
-            >
-              <img src={photo.url} alt={`תיעוד ריצוף — ${category}`} className="w-full h-full object-cover" />
-            </button>
-            {canDelete(photo) && (
-              <button
-                type="button"
-                onClick={() => setDeletePhoto(photo)}
-                className="absolute -top-1 -start-1 w-6 h-6 rounded-full bg-red-500 text-white flex items-center justify-center shadow-sm"
-                aria-label="מחק תמונה"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
+          <button key={photo.id} type="button"
+            onClick={() => setLightboxPhoto(photo)}
+            className="w-11 h-11 rounded-lg overflow-hidden border border-slate-200"
+            aria-label={`תיעוד ריצוף — ${category}`}
+          >
+            <img src={photo.url} alt={`תיעוד ריצוף — ${category}`} className="w-full h-full object-cover" />
+          </button>
         ))}
         {canWrite && photos.length < 3 && (
           <>
@@ -126,6 +113,19 @@ const SpareCategoryPhotos = ({
             <p className="text-sm text-white mt-2">
               {lightboxPhoto.uploaded_by_name} · {dateCaption(lightboxPhoto.uploaded_at)}
             </p>
+            {canDelete(lightboxPhoto) && (
+              <button type="button"
+                className="min-h-[44px] border border-red-400 text-red-200 px-4 rounded-lg mt-3 inline-flex items-center gap-2"
+                onClick={event => {
+                  event.stopPropagation();
+                  setLightboxPhoto(null);
+                  setDeletePhoto(lightboxPhoto);
+                }}
+              >
+                <Trash2 className="w-4 h-4" />
+                מחק תמונה
+              </button>
+            )}
           </div>
         </div>,
         document.body

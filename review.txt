@@ -5538,3 +5538,147 @@ Final documentation checks: original review is an exact byte prefix; exactly one
 Follow-ups proposed: permanent account/org photo cleanup/anonymization and dedicated frontend photo regression tests. No functional scope was deferred.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#603 FIX-1 (17.9)
+
+Move photo deletion out of the thumbnail row.
+
+Implementation:
+- Only frontend/src/components/spare/SpareCategoryPhotos.js changed in source.
+- Each thumbnail is now a standalone 44x44 button opening the lightbox.
+  Removed its wrapper, relative/absolute badge markup, and red X delete badge.
+- Under the unchanged uploader/date caption, canDelete(lightboxPhoto) gates
+  the Trash2 / "מחק תמונה" button: min-h-[44px], border-red-400,
+  text-red-200, px-4, rounded-lg, mt-3.
+- Its handler stops propagation, closes the lightbox, and sets deletePhoto.
+  The existing AlertDialog copy, cancel/confirm handlers, permission predicate,
+  upload behavior, and API deletion flow are unchanged.
+- Contractor/viewer lightboxes have no delete control.
+
+V1 — exact source scope and physical line limit
+
+$ git status --short (before appending this review section)
+```text
+ M frontend/src/components/spare/SpareCategoryPhotos.js
+```
+$ wc -l frontend/src/components/spare/SpareCategoryPhotos.js
+```text
+150 frontend/src/components/spare/SpareCategoryPhotos.js
+```
+$ git diff --numstat -- frontend/src/components/spare/SpareCategoryPhotos.js
+```text
+21	21	frontend/src/components/spare/SpareCategoryPhotos.js
+```
+git diff --check: passed.
+Screenshots and logs are retained only in the already-ignored
+.local/artifacts/batch603-fix1/ directory; no ignore rule or other source
+file was changed, and no new evidence files are tracked.
+
+V2 — CI build and existing Jest suites
+
+$ cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+```text
+Compiled successfully.
+Done in 31.25s.
+EXITCODE=0
+```
+Full output: .local/artifacts/batch603-fix1/b603fix1-build.log
+
+$ cd frontend && CI=true LD_LIBRARY_PATH=/tmp/batch603-libuuid yarn test --watchAll=false
+```text
+Test Suites: 8 passed, 8 total
+Tests:       43 passed, 43 total
+Snapshots:   0 total
+Time:        9.002 s
+Ran all test suites.
+Done in 15.52s.
+EXITCODE=0
+```
+Full output: .local/artifacts/batch603-fix1/b603fix1-jest.log
+The existing temporary libuuid-only shim was reused; no dependency or
+configuration files changed.
+
+V3 — real local browser evidence at 390x844
+
+Recreated the original Batch603 V4 isolated fixture using its existing
+prepare/cleanup scripts, run fix1-20260917. Local Mongo contractor_ops and
+LOCAL object storage only; no staging/production data or storage operations.
+Two real management_team uploads returned 201 before browser verification;
+the initial GET returned exactly two dry-floor photos.
+
+Screenshots:
+1. Category row: two thumbnails and no X/delete badges.
+   .local/artifacts/batch603-fix1/01-team-category-two-thumbnails.png
+2. Management-team lightbox: caption + red outlined Trash2 "מחק תמונה".
+   .local/artifacts/batch603-fix1/02-team-lightbox-delete-control.png
+3. AlertDialog after tapping the lightbox button.
+   .local/artifacts/batch603-fix1/03-team-delete-confirmation.png
+4. Contractor lightbox: caption and no delete button.
+   .local/artifacts/batch603-fix1/04-contractor-lightbox-no-delete.png
+
+Observed:
+- Delete button measured 137.44x44px. Caption and button fit in the overlay.
+- Tapping it closed the lightbox and opened the existing AlertDialog:
+  "למחוק את התמונה?" / "התמונה תימחק לצמיתות" / "מחק" / "ביטול".
+- Cancel issued zero DELETE requests.
+- Reopening and confirming once issued exactly one DELETE, returned 204,
+  showed "התמונה נמחקה", and left one thumbnail.
+- Contractor and viewer lightboxes each had zero delete buttons.
+- All browser contexts closed before cleanup.
+
+The first browser pass stopped on an overbroad document-height assertion:
+the underlying scrollable apartment page was 1187px tall in an 844px viewport.
+This was not a feature failure; the agent inspected the screenshot and
+continued only the unfinished confirmation/deletion/role checks without a
+source change. Horizontal width was 375px in the 390px team viewport.
+Existing CSP warnings did not block the flow.
+Consolidated report: .local/artifacts/batch603-fix1/browser-report.txt
+
+Actual backend log for the one deletion:
+```text
+2026-09-17 12:03:08,878 - server - INFO - [REQ] rid=3928529a DELETE /api/units/b603-unit-profile-fix1-20260917-e171d84970/spare-photos/b9b7097d-fca4-4367-ab88-d938b0aa7112 status=204 duration=10.7ms user=b603-team-fix1-20260917-4848fcfa1f
+```
+Saved log: .local/artifacts/batch603-fix1/delete-204.log
+
+Fixture cleanup output (after all browser contexts closed):
+```text
+Batch603 cleanup verified zero fixture rows/side effects:
+  tagged=0 (checked 0)
+  users=0 (checked 0)
+  organizations=0 (checked 0)
+  companies=0 (checked 0)
+  projects=0 (checked 0)
+  buildings=0 (checked 0)
+  floors=0 (checked 0)
+  units=0 (checked 0)
+  memberships=0 (checked 0)
+  org_memberships=0 (checked 0)
+  subscriptions=0 (checked 0)
+  presence=0 (checked 0)
+  auth=0 (checked 0)
+  ledger=0 (checked 0)
+  audit=0 (checked 0)
+  storageprefixes=0 (checked 0)
+deletedkeys:
+  /api/uploads/spare/b603-project-fix1-20260917-dd51965ace/b603-unit-profile-fix1-20260917-e171d84970/ca7c7131-e646-4209-92d6-d53c9765d7e3.jpg
+storage_refs_deleted=1
+tagged_documents_removed=28
+private_session_file=0
+```
+Full output: .local/artifacts/batch603-fix1/b603fix1-cleanup.log
+
+The standard frontend API target (https://api.brikops.com) was restored using
+another successful CI=true build, built separately while the local browser
+proof remained available, then installed only after all contexts closed.
+The exact original Start application workflow command was restored and
+restarted. No environment/configuration source files were changed.
+Standard build output: .local/artifacts/batch603-fix1/b603fix1-standard-build.log
+
+Final git status --short:
+```text
+ M frontend/src/components/spare/SpareCategoryPhotos.js
+ M review.txt
+```
+No commit, no push, no deploy performed. Zahi deploys.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
