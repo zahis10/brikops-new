@@ -1089,3 +1089,17 @@ mtime_ms = 1788501282436
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/1b107f24-6961-4359-a091-b1ab1687cb76/efb6718d-fbd7-4c66-9e77-4b55ba6326e7"
 storage_version_token = "1788501292866766"
 content_type = "text/plain"
+
+[[outputs]]
+id = "5rVkXL_vI6KK9pkJRp-9W"
+uri = "file://.local/artifacts/batch603-fix1/review-fix1.txt"
+type = "text"
+title = "review.txt — #603 FIX-1 (17.9)"
+description = "הסעיף האחרון מתוך review.txt: השינוי, תוצאות הבדיקות, צילומי המסך, DELETE 204 ואימות הניקוי."
+logical_id = "7cf11f02-cdc6-4872-8aa9-f2e05c3cb51d"
+content_hash = "sha256:b03e1616c1faa8b667212d33fb4f5e98e9774e960389a84044f34d4b343ea92b"
+size = 5937
+mtime_ms = 1789646973462
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7cf11f02-cdc6-4872-8aa9-f2e05c3cb51d/3d0f5f7a-5899-4e53-847c-957ba122031b"
+storage_version_token = "1789646975346417"
+content_type = "text/plain"
