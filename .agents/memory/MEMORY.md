@@ -10,3 +10,5 @@
 - [Security range vs advisory drift](security-range-advisory-drift.md) — never suppress current findings when an approved version ceiling can no longer reach the published fix.
 - [Jest canvas libuuid shim](jest-canvas-libuuid.md) — expose only libuuid via a /tmp shim; adding all of /usr/lib can load an incompatible OpenSSL into Nix Node.
 - [Presence fixture cleanup](presence-fixture-cleanup.md) — close polling browser contexts before restoring auth/presence snapshots; rejected admin polls still stamp authenticated users.
+- [Spare photo upload policy](spare-photo-upload-policy.md) — count caps are intentionally preflight-only UX limits; storage MIME must follow sniffed bytes rather than declared MIME.
+- [Review evidence preservation](review-evidence-preservation.md) — repeated approval markers are unsafe append anchors; verify the original review remains an exact byte prefix.

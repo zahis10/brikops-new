@@ -1,0 +1,34 @@
+Batch603 browser proof — corrected report
+
+Verdict: PASS. There was no application failure. The only issue was execution order: the first file-input action uploaded the tile to the existing dry-floor category, which is the required dry third-photo upload (HTTP 201). The empty-category upload was then performed (HTTP 201), followed by the required delete (HTTP 204). These were authorized isolated fixture actions; no cleanup or DB writes were performed by the tester.
+
+Verified:
+- Build gate passed: /tmp/batch603-build-final.log ended EXITCODE=0.
+- 390px profile/team view: document scrollWidth 375 <= innerWidth 390.
+- Empty-category camera state captured; real tile upload returned POST 201 to /api/units/.../spare-photos, toast התמונה נשמרה, and thumbnail appeared.
+- Dry category was visibly 3/3 after the dry third-photo upload, with three thumbnails and no dry-category camera/add control visible.
+- Lightbox opened with uploader demo-team-202609171052261782 and date 17.9.2026. Image tap closed it; Escape was also verified closed.
+- Delete dialog showed למחוק את התמונה?, מחק, ביטול. Cancel preserved the thumbnail. Confirm returned DELETE 204, showed התמונה נמחקה, and removed the thumbnail.
+- Editing mode showed no photo line, thumbnails, camera, or delete controls in the inventory cards; canceled without saving.
+- Contractor view showed three thumbnails, camera count 0, delete count 0, and read-only lightbox access. scrollWidth 390 <= 390.
+- Viewer quick read-only check: camera 0, delete 0, scrollWidth 390.
+- Legacy route retained Legacy (ללא פרופילים); existing ריצוף יבש row accepted the real tile, POST 201, toast התמונה נשמרה, and thumbnail appeared beneath the row. scrollWidth 375 <= 390.
+- 1440px profile card captured; scrollWidth 1425 <= 1440, dry category showed 3 thumbnails / 3/3, and four empty-category camera controls.
+- Context closure was explicitly verified: contextClosed=true and pagesAfterClose=0.
+
+Required screenshots (all saved):
+- /tmp/batch603/screenshots/390-empty-category-camera.png
+- /tmp/batch603/screenshots/390-thumbnail-empty-category.png
+- /tmp/batch603/screenshots/390-lightbox.png
+- /tmp/batch603/screenshots/390-delete-confirm.png
+- /tmp/batch603/screenshots/390-editing.png
+- /tmp/batch603/screenshots/390-contractor.png
+- /tmp/batch603/screenshots/390-legacy.png
+- /tmp/batch603/screenshots/1440-profile-card.png
+
+Verification gaps:
+- Input reset after upload and disabled/spinner state during upload were not observed; mark unobserved rather than inferred.
+- The independent curl fixture assertions (201x3/422) were supplied externally and were not repeated in-browser.
+- Browser logs contained CSP refusals for external fonts/inline styles/Emergent script, but the app rendered and all requested browser behaviors worked. No new application module error was observed.
+
+No source/config changes, workflow restart, production API/storage use, logout API, or tester DB writes occurred.

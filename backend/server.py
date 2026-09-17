@@ -540,6 +540,8 @@ app.include_router(projects_router)
 from contractor_ops.spare_tiles_router import router as spare_tiles_router
 app.include_router(spare_tiles_router)
 
+from contractor_ops.spare_photos_router import router as spare_photos_router
+app.include_router(spare_photos_router)
 from contractor_ops.escalations_router import router as escalations_router
 app.include_router(escalations_router)
 

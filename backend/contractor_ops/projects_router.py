@@ -1275,11 +1275,16 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
         serialized_escalation['notes_count'] = len(spare_escalation.get('notes') or [])
         serialized_escalation['context_line'] = context_line(spare_escalation.get('context'))
 
+    from contractor_ops.spare_photos_router import serialize_photo
+    spare_photos = sorted(
+        (serialize_photo(p) for p in (unit.get('spare_photos') or []) if isinstance(p, dict) and p.get('id')),
+        key=lambda p: p.get('uploaded_at') or '')
     return {
         'unit': {
             **unit,
             'effective_label': effective_label,
         },
+        'spare_photos': spare_photos,
         'floor': {'id': floor['id'], 'name': floor.get('name', '')} if floor else None,
         'building': {'id': building['id'], 'name': building.get('name', '')} if building else None,
         'project': {'id': project['id'], 'name': project.get('name', ''), 'code': project.get('code', '')} if project else None,

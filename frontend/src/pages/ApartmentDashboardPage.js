@@ -17,6 +17,7 @@ import TaskCardSkeleton from '../components/TaskCardSkeleton';
 import { spareSummaryText } from '../components/matrix/SparePill';
 import EscalationSheet from '../components/spare/EscalationSheet';
 import SpareEscalationStatus from '../components/spare/SpareEscalationStatus';
+import SpareCategoryPhotos from '../components/spare/SpareCategoryPhotos';
 import { arraysEqualAsSets } from '../utils/filterHelpers';
 import { FEATURES } from '../config/features';
 import { getDefectCreatesForUnit } from '../services/offlineOutbox';
@@ -129,6 +130,7 @@ const ApartmentDashboardPage = () => {
   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
   const spareCanWrite = unitData?.spare_can_write === true;
   const spareCanAssign = unitData?.spare_can_assign === true;
+  const photosFor = (name) => (unitData?.spare_photos || []).filter(p => p.category === name);
   const spareRows = unitData?.spare_status?.categories || [];
   const spareSummary = unitData?.spare_status ? {
     overall: unitData.spare_status.overall,
@@ -783,9 +785,12 @@ const ApartmentDashboardPage = () => {
                         isOk || hasInventory ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
                         'bg-slate-100 text-slate-500 border-slate-200';
                       return (
-                        <div key={`${row.type}-${idx}`} className="flex items-center justify-between gap-3 py-1.5 text-[13px]">
-                          <span className="font-medium text-slate-700 min-w-0 flex-1 truncate">{row.name || row.type}</span>
-                          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold whitespace-nowrap ${chipClasses}`}>{chipText}</span>
+                        <div key={`${row.type}-${idx}`}>
+                          <div className="flex items-center justify-between gap-3 py-1.5 text-[13px]">
+                            <span className="font-medium text-slate-700 min-w-0 flex-1 truncate">{row.name || row.type}</span>
+                            <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold whitespace-nowrap ${chipClasses}`}>{chipText}</span>
+                          </div>
+                          {!spareTilesEditing && <SpareCategoryPhotos unitId={unitId} category={row.name || row.type} photos={photosFor(row.name || row.type)} canWrite={spareCanWrite} canDeleteAny={spareCanAssign} currentUserId={user?.id} onChanged={loadUnit} />}
                         </div>
                       );
                     })}
@@ -961,10 +966,13 @@ const ApartmentDashboardPage = () => {
                   {Array.isArray(unit?.spare_tiles) && unit.spare_tiles.length > 0 && (
                     <div className="space-y-1.5">
                       {unit.spare_tiles.filter(e => e.count > 0 || e.notes || e.entered).map((entry, idx) => (
-                        <div key={idx} className="flex items-center gap-2 text-sm text-slate-700">
-                          <span className="font-medium min-w-[100px]">{entry.type}:</span>
-                          <span>{entry.entered && entry.count === 0 ? 'אין' : entry.count}</span>
-                          {entry.notes && <span className="text-slate-500 text-xs truncate">({entry.notes})</span>}
+                        <div key={idx}>
+                          <div className="flex items-center gap-2 text-sm text-slate-700">
+                            <span className="font-medium min-w-[100px]">{entry.type}:</span>
+                            <span>{entry.entered && entry.count === 0 ? 'אין' : entry.count}</span>
+                            {entry.notes && <span className="text-slate-500 text-xs truncate">({entry.notes})</span>}
+                          </div>
+                          <SpareCategoryPhotos unitId={unitId} category={entry.type} photos={photosFor(entry.type)} canWrite={spareCanWrite} canDeleteAny={spareCanAssign} currentUserId={user?.id} onChanged={loadUnit} />
                         </div>
                       ))}
                     </div>
