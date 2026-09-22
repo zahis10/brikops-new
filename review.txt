@@ -6105,3 +6105,84 @@ Task remains incomplete pending disposition of the two additional failures
 and completion of the remaining verification. No commit, push or deploy.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#604 (22.9) — FINAL
+
+STATUS: incomplete — V4 stopped due to an agent-created invalid disposable
+invoice fixture. No application source or test-file changes were made.
+This is a verification-harness preparation error, not evidence of a defect
+introduced by #604-mini. The user's explicit stop-on-V4-failure rule was
+honored; the invalid fixture was removed, not repaired and silently retried.
+
+V2 — DONE, not rerun
+The four legacy failures are accepted pre-existing expectation mismatches:
+test_pm_cannot_access_admin_billing, test_pm_cannot_override,
+test_pm_cannot_list_plans, test_pm_cannot_dry_run. Admin billing routes depend
+on require_super_admin, which deliberately returns 404 to non-super-admins.
+Previous actual counts remain 21 passed, 43 skipped, 4 failed, 1 deselected.
+They are not reclassified as passes. No legacy suite was run in FINAL.
+
+V4 — observed partial matrix, flag OFF
+```text
+owner POST .../invoice/generate?period=2026-09
+405 — Method Not Allowed
+
+owner POST .../invoices/{confirmed-nonexistent-id}/mark-paid
+403 — רק אדמין ראשי
+
+super admin POST .../invoices/{confirmed-nonexistent-id}/mark-paid
+403 — סימולציית תשלום כבויה בסביבה זו
+```
+All three status/detail checks passed. The next request, owner GET
+.../invoices, returned a non-JSON server error response. The harness tried
+to decode JSON before recording its numeric HTTP status, so that status
+is NOT claimed as captured evidence. Server traceback identifies:
+```text
+billing_router.py:763: await check_and_enforce_dunning(org_id)
+invoicing.py:742: due_dt = datetime.fromisoformat(inv['due_at'])
+KeyError: 'due_at'
+```
+Cause: the agent directly seeded the disposable issued invoice with
+`due_date` instead of the required `due_at`. This is the agent's fixture
+mistake, not a reason to modify invoicing.py or billing source.
+Server log: /tmp/logs/Start_application_20260922_095125_963_b0f7bbcc.log.
+
+The flag-OFF list checks and entire flag-ON matrix remain unverified.
+No existing invoice was marked paid. The generated nonexistent invoice ID
+was confirmed absent before the HTTP requests. The simulation flag was
+never enabled during this attempt.
+
+Safety: temporary runtime used local Mongo, BILLING_V1_ENABLED=true,
+APP_MODE=staging without dotenv, GI_BASE_URL/PAYPLUS_API_KEY/
+PAYPLUS_SECRET_KEY unset, loopback-only outbound connections, and no
+startup jobs. No provider call or real fiscal document was made.
+
+V6 — not run after V4 stop
+No browser contexts opened and no requested screenshot PNGs captured.
+
+V7 — not run after V4 stop
+Jest not run; no new counts claimed. Previous successful guard-test and
+CI build evidence was retained without rerunning those checks.
+No frontend build or generated API target changed in this FINAL attempt.
+
+Cleanup — exact fresh-snapshot comparison before normal restart:
+```text
+invoices: restored 0, removed 1 test-created records
+organization_memberships: restored 0, removed 2 test-created records
+organizations: restored 0, removed 1 test-created records
+otp_rate_limits: restored 0, removed 2 test-created records
+subscriptions: restored 0, removed 1 test-created records
+user_activity_hours: restored 0, removed 2 test-created records
+users: restored 0, removed 2 test-created records
+All collection document contents match the fresh pre-FINAL snapshot.
+```
+Cleanup log: /tmp/batch604-mini/final-cleanup.txt.
+Temporary fixture token file was deleted. Exact original workflow was
+restored and restarted normally through original start.sh, successfully.
+Its read-only startup Git metadata lookup ran under the user's express
+authorization. No agent-issued Git command, commit, push, or deploy.
+
+Outstanding: valid disposable invoice fixture, remaining V4 matrix,
+four V6 screenshots, and V7 Jest. Completion is NOT claimed.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
