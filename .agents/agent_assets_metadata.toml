@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "review.txt"
-description = "קובץ הסקירה המלא, כולל תיעוד Batch #603."
+title = "review.txt — דוח הבדיקה המלא"
+description = "הקובץ המלא, כולל סעיף #604 (22.9) עם השינויים, תוצאות הבדיקות וסיבת העצירה."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:99081c1371b9e7a400dd8a29be12b1cbf65d4ddbf65ca66a80444e90e3a4152f"
-size = 271130
-mtime_ms = 1789643851965
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/16759b25-1595-4d4c-a4e7-87eadc840f03"
-storage_version_token = "1789644426243922"
+content_hash = "sha256:5676ebbf5f79782c96db328deefa19b9d9cf2e9b0e8d3c1af2e5f117ebb52e86"
+size = 289389
+mtime_ms = 1790063531241
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/dba83570-c177-4217-996d-e6efc6647ebb"
+storage_version_token = "1790063586824814"
 content_type = "text/plain"
 
 [[outputs]]
