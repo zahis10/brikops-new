@@ -749,32 +749,9 @@ async def invoice_preview(org_id: str, period: str, user: dict = Depends(get_cur
     return preview
 
 
-@router.post("/billing/org/{org_id}/invoice/generate")
-async def invoice_generate(org_id: str, period: str, user: dict = Depends(get_current_user)):
-    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
-    from contractor_ops.invoicing import generate_invoice, validate_period_ym
-    if not BILLING_V1_ENABLED:
-        raise HTTPException(status_code=404, detail='Not found')
-    try:
-        validate_period_ym(period)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    if not _is_super_admin(user):
-        billing_role = await check_org_billing_role(user['id'], org_id)
-        if not billing_role or billing_role == 'org_admin':
-            raise HTTPException(status_code=403, detail='אין הרשאה להפקת חשבוניות')
-    from contractor_ops.billing import get_billable_amount
-    try:
-        billing_info = await get_billable_amount(org_id, 'monthly')
-        oa = billing_info['amount']
-    except ValueError:
-        oa = None
-    invoice = await generate_invoice(org_id, period, user['id'], override_amount=oa)
-    return invoice
-
-
 @router.get("/billing/org/{org_id}/invoices")
 async def invoice_list(org_id: str, user: dict = Depends(get_current_user)):
+    from config import BILLING_SIMULATION_ENABLED
     from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
     from contractor_ops.invoicing import list_invoices, check_and_enforce_dunning
     if not BILLING_V1_ENABLED:
@@ -785,7 +762,7 @@ async def invoice_list(org_id: str, user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=403, detail='אין הרשאת צפייה בחיובי ארגון')
     await check_and_enforce_dunning(org_id)
     invoices = await list_invoices(org_id)
-    return {'invoices': invoices}
+    return {'invoices': invoices, 'simulation_enabled': bool(BILLING_SIMULATION_ENABLED and _is_super_admin(user))}
 
 
 @router.get("/billing/org/{org_id}/invoices/{invoice_id}")
@@ -806,14 +783,15 @@ async def invoice_detail(org_id: str, invoice_id: str, user: dict = Depends(get_
 
 @router.post("/billing/org/{org_id}/invoices/{invoice_id}/mark-paid")
 async def invoice_mark_paid(org_id: str, invoice_id: str, user: dict = Depends(get_current_user)):
-    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
+    from contractor_ops.billing import BILLING_V1_ENABLED
     from contractor_ops.invoicing import mark_invoice_paid
     if not BILLING_V1_ENABLED:
         raise HTTPException(status_code=404, detail='Not found')
     if not _is_super_admin(user):
-        billing_role = await check_org_billing_role(user['id'], org_id)
-        if not billing_role or billing_role == 'org_admin':
-            raise HTTPException(status_code=403, detail='אין הרשאה לסימון חשבונית כשולם')
+        raise HTTPException(status_code=403, detail='רק אדמין ראשי')
+    from config import BILLING_SIMULATION_ENABLED
+    if not BILLING_SIMULATION_ENABLED:
+        raise HTTPException(status_code=403, detail='סימולציית תשלום כבויה בסביבה זו')
     try:
         result = await mark_invoice_paid(org_id, invoice_id, user['id'])
         return result

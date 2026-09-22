@@ -5682,3 +5682,235 @@ Final git status --short:
 No commit, no push, no deploy performed. Zahi deploys.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#604 (22.9)
+
+STATUS: IMPLEMENTATION PRESENT; VERIFICATION INCOMPLETE — STOPPED ON TEST SETUP ERROR.
+The user's explicit stop-on-failure instruction was honored. This batch is NOT
+reported complete or ready to deploy. No existing tests or protected source
+files were changed. Task #97 was not executed or incorporated.
+
+STEP 0
+```text
+$ git branch --show-current
+main
+$ git fetch origin && git log --oneline -1 origin/staging
+3b56f76 (HEAD -> main, origin/staging, origin/main, origin/HEAD, gitsafe-backup/main, staging) Update agent assets metadata
+$ git log --oneline -3
+3b56f76 (HEAD -> main, origin/staging, origin/main, origin/HEAD, gitsafe-backup/main, staging) Update agent assets metadata
+78535eb Update spare category photos component and add review notes
+60f2687 Update agent assets metadata
+$ git status --short
+(no output)
+```
+HEAD matches the expected baseline. Continued on main as explicitly approved.
+
+V1 — scope and full backend diff
+```text
+$ git status --short
+ M backend/config.py
+ M backend/contractor_ops/billing_router.py
+ M frontend/src/pages/OrgBillingPage.js
+ M frontend/src/services/api.js
+ M security/pentest-regression-checklist.md
+?? backend/tests/test_invoice_guard_mini.py
+
+$ git diff --stat
+ backend/config.py                        |  2 ++
+ backend/contractor_ops/billing_router.py | 36 +++++++-------------------------
+ frontend/src/pages/OrgBillingPage.js     | 30 +++-----------------------
+ frontend/src/services/api.js             |  4 ----
+ security/pentest-regression-checklist.md | 30 ++++++++++++++++++++++++++
+ 5 files changed, 42 insertions(+), 60 deletions(-)
+```
+Captured before this review append. The new untracked test is not included in
+diff --stat. This review is the additional allowed evidence file.
+The requested ignored .local/.commit_message was prepared, without committing.
+
+```diff
+diff --git a/backend/config.py b/backend/config.py
+index 09d0846..b88d9db 100644
+--- a/backend/config.py
++++ b/backend/config.py
+@@ -250,6 +250,7 @@ GI_BASE_URL = os.environ.get('GI_BASE_URL', '')
+ GI_API_KEY_ID = os.environ.get('GI_API_KEY_ID', '')
+ GI_API_SECRET = os.environ.get('GI_API_SECRET', '')
+ GI_WEBHOOK_SECRET = os.environ.get('GI_WEBHOOK_SECRET', '')
++BILLING_SIMULATION_ENABLED = os.environ.get('BILLING_SIMULATION_ENABLED', 'false').lower() == 'true'
+ 
+ PAYPLUS_API_KEY = os.environ.get('PAYPLUS_API_KEY', '')
+ PAYPLUS_SECRET_KEY = os.environ.get('PAYPLUS_SECRET_KEY', '')
+@@ -314,6 +315,7 @@ def log_sanitized_startup():
+     logger.info(f"  GI_BASE_URL:        {GI_BASE_URL or 'NOT SET'}")
+     logger.info(f"  GI_API_KEY_ID:      {'SET' if GI_API_KEY_ID else 'NOT SET'}")
+     logger.info(f"  GI_API_SECRET:      {'SET' if GI_API_SECRET else 'NOT SET'}")
++    logger.info(f"  BILLING_SIMULATION: {'ON' if BILLING_SIMULATION_ENABLED else 'off'}")
+     logger.info(f"  PAYPLUS_ENV:        {PAYPLUS_ENV}")
+     logger.info(f"  PAYPLUS_API_KEY:    {'SET (' + str(len(PAYPLUS_API_KEY)) + ' chars)' if PAYPLUS_API_KEY else 'NOT SET'}")
+     logger.info(f"  PAYPLUS_SECRET_KEY: {'SET' if PAYPLUS_SECRET_KEY else 'NOT SET'}")
+diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
+index 85f004a..810da67 100644
+--- a/backend/contractor_ops/billing_router.py
++++ b/backend/contractor_ops/billing_router.py
+@@ -749,32 +749,9 @@ async def invoice_preview(org_id: str, period: str, user: dict = Depends(get_cur
+     return preview
+ 
+ 
+-@router.post("/billing/org/{org_id}/invoice/generate")
+-async def invoice_generate(org_id: str, period: str, user: dict = Depends(get_current_user)):
+-    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
+-    from contractor_ops.invoicing import generate_invoice, validate_period_ym
+-    if not BILLING_V1_ENABLED:
+-        raise HTTPException(status_code=404, detail='Not found')
+-    try:
+-        validate_period_ym(period)
+-    except ValueError as e:
+-        raise HTTPException(status_code=400, detail=str(e))
+-    if not _is_super_admin(user):
+-        billing_role = await check_org_billing_role(user['id'], org_id)
+-        if not billing_role or billing_role == 'org_admin':
+-            raise HTTPException(status_code=403, detail='אין הרשאה להפקת חשבוניות')
+-    from contractor_ops.billing import get_billable_amount
+-    try:
+-        billing_info = await get_billable_amount(org_id, 'monthly')
+-        oa = billing_info['amount']
+-    except ValueError:
+-        oa = None
+-    invoice = await generate_invoice(org_id, period, user['id'], override_amount=oa)
+-    return invoice
+-
+-
+ @router.get("/billing/org/{org_id}/invoices")
+ async def invoice_list(org_id: str, user: dict = Depends(get_current_user)):
++    from config import BILLING_SIMULATION_ENABLED
+     from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
+     from contractor_ops.invoicing import list_invoices, check_and_enforce_dunning
+     if not BILLING_V1_ENABLED:
+@@ -785,7 +762,7 @@ async def invoice_list(org_id: str, user: dict = Depends(get_current_user)):
+             raise HTTPException(status_code=403, detail='אין הרשאת צפייה בחיובי ארגון')
+     await check_and_enforce_dunning(org_id)
+     invoices = await list_invoices(org_id)
+-    return {'invoices': invoices}
++    return {'invoices': invoices, 'simulation_enabled': bool(BILLING_SIMULATION_ENABLED and _is_super_admin(user))}
+ 
+ 
+ @router.get("/billing/org/{org_id}/invoices/{invoice_id}")
+@@ -806,14 +783,15 @@ async def invoice_detail(org_id: str, invoice_id: str, user: dict = Depends(get_
+ 
+ @router.post("/billing/org/{org_id}/invoices/{invoice_id}/mark-paid")
+ async def invoice_mark_paid(org_id: str, invoice_id: str, user: dict = Depends(get_current_user)):
+-    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
++    from contractor_ops.billing import BILLING_V1_ENABLED
+     from contractor_ops.invoicing import mark_invoice_paid
+     if not BILLING_V1_ENABLED:
+         raise HTTPException(status_code=404, detail='Not found')
+     if not _is_super_admin(user):
+-        billing_role = await check_org_billing_role(user['id'], org_id)
+-        if not billing_role or billing_role == 'org_admin':
+-            raise HTTPException(status_code=403, detail='אין הרשאה לסימון חשבונית כשולם')
++        raise HTTPException(status_code=403, detail='רק אדמין ראשי')
++    from config import BILLING_SIMULATION_ENABLED
++    if not BILLING_SIMULATION_ENABLED:
++        raise HTTPException(status_code=403, detail='סימולציית תשלום כבויה בסביבה זו')
+     try:
+         result = await mark_invoice_paid(org_id, invoice_id, user['id'])
+         return result
+```
+
+V2 — stopped; not a passing regression run
+Standalone new guards: 5 passed, 2 existing Pydantic deprecation warnings in 4.33s.
+Log: /tmp/batch604-mini/guard-tests.txt
+
+Combined command, with GI_BASE_URL, PAYPLUS_API_KEY and PAYPLUS_SECRET_KEY unset,
+APP_MODE=staging (no dotenv), local Mongo, and BILLING_V1_ENABLED=true:
+```text
+cd backend && python -m pytest -q -x tests/test_invoice_guard_mini.py tests/test_billing.py tests/test_billing_v1.py -k 'not test_billing_checkout_rejects_founder_yearly'
+ERROR tests/test_billing.py::TestBillingMeEndpoint::test_billing_me_returns_data
+pymongo.errors.ServerSelectionTimeoutError:
+127.0.0.1:27017: [Errno 111] Connection refused
+5 passed, 1 deselected, 2 warnings, 1 error in 31.12s
+```
+Full traceback: /tmp/batch604-mini/billing-tests.txt
+Error occurred in _set_platform_role fixture setup, before the legacy test body.
+No assertion failure was observed, but the suite is NOT green. Stopped rather
+than rerunning or editing existing tests. Subsequent HTTP/Jest/browser
+acceptance checks were not run.
+
+not run — provider not configured:
+- tests/test_billing.py::test_billing_checkout_rejects_founder_yearly:
+  installs dummy PayPlus keys and can enter a provider path. Deselected to
+  guarantee no provider call; not counted as a failure.
+All remaining legacy cases were not reached due to -x; they are NOT claimed
+as passed or provider-related skips.
+
+Temporary verification server used a loopback-only socket guard, no dotenv,
+unset provider variables, and lifespan off to avoid startup jobs. Initial
+startup hit the known Nix/Python NumPy path mismatch; matching the existing
+start.sh PYTHONPATH fixed server startup. Mongo had been started independently
+and snapshotted, but was unavailable after workflow restart. No provider call
+or fiscal document was made during verification.
+
+Cleanup: original application workflow restored and restarted successfully.
+Restored workflow is RUNNING and startup completed. Its logs also report
+non-fatal field_escalations IndexOptionsConflict (existing index name
+unit_id_1_status_1) and a configured super-admin phone without a matching
+user; these are outside this batch and were not modified.
+Compared local users, organizations, subscriptions, project_billing, projects,
+and feature_flags against the pre-test snapshot: all UNCHANGED. No fixture
+restore writes were needed. Snapshot contains local data, is mode 0600 under
+/tmp/batch604-mini, and is not a deliverable.
+
+V3 — raw approved scoped searches (collected for review)
+```text
+$ grep -rn "invoice/generate" backend frontend/src --exclude-dir=tests
+grep: backend/contractor_ops/__pycache__/billing_router.cpython-311.pyc: binary file matches
+$ grep -rn "invoiceService.generate\|handleGenerate\|canMutateInvoices\|setGenerating" frontend/src/pages/OrgBillingPage.js frontend/src/services/api.js
+(no output)
+$ grep -rn "BILLING_SIMULATION_ENABLED" backend --exclude-dir=tests
+backend/contractor_ops/billing_router.py:754:    from config import BILLING_SIMULATION_ENABLED
+backend/contractor_ops/billing_router.py:765:    return {'invoices': invoices, 'simulation_enabled': bool(BILLING_SIMULATION_ENABLED and _is_super_admin(user))}
+backend/contractor_ops/billing_router.py:792:    from config import BILLING_SIMULATION_ENABLED
+backend/contractor_ops/billing_router.py:793:    if not BILLING_SIMULATION_ENABLED:
+backend/config.py:253:BILLING_SIMULATION_ENABLED = os.environ.get('BILLING_SIMULATION_ENABLED', 'false').lower() == 'true'
+backend/config.py:318:    logger.info(f"  BILLING_SIMULATION: {'ON' if BILLING_SIMULATION_ENABLED else 'off'}")
+```
+The route grep found a pre-existing compiled Python cache, not source. This
+raw command is NOT claimed empty. The new route-absence test passed. No
+unrelated code or cache was edited to force the grep to be silent.
+
+V4 — NOT RUN after stop
+No full-middleware HTTP matrix collected. 404 or 405 is accepted for route
+removal, but neither is claimed as an observed runtime result here. Unit
+checks are not a replacement for this outstanding acceptance evidence.
+
+V5 — checklist
+Added BILL-A under HIGH, matching MED-D structure, with staging curl examples
+using placeholders, 404/405 acceptance plus route absence, and exact 403
+details. Staging examples were NOT executed. FIXED describes the code change;
+full verification remains blocked as stated above.
+
+V6 — NOT RUN after stop
+No requested SA/owner billing screenshots were captured. No screenshot files
+were added to the repository. Four /tmp PNGs remain outstanding.
+
+V7 — build passed before stop; Jest NOT RUN
+```text
+cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+Compiled successfully.
+EXIT 0
+```
+No compiler/lint warnings. Tool output did include the existing fs.F_OK Node
+deprecation and stale caniuse-lite/Browserslist notices; zero total warnings
+is NOT claimed. Full log: /tmp/batch604-mini/build.txt
+After stopping, restored generated frontend output to the pre-existing
+standard API target https://api.brikops.com with a CI=true build (EXIT 0).
+This was cleanup, not a deployment. Log: /tmp/batch604-mini/restore-build.txt
+Jest counts unavailable: not run after the stop.
+
+Final branch: main. Only the six scoped source/documentation targets plus
+review.txt are changed; the test is untracked and the commit-message file
+is ignored. No commit, push, deploy, dependency installation, provider
+call, or protected source edit. Do not mark this task complete until the
+outstanding verification is authorized and passes.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY

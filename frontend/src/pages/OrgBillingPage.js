@@ -96,7 +96,7 @@ export default function OrgBillingPage() {
   const [invoicesLoading, setInvoicesLoading] = useState(false);
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [generating, setGenerating] = useState(false);
+  const [simulationEnabled, setSimulationEnabled] = useState(false);
   const [markingPaid, setMarkingPaid] = useState(null);
   const [expandedInvoice, setExpandedInvoice] = useState(null);
   const [expandedDetail, setExpandedDetail] = useState(null);
@@ -153,7 +153,6 @@ export default function OrgBillingPage() {
   const canViewRequests = isSA || canManageBilling || isPM;
   const canEditRoles = isSA || isOwner;
   const canEditLogo = isSA || isOwner || isPM;
-  const canMutateInvoices = isSA || isOwner || (data && members.find(m => m.user_id === user?.id && m.role === 'billing_admin'));
 
   // Back-navigation helper. If user came from a project context
   // (sourceProjectId in URL), return to that project's structure
@@ -196,6 +195,7 @@ export default function OrgBillingPage() {
     try {
       const result = await invoiceService.list(orgId);
       setInvoices(result.invoices || []);
+      setSimulationEnabled(!!result.simulation_enabled);
     } catch {
       setInvoices([]);
     } finally {
@@ -222,20 +222,6 @@ export default function OrgBillingPage() {
       loadPreview();
     }
   }, [orgId, data, loadInvoices, loadPreview]);
-
-  const handleGenerate = async () => {
-    setGenerating(true);
-    try {
-      await invoiceService.generate(orgId, currentPeriod);
-      toast.success('חשבונית הופקה בהצלחה');
-      await loadInvoices();
-      await loadPreview();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה בהפקת חשבונית');
-    } finally {
-      setGenerating(false);
-    }
-  };
 
   const handleMarkPaid = async (invoiceId) => {
     setInvoiceConfirm(null);
@@ -1923,16 +1909,6 @@ export default function OrgBillingPage() {
             <div className="text-xs text-amber-700">
               {preview.line_items?.length || 0} פרויקטים פעילים
             </div>
-            {canMutateInvoices && !invoices.find(inv => inv.period_ym === currentPeriod) && (isSA || paymentRequests.some(pr => pr.status === 'paid')) && (
-              <button
-                onClick={handleGenerate}
-                disabled={generating}
-                className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
-              >
-                {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-                הפקת חשבונית לתקופה {formatPeriod(currentPeriod)}
-              </button>
-            )}
           </div>
         )}
 
@@ -2017,7 +1993,7 @@ export default function OrgBillingPage() {
                         צפה בחשבונית
                       </a>
                     )}
-                    {canMutateInvoices && (inv.status === 'issued' || inv.status === 'past_due') && (
+                    {isSA && simulationEnabled && (inv.status === 'issued' || inv.status === 'past_due') && (
                       <button
                         onClick={() => setInvoiceConfirm(inv.id)}
                         disabled={markingPaid === inv.id}

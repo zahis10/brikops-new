@@ -250,6 +250,7 @@ GI_BASE_URL = os.environ.get('GI_BASE_URL', '')
 GI_API_KEY_ID = os.environ.get('GI_API_KEY_ID', '')
 GI_API_SECRET = os.environ.get('GI_API_SECRET', '')
 GI_WEBHOOK_SECRET = os.environ.get('GI_WEBHOOK_SECRET', '')
+BILLING_SIMULATION_ENABLED = os.environ.get('BILLING_SIMULATION_ENABLED', 'false').lower() == 'true'
 
 PAYPLUS_API_KEY = os.environ.get('PAYPLUS_API_KEY', '')
 PAYPLUS_SECRET_KEY = os.environ.get('PAYPLUS_SECRET_KEY', '')
@@ -314,6 +315,7 @@ def log_sanitized_startup():
     logger.info(f"  GI_BASE_URL:        {GI_BASE_URL or 'NOT SET'}")
     logger.info(f"  GI_API_KEY_ID:      {'SET' if GI_API_KEY_ID else 'NOT SET'}")
     logger.info(f"  GI_API_SECRET:      {'SET' if GI_API_SECRET else 'NOT SET'}")
+    logger.info(f"  BILLING_SIMULATION: {'ON' if BILLING_SIMULATION_ENABLED else 'off'}")
     logger.info(f"  PAYPLUS_ENV:        {PAYPLUS_ENV}")
     logger.info(f"  PAYPLUS_API_KEY:    {'SET (' + str(len(PAYPLUS_API_KEY)) + ' chars)' if PAYPLUS_API_KEY else 'NOT SET'}")
     logger.info(f"  PAYPLUS_SECRET_KEY: {'SET' if PAYPLUS_SECRET_KEY else 'NOT SET'}")

@@ -2024,10 +2024,6 @@ export const invoiceService = {
     const response = await axios.get(`${API}/billing/org/${orgId}/invoice/preview`, { params: { period }, headers: getAuthHeader() });
     return response.data;
   },
-  async generate(orgId, period) {
-    const response = await axios.post(`${API}/billing/org/${orgId}/invoice/generate?period=${encodeURIComponent(period)}`, {}, { headers: getAuthHeader() });
-    return response.data;
-  },
   async list(orgId) {
     const response = await axios.get(`${API}/billing/org/${orgId}/invoices`, { headers: getAuthHeader() });
     return response.data;
