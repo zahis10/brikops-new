@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "review.txt — דוח הבדיקה המלא"
-description = "הקובץ המלא, כולל סעיף #604 (22.9) עם השינויים, תוצאות הבדיקות וסיבת העצירה."
+title = "review.txt — מעודכן כולל CONTINUE-2"
+description = "הדוח המלא, כולל סעיף #604 (22.9) — CONTINUE-2: תוצאות ההרצה, כל סיבות הדילוג, שני הכשלים הנוספים ותיעוד השחזור."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:5676ebbf5f79782c96db328deefa19b9d9cf2e9b0e8d3c1af2e5f117ebb52e86"
-size = 289389
-mtime_ms = 1790063531241
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/dba83570-c177-4217-996d-e6efc6647ebb"
-storage_version_token = "1790063586824814"
+content_hash = "sha256:d3b0b4b1d036fa9b42112442d6aa04eabf1d0fb0a2ceed309e34d250c4328d5a"
+size = 298598
+mtime_ms = 1790066781823
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/4b07b6f4-82e4-4e19-9d1c-e932de97cf00"
+storage_version_token = "1790068406573042"
 content_type = "text/plain"
 
 [[outputs]]
