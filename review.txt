@@ -6186,3 +6186,158 @@ Outstanding: valid disposable invoice fixture, remaining V4 matrix,
 four V6 screenshots, and V7 Jest. Completion is NOT claimed.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+## FINAL continuation — fixture corrected; remaining checks executed
+
+This continuation is appended to the same FINAL section. The preceding
+stop report is historical, not the current verification result.
+No product source or test-file changes were made.
+
+Fixture correction:
+- Directly seeded issued invoice now uses due_at as a timezone-bearing ISO
+  string from datetime.isoformat(), matching invoicing.py's storage type.
+- Subsequent screenshot fixture also included issued_at, paid_at=None,
+  created_at, updated_at, and a directly seeded invoice_line_items record.
+- No generate_invoice call, fiscal document creation, provider payment,
+  or mark-paid request against an existing invoice was performed.
+
+V4 — PASS
+Resumed at invoice-list, without rerunning the three already-passing OFF
+POST checks above. Actual additional HTTP results:
+```text
+flag OFF:
+owner GET /api/billing/org/{fixture-org}/invoices
+200 — simulation_enabled: false
+super admin GET same list
+200 — simulation_enabled: false
+
+flag ON, temporary local server only:
+super admin POST /api/billing/org/{fixture-org}/invoices/{nonexistent}/mark-paid
+400 — חשבונית לא נמצאה
+super admin GET invoice list
+200 — simulation_enabled: true
+owner GET invoice list
+200 — simulation_enabled: false
+```
+The invoice ID was confirmed absent in local Mongo before the enabled
+simulation request. Existing fixture invoice remained issued. Flag OFF
+was restored before all valid screenshot captures; each screenshot run
+also observed a real local list response 200 / simulation_enabled:false.
+
+V6 — PASS, four real PNG screenshots
+```text
+/tmp/batch604-mini/screenshots/owner-390.png   (390 x 1000)
+/tmp/batch604-mini/screenshots/owner-1440.png  (1440 x 1000)
+/tmp/batch604-mini/screenshots/sa-390.png      (390 x 1000)
+/tmp/batch604-mini/screenshots/sa-1440.png     (1440 x 1000)
+```
+All four show חשבוניות, תקופה נוכחית preview, and the expanded issued
+fixture invoice with its real line item. Generation and simulation
+controls are absent. All four checked both DOM state and actual local
+invoice-list responses. Screenshots remain under /tmp, not the repository.
+Machine-readable evidence: /tmp/batch604-mini/final-browser.json.
+Capture log: /tmp/batch604-mini/capture-log.txt.
+
+Browser-harness corrections and evidence boundaries:
+- Early browser attempts followed the staging canonical redirect to the
+  published frontend through route.fetch's redirect handling. Their old
+  main.4dc767d1.js was not the local bundle. Those attempts are INVALID
+  evidence of the current product and were not accepted as V6 failures.
+  Public frontend asset fetching may therefore have occurred in those
+  attempts; zero public-network traffic across the entire attempt is not
+  claimed. No payment/fiscal provider request or production API write
+  was made.
+- PUBLIC_APP_URL was unset only in the temporary runtime. The valid
+  capture harness used httpx with follow_redirects=False, explicit
+  loopback forwarding for HTML/assets/API requests, and aborted other
+  origins. The actual local main.793b8b92.js and billing lazy chunk
+  8298.0ec57b3b.chunk.js were verified.
+- The temporary staging CSP blocked the original cross-origin API target.
+  CSP and browser cross-origin checks were bypassed ONLY in the disposable
+  test browser, while all requests were still constrained to local
+  forwarding. No app CSP/config/source was changed and no API response was
+  mocked. These are isolated UI guard checks, not production CSP validation.
+- The stalled browser helper was stopped. Final captures were completed
+  with the installed Chromium at /repl/tools/bin/chromium. All final
+  browser contexts were closed before data restoration.
+
+Build — PASS
+A fresh current-source build completed with CI=true, preserving
+REACT_APP_BACKEND_URL=https://api.brikops.com. The successful command used
+NODE_OPTIONS=--max-old-space-size=2048 and GENERATE_SOURCEMAP=false.
+Output: "Compiled successfully." No compiler/lint warnings; existing
+Node fs.F_OK deprecation and stale Browserslist data notices were present.
+Log: /tmp/batch604-mini/final-build.txt.
+No dependency installation, source change, or test-file edit was needed.
+The original generated API target was never replaced in this continuation.
+
+V7 — PASS
+Actual command:
+cd frontend && CI=true LD_LIBRARY_PATH=/tmp/batch604-mini/lib yarn test --watchAll=false
+Actual output:
+```text
+Test Suites: 8 passed, 8 total
+Tests:       43 passed, 43 total
+Snapshots:   0 total
+Time:        6.936 s
+Ran all test suites.
+Done in 9.74s.
+```
+The LD_LIBRARY_PATH contained only the existing libuuid shim. This run
+passed before the environment restart described below; it was not rerun.
+Its original /tmp log was lost in that restart; counts above are preserved
+from the actual successful tool output, not inferred from a rerun.
+V2 and the passing mocked guard tests were not rerun.
+
+Cleanup and snapshot evidence:
+An unexpected environment disconnect/restart during the initial frontend
+build erased /tmp, including the first snapshot and earlier JSON logs.
+Mongo and workspace files survived. Therefore an exact end-to-end
+comparison against the initial pre-continuation snapshot cannot be
+claimed or reconstructed.
+
+Recovery removed only the known earlier fixture's linked organization,
+users, memberships, subscription, invoice, presence, audit, and limiter
+records, plus its exact timestamp-matched local-IP limiter entry.
+Recovery log: /tmp/batch604-mini/restart-recovery.txt.
+A NEW fresh clean snapshot was then taken BEFORE recreating the final
+screenshot fixtures. After every browser context was closed, restoration
+against that snapshot produced:
+```text
+audit_events: restored 0, removed 5 test-created records
+invoice_line_items: restored 0, removed 1 test-created records
+invoices: restored 0, removed 1 test-created records
+organization_memberships: restored 0, removed 2 test-created records
+organizations: restored 0, removed 1 test-created records
+otp_rate_limits: restored 0, removed 3 test-created records
+subscriptions: restored 0, removed 1 test-created records
+user_activity_hours: restored 0, removed 2 test-created records
+users: restored 0, removed 2 test-created records
+All collection document contents match the fresh clean baseline taken before the recreated fixtures.
+No invoice-final fixture-linked records remain.
+Fixture invoice was still issued immediately before removal.
+```
+Cleanup log: /tmp/batch604-mini/final-cleanup.txt.
+Private fixture token file deleted; snapshots are private /tmp files,
+not deliverables. This exact comparison preceded normal startup, whose
+usual initialization may subsequently update its own normal records.
+
+Runtime restored:
+The exact original Start application workflow was restored and normally
+restarted with original start.sh and its authorized read-only Git metadata
+lookup. Local /health returned HTTP 200 on both ports 5000 and 8000.
+No agent-issued Git command, commit, push, or deploy.
+Normal startup completed; logs also show a non-fatal preexisting-index-name
+conflict for field_escalations and a missing configured super-admin phone.
+No out-of-scope startup repair was attempted.
+External preview-domain health probing returned 502 (the first TLS-verified
+probe also lacked a trusted issuer in this container); local serving was
+confirmed independently. The restored unmodified frontend still exhibits
+the local CSP restrictions with its original production API target, so a
+fully healthy unaided preview is NOT claimed.
+
+Current result: V4, isolated local V6, V7, and CI build pass. Fixtures are
+removed and the original runtime is restored. The lost initial snapshot
+and preview/CSP limitations above remain explicit evidence qualifications.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY

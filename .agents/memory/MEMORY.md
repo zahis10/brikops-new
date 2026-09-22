@@ -12,3 +12,4 @@
 - [Presence fixture cleanup](presence-fixture-cleanup.md) — close polling browser contexts before restoring auth/presence snapshots; rejected admin polls still stamp authenticated users.
 - [Spare photo upload policy](spare-photo-upload-policy.md) — count caps are intentionally preflight-only UX limits; storage MIME must follow sniffed bytes rather than declared MIME.
 - [Review evidence preservation](review-evidence-preservation.md) — repeated approval markers are unsafe append anchors; verify the original review remains an exact byte prefix.
+- [Local verification isolation](local-verification-isolation.md) — redirect-following can escape browser interception; verify local asset fingerprints and qualify any lost snapshot evidence.
