@@ -5958,3 +5958,150 @@ V4 HTTP matrix, V6 billing screenshots and Jest remain unverified.
 Task not marked complete. No agent commit, push, or deploy.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#604 (22.9) — CONTINUE-2
+
+STATUS: full V2 run completed; STOPPED because two additional failures were
+found beyond the two specifically accepted legacy failures. No source or
+test-file changes and no Git commands were executed in this continuation.
+
+V2 — full run without -x
+```text
+cd backend && python -m pytest -q -rA --tb=short tests/test_invoice_guard_mini.py tests/test_billing.py tests/test_billing_v1.py -k 'not test_billing_checkout_rejects_founder_yearly'
+
+4 failed, 21 passed, 43 skipped, 1 deselected, 2 warnings in 2.40s
+```
+Both pytest and temporary server had BILLING_V1_ENABLED=true, APP_MODE=staging
+(no dotenv), local MONGO_URL and DB_NAME. GI_BASE_URL, PAYPLUS_API_KEY and
+PAYPLUS_SECRET_KEY were unset. Simulation was unset/off. The temporary server
+blocked non-loopback socket connections, did not run startup jobs, and
+started Mongo inside its own workflow. No provider call or fiscal document.
+All five new guard tests passed.
+Log: /tmp/batch604-mini/continue2-billing-tests.txt (redacted, mode 0600).
+
+pre-existing failure — admin routes answer 404 by design (router.py :351-357),
+test older than the hardening; not changed in this batch:
+```text
+tests/test_billing.py::TestAccessGate::test_pm_cannot_access_admin_billing
+tests/test_billing.py:209:
+    assert r.status_code in [403, 401]
+E   assert 404 in [403, 401]
+
+tests/test_billing.py::TestAccessGate::test_pm_cannot_override
+tests/test_billing.py:218:
+    assert r.status_code in [403, 401]
+E   assert 404 in [403, 401]
+```
+These are the two accepted exceptions from CONTINUE-2. They are included
+in the real failure count, not relabeled as passes or excluded.
+
+OTHER failures — not covered by that explicit exception:
+```text
+tests/test_billing_v1.py::TestPlansRBAC::test_pm_cannot_list_plans
+tests/test_billing_v1.py:168:
+    assert r.status_code == 403
+E   assert 404 == 403
+
+tests/test_billing_v1.py::TestMigrationRBAC::test_pm_cannot_dry_run
+tests/test_billing_v1.py:188:
+    assert r.status_code == 403
+E   assert 404 == 403
+```
+Stopped after the full run returned, as directed by "Any OTHER failure".
+No assertion expectations were changed and no new exemptions were assumed.
+
+Every skipped test and its reason (43 total):
+
+Reason: "Cannot login as admin@contractor-ops.com" (36 tests)
+In tests/test_billing.py:
+- TestBillingMeEndpoint::test_billing_me_returns_data
+- TestTrialAccess::test_active_trial_has_full_access
+- TestTrialAccess::test_get_requests_always_allowed
+- TestAdminOverrides::test_admin_can_list_orgs
+- TestAdminOverrides::test_admin_can_view_audit
+- TestAdminOverrides::test_override_requires_note
+- TestAdminOverrides::test_extend_trial_works
+- TestAdminOverrides::test_comp_works
+- TestAdminOverrides::test_suspend_then_unsuspend
+- TestAccessGate::test_suspend_blocks_writes
+- TestAccessGate::test_get_allowed_when_suspended
+- TestAccessGate::test_audit_events_logged
+In tests/test_billing_v1.py:
+- TestBillingOrgRBAC::test_sa_can_read_org_billing
+- TestBillingProjectRBAC::test_sa_can_read_project_billing
+- TestPlansRBAC::test_sa_can_list_plans
+- TestMigrationRBAC::test_sa_can_dry_run
+- TestPlanStructure::test_default_plans_exist
+- TestPlanStructure::test_plan_has_required_fields
+- TestProjectBillingData::test_project_billing_has_observed_units
+- TestProjectBillingData::test_project_billing_has_access
+- TestOrgBillingData::test_org_billing_has_subscription
+- TestOrgBillingData::test_org_billing_has_projects_list
+- TestMigrationIdempotency::test_dry_run_counts_consistent
+- TestPricingModel::test_standard_plan_exists
+- TestPricingModel::test_plan_has_pricing_fields
+- TestWriteEndpointsRBAC::test_sa_can_patch_project_billing
+- TestWriteEndpointsRBAC::test_patch_invalid_plan_returns_400
+- TestWriteEndpointsRBAC::test_patch_plan_updates_pricing
+- TestWriteEndpointsRBAC::test_patch_empty_body_returns_400
+- TestWriteEndpointsRBAC::test_patch_no_org_project_returns_400
+- TestHandoffWorkflow::test_handoff_full_flow
+- TestHandoffWorkflow::test_invalid_transition_returns_400
+- TestSetupStateField::test_project_billing_has_setup_state
+- TestSnapshotImmutability::test_monthly_total_consistent_after_read
+- TestBillingAuditPhase2::test_patch_creates_audit_event
+- TestBillingAuditPhase2::test_handoff_creates_audit_event
+
+Reason: "Only when flag OFF" (5 tests, tests/test_billing_v1.py):
+- TestFeatureFlag::test_billing_org_404_when_flag_off
+- TestFeatureFlag::test_billing_project_404_when_flag_off
+- TestFeatureFlag::test_plans_404_when_flag_off
+- TestFeatureFlag::test_migration_dry_run_404_when_flag_off
+- TestFeatureFlag::test_migration_apply_blocked_when_flag_off
+
+Reason: "No contractor demo user" (2 tests, tests/test_billing_v1.py):
+- TestWriteEndpointsRBAC::test_contractor_cannot_patch_project_billing
+- TestHandoffWorkflow::test_contractor_cannot_handoff
+
+No "No orgs available" skips occurred in this run.
+Raw per-test skip mapping: /tmp/batch604-mini/continue2-skips.txt.
+Warnings: 2 existing Pydantic V1-style validator deprecations.
+
+not run — provider not configured (1 deselected, not a failure):
+tests/test_billing.py::test_billing_checkout_rejects_founder_yearly
+It installs dummy PayPlus credentials and may enter a provider path.
+The approved -k exclusion was retained unchanged.
+
+V4 / V6 / V7
+HTTP matrix: NOT RUN after the additional failures.
+Four requested billing screenshots: NOT RUN; no screenshot fixture created.
+Jest: NOT RUN; no counts are claimed.
+Previously passing CI build unchanged; no additional build was necessary.
+
+Cleanup / snapshot comparison
+```text
+audit_events: restored 0, removed 6 test-created records
+auth_failed_attempts: restored 0, removed 2 test-created records
+otp_rate_limits: restored 0, removed 4 test-created records
+user_activity_hours: restored 0, removed 1 test-created records
+users: restored 1, removed 0 test-created records
+All collection document contents match the pre-run snapshot.
+```
+Comparison was checked before returning to normal application startup.
+Log: /tmp/batch604-mini/continue2-cleanup.txt.
+No browser contexts were opened.
+
+Workflow restoration without Git:
+Normal application startup was run through a temporary shell pipeline that
+omitted only the existing Git metadata lookup from start.sh; RELEASE_SHA and
+GIT_SHA were set to "none". The source start.sh was not edited. Startup
+succeeded. Then the exact original workflow command was restored as its
+configuration WITHOUT restarting/executing its Git metadata commands.
+Start application remains RUNNING with the no-Git launch process; its next
+normal manual restart will use the restored original configuration.
+The standard frontend API target/build was untouched in this continuation.
+
+Task remains incomplete pending disposition of the two additional failures
+and completion of the remaining verification. No commit, push or deploy.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
