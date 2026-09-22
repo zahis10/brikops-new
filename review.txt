@@ -5913,4 +5913,48 @@ is ignored. No commit, push, deploy, dependency installation, provider
 call, or protected source edit. Do not mark this task complete until the
 outstanding verification is authorized and passes.
 
+Continuation after Zahi's "continute -1" — 22.9
+------------------------------------------------
+Resumed verification only; no application source or existing test edits.
+Fixed the temporary /tmp verification harness to start MongoDB inside the
+same managed workflow as the local server. The database stayed available
+for this run. Took a fresh local snapshot before testing.
+
+V2 resumed command:
+```text
+cd backend && python -m pytest -q -x tests/test_invoice_guard_mini.py tests/test_billing.py tests/test_billing_v1.py -k 'not test_billing_checkout_rejects_founder_yearly'
+
+FAILED tests/test_billing.py::TestAccessGate::test_pm_cannot_access_admin_billing
+tests/test_billing.py:209:
+    assert r.status_code in [403, 401]
+E   assert 404 in [403, 401]
+
+1 failed, 6 passed, 12 skipped, 1 deselected, 2 warnings in 2.08s
+```
+The test requests GET /api/admin/billing/orgs as PM. This is an actual assertion
+failure, not the earlier Mongo connection/setup error. Its cause is not
+established here; no claim is made that this hotfix introduced it.
+Stopped immediately on this failure as instructed. No retries, test edits,
+out-of-scope fixes, HTTP matrix, Jest, or billing screenshots followed.
+The provider-adjacent checkout test remains excluded for the reason above.
+
+Safe runtime: APP_MODE=staging (no dotenv); GI_BASE_URL, PAYPLUS_API_KEY,
+PAYPLUS_SECRET_KEY and BILLING_SIMULATION_ENABLED unset; local Mongo only;
+BILLING_V1_ENABLED=true; loopback-only outbound socket guard; startup
+lifespan jobs off. No provider request or fiscal document was made.
+Redacted log: /tmp/batch604-mini/resume-billing-tests.txt (mode 0600).
+
+Cleanup: compared all local collection document contents with the fresh
+snapshot. Restored 1 user document and removed test-created records:
+audit_events 1, auth_failed_attempts 1, otp_rate_limits 3,
+user_activity_hours 1. Verified document contents exactly match the
+pre-run snapshot before restoring the original workflow.
+The original Start application command was restored and restarted
+successfully. The standard frontend build was not changed during this
+continuation. No browser contexts or screenshot fixtures were created.
+
+CURRENT STATUS: blocked on the existing billing regression assertion above.
+V4 HTTP matrix, V6 billing screenshots and Jest remain unverified.
+Task not marked complete. No agent commit, push, or deploy.
+
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
