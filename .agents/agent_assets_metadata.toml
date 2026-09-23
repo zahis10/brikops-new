@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "review.txt — מעודכן כולל CONTINUE-2"
-description = "הדוח המלא, כולל סעיף #604 (22.9) — CONTINUE-2: תוצאות ההרצה, כל סיבות הדילוג, שני הכשלים הנוספים ותיעוד השחזור."
+title = "review.txt"
+description = "קובץ הסקירה המלא, בגודל כ־76MB. סעיף Batch 606 נשמר בנפרד ואינו כלול בקובץ זה."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:d3b0b4b1d036fa9b42112442d6aa04eabf1d0fb0a2ceed309e34d250c4328d5a"
-size = 298598
-mtime_ms = 1790066781823
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/4b07b6f4-82e4-4e19-9d1c-e932de97cf00"
-storage_version_token = "1790068406573042"
+content_hash = "sha256:73ae5877175ed3ff67374f8ac80a47492f77b2e78b076cc8e91c2527bfd67582"
+size = 79425536
+mtime_ms = 1790153066273
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/5520a77d-3afe-4e6b-866e-cb3e734c351c"
+storage_version_token = "1790168667925379"
 content_type = "text/plain"
 
 [[outputs]]
