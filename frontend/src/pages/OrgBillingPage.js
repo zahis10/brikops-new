@@ -101,6 +101,10 @@ export default function OrgBillingPage() {
   const [expandedInvoice, setExpandedInvoice] = useState(null);
   const [expandedDetail, setExpandedDetail] = useState(null);
   const [invoiceConfirm, setInvoiceConfirm] = useState(null);
+  const [voidConfirm, setVoidConfirm] = useState(null);
+  const [voidReason, setVoidReason] = useState('');
+  const [voidGiDoc, setVoidGiDoc] = useState('');
+  const [voiding, setVoiding] = useState(null);
 
   const [renewalCycle, setRenewalCycle] = useState('monthly');
   const [serverPlanPricing, setServerPlanPricing] = useState(null);
@@ -234,6 +238,25 @@ export default function OrgBillingPage() {
       toast.error(err.response?.data?.detail || 'שגיאה בסימון חשבונית');
     } finally {
       setMarkingPaid(null);
+    }
+  };
+
+  const handleVoidInvoice = async () => {
+    const invoiceId = voidConfirm;
+    const reason = voidReason.trim();
+    if (!invoiceId || !reason) return;
+    setVoiding(invoiceId);
+    try {
+      await invoiceService.voidInvoice(orgId, invoiceId, { reason, gi_cancel_document_id: voidGiDoc.trim() });
+      toast.success('החשבונית בוטלה');
+      setVoidConfirm(null);
+      setVoidReason('');
+      setVoidGiDoc('');
+      await loadInvoices();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בביטול חשבונית');
+    } finally {
+      setVoiding(null);
     }
   };
 
@@ -1981,6 +2004,7 @@ export default function OrgBillingPage() {
                       {!inv.paid_at && inv.status !== 'paid' && inv.status !== 'issued' && inv.due_at && (
                         <div>תאריך יעד: {new Date(inv.due_at).toLocaleDateString('he-IL')}</div>
                       )}
+                      {inv.status === 'void' && inv.void_reason && <div>סיבת ביטול: {inv.void_reason}</div>}
                     </div>
                     {(inv.gi_download_url || inv.gi_document_id) && (
                       <a
@@ -2001,6 +2025,16 @@ export default function OrgBillingPage() {
                       >
                         {markingPaid === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                         סימון כשולם (סימולציה)
+                      </button>
+                    )}
+                    {isSA && (inv.status === 'issued' || inv.status === 'past_due') && (
+                      <button
+                        onClick={() => { setVoidReason(''); setVoidGiDoc(''); setVoidConfirm(inv.id); }}
+                        disabled={voiding === inv.id}
+                        className="w-full border border-red-300 hover:border-red-400 bg-white hover:bg-red-50 disabled:opacity-50 text-red-700 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
+                      >
+                        {voiding === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                        בטל חשבונית (אדמין)
                       </button>
                     )}
                   </div>
@@ -2116,6 +2150,33 @@ export default function OrgBillingPage() {
                 className="flex-1 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm"
               >
                 ביטול
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {voidConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 space-y-4" dir="rtl">
+            <h3 className="text-lg font-bold text-slate-800">לבטל את החשבונית?</h3>
+            <p className="text-xs text-slate-500">הרשומה תסומן כמבוטלת ב-BrikOps. את המסמך ב-Green Invoice מבטלים בנפרד (חשבונית זיכוי / מסמך ביטול).</p>
+            <label className="block text-sm text-slate-700">סיבה <span className="text-red-600">*</span>
+              <textarea value={voidReason} onChange={(e) => setVoidReason(e.target.value)} maxLength={300} rows={3}
+                className="mt-1 w-full border border-slate-300 rounded-lg p-2 text-sm" placeholder="למשל: הופקה בטעות — ארגון בניסיון, ללא תשלום" />
+            </label>
+            <label className="block text-sm text-slate-700">מספר מסמך הביטול ב-Green Invoice (אופציונלי)
+              <input value={voidGiDoc} onChange={(e) => setVoidGiDoc(e.target.value)} maxLength={50}
+                className="mt-1 w-full border border-slate-300 rounded-lg p-2 text-sm" dir="ltr" />
+            </label>
+            <div className="flex gap-2">
+              <button onClick={handleVoidInvoice} disabled={!voidReason.trim() || !!voiding}
+                className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-medium py-2 px-4 rounded-lg text-sm">
+                בטל חשבונית
+              </button>
+              <button onClick={() => setVoidConfirm(null)} disabled={!!voiding}
+                className="flex-1 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm">
+                חזור
               </button>
             </div>
           </div>

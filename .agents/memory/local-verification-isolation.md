@@ -14,3 +14,9 @@ Temporary snapshots can disappear during an environment restart while Mongo pers
 **Why:** A restart erased the original verification snapshot, making an exact comparison with that baseline impossible.
 
 **How to apply:** Never claim that lost comparison succeeded. Remove only clearly fixture-owned recovery data, take a new clean baseline before any replacement fixture work, and state precisely which baseline was compared.
+
+Recheck Mongo after replacing the normal app workflow; a database process inherited from that workflow can die with it. A standalone shell `mongod --fork` can also disappear when tool process cleanup runs.
+
+**Why:** A preflight ping passed before workflow replacement, but subsequent legacy tests timed out on a refused Mongo connection.
+
+**How to apply:** Keep a disposable Mongo process in a managed background shell or workflow and ping after runtime changes, immediately before database-dependent tests.

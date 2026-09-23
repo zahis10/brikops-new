@@ -135,7 +135,31 @@ async def build_invoice_preview(org_id: str, period_ym: str) -> dict:
     }
 
 
-async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: float, period_ym: str, paid_until: str = "", card_last4: str = ""):
+_PAYMENT_METHODS = ('card',)
+_REFERENCE_RE = re.compile(r'^\S{1,120}$')
+
+
+def _validate_payment(payment) -> dict:
+    """Proof that money moved. Only method + reference are validated —
+    amount / card_last4 are informational (see WHY)."""
+    if not isinstance(payment, dict):
+        raise ValueError('חשבונית מופקת רק אחרי תשלום שאושר')
+    method = payment.get('method')
+    reference = payment.get('reference')
+    if method not in _PAYMENT_METHODS or not isinstance(reference, str) \
+            or not _REFERENCE_RE.match(reference.strip()):
+        raise ValueError('חשבונית מופקת רק אחרי תשלום שאושר')
+    card_last4 = payment.get('card_last4')
+    card_last4 = card_last4.strip() if isinstance(card_last4, str) else ''
+    try:
+        amount = float(payment.get('amount') or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    return {'method': method, 'reference': reference.strip(),
+            'card_last4': card_last4, 'amount': amount}
+
+
+async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: float, period_ym: str, paid_until: str = "", payment: dict = None):
     from config import GI_BASE_URL
     if not GI_BASE_URL or amount <= 0:
         logger.info("[INVOICING:GI] Skipped — GI not configured or amount=0. invoice=%s amount=%s gi_configured=%s", invoice_id, amount, bool(GI_BASE_URL))
@@ -165,17 +189,18 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
             gi_description = f"מנוי BrikOps — {period_ym}"
     else:
         gi_description = f"מנוי BrikOps — {period_ym}"
-    today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    gi_remarks = f"org_id={org_id} invoice_id={invoice_id}"
+    if (payment or {}).get('reference'):
+        gi_remarks += f" tx={payment['reference']}"
     gi_doc = await create_document(
         client_name=org_name or 'BrikOps Client',
         client_email=billing_email,
         description=gi_description,
         amount=amount,
         currency='ILS',
-        remarks=f"org_id={org_id} invoice_id={invoice_id}",
+        remarks=gi_remarks,
         client_id=gi_client_id,
-        payment_date=today_str,
-        card_last4=card_last4,
+        payment=payment or {},
     )
     gi_document_id = gi_doc.get('id', '')
     url_field = gi_doc.get('url', {})
@@ -523,7 +548,8 @@ async def send_reactivation_email_user(org_id: str, sub: dict, user: dict):
     _smtp_send(msg, 'invoice@brikops.com', to_email, 'REACTIVATE-EMAIL-USER', org_id)
 
 
-async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_until: str = "", card_last4: str = "", override_amount: float = None) -> dict:
+async def generate_invoice(org_id: str, period_ym: str, created_by: str, *, payment: dict, paid_until: str = "", override_amount: float = None) -> dict:
+    payment = _validate_payment(payment)
     year, month = validate_period_ym(period_ym)
     db = get_db()
 
@@ -532,6 +558,8 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
         {'_id': 0}
     )
     if existing:
+        if existing.get('status') == 'void':
+            raise ValueError('קיימת חשבונית מבוטלת לתקופה זו — נדרש טיפול ידני')
         items = await db.invoice_line_items.find(
             {'invoice_id': existing['id']},
             {'_id': 0}
@@ -539,7 +567,7 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
         existing['line_items'] = items
         if not existing.get('gi_document_id'):
             try:
-                gi_id = await _try_create_gi_document(db, org_id, existing['id'], existing.get('total_amount', 0), period_ym, paid_until=paid_until, card_last4=card_last4)
+                gi_id = await _try_create_gi_document(db, org_id, existing['id'], existing.get('total_amount', 0), period_ym, paid_until=paid_until, payment=payment)
                 if gi_id:
                     existing['gi_document_id'] = gi_id
             except Exception as e:
@@ -562,6 +590,9 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
         'status': 'issued',
         'total_amount': final_amount,
         'currency': 'ILS',
+        'payment_method': payment['method'],
+        'payment_reference': payment['reference'],
+        'payment_amount': payment['amount'],
         'issued_at': ts,
         'due_at': preview['due_at'],
         'paid_at': None,
@@ -623,7 +654,7 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
     from config import GI_BASE_URL
     logger.info("[INVOICING:GI] About to attempt GI. invoice=%s amount=%s gi_configured=%s", invoice_id, final_amount, bool(GI_BASE_URL))
     try:
-        gi_document_id = await _try_create_gi_document(db, org_id, invoice_id, final_amount, period_ym, paid_until=paid_until, card_last4=card_last4)
+        gi_document_id = await _try_create_gi_document(db, org_id, invoice_id, final_amount, period_ym, paid_until=paid_until, payment=payment)
         if gi_document_id:
             invoice_doc['gi_document_id'] = gi_document_id
             gi_inv = await db.invoices.find_one({'id': invoice_id}, {'_id': 0, 'gi_download_url': 1})
@@ -724,6 +755,46 @@ async def mark_invoice_paid(org_id: str, invoice_id: str, actor_id: str) -> dict
     items = await db.invoice_line_items.find(
         {'invoice_id': invoice_id}, {'_id': 0}
     ).to_list(1000)
+    updated['line_items'] = items
+    return updated
+
+
+async def void_invoice(org_id: str, invoice_id: str, actor_id: str, reason: str, gi_cancel_document_id: str = '') -> dict:
+    db = get_db()
+    reason = (reason or '').strip()[:300] if isinstance(reason, str) else ''
+    if not reason:
+        raise ValueError('נדרשת סיבה לביטול')
+    inv = await db.invoices.find_one({'id': invoice_id, 'org_id': org_id}, {'_id': 0})
+    if not inv:
+        raise ValueError('חשבונית לא נמצאה')
+    if inv['status'] == 'paid':
+        raise ValueError('לא ניתן לבטל חשבונית ששולמה')
+    if inv['status'] not in ('issued', 'past_due'):
+        raise ValueError(f"לא ניתן לבטל חשבונית בסטטוס {inv['status']}")
+    ts = _now()
+    before_status = inv['status']
+    gi_cancel = gi_cancel_document_id.strip()[:50] if isinstance(gi_cancel_document_id, str) else ''
+    res = await db.invoices.update_one(
+        {'id': invoice_id, 'org_id': org_id, 'status': {'$in': ['issued', 'past_due']}},
+        {'$set': {'status': 'void', 'voided_at': ts, 'voided_by': actor_id,
+                  'void_reason': reason, 'gi_cancel_document_id': gi_cancel,
+                  'updated_at': ts}}
+    )
+    if res.matched_count == 0:
+        raise ValueError('החשבונית השתנתה בינתיים — רענן ונסה שוב')
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()), 'entity_type': 'invoice', 'entity_id': invoice_id,
+        'action': 'invoice_voided', 'actor_id': actor_id,
+        'payload': {'org_id': org_id, 'period_ym': inv.get('period_ym'),
+                    'total_amount': inv.get('total_amount'),
+                    'before_status': before_status, 'after_status': 'void',
+                    'reason': reason, 'gi_document_id': inv.get('gi_document_id', ''),
+                    'gi_cancel_document_id': gi_cancel},
+        'created_at': ts,
+    })
+    logger.info(f"[INVOICING] Invoice {invoice_id} voided for org {org_id} by {actor_id}: {reason}")
+    updated = await db.invoices.find_one({'id': invoice_id}, {'_id': 0})
+    items = await db.invoice_line_items.find({'invoice_id': invoice_id}, {'_id': 0}).to_list(1000)
     updated['line_items'] = items
     return updated
 

@@ -55,6 +55,7 @@ const ACTION_LABELS = {
   'role_changed': 'שינוי תפקיד',
   'invoice_generated': 'הפקת חשבונית',
   'invoice_marked_paid': 'סימון חשבונית כשולם',
+  'invoice_voided': 'ביטול חשבונית',
 };
 
 const ENTITY_LABELS = {

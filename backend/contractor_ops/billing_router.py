@@ -799,6 +799,33 @@ async def invoice_mark_paid(org_id: str, invoice_id: str, user: dict = Depends(g
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/billing/org/{org_id}/invoices/{invoice_id}/void")
+async def invoice_void(org_id: str, invoice_id: str, request: Request, user: dict = Depends(get_current_user)):
+    from contractor_ops.billing import BILLING_V1_ENABLED
+    from contractor_ops.invoicing import void_invoice
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+    if not _is_super_admin(user):
+        raise HTTPException(status_code=403, detail='רק אדמין ראשי')
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    reason = body.get('reason')
+    reason = reason.strip() if isinstance(reason, str) else ''
+    if not reason or len(reason) > 300:
+        raise HTTPException(status_code=400, detail='נדרשת סיבה לביטול (עד 300 תווים)')
+    gi_cancel = body.get('gi_cancel_document_id')
+    gi_cancel = gi_cancel.strip()[:50] if isinstance(gi_cancel, str) else ''
+    try:
+        return await void_invoice(org_id, invoice_id, user['id'], reason, gi_cancel)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/orgs/{org_id}/billing-contact")
 async def get_billing_contact_endpoint(org_id: str, user: dict = Depends(get_current_user)):
     from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role, get_billing_contact
@@ -1069,12 +1096,13 @@ async def billing_run_renewals_internal() -> dict:
                     updated_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'paid_until': 1})
                     new_paid_until = updated_sub.get('paid_until', '') if updated_sub else ''
                     inv_card_last4 = billing_data.get('card_last4', '')
+                    renewal_payment = {'method': 'card', 'reference': transaction_uid, 'card_last4': inv_card_last4, 'amount': amount}
                     invoice = await generate_invoice(
                         org_id,
                         period_ym,
                         'system_renewal',
+                        payment=renewal_payment,
                         paid_until=new_paid_until,
-                        card_last4=inv_card_last4,
                         override_amount=amount,
                     )
                     invoice_id = invoice.get('id', '')
@@ -1086,7 +1114,7 @@ async def billing_run_renewals_internal() -> dict:
                             gi_doc_id = await _try_create_gi_document(
                                 db, org_id, invoice_id, amount, period_ym,
                                 paid_until=new_paid_until,
-                                card_last4=inv_card_last4,
+                                payment=renewal_payment,
                             )
                             if gi_doc_id:
                                 logger.info("[RENEWALS] GI document created: %s for org=%s", gi_doc_id, org_id)
@@ -1201,7 +1229,7 @@ async def billing_webhook_greeninvoice(request: Request):
     import uuid
     import json
     from contractor_ops.billing import _now, get_subscription, mark_paid
-    from contractor_ops.green_invoice_service import get_document, compute_payload_hash, GreenInvoiceError
+    from contractor_ops.green_invoice_service import get_document, compute_payload_hash, GreenInvoiceError, parse_gi_remarks
     from config import GI_BASE_URL
 
     client_ip = request.client.host if request.client else 'unknown'
@@ -1313,14 +1341,9 @@ async def billing_webhook_greeninvoice(request: Request):
         return {"status": "ok"}
 
     remarks = verified_doc.get("remarks", "") or ""
-    org_id = ""
-    cycle = "monthly"
-    if remarks:
-        for part in remarks.split():
-            if part.startswith("org_id="):
-                org_id = part.split("=", 1)[1]
-            elif part.startswith("cycle="):
-                cycle = part.split("=", 1)[1]
+    parsed = parse_gi_remarks(remarks)
+    org_id = parsed['org_id']
+    cycle = parsed['cycle']
 
     doc_total = verified_doc.get("total", 0) or verified_doc.get("amount", 0) or 0
 
@@ -1341,6 +1364,16 @@ async def billing_webhook_greeninvoice(request: Request):
         log_entry['raw_verified_doc'] = verified_doc
         log_entry['raw_payload_expires_at'] = datetime.now(timezone.utc) + timedelta(days=30)
         logger.info("[GI-WEBHOOK] Logging full raw payload+doc (%d/%d)", raw_log_count + 1, RAW_PAYLOAD_LOG_LIMIT)
+
+    if parsed['invoice_id']:
+        # Document created by our own API (invoicing._try_create_gi_document):
+        # the payment was already processed by PayPlus / the renewal. Never
+        # mark it paid a second time.
+        log_entry['result'] = 'api_created_doc'
+        log_entry['invoice_id'] = parsed['invoice_id']
+        logger.info("[GI-WEBHOOK] Doc %s is API-created (invoice %s) — ignored", doc_id, parsed['invoice_id'])
+        await db.gi_webhook_log.insert_one(log_entry)
+        return {"status": "ok"}
 
     if not org_id:
         log_entry['result'] = 'no_org_id'
@@ -1654,7 +1687,7 @@ async def billing_webhook_payplus(request: Request):
         from contractor_ops.invoicing import generate_invoice
         period = datetime.now(timezone.utc).strftime("%Y-%m")
         paid_amount = float(verified_tx.get("amount", 0) or body.get("transaction", {}).get("amount", 0) or 0)
-        invoice = await generate_invoice(org_id, period, 'payplus_webhook', paid_until=paid_until, card_last4=card_last4, override_amount=paid_amount if paid_amount > 0 else None)
+        invoice = await generate_invoice(org_id, period, 'payplus_webhook', payment={'method': 'card', 'reference': transaction_uid, 'card_last4': card_last4, 'amount': paid_amount}, paid_until=paid_until, override_amount=paid_amount if paid_amount > 0 else None)
         if invoice and invoice.get('id') and invoice.get('status') != 'paid':
             ts_now = datetime.now(timezone.utc).isoformat()
             await db.invoices.update_one(

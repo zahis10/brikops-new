@@ -1,0 +1,510 @@
+#606 (22.9)
+
+FALLBACK DELIVERABLE: required append to review.txt remains BLOCKED because
+apply_patch rejects its79,425,536-byte size (limit16,777,216). No restriction
+bypassed; original review remains unchanged. This complete intended section
+is preserved here using apply_patch, not claimed as appended.
+
+STEP0: expected base76e65fe user-reported, NOT independently verified. No Git
+commands, branch changes, commit/push/deploy, dependencies, production changes
+or external provider calls. Batch606 plus ADDENDUM-1 followed.
+Scope: invoicing.py, green_invoice_service.py, billing_router.py,
+OrgBillingPage.js, api.js, actionLabels.js, new test_invoice_guard_phase_b.py,
+BILL-A checklist, requested metadata and this fallback evidence.
+Protected startup/config/env/core/existing tests unchanged.
+
+V1 — FULL requested source text, ADDENDUM-1 no-Git replacement:
+
+===== backend/contractor_ops/invoicing.py: _validate_payment =====
+def _validate_payment(payment) -> dict:
+    """Proof that money moved. Only method + reference are validated —
+    amount / card_last4 are informational (see WHY)."""
+    if not isinstance(payment, dict):
+        raise ValueError('חשבונית מופקת רק אחרי תשלום שאושר')
+    method = payment.get('method')
+    reference = payment.get('reference')
+    if method not in _PAYMENT_METHODS or not isinstance(reference, str) \
+            or not _REFERENCE_RE.match(reference.strip()):
+        raise ValueError('חשבונית מופקת רק אחרי תשלום שאושר')
+    card_last4 = payment.get('card_last4')
+    card_last4 = card_last4.strip() if isinstance(card_last4, str) else ''
+    try:
+        amount = float(payment.get('amount') or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    return {'method': method, 'reference': reference.strip(),
+            'card_last4': card_last4, 'amount': amount}
+
+===== backend/contractor_ops/invoicing.py: _try_create_gi_document signature =====
+async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: float, period_ym: str, paid_until: str = "", payment: dict = None):
+
+===== backend/contractor_ops/invoicing.py: _try_create_gi_document remarks and create_document call =====
+    gi_remarks = f"org_id={org_id} invoice_id={invoice_id}"
+    if (payment or {}).get('reference'):
+        gi_remarks += f" tx={payment['reference']}"
+    gi_doc = await create_document(
+        client_name=org_name or 'BrikOps Client',
+        client_email=billing_email,
+        description=gi_description,
+        amount=amount,
+        currency='ILS',
+        remarks=gi_remarks,
+        client_id=gi_client_id,
+        payment=payment or {},
+    )
+
+===== backend/contractor_ops/invoicing.py: generate_invoice through existing-branch return =====
+async def generate_invoice(org_id: str, period_ym: str, created_by: str, *, payment: dict, paid_until: str = "", override_amount: float = None) -> dict:
+    payment = _validate_payment(payment)
+    year, month = validate_period_ym(period_ym)
+    db = get_db()
+
+    existing = await db.invoices.find_one(
+        {'org_id': org_id, 'period_ym': period_ym},
+        {'_id': 0}
+    )
+    if existing:
+        if existing.get('status') == 'void':
+            raise ValueError('קיימת חשבונית מבוטלת לתקופה זו — נדרש טיפול ידני')
+        items = await db.invoice_line_items.find(
+            {'invoice_id': existing['id']},
+            {'_id': 0}
+        ).to_list(1000)
+        existing['line_items'] = items
+        if not existing.get('gi_document_id'):
+            try:
+                gi_id = await _try_create_gi_document(db, org_id, existing['id'], existing.get('total_amount', 0), period_ym, paid_until=paid_until, payment=payment)
+                if gi_id:
+                    existing['gi_document_id'] = gi_id
+            except Exception as e:
+                logger.warning("[INVOICING:GI] Backfill FAILED for existing invoice %s: %s", existing['id'], str(e))
+        return existing
+
+===== backend/contractor_ops/invoicing.py: generate_invoice invoice_doc =====
+    invoice_doc = {
+        'id': invoice_id,
+        'org_id': org_id,
+        'period_ym': period_ym,
+        'status': 'issued',
+        'total_amount': final_amount,
+        'currency': 'ILS',
+        'payment_method': payment['method'],
+        'payment_reference': payment['reference'],
+        'payment_amount': payment['amount'],
+        'issued_at': ts,
+        'due_at': preview['due_at'],
+        'paid_at': None,
+        'created_by': created_by,
+        'created_at': ts,
+        'updated_at': ts,
+    }
+
+===== backend/contractor_ops/invoicing.py: void_invoice =====
+async def void_invoice(org_id: str, invoice_id: str, actor_id: str, reason: str, gi_cancel_document_id: str = '') -> dict:
+    db = get_db()
+    reason = (reason or '').strip()[:300] if isinstance(reason, str) else ''
+    if not reason:
+        raise ValueError('נדרשת סיבה לביטול')
+    inv = await db.invoices.find_one({'id': invoice_id, 'org_id': org_id}, {'_id': 0})
+    if not inv:
+        raise ValueError('חשבונית לא נמצאה')
+    if inv['status'] == 'paid':
+        raise ValueError('לא ניתן לבטל חשבונית ששולמה')
+    if inv['status'] not in ('issued', 'past_due'):
+        raise ValueError(f"לא ניתן לבטל חשבונית בסטטוס {inv['status']}")
+    ts = _now()
+    before_status = inv['status']
+    gi_cancel = gi_cancel_document_id.strip()[:50] if isinstance(gi_cancel_document_id, str) else ''
+    res = await db.invoices.update_one(
+        {'id': invoice_id, 'org_id': org_id, 'status': {'$in': ['issued', 'past_due']}},
+        {'$set': {'status': 'void', 'voided_at': ts, 'voided_by': actor_id,
+                  'void_reason': reason, 'gi_cancel_document_id': gi_cancel,
+                  'updated_at': ts}}
+    )
+    if res.matched_count == 0:
+        raise ValueError('החשבונית השתנתה בינתיים — רענן ונסה שוב')
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()), 'entity_type': 'invoice', 'entity_id': invoice_id,
+        'action': 'invoice_voided', 'actor_id': actor_id,
+        'payload': {'org_id': org_id, 'period_ym': inv.get('period_ym'),
+                    'total_amount': inv.get('total_amount'),
+                    'before_status': before_status, 'after_status': 'void',
+                    'reason': reason, 'gi_document_id': inv.get('gi_document_id', ''),
+                    'gi_cancel_document_id': gi_cancel},
+        'created_at': ts,
+    })
+    logger.info(f"[INVOICING] Invoice {invoice_id} voided for org {org_id} by {actor_id}: {reason}")
+    updated = await db.invoices.find_one({'id': invoice_id}, {'_id': 0})
+    items = await db.invoice_line_items.find({'invoice_id': invoice_id}, {'_id': 0}).to_list(1000)
+    updated['line_items'] = items
+    return updated
+
+===== backend/contractor_ops/green_invoice_service.py: create_document signature =====
+async def create_document(
+    client_name: str,
+    client_email: str,
+    description: str,
+    amount: float,
+    currency: str = "ILS",
+    remarks: str = "",
+    client_id: str = "",
+    payment: dict = None,
+) -> dict:
+
+===== backend/contractor_ops/green_invoice_service.py: create_document payment block =====
+    pay = payment or {}
+    pay_date = pay.get('date') or datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    payment_entry = {
+        "type": 3,
+        "price": amount,
+        "currency": currency,
+        "date": pay_date,
+    }
+    card_last4 = pay.get('card_last4')
+    if isinstance(card_last4, str) and len(card_last4) == 4 and card_last4.isdigit():
+        payment_entry["cardNum"] = card_last4
+    payload["payment"] = [payment_entry]
+
+===== backend/contractor_ops/green_invoice_service.py: parse_gi_remarks =====
+def parse_gi_remarks(remarks) -> dict:
+    """'org_id=A invoice_id=B tx=C cycle=yearly' -> dict; unknown tokens ignored."""
+    parsed = {'org_id': '', 'cycle': 'monthly', 'invoice_id': '', 'tx': ''}
+    if not remarks or not isinstance(remarks, str):
+        return parsed
+    for part in remarks.split():
+        key, sep, value = part.partition('=')
+        if sep and key in parsed and value:
+            parsed[key] = value
+    return parsed
+
+===== backend/contractor_ops/billing_router.py: invoice_void =====
+@router.post("/billing/org/{org_id}/invoices/{invoice_id}/void")
+async def invoice_void(org_id: str, invoice_id: str, request: Request, user: dict = Depends(get_current_user)):
+    from contractor_ops.billing import BILLING_V1_ENABLED
+    from contractor_ops.invoicing import void_invoice
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+    if not _is_super_admin(user):
+        raise HTTPException(status_code=403, detail='רק אדמין ראשי')
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    reason = body.get('reason')
+    reason = reason.strip() if isinstance(reason, str) else ''
+    if not reason or len(reason) > 300:
+        raise HTTPException(status_code=400, detail='נדרשת סיבה לביטול (עד 300 תווים)')
+    gi_cancel = body.get('gi_cancel_document_id')
+    gi_cancel = gi_cancel.strip()[:50] if isinstance(gi_cancel, str) else ''
+    try:
+        return await void_invoice(org_id, invoice_id, user['id'], reason, gi_cancel)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+===== backend/contractor_ops/billing_router.py: renewal generate_invoice and GI backfill calls =====
+                try:
+                    updated_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'paid_until': 1})
+                    new_paid_until = updated_sub.get('paid_until', '') if updated_sub else ''
+                    inv_card_last4 = billing_data.get('card_last4', '')
+                    renewal_payment = {'method': 'card', 'reference': transaction_uid, 'card_last4': inv_card_last4, 'amount': amount}
+                    invoice = await generate_invoice(
+                        org_id,
+                        period_ym,
+                        'system_renewal',
+                        payment=renewal_payment,
+                        paid_until=new_paid_until,
+                        override_amount=amount,
+                    )
+                    invoice_id = invoice.get('id', '')
+                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s period=%s amount=%.2f gi_doc=%s gi_url=%s",
+                                org_id, invoice_id, period_ym, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
+                    if invoice_id and not invoice.get('gi_document_id'):
+                        try:
+                            from contractor_ops.invoicing import _try_create_gi_document
+                            gi_doc_id = await _try_create_gi_document(
+                                db, org_id, invoice_id, amount, period_ym,
+                                paid_until=new_paid_until,
+                                payment=renewal_payment,
+                            )
+                            if gi_doc_id:
+                                logger.info("[RENEWALS] GI document created: %s for org=%s", gi_doc_id, org_id)
+                        except Exception as gi_err:
+                            logger.warning("[RENEWALS] GI document creation failed for org=%s: %s", org_id, str(gi_err))
+
+===== backend/contractor_ops/billing_router.py: PayPlus generate_invoice line =====
+        invoice = await generate_invoice(org_id, period, 'payplus_webhook', payment={'method': 'card', 'reference': transaction_uid, 'card_last4': card_last4, 'amount': paid_amount}, paid_until=paid_until, override_amount=paid_amount if paid_amount > 0 else None)
+
+===== backend/contractor_ops/billing_router.py: GI webhook remarks through if not org_id =====
+    remarks = verified_doc.get("remarks", "") or ""
+    parsed = parse_gi_remarks(remarks)
+    org_id = parsed['org_id']
+    cycle = parsed['cycle']
+
+    doc_total = verified_doc.get("total", 0) or verified_doc.get("amount", 0) or 0
+
+    log_entry = {
+        'id': str(uuid.uuid4()),
+        'gi_document_id': doc_id,
+        'payload_hash': payload_hash,
+        'ip': client_ip,
+        'org_id': org_id,
+        'cycle': cycle,
+        'doc_total': doc_total,
+        'doc_status': doc_status,
+        'result': 'pending',
+        'created_at': _now(),
+    }
+    if should_log_raw:
+        log_entry['raw_payload'] = payload
+        log_entry['raw_verified_doc'] = verified_doc
+        log_entry['raw_payload_expires_at'] = datetime.now(timezone.utc) + timedelta(days=30)
+        logger.info("[GI-WEBHOOK] Logging full raw payload+doc (%d/%d)", raw_log_count + 1, RAW_PAYLOAD_LOG_LIMIT)
+
+    if parsed['invoice_id']:
+        # Document created by our own API (invoicing._try_create_gi_document):
+        # the payment was already processed by PayPlus / the renewal. Never
+        # mark it paid a second time.
+        log_entry['result'] = 'api_created_doc'
+        log_entry['invoice_id'] = parsed['invoice_id']
+        logger.info("[GI-WEBHOOK] Doc %s is API-created (invoice %s) — ignored", doc_id, parsed['invoice_id'])
+        await db.gi_webhook_log.insert_one(log_entry)
+        return {"status": "ok"}
+
+    if not org_id:
+
+===== frontend/src/pages/OrgBillingPage.js: handleVoidInvoice =====
+  const handleVoidInvoice = async () => {
+    const invoiceId = voidConfirm;
+    const reason = voidReason.trim();
+    if (!invoiceId || !reason) return;
+    setVoiding(invoiceId);
+    try {
+      await invoiceService.voidInvoice(orgId, invoiceId, { reason, gi_cancel_document_id: voidGiDoc.trim() });
+      toast.success('החשבונית בוטלה');
+      setVoidConfirm(null);
+      setVoidReason('');
+      setVoidGiDoc('');
+      await loadInvoices();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בביטול חשבונית');
+    } finally {
+      setVoiding(null);
+    }
+  };
+
+
+===== frontend/src/pages/OrgBillingPage.js: void button =====
+                    {isSA && (inv.status === 'issued' || inv.status === 'past_due') && (
+                      <button
+                        onClick={() => { setVoidReason(''); setVoidGiDoc(''); setVoidConfirm(inv.id); }}
+                        disabled={voiding === inv.id}
+                        className="w-full border border-red-300 hover:border-red-400 bg-white hover:bg-red-50 disabled:opacity-50 text-red-700 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
+                      >
+                        {voiding === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                        בטל חשבונית (אדמין)
+                      </button>
+                    )}
+
+===== frontend/src/pages/OrgBillingPage.js: void modal =====
+      {voidConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 space-y-4" dir="rtl">
+            <h3 className="text-lg font-bold text-slate-800">לבטל את החשבונית?</h3>
+            <p className="text-xs text-slate-500">הרשומה תסומן כמבוטלת ב-BrikOps. את המסמך ב-Green Invoice מבטלים בנפרד (חשבונית זיכוי / מסמך ביטול).</p>
+            <label className="block text-sm text-slate-700">סיבה <span className="text-red-600">*</span>
+              <textarea value={voidReason} onChange={(e) => setVoidReason(e.target.value)} maxLength={300} rows={3}
+                className="mt-1 w-full border border-slate-300 rounded-lg p-2 text-sm" placeholder="למשל: הופקה בטעות — ארגון בניסיון, ללא תשלום" />
+            </label>
+            <label className="block text-sm text-slate-700">מספר מסמך הביטול ב-Green Invoice (אופציונלי)
+              <input value={voidGiDoc} onChange={(e) => setVoidGiDoc(e.target.value)} maxLength={50}
+                className="mt-1 w-full border border-slate-300 rounded-lg p-2 text-sm" dir="ltr" />
+            </label>
+            <div className="flex gap-2">
+              <button onClick={handleVoidInvoice} disabled={!voidReason.trim() || !!voiding}
+                className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-medium py-2 px-4 rounded-lg text-sm">
+                בטל חשבונית
+              </button>
+              <button onClick={() => setVoidConfirm(null)} disabled={!!voiding}
+                className="flex-1 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm">
+                חזור
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+===== frontend/src/services/api.js: voidInvoice =====
+  async voidInvoice(orgId, invoiceId, body) {
+    const response = await axios.post(`${API}/billing/org/${orgId}/invoices/${invoiceId}/void`, body || {}, { headers: getAuthHeader() });
+    return response.data;
+  },
+
+===== frontend/src/utils/actionLabels.js: invoice_voided =====
+  'invoice_voided': 'ביטול חשבונית',
+
+V2 — local Mongo ping1.0; BILLING_V1_ENABLED=true; GI_BASE_URL,
+PAYPLUS_API_KEY/PAYPLUS_SECRET_KEY unset and dotenv reintroduction disabled.
+Disposable safety harness blocks outbound non-loopback Python sockets.
+Verification startup lifespan off: no background payment jobs.
+Exact combined command (safety harness supplied through PYTHONPATH):
+cd backend && python -m pytest -q tests/test_invoice_guard_phase_b.py tests/test_invoice_guard_mini.py tests/test_billing.py tests/test_billing_v1.py -k "not test_billing_checkout_rejects_founder_yearly"
+Raw result:4 failed,48 passed,43 skipped,1 deselected,2 warnings in6.06s.
+All new guard and5 mini cases passed; provider interactions mocked.
+Only four specified legacy failures, recorded not repaired:
+test_billing.py::TestAccessGate::test_pm_cannot_access_admin_billing
+  line209 assert404 in [403,401]
+test_billing.py::TestAccessGate::test_pm_cannot_override
+  line218 assert404 in [403,401]
+test_billing_v1.py::TestPlansRBAC::test_pm_cannot_list_plans
+  line168 assert404 ==403
+test_billing_v1.py::TestMigrationRBAC::test_pm_cannot_dry_run
+  line188 assert404 ==403
+Two Pydantic V1 validator deprecations schemas.py209/612.
+Known43 skips unavailable admin/org fixtures; founder-yearly provider-dependent
+test explicitly not run. Sanitized raw /tmp/batch606/pytest-complete.txt.
+Initial300s attempt timed out because original workflow shutdown killed Mongo;
+second guarded attempt stopped at ping refusal without rerunning tests. Parent
+started persistent foreground Mongo and completed run above is authoritative.
+Pytest repr briefly emitted truncated bearer prefix; saved artifact redacted
+immediately. No complete JWT intentionally printed in evidence.
+
+V3 — FULL raw requested output:
+$ grep -rn "\"0000\"\|'0000'" backend/contractor_ops/
+$ grep -rn "card_last4=" backend/contractor_ops/
+$ grep -rn "payment_date" backend/contractor_ops/
+$ grep -rn "parse_gi_remarks" backend --exclude-dir=tests
+grep: backend/contractor_ops/__pycache__/green_invoice_service.cpython-311.pyc: binary file matches
+grep: backend/contractor_ops/__pycache__/billing_router.cpython-311.pyc: binary file matches
+backend/contractor_ops/green_invoice_service.py:326:def parse_gi_remarks(remarks) -> dict:
+backend/contractor_ops/billing_router.py:1232:    from contractor_ops.green_invoice_service import get_document, compute_payload_hash, GreenInvoiceError, parse_gi_remarks
+backend/contractor_ops/billing_router.py:1344:    parsed = parse_gi_remarks(remarks)
+$ grep -rn "invoices/\${invoiceId}/void\|invoice_voided\|voidInvoice(" frontend/src
+frontend/src/pages/OrgBillingPage.js:250:      await invoiceService.voidInvoice(orgId, invoiceId, { reason, gi_cancel_document_id: voidGiDoc.trim() });
+frontend/src/services/api.js:2039:  async voidInvoice(orgId, invoiceId, body) {
+frontend/src/services/api.js:2040:    const response = await axios.post(`${API}/billing/org/${orgId}/invoices/${invoiceId}/void`, body || {}, { headers: getAuthHeader() });
+frontend/src/utils/actionLabels.js:58:  'invoice_voided': 'ביטול חשבונית',
+$ grep -rn "generate_invoice(\|create_document(\|_try_create_gi_document(" backend/ --exclude-dir=tests | grep -v "def "
+backend/contractor_ops/invoicing.py:195:    gi_doc = await create_document(
+backend/contractor_ops/invoicing.py:570:                gi_id = await _try_create_gi_document(db, org_id, existing['id'], existing.get('total_amount', 0), period_ym, paid_until=paid_until, payment=payment)
+backend/contractor_ops/invoicing.py:657:        gi_document_id = await _try_create_gi_document(db, org_id, invoice_id, final_amount, period_ym, paid_until=paid_until, payment=payment)
+backend/contractor_ops/billing_router.py:1100:                    invoice = await generate_invoice(
+backend/contractor_ops/billing_router.py:1114:                            gi_doc_id = await _try_create_gi_document(
+backend/contractor_ops/billing_router.py:1690:        invoice = await generate_invoice(org_id, period, 'payplus_webhook', payment={'method': 'card', 'reference': transaction_uid, 'card_last4': card_last4, 'amount': paid_amount}, paid_until=paid_until, override_amount=paid_amount if paid_amount > 0 else None)
+
+V4 — real local HTTP disposable invoices all with due_at ISO strings:
+owner POST /void reason x →403 רק אדמין ראשי
+SA POST /void {} →400 נדרשת סיבה לביטול (עד 300 תווים)
+SA reason301chars →400 נדרשת סיבה לביטול (עד 300 תווים)
+SA issued reason בדיקה, GI60011 →200 status void; void_reason בדיקה;
+gi_cancel_document_id60011. GET list200 target void, simulation_enabled false.
+Actual audit_events id ec402f5c-e045-4562-9a32-7fdb2d2ca001:
+entity_type invoice, entity_id batch606-http, action invoice_voided,
+actor_id batch606-local-sa, created_at2026-09-23T10:06:31.770029+00:00;
+payload org_id batch606-local-org, period_ym2026-09, total_amount100.0,
+before_status issued, after_status void, reason בדיקה,
+gi_document_id local-fixture-http, gi_cancel_document_id60011.
+Repeated void →400 לא ניתן לבטל חשבונית בסטטוס void
+Paid invoice void →400 לא ניתן לבטל חשבונית ששולמה
+Simulation-enabled mark-paid on void →400
+לא ניתן לסמן חשבונית בסטטוס void כשולם
+The simulation request used genuine full middleware ASGI/JWT/DB, config toggle
+confined to disposable process, restored OFF in finally; browser runtimes OFF.
+POST GI webhook {"id":"batch606-unconfigured"} →200 {"status":"ok"};
+actual gi_webhook_log result no_gi_config.
+Subscription document before/after EXACTLY unchanged. No provider calls or
+substituted responses. Full sanitized /tmp/batch606/http-results.json.
+Harness correction: inherited Nix numpy path initially failed at simulation
+server import; corrected workspace Python libs first, reset owned fixtures and
+reran matrix successfully. No product/source repair.
+
+V5 — real local browser verification, simulation OFF, eight screenshots:
+/tmp/batch606/screenshots/sa-issued-expanded-390.png
+/tmp/batch606/screenshots/sa-issued-expanded-1440.png
+/tmp/batch606/screenshots/sa-confirm-modal-390.png
+/tmp/batch606/screenshots/sa-confirm-modal-1440.png
+/tmp/batch606/screenshots/sa-postvoid-expanded-390.png
+/tmp/batch606/screenshots/sa-postvoid-expanded-1440.png
+/tmp/batch606/screenshots/owner-issued-expanded-390.png
+/tmp/batch606/screenshots/owner-issued-expanded-1440.png
+Issued SA action visible; empty reason disabled confirm; real UI submit reason
+בדיקת ממשק optional60011 succeeded, toast החשבונית בוטלה. Postvoid מבוטל chip
+and סיבת ביטול visible; no mutation actions. Owner against issued invoice
+shows document viewing only, no void/simulation. Only batch606-browser fixture
+reset from void to issued after SA captures for owner verification.
+Served main.77f76aeb.js200 SHA256:
+a7ab2693a170eb20b26a0feb50a57d4febf001387f60f962d2995844c4676ec1
+EXACT local frontend/build match. Fetch redirect:error; external requests blocked;
+GI links not followed. Browser-only bypassCSP disclosed; same-origin localhost
+needed because127.0.0.1 origin conflicts with localhost API target/CORS.
+NOT a production CSP test. Blocked PostHog/Emergent produced fetch notices.
+Parent generic Screenshot showed known CSP connecting splash; NOT passing visual
+evidence. Eight actual browser captures above provide verification.
+No API response mocks or source edits. Both contexts CLOSED before cleanup.
+Detailed /tmp/batch606/browser-report.txt.
+
+V6 — BILL-A security/pentest-regression-checklist.md updated to:
+FIXED in #604-mini (generate/mark-paid) + #606 (void SA-only, payment proof,
+GI-webhook guard). Owner missing-invoice void POST403 רק אדמין ראשי example and
+pass criterion added. Verified GI invoice_id documents api_created_doc/no
+activation unit tests12–13 note added (not curl-testable without GI).
+Scope stays BILL-A; existing tests/core/mark-paid/dunning not changed.
+
+V7 — exact build:
+cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+EXIT0, compiled successfully,32.60s; zero compiler/lint warnings, NOT zero total
+notices: Node DEP0176 fs.F_OK deprecated; Browserslist7-month-old caniuse-lite
+notice twice. Raw /tmp/batch606/build.txt.
+Exact CI=true yarn test --watchAll=false first collected0 tests:8 suites failed
+importing canvas missing libuuid.so.1;0 snapshots,3.807s. Parent authorized
+documented harness correction plus rerun: ONLY temporary /tmp/batch606/libuuid
+symlink to /usr/lib/x86_64-linux-gnu/libuuid.so.1, command-only LD_LIBRARY_PATH.
+No dependencies/config changed; avoids Nix OpenSSL collision.
+Rerun EXIT0:8 suites passed,43 tests passed,0 snapshots,7.296s (yarn13.83s).
+Logs /tmp/batch606/jest.txt and jest-complete.txt.
+
+Cleanup/exact snapshot:
+Original private snapshot taken BEFORE legacy tests,73 collections2719 docs;
+SHA2564c79fdd142f03f4a5b424e3083a167dcda6b14d5eda56b2647c017a0a5aca63a.
+No lost/replacement baseline. Closed browsers then cleanup;2743 docs before,
+2719 after. Removed added audit_events10, auth_failed_attempts2, gi_webhook_log1,
+invoices3, organization_memberships1, organizations1, subscriptions1,
+user_activity_hours3, users2; restored1 existing user exact preimage.
+All original document BSON preimages,73-collection set and original index
+descriptors equal. Zero remaining batch606 fixture docs; authentication,
+presence, limiter/audit and legacy mutation preimages restored.
+Full original/before/after per-collection counts and restoration changes:
+/tmp/batch606/cleanup-results.json.
+Original generated frontend API target/build restored AFTER parent Screenshot,
+all424 file SHA256 fingerprints equal original. Private token file deleted.
+Original snapshot remains private/protected; no production database opened.
+Post-normal-start compare: ZERO document differences across73 collections,
+collection set equal; no startup delta required restoration.
+
+Runtime restoration qualification:
+Parent restored normal runtime using /tmp/batch606/normal-launch.sh rather than
+verbatim original Git-containing command. Protected backend/start.sh unchanged.
+Disposable copied normal-start.sh has ONLY GIT_SHA command substitution replaced
+with none. RELEASE_SHA/GIT_SHA none; GI/PayPlus unset and scrubbed after normal
+dotenv loading; other normal configuration retained. Workflow DEPENDS ON /tmp
+artifacts, not a permanent source startup change. Parent reported normal startup
+complete; existing nonfatal field_escalations index-name conflict and missing
+super-admin-phone warning were not repaired or misclassified as new regressions.
+No claim of warning-free runtime or unaided CSP preview success.
+
+Known reverse-order race (ADDENDUM-1): conditional void update prevents void
+overwriting payment that lands first. If void lands AFTER generate_invoice
+returns but BEFORE unconditional existing PayPlus/renewal paid update, paid can
+still overwrite void. Those updates intentionally unchanged; no scope expansion.
+Voided period reissue requires manual handling; bank transfer not added.
+Follow-up tasks611/612 proposed by parent; no work added to this batch.
+
+Consolidated /tmp/batch606/verification-report.txt; full source/raw grep also
+/tmp/batch606/v1-source.txt and v3-grep.txt.
+Exact requested .local/.commit_message metadata written, no commit performed.
+Required append blocked ONLY by apply_patch size limit; no bypass attempted.
+Original review exact byte equality and10 protected hashes checked separately.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY

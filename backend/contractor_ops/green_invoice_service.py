@@ -212,8 +212,7 @@ async def create_document(
     currency: str = "ILS",
     remarks: str = "",
     client_id: str = "",
-    payment_date: str = "",
-    card_last4: str = "",
+    payment: dict = None,
 ) -> dict:
     if client_id:
         client_block = {"id": client_id}
@@ -243,14 +242,17 @@ async def create_document(
             }
         ],
     }
-    pay_date = payment_date or datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    pay = payment or {}
+    pay_date = pay.get('date') or datetime.now(timezone.utc).strftime('%Y-%m-%d')
     payment_entry = {
         "type": 3,
         "price": amount,
         "currency": currency,
         "date": pay_date,
-        "cardNum": card_last4 or "0000",
     }
+    card_last4 = pay.get('card_last4')
+    if isinstance(card_last4, str) and len(card_last4) == 4 and card_last4.isdigit():
+        payment_entry["cardNum"] = card_last4
     payload["payment"] = [payment_entry]
     if remarks:
         payload["remarks"] = remarks
@@ -319,3 +321,15 @@ def compute_payload_hash(payload: dict) -> str:
     import json
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def parse_gi_remarks(remarks) -> dict:
+    """'org_id=A invoice_id=B tx=C cycle=yearly' -> dict; unknown tokens ignored."""
+    parsed = {'org_id': '', 'cycle': 'monthly', 'invoice_id': '', 'tx': ''}
+    if not remarks or not isinstance(remarks, str):
+        return parsed
+    for part in remarks.split():
+        key, sep, value = part.partition('=')
+        if sep and key in parsed and value:
+            parsed[key] = value
+    return parsed

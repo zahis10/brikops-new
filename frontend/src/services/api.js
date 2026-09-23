@@ -2036,6 +2036,10 @@ export const invoiceService = {
     const response = await axios.post(`${API}/billing/org/${orgId}/invoices/${invoiceId}/mark-paid`, {}, { headers: getAuthHeader() });
     return response.data;
   },
+  async voidInvoice(orgId, invoiceId, body) {
+    const response = await axios.post(`${API}/billing/org/${orgId}/invoices/${invoiceId}/void`, body || {}, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const adminOrgService = {
