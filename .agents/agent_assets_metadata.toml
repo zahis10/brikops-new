@@ -1103,3 +1103,31 @@ mtime_ms = 1789646973462
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7cf11f02-cdc6-4872-8aa9-f2e05c3cb51d/3d0f5f7a-5899-4e53-847c-957ba122031b"
 storage_version_token = "1789646975346417"
 content_type = "text/plain"
+
+[[outputs]]
+id = "EPieHEk6gYc6OJH9pJgI9"
+uri = "file://attached_assets/review-download.zip"
+type = "unspecified"
+title = "הורדת review.txt — קובץ ZIP"
+description = "הקובץ המלא מכווץ לכ־19MB. לאחר ההורדה יש לחלץ את review.txt."
+logical_id = "dfe8132e-a5e2-443f-9e73-a0f18c29239b"
+content_hash = "sha256:653162b2625ebd2b00f95c96f60bda8a8fb6ca440ee27218948abe55d978e30b"
+size = 19267351
+mtime_ms = 1790177404977
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/dfe8132e-a5e2-443f-9e73-a0f18c29239b/6c8617bd-fd7e-4b78-9754-3c0abacb5fe3"
+storage_version_token = "1790177415062872"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "2IWNm17TxLX2KTxayQyeD"
+uri = "file://.agents/batch606-review-section.txt"
+type = "text"
+title = "Review — משימה 606 בלבד"
+description = "הדוח המלא של משימה 606 בלבד: שינויי הקוד, תוצאות הבדיקות, ראיות ומגבלות ידועות. כ־29KB, ללא צורך בחילוץ."
+logical_id = "b0595290-272a-4736-90da-dde905980f10"
+content_hash = "sha256:e3661a37ab7974b8e10ff26f8a3dc6068533fd93b783c3a00d32a4aecfcf0b25"
+size = 28922
+mtime_ms = 1790158850088
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/b0595290-272a-4736-90da-dde905980f10/b6566141-972a-4f49-a5b8-046104b9afc7"
+storage_version_token = "1790177482362333"
+content_type = "text/plain"
