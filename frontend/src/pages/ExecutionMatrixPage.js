@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Loader2, AlertCircle, LayoutGrid, ArrowRight, Settings, Download } from 'lucide-react';
+import { CalendarCheck } from 'lucide-react';
 import { downloadBlob } from '../utils/fileDownload';
 import { toast } from 'sonner';
 import { useMatrixData } from '../hooks/useMatrixData';
@@ -260,6 +261,14 @@ export default function ExecutionMatrixPage() {
               {units.length} דירות • {stages.length} שלבים
             </p>
           </div>
+          <button
+            type="button"
+            onClick={() => navigate(`/projects/${projectId}/monthly-close`)}
+            className="px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-100 active:bg-slate-200 transition-colors min-h-[44px] flex items-center gap-2 text-sm font-medium text-slate-700"
+          >
+            <CalendarCheck className="w-4 h-4" />
+            <span>חשבון חודשי</span>
+          </button>
           <button
             type="button"
             onClick={handleExport}

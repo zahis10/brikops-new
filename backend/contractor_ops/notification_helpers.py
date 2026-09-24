@@ -21,6 +21,7 @@ NOTIFICATION_TYPES = {
     'defect_status_change_by_pm',      # PM approved/rejected, contractor needs to know
     'field_escalation',
     'field_escalation_resolved',
+    'monthly_close',
 }
 
 

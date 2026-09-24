@@ -3901,6 +3901,7 @@ async def list_notifications(
         "escalation_assigned": "field_escalation",
         "escalation_done": "field_escalation_resolved",
         "escalation_dismissed": "field_escalation_resolved",
+        "month_closed": "monthly_close",
     }
 
     notifications = []
@@ -3915,6 +3916,7 @@ async def list_notifications(
             "defect_status_change_by_pm",
             "field_escalation",
             "field_escalation_resolved",
+            "monthly_close",
         ) and n.get("body"):
             body = n["body"]
         else:
@@ -3937,6 +3939,9 @@ async def list_notifications(
                 link = f"/projects/{n['project_id']}/units/{n['unit_id']}/defects"
             elif n.get("project_id"):
                 link = f"/projects/{n['project_id']}/dashboard?focus=escalations"
+        elif ntype == "monthly_close":
+            if n.get("project_id") and n.get("month"):
+                link = f"/projects/{n['project_id']}/monthly-close?month={n['month']}"
         elif ntype in ("defect_close_request", "defect_status_change_by_pm"):
             if n.get("task_id"):
                 link = f"/tasks/{n['task_id']}?src=bell"

@@ -62,6 +62,7 @@ const FloorDetailPage = React.lazy(() => import('./pages/FloorDetailPage'));
 const StageDetailPage = React.lazy(() => import('./pages/StageDetailPage'));
 const QCFloorSelectionPage = React.lazy(() => import('./pages/QCFloorSelectionPage'));
 const ExecutionMatrixPage = React.lazy(() => import('./pages/ExecutionMatrixPage'));
+const MonthlyClosePage = React.lazy(() => import('./pages/MonthlyClosePage'));
 const AccountSettingsPage = React.lazy(() => import('./pages/AccountSettingsPage'));
 const BuildingDefectsPage = React.lazy(() => import('./pages/BuildingDefectsPage'));
 const BuildingQCPage = React.lazy(() => import('./pages/BuildingQCPage'));
@@ -457,6 +458,10 @@ const AppRoutes = () => {
               <ExecutionMatrixPage />
             </ProtectedRoute>
           }
+        />
+        <Route
+          path="/projects/:projectId/monthly-close"
+          element={<ProtectedRoute><MonthlyClosePage /></ProtectedRoute>}
         />
         <Route
           path="/projects/:projectId/safety"
