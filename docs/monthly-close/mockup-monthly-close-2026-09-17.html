@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>מוקאפ — סגירת חודש (התקדמות → חשבונות), שלב 1</title>
+<style>
+  :root { --amber:#d78b26; --amber-100:#fef3c7; --amber-700:#b45309; --slate-50:#f8fafc; --slate-100:#f1f5f9; --slate-200:#e2e8f0; --slate-400:#94a3b8; --slate-500:#64748b; --slate-700:#334155; --slate-800:#1e293b; --red-100:#fee2e2; --red-700:#b91c1c; --red-200:#fecaca; --emerald-50:#ecfdf5; --emerald-100:#d1fae5; --emerald-700:#047857; --emerald-200:#a7f3d0; --amber-200:#fde68a; --amber-800:#92400e; --blue-100:#dbeafe; --blue-700:#1d4ed8; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#e9edf1; font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans Hebrew", sans-serif; color:var(--slate-800); direction:rtl; }
+  h1 { font-size:18px; margin:18px 20px 4px; }
+  .sub { margin:0 20px 14px; color:var(--slate-500); font-size:13px; }
+  .row { display:flex; gap:18px; padding:0 20px 24px; overflow-x:auto; align-items:flex-start; }
+  .phone { flex:0 0 390px; width:390px; background:#fff; border:10px solid #111; border-radius:38px; overflow:hidden; box-shadow:0 12px 30px rgba(0,0,0,.18); }
+  .desk { flex:0 0 720px; width:720px; background:#fff; border:10px solid #111; border-radius:18px; overflow:hidden; box-shadow:0 12px 30px rgba(0,0,0,.18); }
+  .screen { background:var(--slate-50); min-height:760px; }
+  .cap { background:#111; color:#fff; font-size:11px; padding:6px 14px; text-align:center; letter-spacing:.3px; }
+  .hdr { background:linear-gradient(90deg,#d97706,#f59e0b); color:#fff; padding:14px 16px 12px; }
+  .hdr b { font-size:18px; }
+  .hdr small { display:block; opacity:.9; font-size:12px; margin-top:2px; }
+  .card { background:#fff; border:1px solid var(--slate-200); border-radius:16px; margin:12px 12px 0; padding:12px 14px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .card-title { display:flex; align-items:center; justify-content:space-between; font-weight:700; font-size:14px; }
+  .chip { display:inline-flex; align-items:center; border-radius:999px; border:1px solid; padding:2px 10px; font-size:11px; font-weight:700; white-space:nowrap; }
+  .chip.red { background:var(--red-100); color:var(--red-700); border-color:var(--red-200); }
+  .chip.green { background:var(--emerald-100); color:var(--emerald-700); border-color:var(--emerald-200); }
+  .chip.amber { background:var(--amber-100); color:var(--amber-800); border-color:var(--amber-200); }
+  .chip.slate { background:var(--slate-100); color:var(--slate-500); border-color:var(--slate-200); }
+  .chip.blue { background:var(--blue-100); color:var(--blue-700); border-color:#bfdbfe; }
+  .line { display:flex; align-items:center; justify-content:space-between; padding:7px 0; font-size:13px; gap:8px; }
+  .line .name { font-weight:500; color:var(--slate-700); }
+  .muted { color:var(--slate-500); font-size:12px; }
+  .divider { border-top:1px solid var(--slate-100); margin:8px 0; }
+  .btn { border-radius:12px; padding:10px 14px; font-weight:700; font-size:13px; border:1px solid transparent; }
+  .btn.primary { background:var(--amber); color:#fff; width:100%; }
+  .btn.outline { background:#fff; color:var(--amber-700); border-color:#fcd34d; }
+  .btn.ghost { background:var(--slate-100); color:var(--slate-700); }
+  .btn.sm { padding:6px 10px; font-size:12px; border-radius:10px; }
+  .link { color:var(--amber-700); font-size:12px; font-weight:600; background:none; border:none; padding:0; }
+  .note { background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:8px 10px; font-size:12px; color:var(--amber-800); margin-top:10px; line-height:1.6; }
+  .legend { margin:0 20px 20px; font-size:12px; color:var(--slate-500); background:#fff; border:1px dashed var(--slate-200); border-radius:12px; padding:10px 14px; line-height:1.7; }
+  select.f { width:100%; border:1px solid var(--slate-200); border-radius:10px; padding:8px 10px; font:inherit; font-size:13px; background:#fff; }
+  .toggle { display:flex; align-items:center; justify-content:space-between; padding:10px 0; font-size:13px; }
+  .sw { width:38px; height:22px; border-radius:999px; background:var(--slate-200); position:relative; flex:0 0 38px; }
+  .sw::after { content:""; position:absolute; top:3px; right:3px; width:16px; height:16px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.2); }
+  .sw.on { background:#059669; } .sw.on::after { right:auto; left:3px; }
+  .monthbar { display:flex; align-items:center; justify-content:space-between; background:#fff; border:1px solid var(--slate-200); border-radius:14px; margin:12px 12px 0; padding:8px 12px; font-weight:700; font-size:14px; }
+  .monthbar span.nav { color:var(--slate-400); font-size:18px; }
+  .kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:12px 12px 0; }
+  .kpi { background:#fff; border:1px solid var(--slate-200); border-radius:14px; padding:10px; text-align:center; }
+  .kpi b { display:block; font-size:20px; }
+  .kpi span { font-size:11px; color:var(--slate-500); }
+  .stage { padding:8px 0; border-top:1px solid var(--slate-100); }
+  .stage .r1 { display:flex; align-items:center; justify-content:space-between; font-size:13px; }
+  .stage .r1 b { font-weight:700; }
+  .stage .r2 { display:flex; gap:6px; align-items:center; margin-top:4px; font-size:11px; color:var(--slate-500); flex-wrap:wrap; }
+  .bar { height:6px; background:var(--slate-100); border-radius:3px; margin-top:6px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:#059669; }
+  .ev { background:var(--slate-50); border:1px solid var(--slate-200); border-radius:10px; padding:6px 10px; margin-top:6px; font-size:12px; line-height:1.8; }
+  .ev .src { font-size:10px; font-weight:700; padding:1px 6px; border-radius:6px; margin-right:4px; }
+  .ev .src.qc { background:var(--emerald-100); color:var(--emerald-700); }
+  .ev .src.manual { background:var(--amber-100); color:var(--amber-800); }
+  .fix { background:#fff7ed; border:1px solid #fed7aa; border-radius:10px; padding:8px 10px; font-size:12px; color:#9a3412; margin-top:8px; line-height:1.6; }
+  table.xl { border-collapse:collapse; width:100%; font-size:12px; background:#fff; }
+  table.xl th, table.xl td { border:1px solid #cbd5e1; padding:5px 8px; text-align:right; white-space:nowrap; }
+  table.xl th { background:#f1f5f9; font-weight:700; white-space:normal; line-height:1.3; }
+  table.xl td.n { text-align:center; font-variant-numeric:tabular-nums; }
+  .tabs { display:flex; gap:4px; padding:8px 12px 0; }
+  .tabs span { background:#e2e8f0; border-radius:8px 8px 0 0; padding:6px 12px; font-size:12px; color:var(--slate-500); }
+  .tabs span.on { background:#fff; color:var(--slate-800); font-weight:700; border:1px solid #cbd5e1; border-bottom:none; }
+  .sheetwrap { background:#fff; margin:0 12px 12px; padding:10px; border:1px solid #cbd5e1; border-radius:0 0 10px 10px; overflow-x:auto; }
+</style>
+</head>
+<body>
+<h1>סגירת חודש — התקדמות → חשבונות (שלב 1)</h1>
+<p class="sub">מוקאפ לאישור. ארבעה מסכים: מיפוי שלב → קבלן (פעם אחת) → מסך "חשבון חודשי" למנהל הפרויקט → חודש סגור + תיקון + מבט הקבלן → האקסל שיוצא לחשב. בלי מחירים ובלי API בשלב הזה.</p>
+
+<div class="row">
+
+  <!-- 1. Project settings: stage → contractor -->
+  <div class="phone"><div class="screen">
+    <div class="cap">1 · הגדרות פרויקט — שלב → קבלן (פעם אחת)</div>
+    <div class="hdr"><b>חשבון חודשי · הגדרות</b><small>פרויקט מגדלי הדמו</small></div>
+    <div class="card">
+      <div class="card-title"><span>מי הקבלן של כל שלב</span><span class="chip slate">6 שלבים</span></div>
+      <div class="muted" style="margin-top:4px">ברירת מחדל לפי המקצוע של החברה. בלי מיפוי — השלב לא נכנס לחשבון של אף אחד.</div>
+      <div class="divider"></div>
+      <label class="muted">אינסטלציה</label><select class="f"><option>אינסטלציה לוי</option></select>
+      <label class="muted" style="display:block;margin-top:8px">חשמל</label><select class="f"><option>חשמל כהן</option></select>
+      <label class="muted" style="display:block;margin-top:8px">טיח</label><select class="f"><option>גמר אברהם</option></select>
+      <label class="muted" style="display:block;margin-top:8px">איטום</label><select class="f"><option>— בחר קבלן —</option></select>
+      <label class="muted" style="display:block;margin-top:8px">אקוסטיקה</label><select class="f"><option>גמר אברהם</option></select>
+      <label class="muted" style="display:block;margin-top:8px">ריצוף</label><select class="f"><option>ריצוף אברהם</option></select>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>שקיפות לקבלן</span></div>
+      <div class="toggle"><span>הקבלן רואה את דוח ההתקדמות שלו</span><span class="sw"></span></div>
+      <div class="muted">כבוי כברירת מחדל. כשמדליקים — כל קבלן רואה רק את הדוח שלו, אותם מספרים בדיוק, קריאה בלבד, ומקבל התראה בפעמון כשחודש נסגר.</div>
+    </div>
+    <div class="legend" style="margin:14px 12px 0">זה כל ה"סטאפ". אין כתב כמויות ואין מחירים בשלב 1 — רק מי אחראי על מה.</div>
+  </div></div>
+
+  <!-- 2. Monthly account — PM, open month -->
+  <div class="phone"><div class="screen">
+    <div class="cap">2 · חשבון חודשי — מנהל הפרויקט, חודש פתוח</div>
+    <div class="hdr"><b>חשבון חודשי</b><small>מגדלי הדמו · 120 דירות · 6 שלבים</small></div>
+    <div class="monthbar"><span class="nav">‹</span><span>ספטמבר 2026 <span class="chip amber" style="margin-right:6px">פתוח</span></span><span class="nav">›</span></div>
+    <div class="kpis">
+      <div class="kpi"><b>41</b><span>שלבי-דירה בוצעו החודש</span></div>
+      <div class="kpi"><b>37</b><span>אושרו בבקרת ביצוע</span></div>
+      <div class="kpi"><b>4</b><span>סומנו ידנית במטריצה</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span>אינסטלציה לוי</span><span class="chip green">החודש 18</span></div>
+      <div class="stage">
+        <div class="r1"><b>אינסטלציה</b><span>החודש <b>14</b> · מצטבר 46/120</span></div>
+        <div class="r2"><span class="chip green" style="font-size:10px">12 אושרו בבקרת ביצוע</span><span class="chip amber" style="font-size:10px">2 סומנו ידנית</span><span>· 38%</span></div>
+        <div class="bar"><i style="width:38%"></i></div>
+        <div class="ev">
+          דירה 12 · 3.9 · אושר ע״י גפן <span class="src qc">בקרת ביצוע</span><br>
+          דירה 14 · 9.9 · סומן ע״י יוסי <span class="src manual">סימון ידני</span><br>
+          דירה 15 · 9.9 · אושר ע״י גפן <span class="src qc">בקרת ביצוע</span><br>
+          <button class="link">עוד 11 ›</button>
+        </div>
+      </div>
+      <div class="stage">
+        <div class="r1"><b>איטום</b><span>החודש <b>4</b> · מצטבר 22/120</span></div>
+        <div class="r2"><span class="chip green" style="font-size:10px">4 אושרו בבקרת ביצוע</span><span>· 18%</span></div>
+        <div class="bar"><i style="width:18%"></i></div>
+      </div>
+      <div class="divider"></div>
+      <button class="btn outline sm">⬇ אקסל — אינסטלציה לוי · ספטמבר</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span>חשמל כהן</span><span class="chip green">החודש 15</span></div>
+      <div class="stage">
+        <div class="r1"><b>חשמל</b><span>החודש <b>15</b> · מצטבר 51/120</span></div>
+        <div class="r2"><span class="chip green" style="font-size:10px">15 אושרו בבקרת ביצוע</span><span>· 43%</span></div>
+        <div class="bar"><i style="width:43%"></i></div>
+      </div>
+      <div class="divider"></div>
+      <button class="btn outline sm">⬇ אקסל — חשמל כהן · ספטמבר</button>
+    </div>
+
+    <div class="card" style="opacity:.75">
+      <div class="card-title"><span>גמר אברהם</span><span class="chip green">החודש 8</span></div>
+      <div class="muted">טיח 6 · אקוסטיקה 2 · <button class="link">פרט</button></div>
+    </div>
+
+    <div class="card" style="border-color:#fde68a">
+      <button class="btn primary">סגור את ספטמבר 2026</button>
+      <div class="note">אחרי הסגירה החודש קפוא — הדוחות לא משתנים. שלב שייפתח מחדש יופיע באוקטובר כשורת תיקון. הסגירה נרשמת: מי ומתי.</div>
+    </div>
+  </div></div>
+
+  <!-- 3. Closed month + correction + contractor view -->
+  <div class="phone"><div class="screen">
+    <div class="cap">3 · חודש סגור · תיקון בחודש הבא · מבט הקבלן</div>
+    <div class="hdr"><b>חשבון חודשי</b><small>מגדלי הדמו</small></div>
+    <div class="monthbar"><span class="nav">‹</span><span>ספטמבר 2026 <span class="chip slate" style="margin-right:6px">נסגר 1.10 · גפן</span></span><span class="nav">›</span></div>
+    <div class="card" style="opacity:.85">
+      <div class="card-title"><span>אינסטלציה לוי</span><span class="chip green">החודש 18</span></div>
+      <div class="muted" style="margin-top:4px">קפוא. כפתורי הסגירה נעלמו; האקסל זמין תמיד.</div>
+      <div class="divider"></div>
+      <button class="btn outline sm">⬇ אקסל — אינסטלציה לוי · ספטמבר</button>
+    </div>
+
+    <div class="monthbar" style="margin-top:18px"><span class="nav">‹</span><span>אוקטובר 2026 <span class="chip amber" style="margin-right:6px">פתוח</span></span><span class="nav">›</span></div>
+    <div class="card">
+      <div class="card-title"><span>אינסטלציה לוי</span><span class="chip green">החודש 9</span></div>
+      <div class="stage">
+        <div class="r1"><b>אינסטלציה</b><span>החודש <b>10</b> · מצטבר 55/120</span></div>
+        <div class="fix">⚠ תיקון: <b>−1</b> · דירה 12 נפתחה מחדש בבקרת הביצוע ב-4.10 (נספרה בספטמבר). נטו החודש: 9.</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:22px;border-color:#bfdbfe">
+      <div class="card-title"><span>מבט הקבלן (אם הודלק בהגדרות)</span><span class="chip blue">קריאה בלבד</span></div>
+      <div class="muted" style="margin-top:4px">אינסטלציה לוי רואה רק את הדוח שלו — אותם מספרים בדיוק, בלי דירות של קבלנים אחרים.</div>
+      <div class="stage">
+        <div class="r1"><b>אינסטלציה · ספטמבר</b><span>החודש <b>14</b> · מצטבר 46/120</span></div>
+        <div class="bar"><i style="width:38%"></i></div>
+      </div>
+      <div class="stage">
+        <div class="r1"><b>איטום · ספטמבר</b><span>החודש <b>4</b> · מצטבר 22/120</span></div>
+        <div class="bar"><i style="width:18%"></i></div>
+      </div>
+      <button class="btn outline sm" style="margin-top:8px">⬇ אקסל</button>
+      <div class="note">🔔 "חשבון ספטמבר 2026 נסגר ע״י גפן" — התראה בפעמון של הקבלן.</div>
+    </div>
+  </div></div>
+
+  <!-- 4. The Excel -->
+  <div class="desk"><div class="screen">
+    <div class="cap">4 · האקסל שיוצא לחשב — "דוח התקדמות לחשבון — אינסטלציה לוי — ספטמבר 2026"</div>
+    <div class="tabs"><span class="on">סיכום</span><span>ראיות</span></div>
+    <div class="sheetwrap">
+      <table class="xl">
+        <tr><th>קבלן</th><th>שלב</th><th>בניין</th><th>סה״כ דירות</th><th>בוצע החודש</th><th>מצטבר</th><th>אחוז</th><th>אושרו בבקרת ביצוע</th><th>סומנו ידנית</th></tr>
+        <tr><td>אינסטלציה לוי</td><td>אינסטלציה</td><td>בניין A</td><td class="n">60</td><td class="n">9</td><td class="n">30</td><td class="n">50%</td><td class="n">8</td><td class="n">1</td></tr>
+        <tr><td>אינסטלציה לוי</td><td>אינסטלציה</td><td>בניין B</td><td class="n">60</td><td class="n">5</td><td class="n">16</td><td class="n">27%</td><td class="n">4</td><td class="n">1</td></tr>
+        <tr><td>אינסטלציה לוי</td><td>איטום</td><td>בניין A</td><td class="n">60</td><td class="n">4</td><td class="n">22</td><td class="n">37%</td><td class="n">4</td><td class="n">0</td></tr>
+        <tr><td>אינסטלציה לוי</td><td>איטום</td><td>בניין B</td><td class="n">60</td><td class="n">0</td><td class="n">0</td><td class="n">0%</td><td class="n">0</td><td class="n">0</td></tr>
+        <tr><th colspan="4">סה״כ ספטמבר 2026 · נסגר 1.10.2026 ע״י גפן ישראלי</th><th class="n">18</th><th class="n">68</th><th></th><th class="n">16</th><th class="n">2</th></tr>
+      </table>
+    </div>
+    <div class="tabs"><span>סיכום</span><span class="on">ראיות</span></div>
+    <div class="sheetwrap">
+      <table class="xl">
+        <tr><th>#</th><th>בניין</th><th>קומה</th><th>דירה</th><th>שלב</th><th>תאריך ביצוע</th><th>אושר ע״י</th><th>מקור</th><th>קישור</th></tr>
+        <tr><td class="n">1</td><td>בניין A</td><td class="n">3</td><td class="n">12</td><td>אינסטלציה</td><td>3.9.2026</td><td>גפן ישראלי</td><td>בקרת ביצוע</td><td>app.brikops.com/…/qc/run/…</td></tr>
+        <tr><td class="n">2</td><td>בניין A</td><td class="n">3</td><td class="n">14</td><td>אינסטלציה</td><td>9.9.2026</td><td>יוסי לוי (מנהל בניין)</td><td>סימון ידני</td><td>app.brikops.com/…/matrix</td></tr>
+        <tr><td class="n">3</td><td>בניין A</td><td class="n">3</td><td class="n">15</td><td>אינסטלציה</td><td>9.9.2026</td><td>גפן ישראלי</td><td>בקרת ביצוע</td><td>app.brikops.com/…/qc/run/…</td></tr>
+        <tr><td class="n">…</td><td colspan="8" class="muted">18 שורות · שורה לכל שלב-דירה שנספר החודש</td></tr>
+      </table>
+    </div>
+    <div class="legend" style="margin:0 12px 12px">
+      <b>מה החשב מקבל:</b> קובץ אחד לקבלן לחודש, שם קבוע, שני גיליונות. הסיכום הוא מה שמקלידים לחשבון החלקי; הראיות הן מה שמצרפים לוויכוח. כל ערך נכתב כטקסט/מספר בטוח (בלי נוסחאות — כמו בכל יצוא שלנו). בשלב 2 מתווסף גיליון "כמויות לחשבון": לכל סעיף חוזה (בקוד הסעיף כפי שהוא בפריוריטי / רמדור של הלקוח) הכמות שבוצעה החודש והמצטברת — הקובץ נטען אצלם והחוזה שלהם מתמחר. מחירים בתוך BrikOps רק כאופציה ללקוח שאין לו מערכת, ומסומנים "אומדן".
+    </div>
+  </div></div>
+
+</div>
+
+<div class="legend">
+  <b>ההחלטות שנקבעו (17.9):</b> "בוצע" לחשבון = גם אישור בבקרת ביצוע וגם סימון ידני במטריצה, וכל שורה מסומנת במקור שלה (בקרת ביצוע / סימון ידני) · שקיפות לקבלן = אופציה בהגדרות הפרויקט, כבויה כברירת מחדל · דוגמת חשבון חלקי אמיתי — זהי מחפש; זה מה שיקבע את שלב 2 (כתב כמויות ומחירים).<br>
+  <b>עקרונות שלב 1:</b> שום רישום בהנהלת חשבונות בלי לחיצה של מנהל · חודש שנסגר לא משתנה — תיקונים בחודש הבא · "חלקי" לא נספר · הכל מבוסס על מה שכבר במטריצה ובבקרת הביצוע, בלי נתון חדש שצריך להזין · המחירים נשארים בפריוריטי / רמדור של הלקוח — BrikOps מספקת כמויות עם ראיות, לא מחירון שני.
+</div>
+</body>
+</html>
