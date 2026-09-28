@@ -1106,7 +1106,7 @@ async def list_unit_tasks(unit_id: str,
         query['category'] = category
     tasks = await db.tasks.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
     tasks = sorted(tasks, key=_priority_sort_key)
-    from services.object_storage import resolve_urls_in_doc
+    from services.object_storage import resolve_urls_in_doc, resolve_url
 
     # ---- Batch enrichment ----
     project_id = tasks[0].get('project_id') if tasks else None
@@ -1175,11 +1175,28 @@ async def list_unit_tasks(unit_id: str,
                 if c.get('id'):
                     company_name_map[c['id']] = c.get('name', '')
 
+    # ---- First image per task (list thumbnail) ----
+    task_ids = [t['id'] for t in tasks if t.get('id')]
+    first_image: dict = {}
+    image_count: dict = {}
+    if task_ids:
+        async for upd in db.task_updates.find(
+            {'task_id': {'$in': task_ids}, 'update_type': 'attachment',
+             'content_type': {'$regex': '^image/'}, 'deletedAt': {'$exists': False}},
+            {'_id': 0, 'task_id': 1, 'attachment_url': 1, 'created_at': 1}
+        ).sort('created_at', 1):
+            tid = upd.get('task_id')
+            image_count[tid] = image_count.get(tid, 0) + 1
+            if tid not in first_image and upd.get('attachment_url'):
+                first_image[tid] = upd['attachment_url']
+
     # ---- Build response ----
     result = []
     for t in tasks:
         td = Task(**t).dict()
         resolve_urls_in_doc(td)
+        td['image_url'] = resolve_url(first_image[t['id']]) if t.get('id') in first_image else None
+        td['image_count'] = image_count.get(t.get('id'), 0)
 
         if t.get('company_id'):
             td['company_name'] = company_name_map.get(t['company_id'], '')

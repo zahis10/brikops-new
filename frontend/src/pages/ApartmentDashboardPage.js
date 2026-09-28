@@ -18,6 +18,7 @@ import { spareSummaryText } from '../components/matrix/SparePill';
 import EscalationSheet from '../components/spare/EscalationSheet';
 import SpareEscalationStatus from '../components/spare/SpareEscalationStatus';
 import SpareCategoryPhotos from '../components/spare/SpareCategoryPhotos';
+import DefectPhotoPreview from '../components/defects/DefectPhotoPreview';
 import { arraysEqualAsSets } from '../utils/filterHelpers';
 import { FEATURES } from '../config/features';
 import { getDefectCreatesForUnit } from '../services/offlineOutbox';
@@ -127,6 +128,7 @@ const ApartmentDashboardPage = () => {
   const [spareTilesEntries, setSpareTilesEntries] = useState([]);
   const [spareTilesSaving, setSpareTilesSaving] = useState(false);
   const [sheetMode, setSheetMode] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
   const spareCanWrite = unitData?.spare_can_write === true;
   const spareCanAssign = unitData?.spare_can_assign === true;
@@ -832,6 +834,8 @@ const ApartmentDashboardPage = () => {
         </div>
       )}
       <EscalationSheet open={!!sheetMode} onClose={() => setSheetMode(null)} projectId={projectId} unit={{ id: unitId, label: effectiveLabel }} buildingName={building?.name || ''} spareStatus={unitData.spare_status} mode={sheetMode || 'new'} onSent={loadUnit} />
+      {photoPreview && <DefectPhotoPreview task={photoPreview} onClose={() => setPhotoPreview(null)}
+        onOpen={() => { const t = photoPreview; setPhotoPreview(null); navigate(`/tasks/${t.id}`, { state: { returnTo: location.pathname + location.search } }); }} />}
       {!unitData.spare_profiles_exist && (
       <div className="max-w-lg mx-auto px-4 mt-3">
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -1078,11 +1082,16 @@ const ApartmentDashboardPage = () => {
                 >
                   <div className="flex items-start gap-3">
                     {hasImage && (
-                      <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                      <div role={task.image_url ? 'button' : undefined} aria-label={task.image_url ? 'הצג תמונה' : undefined}
+                        onClick={task.image_url ? (e) => { e.stopPropagation(); setPhotoPreview(task); } : undefined}
+                        className="relative w-16 h-16 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
                         {task.image_url ? (
                           <img src={task.image_url} alt="" className="w-full h-full object-cover" />
                         ) : (
                           <ImageIcon className="w-5 h-5 text-slate-300" />
+                        )}
+                        {task.image_count > 1 && (
+                          <span className="absolute bottom-0.5 left-0.5 rounded bg-black/60 px-1 text-[10px] font-bold text-white">+{task.image_count - 1}</span>
                         )}
                       </div>
                     )}
