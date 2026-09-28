@@ -1,6 +1,8 @@
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
 from contractor_ops import projects_router
 from contractor_ops.schemas import Task
 
@@ -46,6 +48,7 @@ def test_unit_list_first_photo_count_filter_and_existing_fields():
          'deletedAt': '2026-09-06'},
     ]
     db = MagicMock()
+    db.units.find_one = AsyncMock(return_value={'id': 'u', 'project_id': 'p'})
     db.tasks.find.return_value = Cursor(tasks)
     db.project_companies.find.return_value = Cursor([])
     db.companies.find.return_value = Cursor([])
@@ -76,6 +79,7 @@ def test_unit_list_first_photo_count_filter_and_existing_fields():
     db.task_updates.find.side_effect = find_images
     with (
         patch.object(projects_router, 'get_db', return_value=db),
+        patch.object(projects_router, '_check_project_read_access', new=AsyncMock()),
         patch('services.object_storage.resolve_url', side_effect=lambda ref: f'/resolved/{ref}') as resolve,
     ):
         result = asyncio.run(projects_router.list_unit_tasks('u', None, None, {'id': 'pm'}))
@@ -95,8 +99,73 @@ def test_unit_list_first_photo_count_filter_and_existing_fields():
 
 def test_unit_list_without_tasks_skips_image_query():
     db = MagicMock()
+    db.units.find_one = AsyncMock(return_value={'id': 'u', 'project_id': 'p'})
     db.tasks.find.return_value = Cursor([])
-    with patch.object(projects_router, 'get_db', return_value=db):
+    with patch.object(projects_router, 'get_db', return_value=db), patch.object(
+        projects_router, '_check_project_read_access', new=AsyncMock()
+    ):
         result = asyncio.run(projects_router.list_unit_tasks('u', None, None, {'id': 'pm'}))
     assert result == []
     db.task_updates.find.assert_not_called()
+
+
+def test_unknown_unit_returns_404_before_tasks_query():
+    db = MagicMock()
+    db.units.find_one = AsyncMock(return_value=None)
+    with patch.object(projects_router, 'get_db', return_value=db), pytest.raises(HTTPException) as exc:
+        asyncio.run(projects_router.list_unit_tasks('u', None, None, {'id': 'pm'}))
+    assert (exc.value.status_code, exc.value.detail) == (404, 'Unit not found')
+    db.tasks.find.assert_not_called()
+
+
+def test_unauthorized_unit_checks_access_before_tasks_query():
+    db = MagicMock()
+    db.units.find_one = AsyncMock(return_value={'id': 'u', 'project_id': 'p'})
+    access = AsyncMock(side_effect=HTTPException(status_code=403, detail='Forbidden'))
+    user = {'id': 'other'}
+    with patch.object(projects_router, 'get_db', return_value=db), patch.object(
+        projects_router, '_check_project_read_access', new=access
+    ), pytest.raises(HTTPException) as exc:
+        asyncio.run(projects_router.list_unit_tasks('u', None, None, user))
+    assert exc.value.status_code == 403
+    access.assert_awaited_once_with(user, 'p')
+    db.tasks.find.assert_not_called()
+
+
+def test_unit_project_falls_back_to_building():
+    db = MagicMock()
+    db.units.find_one = AsyncMock(return_value={'id': 'u', 'building_id': 'b'})
+    db.buildings.find_one = AsyncMock(return_value={'project_id': 'p'})
+    db.tasks.find.return_value = Cursor([])
+    access = AsyncMock()
+    with patch.object(projects_router, 'get_db', return_value=db), patch.object(
+        projects_router, '_check_project_read_access', new=access
+    ):
+        assert asyncio.run(projects_router.list_unit_tasks('u', None, None, {'id': 'pm'})) == []
+    db.buildings.find_one.assert_awaited_once_with({'id': 'b'}, {'_id': 0, 'project_id': 1})
+    access.assert_awaited_once_with({'id': 'pm'}, 'p')
+
+
+def test_handover_proof_images_merge_and_other_proofs_are_ignored():
+    db = MagicMock()
+    db.units.find_one = AsyncMock(return_value={'id': 'u', 'project_id': 'p'})
+    db.tasks.find.return_value = Cursor([
+        {'id': 'h', 'project_id': 'p', 'title': 'מסירה', 'handover_protocol_id': 'hp',
+         'proof_urls': ['s3://a', 's3://b']},
+        {'id': 'regular', 'project_id': 'p', 'title': 'רגיל', 'proof_urls': ['s3://orphan']},
+    ])
+    db.task_updates.find.return_value = Cursor([
+        {'task_id': 'h', 'attachment_url': 's3://b', 'created_at': '2026-09-01'},
+        {'task_id': 'h', 'attachment_url': 's3://c', 'created_at': '2026-09-02'},
+    ])
+    with (
+        patch.object(projects_router, 'get_db', return_value=db),
+        patch.object(projects_router, '_check_project_read_access', new=AsyncMock()),
+        patch('services.object_storage.resolve_urls_in_doc', side_effect=lambda doc: doc),
+        patch('services.object_storage.resolve_url', side_effect=lambda ref: f'/url/{ref}') as resolve,
+    ):
+        result = asyncio.run(projects_router.list_unit_tasks('u', None, None, {'id': 'pm'}))
+    items = {item['id']: item for item in result}
+    assert (items['h']['image_url'], items['h']['image_count']) == ('/url/s3://a', 3)
+    assert (items['regular']['image_url'], items['regular']['image_count']) == (None, 0)
+    resolve.assert_called_once_with('s3://a')

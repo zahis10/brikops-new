@@ -1099,6 +1099,17 @@ async def list_unit_tasks(unit_id: str,
                           category: Optional[str] = Query(None),
                           user: dict = Depends(get_current_user)):
     db = get_db()
+    unit = await db.units.find_one({'id': unit_id}, {'_id': 0, 'project_id': 1, 'building_id': 1})
+    if not unit:
+        raise HTTPException(status_code=404, detail='Unit not found')
+    unit_project_id = unit.get('project_id')
+    if not unit_project_id and unit.get('building_id'):
+        building = await db.buildings.find_one(
+            {'id': unit['building_id']}, {'_id': 0, 'project_id': 1})
+        unit_project_id = (building or {}).get('project_id')
+    if not unit_project_id:
+        raise HTTPException(status_code=404, detail='Unit not found')
+    await _check_project_read_access(user, unit_project_id)
     query = {'unit_id': unit_id}
     if status:
         query['status'] = status
@@ -1177,26 +1188,27 @@ async def list_unit_tasks(unit_id: str,
 
     # ---- First image per task (list thumbnail) ----
     task_ids = [t['id'] for t in tasks if t.get('id')]
-    first_image: dict = {}
-    image_count: dict = {}
+    task_images: dict = {}
     if task_ids:
         async for upd in db.task_updates.find(
             {'task_id': {'$in': task_ids}, 'update_type': 'attachment',
              'content_type': {'$regex': '^image/'}, 'deletedAt': {'$exists': False}},
             {'_id': 0, 'task_id': 1, 'attachment_url': 1, 'created_at': 1}
         ).sort('created_at', 1):
-            tid = upd.get('task_id')
-            image_count[tid] = image_count.get(tid, 0) + 1
-            if tid not in first_image and upd.get('attachment_url'):
-                first_image[tid] = upd['attachment_url']
+            if upd.get('attachment_url'):
+                task_images.setdefault(upd.get('task_id'), []).append(upd['attachment_url'])
 
     # ---- Build response ----
     result = []
     for t in tasks:
         td = Task(**t).dict()
         resolve_urls_in_doc(td)
-        td['image_url'] = resolve_url(first_image[t['id']]) if t.get('id') in first_image else None
-        td['image_count'] = image_count.get(t.get('id'), 0)
+        refs = list(t.get('proof_urls') or []) if t.get('handover_protocol_id') else []
+        for ref in task_images.get(t.get('id'), []):
+            if ref not in refs:
+                refs.append(ref)
+        td['image_url'] = resolve_url(refs[0]) if refs else None
+        td['image_count'] = len(refs)
 
         if t.get('company_id'):
             td['company_name'] = company_name_map.get(t['company_id'], '')
