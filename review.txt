@@ -7169,3 +7169,132 @@ Original monthly screenshot build static/js/main.eb86c51f.js (SHA-256 f83caea05c
 V4 — Generated verified output preserved at /tmp/batch602fix1/verified-build; original frontend/build restored with exact 427-file SHA-256 manifest, including static/js/main.9089c659.js SHA-256 3261c21d8ea370abd7aa59e9dbf2ab79008d9a654c4c00a3cc03deace27ed33e. Browser contexts were closed before cleanup. The addendum header-only context was closed before the original build was restored; no addendum OTP or fixture mutation occurred. The final local-safe workflow was RUNNING after restart; its pre-existing index warning was non-fatal. Pre-V3 project, project_companies and monthly_progress_closes snapshots are under /tmp/batch602fix1/db-pre-v3/; cleanup reports removal of the temporary companies, monthly settings and September close, with final project=1, companies=0 and snapshots=0. Four exact flow-created audit records were removed by scoped identifiers (before=4, deleted=4, after=0), without a broad collection reset. Post-cleanup counts: projectCompanies=0, monthlySnapshots=0, projectMonthlySettings=0, qcNotifications=0. Initial failed local OTP/auth attempts left otp_codes=1 and otp_metrics=1; no pre-attempt baseline exists and neither residue record was deleted or guessed away. No complete database pre/post snapshot is available, so exact full-database restoration is NOT established. Review baseline 357143 bytes, private copy /tmp/batch602fix1/baseline/review.txt. The existing single #602-FIX-1 EOF section was updated in place after browser verification, not duplicated; the original 357143-byte prefix remains exact (final: 371667 bytes; delta: 14524 bytes). Requested commit-message metadata remains written without committing; no deployment.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+
+
+#602-FIX-2 (28.9)
+
+Scope: Frontend only. One new read-only dashboard card using monthlyCloseService and exactly two additive ProjectDashboardPage.js lines. No backend, dependencies, or other frontend/src edits. No Git commands or deployment.
+
+V1 — wc -l frontend/src/components/dashboard/MonthlyCloseCard.js: 87 (≤95). FULL component text:
+```jsx
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { CalendarCheck, ChevronLeft } from 'lucide-react';
+import { monthlyCloseService } from '../../services/monthlyCloseService';
+
+const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}` : '';
+
+export default function MonthlyCloseCard({ projectId }) {
+  const navigate = useNavigate();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setData(null);
+    setLoading(true);
+    const load = async () => {
+      try {
+        const list = await monthlyCloseService.getMonths(projectId);
+        if (!active) return;
+        const month = list.next_closable <= list.current_month ? list.next_closable : list.current_month;
+        const account = await monthlyCloseService.getMonth(projectId, month);
+        if (active) setData({ list, account });
+      } catch {
+        if (active) setData(null);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    return () => { active = false; };
+  }, [projectId]);
+
+  if (loading) return <div role="status" aria-label="טוען חשבון חודשי" className="h-20 rounded-xl bg-slate-200 animate-pulse" />;
+  if (!data) return null;
+  const { list, account } = data;
+  const total = account.totals?.stages ?? 0;
+  if (account.permissions?.role === 'contractor' || total === 0) return null;
+  const unmapped = account.unmapped_stages?.length ?? 0;
+  const mapped = Math.max(0, total - unmapped);
+  const companies = account.contractors?.filter((company) => company.stages?.length).length ?? 0;
+  const canWrite = !!account.permissions?.can_write;
+  const overdue = account.status === 'open' && account.month < list.current_month;
+  const target = `/projects/${projectId}/monthly-close?month=${account.month}`;
+
+  return (
+    <div className="bg-white rounded-xl border shadow-sm p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <CalendarCheck className="w-4 h-4 text-amber-500" />
+          <h3 className="text-sm font-bold text-slate-700">חשבון חודשי</h3>
+        </div>
+        <button onClick={() => navigate(target)} className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1 min-h-[44px]">
+          צפה <ChevronLeft className="w-3 h-3" />
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-bold text-slate-800">{account.label}</span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+          account.status === 'closed' ? 'bg-emerald-100 text-emerald-700' :
+            overdue ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
+        }`}>
+          {account.status === 'closed'
+            ? `נסגר ${dayMonth(account.closed_at)} · ${account.closed_by?.name}`
+            : overdue ? 'עדיין לא נסגר' : 'פתוח'}
+        </span>
+      </div>
+      <div className="mt-2 text-sm text-slate-700">
+        {account.kpis?.this_month ?? 0} שלבי-דירה {account.status === 'closed' ? 'בחשבון' : 'בוצעו החודש'} · {companies} קבלנים
+      </div>
+      {canWrite && account.status === 'open' && (
+        <div className={`mt-1 text-xs ${unmapped > 0 ? 'text-amber-800' : 'text-slate-500'}`}>
+          {unmapped > 0
+            ? `${unmapped} שלבים ללא קבלן — לא ייכנסו לאף חשבון`
+            : `${mapped}/${total} שלבים משויכים לקבלנים`}
+        </div>
+      )}
+      {canWrite && account.status === 'open' && (overdue || unmapped > 0) && (
+        <button onClick={() => navigate(target)}
+          className={`mt-3 min-h-[44px] w-full sm:w-auto px-4 rounded-lg font-bold ${
+            overdue ? 'bg-amber-500 text-white' : 'border border-amber-300 text-amber-800'
+          }`}>
+          {overdue ? `לסגירת חשבון ${account.label}` : 'עדכן שיוך שלבים'}
+        </button>
+      )}
+    </div>
+  );
+}
+```
+
+ProjectDashboardPage.js — exactly two added lines with three lines of context on each side (baseline diff, no Git):
+```diff
+@@ -8,6 +8,7 @@
+ import HamburgerMenu from '../components/HamburgerMenu';
+ import DashboardFoldSection from '../components/DashboardFoldSection';
+ import EscalationsSection from '../components/dashboard/EscalationsSection';
++import MonthlyCloseCard from '../components/dashboard/MonthlyCloseCard';
+ import ProjectsLightSkyline from '../components/ProjectsLightSkyline';
+ import { tRole } from '../i18n';
+ import { toast } from 'sonner';
+@@ -452,6 +453,7 @@
+           </div>
+         )}
+ 
++        <MonthlyCloseCard projectId={projectId} />
+         {escalations && (escalations.open_count > 0 || escalations.resolved_week_count > 0) && <div ref={el => { foldRefs.current.escalations = el; }}><DashboardFoldSection id="escalations" projectId={projectId} icon={Megaphone} iconColor="text-amber-500" title="הקפצות מהשטח · לטיפולי" summary={`${escalations.open_count} פתוחות`} forceOpen={foldForce.escalations || 0}><EscalationsSection projectId={projectId} escalations={escalations} canAssign={escalations.can_assign} currentUserId={user?.id} onChanged={() => escalationService.list(projectId, 'open').then(setEscalations).catch(() => {})} /></DashboardFoldSection></div>}
+ 
+         <div ref={handoverRef}>
+```
+SHA-256 manifest baseline: /tmp/batch602fix2/frontend-src.before.sha256; final manifest and full diff: /tmp/batch602fix2/frontend-src.final.sha256 and /tmp/batch602fix2/frontend-src.final-manifest-diff.txt. The full manifest diff shows only the new MonthlyCloseCard.js and the changed ProjectDashboardPage.js; the dashboard diff shows only the two additive lines. Full component and dashboard diffs: /tmp/batch602fix2/MonthlyCloseCard.full-diff.txt and /tmp/batch602fix2/ProjectDashboardPage.full-diff.txt. Original dashboard: /tmp/batch602fix2/ProjectDashboardPage.original.js.
+
+V2 — Exact `cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build`: exit 0, Compiled successfully, zero compiler/lint warnings; /tmp/batch602fix2/build.log and build.exit. Separately, Node reported [DEP0176] fs.F_OK deprecation and Browserslist reported seven-month-old data (tooling notices, not compiler warnings). The requested exact `CI=true yarn test --watchAll=false` first exited 1 BEFORE running tests: canvas native binding could not find libuuid.so.1 (8 suites failed to initialize, 0 tests; /tmp/batch602fix2/jest.log and jest.exit). Rerun with only Nix libuuid on LD_LIBRARY_PATH, no dependency/source change: exit 0, 8 suites and 43 tests passed; /tmp/batch602fix2/jest-with-nix-uuid.log and jest-with-nix-uuid.exit. Abbreviation grep for בק״ב / בק"ב over the two source paths produced no output: /tmp/batch602fix2/abbreviation-scan.txt (0 bytes).
+
+V3 — not run — local harness. Final authorized exact same-origin retry details: /tmp/batch602fix2/browser-report-final.txt. On http://localhost:5000, the visible local DEV OTP login succeeded and reached /projects. The required demo project dashboard then returned 403 from project/dashboard APIs and redirected to /projects with “אין לך הרשאה למרכז ניהול זה”. Tester stopped at the authorized condition. The requested overdue, open/unmapped, fully mapped, closed, management_team, contractor, no-stage, navigation, loading and API-failure acceptance states were NOT verified; no requested 390px/1440px acceptance PNGs were produced. Browser observation IDs gil7to, glbv3i, mlh6rv, q1zdm0 document login/403 only; they are diagnostic IDs, NOT acceptance PNG file paths. No browser pass or console-clean assertion is claimed.
+Tester cleanup: July test snapshot batch602fix2-july-seed deleted; project monthly snapshots final=0. Scoped OTP metrics and retry-created presence/activity bucket deleted; no audit deletion needed. No September close, mapping or role fixture mutation. Pre-login local collection snapshots: /tmp/batch602fix2/prelogin-json/ (see final browser report). Browser context closed. Verified FIX-2 browser build retained at /tmp/batch602fix2/verified-build (346 files; main.0192ffff.js SHA-256 633c9f8f95aac29301b7e6cb3d406ad3f8f58db84f35b09f609104ac37b1a226). After tester completed, original 427-file generated frontend/build restored from /tmp/batch602fix2/build.original (main.ecadfc70.js). Tester reports local-safe workflow RUNNING; existing non-fatal startup notices remain. No workflow or source edit from tester.
+
+V4 — review.txt original size 371667 bytes; exact private copy /tmp/batch602fix2/review.original.txt. Original was checked as an exact byte match before this sole EOF append; no historical text edited. Commit-message metadata in .local/.commit_message: dashboard: monthly account card — month status, stage-units this month, mapping, close nudge (#602-FIX-2).
+Final review.txt size: 381263 bytes (delta 9596 bytes); original 371667 bytes are the exact prefix. One new #602-FIX-2 (28.9) heading only.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
