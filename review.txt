@@ -7597,3 +7597,46 @@ V3 — Initial #607 local verification report: /tmp/batch607/v3-report.txt. Befo
 V4 — review.txt stayed byte-identical to /tmp/batch607/review.original.txt: 389890 bytes before and after, SHA-256 2d562894206e51b886f8ddbc0a3c24ff54e52db1576d54ecd7d60ce10f633a04. This standalone section is /tmp/batch607/review-section.txt (12850 bytes); never appended to review.txt. Commit metadata unchanged: defects: first photo + count on every card of the unit's defect list, tap to view full-screen (#607).
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#608 (28.9)
+
+Frontend only: exactly two changed lines in frontend/src/pages/TaskDetailPage.js. Button label now says "שלח תזכורת לקבלן". Success toast says "התזכורת נשלחה לקבלן בוואטסאפ" when result.status is sent or result.message is absent; otherwise the backend message is preserved. Phone icon, green styling, disabled logic and handler remain unchanged. No backend changes, dependencies, Git commands or deployment.
+
+V1 — Full changed regions with three context lines (diff, no Git):
+
+```diff
+--- /tmp/batch608/TaskDetailPage.original.js2026-09-28 12:47:39.997940131 +0000
++++ frontend/src/pages/TaskDetailPage.js2026-09-28 12:52:47.514759598 +0000
+@@ -325,7 +325,7 @@
+     setSendingWhatsApp(true);
+     try {
+       const result = await notificationService.sendWhatsApp(id);
+-      toast.success(result.message || 'הודעת WhatsApp נשלחה');
++      toast.success(result.status === 'sent' || !result.message ? 'התזכורת נשלחה לקבלן בוואטסאפ' : result.message);
+       if (canManage) {
+         const notifData = await notificationService.getTimeline(id);
+         setNotifications(notifData);
+@@ -966,7 +966,7 @@
+                       className="bg-green-600 hover:bg-green-700 text-white gap-2"
+                     >
+                       <Phone className="w-4 h-4" />
+-                      {sendingWhatsApp ? 'שולח...' : 'שלח עדכון בוואטסאפ'}
++                      {sendingWhatsApp ? 'שולח...' : 'שלח תזכורת לקבלן'}
+                     </Button>
+                   )}
+                 </>
+```
+
+wc -l frontend/src/pages/TaskDetailPage.js: 2060 before and after. SHA-256 manifests /tmp/batch608/frontend-src.before.sha256 and /tmp/batch608/frontend-src.after.sha256 show TaskDetailPage.js is the only changed file under frontend/src.
+
+V2 — cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build: EXIT 0, Compiled successfully; zero compiler/lint warnings. Separate tooling notices: Node DEP0176 fs.F_OK deprecation and outdated Browserslist data. Evidence: /tmp/batch608/build.log and build.exit.
+CI=true yarn test --watchAll=false: initial EXIT 1 before test execution because canvas could not load libuuid.so.1. Environment-only rerun with LD_LIBRARY_PATH=/tmp/batch608/uuid, containing only a symlink to the existing system libuuid.so.1: EXIT 0, 8 suites / 43 tests passed. No dependency or project configuration changes. Evidence: /tmp/batch608/jest.log, jest.exit, jest-uuid.log and jest-uuid.exit.
+grep -n "שלח עדכון בוואטסאפ" frontend/src/pages/TaskDetailPage.js: no output; /tmp/batch608/old-label-grep.txt is empty.
+Generated build preserved at /tmp/batch608/verified-build; original frontend/build restored from /tmp/batch608/build.original.
+
+V3 — None, as specified. No browser or HTTP checks, WhatsApp sends or workflow changes.
+
+V4 — review.txt before/after: 402741 bytes; cmp against /tmp/batch608/review.original.txt confirms byte equality. review.txt was not edited. Standalone /tmp/batch608/review-section.txt: 3327 bytes; not appended to historical review.
+.local/.commit_message: defect page: WhatsApp button reads "שלח תזכורת לקבלן" (#608)
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
