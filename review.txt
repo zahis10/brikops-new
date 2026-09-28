@@ -7298,3 +7298,135 @@ V4 — review.txt original size 371667 bytes; exact private copy /tmp/batch602fi
 Final review.txt size: 381263 bytes (delta 9596 bytes); original 371667 bytes are the exact prefix. One new #602-FIX-2 (28.9) heading only.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#602-FIX-3 (28.9)
+
+Frontend only: return-aware monthly-page back arrow; dashboard card now has an always-visible destination button. No Git commands or deployment.
+
+V1 — wc -l frontend/src/components/dashboard/MonthlyCloseCard.js = 83 (≤95); wc -l frontend/src/pages/MonthlyClosePage.js = 189 (≤280). FULL new MonthlyCloseCard.js:
+```jsx
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { CalendarCheck, ChevronLeft } from 'lucide-react';
+import { monthlyCloseService } from '../../services/monthlyCloseService';
+
+const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}` : '';
+
+export default function MonthlyCloseCard({ projectId }) {
+  const navigate = useNavigate();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setData(null);
+    setLoading(true);
+    const load = async () => {
+      try {
+        const list = await monthlyCloseService.getMonths(projectId);
+        if (!active) return;
+        const month = list.next_closable <= list.current_month ? list.next_closable : list.current_month;
+        const account = await monthlyCloseService.getMonth(projectId, month);
+        if (active) setData({ list, account });
+      } catch {
+        if (active) setData(null);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    return () => { active = false; };
+  }, [projectId]);
+
+  if (loading) return <div role="status" aria-label="טוען חשבון חודשי" className="h-20 rounded-xl bg-slate-200 animate-pulse" />;
+  if (!data) return null;
+  const { list, account } = data;
+  const total = account.totals?.stages ?? 0;
+  if (account.permissions?.role === 'contractor' || total === 0) return null;
+  const unmapped = account.unmapped_stages?.length ?? 0;
+  const mapped = Math.max(0, total - unmapped);
+  const companies = account.contractors?.filter((company) => company.stages?.length).length ?? 0;
+  const canWrite = !!account.permissions?.can_write;
+  const overdue = account.status === 'open' && account.month < list.current_month;
+  const target = `/projects/${projectId}/monthly-close?month=${account.month}`;
+  const back = { state: { returnTo: `/projects/${projectId}/dashboard` } };
+
+  return (
+    <div className="bg-white rounded-xl border shadow-sm p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <CalendarCheck className="w-4 h-4 text-amber-500" />
+        <h3 className="text-sm font-bold text-slate-700">חשבון חודשי</h3>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-bold text-slate-800">{account.label}</span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+          account.status === 'closed' ? 'bg-emerald-100 text-emerald-700' :
+            overdue ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
+        }`}>
+          {account.status === 'closed'
+            ? `נסגר ${dayMonth(account.closed_at)} · ${account.closed_by?.name}`
+            : overdue ? 'עדיין לא נסגר' : 'פתוח'}
+        </span>
+      </div>
+      <div className="mt-2 text-sm text-slate-700">
+        {account.kpis?.this_month ?? 0} שלבי-דירה {account.status === 'closed' ? 'בחשבון' : 'בוצעו החודש'} · {companies} קבלנים
+      </div>
+      {canWrite && account.status === 'open' && (
+        <div className={`mt-1 text-xs ${unmapped > 0 ? 'text-amber-800' : 'text-slate-500'}`}>
+          {unmapped > 0
+            ? `${unmapped} שלבים ללא קבלן — לא ייכנסו לאף חשבון`
+            : `${mapped}/${total} שלבים משויכים לקבלנים`}
+        </div>
+      )}
+      <button onClick={() => navigate(target, back)}
+        className={`mt-3 min-h-[44px] w-full sm:w-auto px-4 rounded-lg font-bold flex items-center justify-center gap-1 ${
+          canWrite && account.status === 'open' && (overdue || unmapped > 0)
+            ? 'bg-amber-500 text-white' : 'border border-amber-300 text-amber-800'
+          }`}>
+        {canWrite && overdue ? `לסגירת חשבון ${account.label}` : 'לדף החשבונות'}
+        <ChevronLeft className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+```
+
+MonthlyClosePage.js changes with three context lines where available (top-of-file import has only one preceding line):
+```diff
+@@ -1,5 +1,5 @@
+ import React, { useCallback, useEffect, useState } from 'react';
+-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
++import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+ import { ArrowRight, CalendarCheck, ChevronLeft, ChevronRight } from 'lucide-react';
+ import { toast } from 'sonner';
+ import { monthlyCloseService } from '../services/monthlyCloseService';
+@@ -24,6 +24,8 @@
+   const { projectId } = useParams();
+   const navigate = useNavigate();
+   const [params, setParams] = useSearchParams();
++  const location = useLocation();
++  const [returnTo] = useState(() => location.state?.returnTo || `/projects/${projectId}/execution-matrix`);
+   const requestedMonth = params.get('month');
+   const [months, setMonths] = useState(null);
+   const [account, setAccount] = useState(null);
+@@ -86,8 +88,8 @@
+     <div className="min-h-screen bg-slate-50 pb-32" dir="rtl">
+       <main className="mx-auto max-w-2xl p-4 sm:p-6">
+         <div className="mb-4 flex items-center gap-3">
+-          <button type="button" onClick={() => navigate(`/projects/${projectId}/execution-matrix`)}
+-            aria-label="חזרה למטריצת ביצוע" className="rounded-lg p-2 hover:bg-slate-200">
++          <button type="button" onClick={() => navigate(returnTo)}
++            aria-label={returnTo.endsWith('/dashboard') ? 'חזרה לדשבורד' : 'חזרה למטריצת ביצוע'} className="rounded-lg p-2 hover:bg-slate-200">
+             <ArrowRight className="h-5 w-5" />
+           </button>
+           <div className="flex-1 rounded-2xl bg-gradient-to-l from-amber-500 to-orange-400 p-4 text-white shadow-sm">
+```
+Baseline source SHA-256 manifest: /tmp/batch602fix3/frontend-src.before.sha256. Final: /tmp/batch602fix3/frontend-src.final.sha256; complete baseline-to-final manifest diff: /tmp/batch602fix3/frontend-src.final-diff.txt. Only MonthlyCloseCard.js and MonthlyClosePage.js changed under frontend/src. Full individual diffs: /tmp/batch602fix3/MonthlyCloseCard.full-diff.txt and /tmp/batch602fix3/MonthlyClosePage.full-diff.txt; private originals: /tmp/batch602fix3/MonthlyCloseCard.original.js and /tmp/batch602fix3/MonthlyClosePage.original.js. F2 is exactly five changed lines: import, two captured-return lines, onClick, and aria-label.
+
+V2 — cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build: exit 0, Compiled successfully, zero compiler/lint warnings (/tmp/batch602fix3/build.log, build.exit). Distinct tooling notices: Node [DEP0176] fs.F_OK deprecation and seven-month-old Browserslist data; no package changes. Exact CI=true yarn test --watchAll=false first exited 1 before any tests executed: native canvas could not find libuuid.so.1 (8 suites failed to initialize, 0 tests; /tmp/batch602fix3/jest.log, jest.exit). Rerun of CI=true yarn test --watchAll=false with only existing Nix libuuid on LD_LIBRARY_PATH: exit 0, 8 suites, 43 tests passed (/tmp/batch602fix3/jest-with-nix-uuid.log, jest-with-nix-uuid.exit); no dependency changes. Required Hebrew-abbreviation grep on the two edited files: no output, 0-byte /tmp/batch602fix3/abbreviation-scan.txt.
+
+V3 — not required; local browser harness is broken; Zahi verifies on staging. No browser acceptance claim or PNG produced.
+
+V4 — review.txt untouched: 381265 bytes before/after; SHA-256 before/after 0ab4160c95fef12dd5baac1b2580dc9e5626f0b1a29178db86f46defee844cc7. Exact private original: /tmp/batch602fix3/review.original.txt; no append attempted. Section stored separately at /tmp/batch602fix3/review-section.txt (8624 bytes). Original generated build restored byte-for-byte (427 files; /tmp/batch602fix3/build.original.sha256 equals /tmp/batch602fix3/build.restored.sha256). Successful FIX-3 build preserved at /tmp/batch602fix3/verified-build (static/js/main.cd0a664b.js). No workflow changes. Commit-message metadata in .local/.commit_message: monthly close: back arrow returns to the page you came from; dashboard card gets a real "לדף החשבונות" button (#602-FIX-3).
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
