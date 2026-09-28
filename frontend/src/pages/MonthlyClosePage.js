@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowRight, CalendarCheck, ChevronLeft, ChevronRight, Settings } from 'lucide-react';
+import { ArrowRight, CalendarCheck, ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { monthlyCloseService } from '../services/monthlyCloseService';
 import { downloadBlob } from '../utils/fileDownload';
@@ -72,6 +72,11 @@ export default function MonthlyClosePage() {
   };
   const changeMonth = (delta) => setParams({ month: shiftMonth(account.month, delta) });
   const canWrite = !!account?.permissions?.can_write;
+  const total = account?.totals?.stages ?? 0;
+  const unmapped = account?.unmapped_stages?.length ?? 0;
+  const mapped = Math.max(0, total - unmapped);
+  const companies = account?.contractors?.filter((company) => company.stages?.length).length ?? 0;
+  const snapshotCompanies = Object.values(account?.settings_snapshot?.stage_companies || {}).filter((id) => id != null);
   const contractorView = account?.permissions?.role === 'contractor';
   const contractor = account?.contractors?.[0];
   const hasVisibleBaseline = !!account?.baseline_keys?.length && (!contractorView ||
@@ -95,10 +100,6 @@ export default function MonthlyClosePage() {
               {account?.totals && ` · ${account.totals.units} דירות · ${account.totals.stages} שלבים`}
             </p>
           </div>
-          {canWrite && <button type="button" onClick={() => setSettingsOpen(true)} title="הגדרות חשבון חודשי"
-            aria-label="הגדרות חשבון חודשי" className="rounded-lg p-2 hover:bg-slate-200">
-            <Settings className="h-5 w-5" />
-          </button>}
         </div>
         {loading && <div role="status" className="space-y-3 animate-pulse" aria-label="טוען חשבון">
           <div className="h-14 rounded-xl bg-slate-200" /><div className="h-24 rounded-xl bg-slate-200" />
@@ -123,6 +124,22 @@ export default function MonthlyClosePage() {
               disabled={monthIndex(account.month) >= monthIndex(currentMonth || account.month)}
               className="min-h-[44px] rounded-lg px-2 disabled:opacity-30"><ChevronLeft className="h-5 w-5" /></button>
           </div>
+          {canWrite && account.status === 'open' && <section className={`mb-4 rounded-xl border bg-white p-4 shadow-sm ${unmapped ? 'border-amber-300' : 'border-slate-200'}`}>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="font-bold text-slate-900">שיוך שלבים לקבלנים</h2>
+              <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{mapped}/{total} שלבים</span>
+            </div>
+            <p className="mt-2 text-sm text-slate-700">{mapped} שלבים משויכים ל-{companies} קבלנים</p>
+            {unmapped > 0 && <p className="mt-1 text-sm text-amber-800">{unmapped} שלבים ללא קבלן — לא ייכנסו לאף חשבון</p>}
+            <p className="mt-2 text-xs text-slate-500">בדוק את השיוך לפני כל סגירת חודש — שלב ללא קבלן לא נספר, וקבלן חדש צריך שיוך.</p>
+            <button type="button" onClick={() => setSettingsOpen(true)}
+              className={`mt-3 min-h-[44px] w-full rounded-lg font-bold ${unmapped ? 'bg-amber-500 text-white' : 'border border-amber-300 text-amber-800'}`}>
+              עדכן שיוך שלבים
+            </button>
+          </section>}
+          {canWrite && account.status === 'closed' && <p className="mb-4 text-sm text-slate-600">
+            השיוך בסגירה: {snapshotCompanies.length}/{total} שלבים · {new Set(snapshotCompanies).size} קבלנים
+          </p>}
           {contractorView && <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
             מבט הקבלן — קריאה בלבד: אתה רואה רק את הדוח של {contractor?.name || ''}
           </div>}
@@ -145,12 +162,6 @@ export default function MonthlyClosePage() {
             מצטבר קודם — לא נספר בחשבון זה
           </p>}
           {!!account.kpis?.corrections && <p className="mb-4 text-sm font-semibold text-red-700">{account.kpis.corrections} תיקונים מחודש קודם</p>}
-          {canWrite && account.status === 'open' && !!account.unmapped_stages?.length && (
-            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-              {account.unmapped_stages.length} שלבים ללא קבלן — לא נכנסים לאף חשבון
-              <button type="button" onClick={() => setSettingsOpen(true)} className="mr-2 font-bold underline">שיוך שלבים</button>
-            </div>
-          )}
           {!account.contractors?.length ? <div className="rounded-xl border border-slate-200 bg-white p-6 text-center">
             <p>{canWrite ? 'עדיין אין שיוך שלבים לקבלנים' : 'אין נתונים לחודש זה'}</p>
             {canWrite && <button type="button" onClick={() => setSettingsOpen(true)}

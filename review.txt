@@ -7028,3 +7028,135 @@ V7 — `/tmp/batch602/cleanup.py --execute` restored only differing local fixtur
 review.txt before append: 339178 bytes. After append: 357143 bytes. Task-section delta: 17965 bytes, exactly equal to separate `.local/reports/batch602-review.txt` byte count; original 339178-byte review is exact prefix. Only one new section heading.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#602-FIX-1 (27.9)
+
+V1 — Baseline privately preserved at /tmp/batch602fix1/baseline/ (review.txt, three original sources, original .local/.commit_message, original generated build, SHA-256 manifests). Original review: 357143 bytes (<2 MB). Source budgets, before → after: ExecutionMatrixPage.js 437→437 lines, exactly two className lines changed (≤3); MonthlyClosePage.js 176→187 (+11, ≤+35 and ≤280); CloseMonthDialog.js 46→54 (+8, ≤+10 and ≤90). SHA-256 manifest comparison over frontend/src shows only those three files changed. Complete baseline-to-new changed regions, with three context lines, follow; baseline copies and timestamp-free unified diffs are in /tmp/batch602fix1/.
+
+ExecutionMatrixPage.js:
+@@ -243,7 +243,7 @@
+   return (
+     <div className="min-h-screen bg-slate-50" dir="rtl">
+       <div className="max-w-7xl mx-auto p-4 sm:p-6">
+-        <div className="flex items-center gap-3 mb-4">
++        <div className="flex flex-wrap items-center gap-3 mb-4">
+           <button
+             onClick={() => navigate(`/projects/${projectId}/qc`)}
+             className="p-2 hover:bg-slate-100 active:bg-slate-200 rounded-lg transition-colors"
+@@ -264,7 +264,7 @@
+           <button
+             type="button"
+             onClick={() => navigate(`/projects/${projectId}/monthly-close`)}
+-            className="px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-100 active:bg-slate-200 transition-colors min-h-[44px] flex items-center gap-2 text-sm font-medium text-slate-700"
++            className="px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-100 active:bg-slate-200 transition-colors min-h-[44px] flex items-center gap-2 text-sm font-medium text-slate-700 w-full sm:w-auto order-last sm:order-none justify-center sm:justify-start"
+           >
+             <CalendarCheck className="w-4 h-4" />
+             <span>חשבון חודשי</span>
+
+MonthlyClosePage.js:
+@@ -1,6 +1,6 @@
+ import React, { useCallback, useEffect, useState } from 'react';
+ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+-import { ArrowRight, CalendarCheck, ChevronLeft, ChevronRight, Settings } from 'lucide-react';
++import { ArrowRight, CalendarCheck, ChevronLeft, ChevronRight } from 'lucide-react';
+ import { toast } from 'sonner';
+ import { monthlyCloseService } from '../services/monthlyCloseService';
+ import { downloadBlob } from '../utils/fileDownload';
+@@ -72,6 +72,11 @@
+   };
+   const changeMonth = (delta) => setParams({ month: shiftMonth(account.month, delta) });
+   const canWrite = !!account?.permissions?.can_write;
++  const total = account?.totals?.stages ?? 0;
++  const unmapped = account?.unmapped_stages?.length ?? 0;
++  const mapped = Math.max(0, total - unmapped);
++  const companies = account?.contractors?.filter((company) => company.stages?.length).length ?? 0;
++  const snapshotCompanies = Object.values(account?.settings_snapshot?.stage_companies || {}).filter((id) => id != null);
+   const contractorView = account?.permissions?.role === 'contractor';
+   const contractor = account?.contractors?.[0];
+   const hasVisibleBaseline = !!account?.baseline_keys?.length && (!contractorView ||
+@@ -95,10 +100,6 @@
+               {account?.totals && ` · ${account.totals.units} דירות · ${account.totals.stages} שלבים`}
+             </p>
+           </div>
+-          {canWrite && <button type="button" onClick={() => setSettingsOpen(true)} title="הגדרות חשבון חודשי"
+-            aria-label="הגדרות חשבון חודשי" className="rounded-lg p-2 hover:bg-slate-200">
+-            <Settings className="h-5 w-5" />
+-          </button>}
+         </div>
+         {loading && <div role="status" className="space-y-3 animate-pulse" aria-label="טוען חשבון">
+           <div className="h-14 rounded-xl bg-slate-200" /><div className="h-24 rounded-xl bg-slate-200" />
+@@ -123,6 +124,22 @@
+               disabled={monthIndex(account.month) >= monthIndex(currentMonth || account.month)}
+               className="min-h-[44px] rounded-lg px-2 disabled:opacity-30"><ChevronLeft className="h-5 w-5" /></button>
+           </div>
++          {canWrite && account.status === 'open' && <section className={`mb-4 rounded-xl border bg-white p-4 shadow-sm ${unmapped ? 'border-amber-300' : 'border-slate-200'}`}>
++            <div className="flex items-center justify-between gap-2">
++              <h2 className="font-bold text-slate-900">שיוך שלבים לקבלנים</h2>
++              <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{mapped}/{total} שלבים</span>
++            </div>
++            <p className="mt-2 text-sm text-slate-700">{mapped} שלבים משויכים ל-{companies} קבלנים</p>
++            {unmapped > 0 && <p className="mt-1 text-sm text-amber-800">{unmapped} שלבים ללא קבלן — לא ייכנסו לאף חשבון</p>}
++            <p className="mt-2 text-xs text-slate-500">בדוק את השיוך לפני כל סגירת חודש — שלב ללא קבלן לא נספר, וקבלן חדש צריך שיוך.</p>
++            <button type="button" onClick={() => setSettingsOpen(true)}
++              className={`mt-3 min-h-[44px] w-full rounded-lg font-bold ${unmapped ? 'bg-amber-500 text-white' : 'border border-amber-300 text-amber-800'}`}>
++              עדכן שיוך שלבים
++            </button>
++          </section>}
++          {canWrite && account.status === 'closed' && <p className="mb-4 text-sm text-slate-600">
++            השיוך בסגירה: {snapshotCompanies.length}/{total} שלבים · {new Set(snapshotCompanies).size} קבלנים
++          </p>}
+           {contractorView && <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+             מבט הקבלן — קריאה בלבד: אתה רואה רק את הדוח של {contractor?.name || ''}
+           </div>}
+@@ -145,12 +162,6 @@
+             מצטבר קודם — לא נספר בחשבון זה
+           </p>}
+           {!!account.kpis?.corrections && <p className="mb-4 text-sm font-semibold text-red-700">{account.kpis.corrections} תיקונים מחודש קודם</p>}
+-          {canWrite && account.status === 'open' && !!account.unmapped_stages?.length && (
+-            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+-              {account.unmapped_stages.length} שלבים ללא קבלן — לא נכנסים לאף חשבון
+-              <button type="button" onClick={() => setSettingsOpen(true)} className="mr-2 font-bold underline">שיוך שלבים</button>
+-            </div>
+-          )}
+           {!account.contractors?.length ? <div className="rounded-xl border border-slate-200 bg-white p-6 text-center">
+             <p>{canWrite ? 'עדיין אין שיוך שלבים לקבלנים' : 'אין נתונים לחודש זה'}</p>
+             {canWrite && <button type="button" onClick={() => setSettingsOpen(true)}
+
+CloseMonthDialog.js:
+@@ -6,6 +6,10 @@
+ export default function CloseMonthDialog({ open, onOpenChange, projectId, account, onClosed }) {
+   const [note, setNote] = useState('');
+   const [submitting, setSubmitting] = useState(false);
++  const total = account?.totals?.stages ?? 0;
++  const unmapped = account?.unmapped_stages?.length ?? 0;
++  const mapped = Math.max(0, total - unmapped);
++  const companies = account?.contractors?.filter((company) => company.stages?.length).length ?? 0;
+   const close = async () => {
+     setSubmitting(true);
+     try {
+@@ -28,6 +32,10 @@
+             {account?.kpis?.this_month || 0} שלבי-דירה · {account?.contractors?.length || 0} קבלנים · {account?.kpis?.corrections || 0} תיקונים
+           </DialogDescription>
+         </DialogHeader>
++        <p className="text-sm text-slate-700">שיוך: {mapped}/{total} שלבים · {companies} קבלנים</p>
++        {unmapped > 0 && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
++          {unmapped} שלבים ללא קבלן לא ייכנסו לחשבון הזה. אפשר לסגור, או לחזור ולעדכן את השיוך.
++        </p>}
+         <label className="text-sm font-medium text-slate-700" htmlFor="close-note">הערה (לא חובה)</label>
+         <textarea id="close-note" value={note} onChange={(e) => setNote(e.target.value)}
+           maxLength={500} rows={3} className="w-full rounded-lg border border-slate-200 p-3 text-right"
+
+V2 — Strict build command: cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build. Exit 0, “Compiled successfully”, zero compiler/lint warnings; /tmp/batch602fix1/build.log. Separate runtime/tool notices: Node [DEP0176] fs.F_OK deprecation and seven-month-old Browserslist data; no dependency changed. CI=true yarn test --watchAll=false, using only temporary /tmp/batch602fix1/libuuid symlink directory on LD_LIBRARY_PATH for the canvas native dependency: exit 0, 8 suites and 43 tests passed; /tmp/batch602fix1/jest.log. Exact Hebrew abbreviation grep produced no output (grep exit 1, zero bytes); /tmp/batch602fix1/abbreviation.log.
+
+V3 — Browser worker report: /tmp/batch602fix1/browser-report.txt. Original preview attempt failed with ERR_CONNECTION_REFUSED; subsequent browser pass used a recovered TEMP /tmp/batch606/normal-launch.sh (derived from existing backend/start.sh, without modifying workflow definition or application source), local MongoDB at 127.0.0.1, and existing Start application workflow. Screenshot observations are tool IDs, NOT saved disk PNG paths:
+- 390px matrix na5262: exactly one full-width monthly button in row two, with back/export/settings preserved; however the title wraps to two lines and the subtitle visibly wraps to THREE lines (required 1–2), so mobile header visual acceptance is NOT met. The exact prescribed two class edits were followed; further compact-header spacing styling exceeds this specification and requires user approval. 1440px matrix luhk54: one-row header.
+- 390px open unmapped amber card + unchanged empty-state action qxilxu: 0/8 mapped, eight unmapped, both update/configuration actions. Card opens existing settings sheet kywwqa.
+- 390px unmapped dialog sb9on0 / 2jt06d: mapping 0/8, exact amber warning, enabled close button; attempted close returned 422 because untouched demo had no project companies, not because unmapped stages disable closing.
+- 390px fully mapped outline card qdsx9o: temporary local companies/settings yielded 8/8 stages mapped to one contractor, no amber warning; mapped dialog p5f0jw: 8/8, one contractor, no warning, close enabled.
+- Closed snapshot havnwg: local test close succeeded, compact 8/8 and one-contractor summary, closed status/toast. 1440px open mapping card xpxttf: 8/8 outline, helper, KPIs and contractor card.
+- Contractor route ftgquf returned DENIED (אין הרשאה לחשבון החודשי); no mapping controls displayed, but this does NOT verify the authorized contractor own-company view.
+Verified screenshot build static/js/main.eb86c51f.js (SHA-256 f83caea05cb7be72e01d52eed65e2638519cd8ca010b8171cbcd987bcc4bd695). Browser-only bypassCSP:true, localhost-only routing, maxRedirects:0 and local-only CORS headers were used; this is NOT a production CSP test. No live external provider or production data used for these screenshots. Required /tmp/batch602fix1/ PNG screenshot-path deliverable remains unfulfilled: these are observation IDs only; screenshot directory is empty.
+
+V4 — Generated verified output preserved at /tmp/batch602fix1/verified-build; original frontend/build restored with exact 427-file SHA-256 manifest, including static/js/main.9089c659.js SHA-256 3261c21d8ea370abd7aa59e9dbf2ab79008d9a654c4c00a3cc03deace27ed33e. Browser contexts were closed before cleanup. Pre-V3 project, project_companies and monthly_progress_closes snapshots are under /tmp/batch602fix1/db-pre-v3/; cleanup reports removal of the temporary companies, monthly settings and September close, with final project=1, companies=0 and snapshots=0. Four exact flow-created audit records were removed by scoped identifiers (before=4, deleted=4, after=0), without a broad collection reset. Post-cleanup counts: projectCompanies=0, monthlySnapshots=0, projectMonthlySettings=0, qcNotifications=0. Initial failed local OTP/auth attempts left otp_codes=1 and otp_metrics=1; no pre-attempt baseline exists and neither residue record was deleted or guessed away. No complete database pre/post snapshot is available, so exact full-database restoration is NOT established. Review baseline 357143 bytes, private copy /tmp/batch602fix1/baseline/review.txt. The existing single #602-FIX-1 EOF section was updated in place after browser verification, not duplicated; the original 357143-byte prefix remains exact (final: 370257 bytes; delta: 13114 bytes). Requested commit-message metadata remains written without committing; no deployment.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY

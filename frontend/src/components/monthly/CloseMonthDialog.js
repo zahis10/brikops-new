@@ -6,6 +6,10 @@ import { monthlyCloseService } from '../../services/monthlyCloseService';
 export default function CloseMonthDialog({ open, onOpenChange, projectId, account, onClosed }) {
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const total = account?.totals?.stages ?? 0;
+  const unmapped = account?.unmapped_stages?.length ?? 0;
+  const mapped = Math.max(0, total - unmapped);
+  const companies = account?.contractors?.filter((company) => company.stages?.length).length ?? 0;
   const close = async () => {
     setSubmitting(true);
     try {
@@ -28,6 +32,10 @@ export default function CloseMonthDialog({ open, onOpenChange, projectId, accoun
             {account?.kpis?.this_month || 0} שלבי-דירה · {account?.contractors?.length || 0} קבלנים · {account?.kpis?.corrections || 0} תיקונים
           </DialogDescription>
         </DialogHeader>
+        <p className="text-sm text-slate-700">שיוך: {mapped}/{total} שלבים · {companies} קבלנים</p>
+        {unmapped > 0 && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          {unmapped} שלבים ללא קבלן לא ייכנסו לחשבון הזה. אפשר לסגור, או לחזור ולעדכן את השיוך.
+        </p>}
         <label className="text-sm font-medium text-slate-700" htmlFor="close-note">הערה (לא חובה)</label>
         <textarea id="close-note" value={note} onChange={(e) => setNote(e.target.value)}
           maxLength={500} rows={3} className="w-full rounded-lg border border-slate-200 p-3 text-right"
