@@ -325,7 +325,7 @@ const TaskDetailPage = () => {
     setSendingWhatsApp(true);
     try {
       const result = await notificationService.sendWhatsApp(id);
-      toast.success(result.message || 'הודעת WhatsApp נשלחה');
+      toast.success(result.status === 'sent' || !result.message ? 'התזכורת נשלחה לקבלן בוואטסאפ' : result.message);
       if (canManage) {
         const notifData = await notificationService.getTimeline(id);
         setNotifications(notifData);
@@ -966,7 +966,7 @@ const TaskDetailPage = () => {
                       className="bg-green-600 hover:bg-green-700 text-white gap-2"
                     >
                       <Phone className="w-4 h-4" />
-                      {sendingWhatsApp ? 'שולח...' : 'שלח עדכון בוואטסאפ'}
+                      {sendingWhatsApp ? 'שולח...' : 'שלח תזכורת לקבלן'}
                     </Button>
                   )}
                 </>
