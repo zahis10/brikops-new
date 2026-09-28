@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowRight, CalendarCheck, ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { monthlyCloseService } from '../services/monthlyCloseService';
@@ -24,6 +24,8 @@ export default function MonthlyClosePage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const [returnTo] = useState(() => location.state?.returnTo || `/projects/${projectId}/execution-matrix`);
   const requestedMonth = params.get('month');
   const [months, setMonths] = useState(null);
   const [account, setAccount] = useState(null);
@@ -86,8 +88,8 @@ export default function MonthlyClosePage() {
     <div className="min-h-screen bg-slate-50 pb-32" dir="rtl">
       <main className="mx-auto max-w-2xl p-4 sm:p-6">
         <div className="mb-4 flex items-center gap-3">
-          <button type="button" onClick={() => navigate(`/projects/${projectId}/execution-matrix`)}
-            aria-label="חזרה למטריצת ביצוע" className="rounded-lg p-2 hover:bg-slate-200">
+          <button type="button" onClick={() => navigate(returnTo)}
+            aria-label={returnTo.endsWith('/dashboard') ? 'חזרה לדשבורד' : 'חזרה למטריצת ביצוע'} className="rounded-lg p-2 hover:bg-slate-200">
             <ArrowRight className="h-5 w-5" />
           </button>
           <div className="flex-1 rounded-2xl bg-gradient-to-l from-amber-500 to-orange-400 p-4 text-white shadow-sm">

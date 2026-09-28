@@ -42,17 +42,13 @@ export default function MonthlyCloseCard({ projectId }) {
   const canWrite = !!account.permissions?.can_write;
   const overdue = account.status === 'open' && account.month < list.current_month;
   const target = `/projects/${projectId}/monthly-close?month=${account.month}`;
+  const back = { state: { returnTo: `/projects/${projectId}/dashboard` } };
 
   return (
     <div className="bg-white rounded-xl border shadow-sm p-4">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <CalendarCheck className="w-4 h-4 text-amber-500" />
-          <h3 className="text-sm font-bold text-slate-700">חשבון חודשי</h3>
-        </div>
-        <button onClick={() => navigate(target)} className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1 min-h-[44px]">
-          צפה <ChevronLeft className="w-3 h-3" />
-        </button>
+      <div className="flex items-center gap-2 mb-2">
+        <CalendarCheck className="w-4 h-4 text-amber-500" />
+        <h3 className="text-sm font-bold text-slate-700">חשבון חודשי</h3>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-bold text-slate-800">{account.label}</span>
@@ -75,14 +71,14 @@ export default function MonthlyCloseCard({ projectId }) {
             : `${mapped}/${total} שלבים משויכים לקבלנים`}
         </div>
       )}
-      {canWrite && account.status === 'open' && (overdue || unmapped > 0) && (
-        <button onClick={() => navigate(target)}
-          className={`mt-3 min-h-[44px] w-full sm:w-auto px-4 rounded-lg font-bold ${
-            overdue ? 'bg-amber-500 text-white' : 'border border-amber-300 text-amber-800'
+      <button onClick={() => navigate(target, back)}
+        className={`mt-3 min-h-[44px] w-full sm:w-auto px-4 rounded-lg font-bold flex items-center justify-center gap-1 ${
+          canWrite && account.status === 'open' && (overdue || unmapped > 0)
+            ? 'bg-amber-500 text-white' : 'border border-amber-300 text-amber-800'
           }`}>
-          {overdue ? `לסגירת חשבון ${account.label}` : 'עדכן שיוך שלבים'}
-        </button>
-      )}
+        {canWrite && overdue ? `לסגירת חשבון ${account.label}` : 'לדף החשבונות'}
+        <ChevronLeft className="w-4 h-4" />
+      </button>
     </div>
   );
 }
