@@ -8,6 +8,7 @@ import NotificationBell from '../components/NotificationBell';
 import HamburgerMenu from '../components/HamburgerMenu';
 import DashboardFoldSection from '../components/DashboardFoldSection';
 import EscalationsSection from '../components/dashboard/EscalationsSection';
+import MonthlyCloseCard from '../components/dashboard/MonthlyCloseCard';
 import ProjectsLightSkyline from '../components/ProjectsLightSkyline';
 import { tRole } from '../i18n';
 import { toast } from 'sonner';
@@ -452,6 +453,7 @@ export default function ProjectDashboardPage() {
           </div>
         )}
 
+        <MonthlyCloseCard projectId={projectId} />
         {escalations && (escalations.open_count > 0 || escalations.resolved_week_count > 0) && <div ref={el => { foldRefs.current.escalations = el; }}><DashboardFoldSection id="escalations" projectId={projectId} icon={Megaphone} iconColor="text-amber-500" title="הקפצות מהשטח · לטיפולי" summary={`${escalations.open_count} פתוחות`} forceOpen={foldForce.escalations || 0}><EscalationsSection projectId={projectId} escalations={escalations} canAssign={escalations.can_assign} currentUserId={user?.id} onChanged={() => escalationService.list(projectId, 'open').then(setEscalations).catch(() => {})} /></DashboardFoldSection></div>}
 
         <div ref={handoverRef}>
