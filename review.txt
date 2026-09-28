@@ -7430,3 +7430,170 @@ V3 — not required; local browser harness is broken; Zahi verifies on staging. 
 V4 — review.txt untouched: 381265 bytes before/after; SHA-256 before/after 0ab4160c95fef12dd5baac1b2580dc9e5626f0b1a29178db86f46defee844cc7. Exact private original: /tmp/batch602fix3/review.original.txt; no append attempted. Section stored separately at /tmp/batch602fix3/review-section.txt (8624 bytes). Original generated build restored byte-for-byte (427 files; /tmp/batch602fix3/build.original.sha256 equals /tmp/batch602fix3/build.restored.sha256). Successful FIX-3 build preserved at /tmp/batch602fix3/verified-build (static/js/main.cd0a664b.js). No workflow changes. Commit-message metadata in .local/.commit_message: monthly close: back arrow returns to the page you came from; dashboard card gets a real "לדף החשבונות" button (#602-FIX-3).
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#607 (28.9)
+
+Unit defect-list photo thumbnail, count and full-screen preview. ADDENDUM-1 also enforces unit project read access before fetching tasks and merges handover proof images with task image updates. No Git commands, deployment, review edits or unrelated application file changes.
+
+V1 — wc -l: backend/contractor_ops/projects_router.py 1742; frontend/src/pages/ApartmentDashboardPage.js 1217; frontend/src/components/defects/DefectPhotoPreview.js 37 (≤60); backend/tests/test_unit_tasks_images.py 170 (≤170). FULL new DefectPhotoPreview.js source:
+```jsx
+import React, { useEffect } from 'react';
+import { ChevronLeft, X } from 'lucide-react';
+
+export default function DefectPhotoPreview({ task, onClose, onOpen }) {
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div dir="rtl" className="fixed inset-0 z-[60] bg-black/90 flex flex-col">
+      <div className="p-3 flex items-center justify-between gap-2">
+        <p className="text-sm font-bold text-white truncate">{task.title}</p>
+        <button type="button" onClick={onClose} aria-label="סגור"
+          className="min-h-[44px] min-w-[44px] flex items-center justify-center text-white">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+      <div className="flex-1 flex items-center justify-center p-2" onClick={onClose}>
+        <img src={task.image_url} alt={task.title}
+          className="max-h-full max-w-full object-contain rounded-lg"
+          onClick={(event) => event.stopPropagation()} />
+      </div>
+      <div className="p-3 flex items-center justify-between gap-2">
+        {task.image_count > 1 && <span className="text-xs text-white/70">
+          עוד {task.image_count - 1} תמונות בליקוי
+        </span>}
+        <button type="button" onClick={onOpen}
+          className="min-h-[44px] px-4 rounded-lg bg-amber-500 font-bold text-white flex items-center gap-1">
+          לליקוי <ChevronLeft className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+projects_router.py complete changed regions with three context lines against the pre-#607 original (no Git):
+```diff
+@@ -1099,6 +1099,17 @@
+                           category: Optional[str] = Query(None),
+                           user: dict = Depends(get_current_user)):
+     db = get_db()
++    unit = await db.units.find_one({'id': unit_id}, {'_id': 0, 'project_id': 1, 'building_id': 1})
++    if not unit:
++        raise HTTPException(status_code=404, detail='Unit not found')
++    unit_project_id = unit.get('project_id')
++    if not unit_project_id and unit.get('building_id'):
++        building = await db.buildings.find_one(
++            {'id': unit['building_id']}, {'_id': 0, 'project_id': 1})
++        unit_project_id = (building or {}).get('project_id')
++    if not unit_project_id:
++        raise HTTPException(status_code=404, detail='Unit not found')
++    await _check_project_read_access(user, unit_project_id)
+     query = {'unit_id': unit_id}
+     if status:
+         query['status'] = status
+@@ -1106,7 +1117,7 @@
+         query['category'] = category
+     tasks = await db.tasks.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
+     tasks = sorted(tasks, key=_priority_sort_key)
+-    from services.object_storage import resolve_urls_in_doc
++    from services.object_storage import resolve_urls_in_doc, resolve_url
+ 
+     # ---- Batch enrichment ----
+     project_id = tasks[0].get('project_id') if tasks else None
+@@ -1175,11 +1186,29 @@
+                 if c.get('id'):
+                     company_name_map[c['id']] = c.get('name', '')
+ 
++    # ---- First image per task (list thumbnail) ----
++    task_ids = [t['id'] for t in tasks if t.get('id')]
++    task_images: dict = {}
++    if task_ids:
++        async for upd in db.task_updates.find(
++            {'task_id': {'$in': task_ids}, 'update_type': 'attachment',
++             'content_type': {'$regex': '^image/'}, 'deletedAt': {'$exists': False}},
++            {'_id': 0, 'task_id': 1, 'attachment_url': 1, 'created_at': 1}
++        ).sort('created_at', 1):
++            if upd.get('attachment_url'):
++                task_images.setdefault(upd.get('task_id'), []).append(upd['attachment_url'])
++
+     # ---- Build response ----
+     result = []
+     for t in tasks:
+         td = Task(**t).dict()
+         resolve_urls_in_doc(td)
++        refs = list(t.get('proof_urls') or []) if t.get('handover_protocol_id') else []
++        for ref in task_images.get(t.get('id'), []):
++            if ref not in refs:
++                refs.append(ref)
++        td['image_url'] = resolve_url(refs[0]) if refs else None
++        td['image_count'] = len(refs)
+ 
+         if t.get('company_id'):
+             td['company_name'] = company_name_map.get(t['company_id'], '')
+```
+
+ApartmentDashboardPage.js complete changed regions with three context lines against the pre-#607 original (no Git):
+```diff
+@@ -18,6 +18,7 @@
+ import EscalationSheet from '../components/spare/EscalationSheet';
+ import SpareEscalationStatus from '../components/spare/SpareEscalationStatus';
+ import SpareCategoryPhotos from '../components/spare/SpareCategoryPhotos';
++import DefectPhotoPreview from '../components/defects/DefectPhotoPreview';
+ import { arraysEqualAsSets } from '../utils/filterHelpers';
+ import { FEATURES } from '../config/features';
+ import { getDefectCreatesForUnit } from '../services/offlineOutbox';
+@@ -127,6 +128,7 @@
+   const [spareTilesEntries, setSpareTilesEntries] = useState([]);
+   const [spareTilesSaving, setSpareTilesSaving] = useState(false);
+   const [sheetMode, setSheetMode] = useState(null);
++  const [photoPreview, setPhotoPreview] = useState(null);
+   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
+   const spareCanWrite = unitData?.spare_can_write === true;
+   const spareCanAssign = unitData?.spare_can_assign === true;
+@@ -832,6 +834,8 @@
+         </div>
+       )}
+       <EscalationSheet open={!!sheetMode} onClose={() => setSheetMode(null)} projectId={projectId} unit={{ id: unitId, label: effectiveLabel }} buildingName={building?.name || ''} spareStatus={unitData.spare_status} mode={sheetMode || 'new'} onSent={loadUnit} />
++      {photoPreview && <DefectPhotoPreview task={photoPreview} onClose={() => setPhotoPreview(null)}
++        onOpen={() => { const t = photoPreview; setPhotoPreview(null); navigate(`/tasks/${t.id}`, { state: { returnTo: location.pathname + location.search } }); }} />}
+       {!unitData.spare_profiles_exist && (
+       <div className="max-w-lg mx-auto px-4 mt-3">
+         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+@@ -1078,12 +1082,17 @@
+                 >
+                   <div className="flex items-start gap-3">
+                     {hasImage && (
+-                      <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
++                      <div role={task.image_url ? 'button' : undefined} aria-label={task.image_url ? 'הצג תמונה' : undefined}
++                        onClick={task.image_url ? (e) => { e.stopPropagation(); setPhotoPreview(task); } : undefined}
++                        className="relative w-16 h-16 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                         {task.image_url ? (
+                           <img src={task.image_url} alt="" className="w-full h-full object-cover" />
+                         ) : (
+                           <ImageIcon className="w-5 h-5 text-slate-300" />
+                         )}
++                        {task.image_count > 1 && (
++                          <span className="absolute bottom-0.5 left-0.5 rounded bg-black/60 px-1 text-[10px] font-bold text-white">+{task.image_count - 1}</span>
++                        )}
+                       </div>
+                     )}
+                     <div className="flex-1 min-w-0">
+```
+
+Backend router has 29 additive source lines total relative to the original (≤40); its only removed original line is the expressly approved local storage import extension. The original project_id = tasks[0] batch enrichment remains unchanged. Query, projection and ascending sort for task_updates are unchanged; one batched lookup; handover proof_urls precede and deduplicate attachment updates. Frontend unchanged from initial #607 delivery; unit page four wiring points, nine net source lines, thumbnail block 14 lines. Test covers exact batch filter/sort, oldest of three images, no-image case, resolve_url, unchanged fields, unknown unit 404 before tasks, unauthorized 403 with awaited access check before tasks, project fallback through building, deduplicated handover proof_urls [s3://a, s3://b] + updates [s3://b, s3://c] => resolved s3://a/count 3, and ignored non-handover proof-only s3://orphan; test stubs document URL resolution to avoid external provider calls.
+
+SHA-256 source manifests: /tmp/batch607/backend-python.before.sha256 and backend-python.addendum1-final.sha256 (full diff backend-python.addendum1-final.manifest-diff.txt); /tmp/batch607/frontend-src.before.sha256 and frontend-src.addendum1-final.sha256 (full diff frontend-src.addendum1.manifest-diff.txt). Exactly four permitted files differ under backend Python source and frontend/src: router, new backend test, unit page and new viewer; generated Python caches excluded. Frontend final manifest exactly matches /tmp/batch607/frontend-src.final.sha256 from the initial delivery. Original copies /tmp/batch607/projects_router.original.py, ApartmentDashboardPage.original.js. Source diff evidence /tmp/batch607/projects_router.addendum1-final.diff and ApartmentDashboardPage.addendum1.diff.
+
+V2 — Initial #607 backend verification: cd backend && python -m pytest -q tests/test_unit_tasks_images.py tests/test_unit_detail.py tests/test_spare_photos.py: exit 0, 37 passed (/tmp/batch607/pytest.log). ADDENDUM-1 final three-file command, rerun after approved exact s3:// fixture adjustment: exit 0, 41 passed, 8 Pydantic deprecation warnings (/tmp/batch607/pytest.addendum1-final.log and pytest.addendum1-final.exit). Strict frontend build already passed: cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build, exit 0, Compiled successfully, zero compiler/lint warnings (/tmp/batch607/build.log and build.exit); separate Node [DEP0176] deprecation and aged Browserslist notices are tooling notices. Exact CI=true yarn test --watchAll=false initially failed before tests because native canvas could not find libuuid.so.1 (/tmp/batch607/jest.log and jest.exit); rerun with only existing Nix libuuid on LD_LIBRARY_PATH passed 8 suites/43 tests (/tmp/batch607/jest-with-nix-uuid.log and jest-with-nix-uuid.exit). Frontend unchanged in ADDENDUM-1, so no repeat build/Jest. Forbidden Hebrew-abbreviation grep over viewer directory and unit page yielded no output (/tmp/batch607/abbreviation-scan.txt, zero bytes).
+
+V3 — Initial #607 local verification report: /tmp/batch607/v3-report.txt. Before ADDENDUM-1 the existing Start application workflow failed with `bash: /tmp/batch606/normal-launch.sh: No such file or directory`, and local Mongo refused 127.0.0.1:27017 (ECONNREFUSED); demo PM HTTP GET was NOT RUN, so neither real-data image URLs nor availability of image fixtures was established. V3 browser — not run — local harness/startup failure; no PNGs, login, uploads, fixtures or data mutations. Main confirmed the existing Start application remains FAILED with no ports and the same missing launcher (shell existence check also found it absent); no restart or repair was attempted. HTTP and browser were NOT RUN for ADDENDUM-1: V3 browser — not run — local harness/startup failure. No new HTTP/browser/workflow attempt, screenshot or real-data conclusion. Previously verified frontend build retained at /tmp/batch607/verified-build (346 files, main.e28530d2.js SHA-256 311382d00ac6b429d4edd40d1ab0578a0233d37f012ff70b56d25927833d6a4a); original generated frontend/build restored from /tmp/batch607/build.original (427 files, main.f744013d.js). Staging verification belongs to Zahi.
+
+V4 — review.txt stayed byte-identical to /tmp/batch607/review.original.txt: 389890 bytes before and after, SHA-256 2d562894206e51b886f8ddbc0a3c24ff54e52db1576d54ecd7d60ce10f633a04. This standalone section is /tmp/batch607/review-section.txt (12850 bytes); never appended to review.txt. Commit metadata unchanged: defects: first photo + count on every card of the unit's defect list, tap to view full-screen (#607).
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
