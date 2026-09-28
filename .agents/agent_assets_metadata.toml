@@ -90,13 +90,13 @@ id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
 title = "review.txt"
-description = "קובץ הסקירה המלא, בגודל כ־76MB. סעיף Batch 606 נשמר בנפרד ואינו כלול בקובץ זה."
+description = "קובץ הסקירה המלא, כולל סעיף ‎#602-FIX-1 והתוספת שאושרה."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:73ae5877175ed3ff67374f8ac80a47492f77b2e78b076cc8e91c2527bfd67582"
-size = 79425536
-mtime_ms = 1790153066273
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/5520a77d-3afe-4e6b-866e-cb3e734c351c"
-storage_version_token = "1790168667925379"
+content_hash = "sha256:e5ca2aecda24ebb1d5cc1e6789ee719093f4add2bb92a8818fea195ef78e84f3"
+size = 371667
+mtime_ms = 1790579648544
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/d846b3da-6f15-4b2c-b355-ce98cce99c70"
+storage_version_token = "1790579944954323"
 content_type = "text/plain"
 
 [[outputs]]
