@@ -170,6 +170,7 @@ export default function MonthlyClosePage() {
               className="mt-3 rounded-lg bg-amber-500 px-4 py-2 font-bold text-white">הגדר שיוך</button>}
           </div> : <div className="space-y-3">{account.contractors.map((company) => (
             <ContractorAccountCard key={company.company_id} contractor={company} month={account}
+              canWrite={canWrite} onChanged={refresh}
               projectId={projectId} canExport onExport={exportCompany} />
           ))}</div>}
           {canWrite && account.permissions?.can_close && <div className="sticky bottom-3 z-10 mt-6 rounded-xl border border-amber-200 bg-white p-4 shadow-lg">

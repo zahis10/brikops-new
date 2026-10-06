@@ -185,6 +185,7 @@ def build_account(month, *, stages, units, buildings, floors, cells, companies,
             'this_month': len(evidence), 'cumulative': cumulative, 'still_paid': len(still),
             'total_units': len(units), 'pct': round(100 * cumulative / len(units)) if units else 0,
             'qc_count': qc, 'manual_count': len(evidence) - qc, 'by_building': by_building,
+            'still_unit_ids': sorted(still),
             'unit_ids_this_month': [e['unit_id'] for e in evidence], 'evidence': evidence})
         for key, amount in [('this_month', len(evidence)), ('cumulative', cumulative),
                             ('qc', qc), ('manual', len(evidence) - qc)]:
@@ -264,6 +265,7 @@ async def load_inputs(db, project_id):
                                        'scope': 'unit'}, {'_id': 0, 'id': 1, 'unit_id': 1}):
             runs_by_unit[r['unit_id']] = r['id']
     return {'project': project, 'stages': stages, 'units': units, 'floors': floors, 'buildings': buildings,
+            'contract_items': await db.contract_items.find({'project_id': project_id, 'active': True}, {'_id': 0}).to_list(None),
             'cells': cells, 'companies': companies, 'settings': project.get('monthly_close_settings') or default_settings(),
             'snapshots': snapshots, 'runs_by_floor': runs_by_floor, 'runs_by_unit': runs_by_unit}
 

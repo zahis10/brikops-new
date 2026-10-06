@@ -9,6 +9,7 @@ from openpyxl.styles import Alignment, Font
 from contractor_ops.execution_matrix_export import HEADER_FILL
 from contractor_ops.utils.timezone import IL_TZ
 from contractor_ops.xlsx_safe import append_row, set_cell
+from contractor_ops.contract_items_export import add_quantities_sheet
 
 
 SUMMARY_HEADERS = [
@@ -88,6 +89,7 @@ def build_monthly_close_xlsx(project, account, contractor, base_url):
     """Create a workbook from stored snapshot rows (or the same live account shape)."""
     wb = Workbook()
     wb.remove(wb.active)
+    add_quantities_sheet(wb, project, account, contractor)
     summary = _sheet(wb, 'סיכום', SUMMARY_HEADERS, 4)
     set_cell(summary, 1, 1, (
         f"דוח התקדמות לחשבון — {contractor.get('name', '')} — "

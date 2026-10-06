@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Download, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
+import ContractItemsRows from './ContractItemsRows';
+import AccountMoneyTotal from './AccountMoneyTotal';
 
 const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
 const label = (month) => month === 'baseline' ? 'לפני החשבון הראשון ב-BrikOps' :
@@ -9,7 +11,7 @@ const label = (month) => month === 'baseline' ? 'לפני החשבון הראש�
 // Dates arrive already formatted in Israel on the server; do not parse through a browser timezone.
 const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}` : '';
 
-export default function ContractorAccountCard({ contractor, month, projectId, canExport, onExport }) {
+export default function ContractorAccountCard({ contractor, month, projectId, canExport, onExport, canWrite = false, onChanged = () => {} }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [expanded, setExpanded] = useState((contractor.totals?.this_month || 0) > 0 || !!contractor.corrections?.length);
@@ -61,6 +63,7 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
               <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(stage.pct || 0, 100))}%` }} />
             </div>
+            <ContractItemsRows contractor={contractor} stage={stage} account={month} projectId={projectId} canWrite={canWrite} onChanged={onChanged} />
             {!!stage.evidence?.length && <div className="mt-3 rounded-lg bg-slate-50 p-2 text-xs">
               <div className={fullStages[stage.stage_id] ? 'max-h-60 space-y-2 overflow-y-auto' : 'space-y-2'}>
                 {(fullStages[stage.stage_id] ? stage.evidence : stage.evidence.slice(0, 3)).map((evidence, index) => (
@@ -82,6 +85,7 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
             </div>}
           </section>
         ))}
+        <ContractItemsRows contractor={contractor} stage={null} account={month} projectId={projectId} canWrite={canWrite} onChanged={onChanged} />
         {corrections.map((correction, index) => (
           <div key={`${correction.stage_id}-${correction.unit_id}-${index}`}
             className="my-2 rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900">
@@ -89,6 +93,7 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
               ? 'נספרה לפני החשבון הראשון ב-BrikOps' : `נספרה ב-${label(correction.counted_in_month)}`})
           </div>
         ))}
+        <AccountMoneyTotal contractor={contractor} account={month} />
         {canExport && <button type="button" onClick={exportFile} disabled={exporting}
           className="mt-3 flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700 disabled:opacity-50">
           <Download className="h-4 w-4" />

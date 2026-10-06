@@ -547,6 +547,9 @@ app.include_router(escalations_router)
 from contractor_ops.monthly_close_router import router as monthly_close_router
 from contractor_ops import monthly_close
 app.include_router(monthly_close_router)
+from contractor_ops.contract_items_router import router as contract_items_router
+from contractor_ops import contract_items
+app.include_router(contract_items_router)
 
 from contractor_ops.tasks_router import router as tasks_router
 app.include_router(tasks_router)
@@ -612,6 +615,7 @@ async def create_indexes():
         await _ensure_field_escalation_indexes()
         await activity_hours.ensure_indexes(db)
         await monthly_close.ensure_indexes(db)
+        await contract_items.ensure_indexes(db)
         await db.users.create_index("email", unique=True, sparse=True)
         await db.auth_failed_attempts.create_index(
             [("identifier", 1), ("ip", 1)],
