@@ -2,7 +2,7 @@ import axios from 'axios';
 import { API, getAuthHeader } from './api';
 
 const path = (projectId) => `${API}/projects/${projectId}/contract-items`;
-const options = () => ({ headers: getAuthHeader(), withCredentials: true });
+const options = () => ({ headers: getAuthHeader() });
 
 export const contractItemsService = {
   async list(projectId) {

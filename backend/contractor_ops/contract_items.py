@@ -125,7 +125,7 @@ def attach_contract_items(account, inputs):
             prev_amt = prior.get('cumulative_amount') if prior else (None if price is None else prev_qty * price)
             lines.append(_line(item, prev_cumulative_qty=prev_qty, this_month_qty=qty,
                 cumulative_qty=prev_qty + qty, prev_cumulative_amount=prev_amt, measurement=entry,
-                this_month_amount=None if price is None else qty * price,
+                this_month_amount=None if price is None else (prev_qty + qty) * price - (prev_amt or 0),
                 cumulative_amount=None if price is None else (prev_qty + qty) * price))
         c['items'], c['has_items'] = lines, bool(mine)
         priced = [l for l in lines if l['cumulative_amount'] is not None]

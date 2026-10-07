@@ -90,7 +90,7 @@ export default function ContractItemsRows({ contractor, stage, account, projectI
   const edit = (line = null) => { setItem(line); setOpen(true); };
   if (!lines.length && !editable) return null;
   const addText = stage
-    ? (lines.length ? '+ סעיף' : 'בלי סעיף — נכנס לחשבון כ״דירות״ · + סעיף')
+    ? (lines.length ? '+ סעיף' : contractor.has_items ? 'בלי סעיף — נכנס לחשבון כ״דירות״ · + סעיף' : '+ סעיף')
     : (lines.length ? '+ סעיף נמדד' : '+ סעיף נמדד · למה שלא במטריצה');
   return (
     <div className={!stage && lines.length ? 'mt-3 border-t border-slate-100 pt-3' : ''}>
