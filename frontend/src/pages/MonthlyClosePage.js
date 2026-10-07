@@ -161,6 +161,7 @@ export default function MonthlyClosePage() {
             מצטבר קודם — לא נספר בחשבון זה
           </p>}
           {!!account.kpis?.corrections && <p className="mb-4 text-sm font-semibold text-red-700">{account.kpis.corrections} תיקונים מחודש קודם</p>}
+          {canWrite && account.status === 'open' && !!account.contractors?.length && <p className="mb-2 text-xs text-slate-500">לכל קבלן: השלבים שהוא מבצע, ומה משלמים על כל שלב. דירה שסומנה ״בוצע״ במטריצה נכנסת לחשבון לבד.</p>}
           {!account.contractors?.length ? <div className="rounded-xl border border-slate-200 bg-white p-6 text-center">
             <p>{canWrite ? 'עדיין אין שיוך שלבים לקבלנים' : 'אין נתונים לחודש זה'}</p>
             {canWrite && <button type="button" onClick={() => setSettingsOpen(true)}

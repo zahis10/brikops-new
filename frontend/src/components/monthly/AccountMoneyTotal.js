@@ -6,7 +6,7 @@ export default function AccountMoneyTotal({ contractor, account }) {
   if (!contractor.totals_money) return null;
   return (
     <div className="mt-3 flex items-baseline justify-between flex-wrap rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
-      <span>סה״כ לחשבון {account.label}</span>
+      <span>לתשלום החודש</span>
       <span><b>{money(contractor.totals_money.this_month)}</b>{' '}
         <span className="text-[11px] text-amber-800">לפני מע״מ · לפני עכבון</span>
       </span>

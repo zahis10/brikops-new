@@ -5,6 +5,7 @@ import ContractItemSheet from './ContractItemSheet';
 
 const fmt = (n) => new Intl.NumberFormat('he-IL', { maximumFractionDigits: 2 }).format(n ?? 0);
 const money = (n) => `${fmt(n)} ₪`;
+const lump = (line) => line.unit === 'דירה' && Number(line.qty) === 1 && line.unit_price != null;
 const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}` : '';
 
 function ItemRow({ line, editable, projectId, account, onChanged, onEdit }) {
@@ -14,6 +15,7 @@ function ItemRow({ line, editable, projectId, account, onChanged, onEdit }) {
   const saved = useRef(String(line.this_month_qty ?? 0));
   const alive = useRef(true);
   const measured = line.source === 'measured';
+  const fixed = !measured && lump(line);
   useEffect(() => {
     saved.current = String(line.this_month_qty ?? 0);
     setValue(saved.current);
@@ -53,11 +55,15 @@ function ItemRow({ line, editable, projectId, account, onChanged, onEdit }) {
         }
       } : undefined}
       className={`rounded-lg bg-slate-50 border border-slate-100 px-2.5 py-1.5 text-xs mt-1.5 ${editable ? 'cursor-pointer' : ''}`}>
-      <div className="flex items-center gap-2">
-        <span className="font-mono font-bold" dir="ltr">{line.code || '—'}</span>
-        <span className="flex-1 truncate text-slate-700">{line.description}</span>
-        <span className="text-slate-500" dir={measured ? undefined : 'ltr'}>{measured ? line.unit : `×${fmt(line.qty)}`}</span>
-        <span className="tabular-nums whitespace-nowrap">
+      <div className="text-slate-700">
+        {fixed ? <><b>{money(line.unit_price)} לדירה</b>{line.price_by_unit_type ? ' · לפי סוג דירה' : ''}</>
+          : <><b>{line.description}</b> · {measured ? line.unit : `${fmt(line.qty)} לדירה`}
+            {line.unit_price != null ? ` · ${money(line.unit_price)} ל${line.unit}` : ''}</>}
+      </div>
+      <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-slate-500">
+        <span className="tabular-nums">
+          החודש {fixed ? `${line.units_this_month ?? 0} דירות` :
+          <>
           {measured && editable ? <input type="number" inputMode="decimal" min="0" step="any"
             value={value} disabled={saving} aria-label="כמות החודש"
             className="w-16 rounded-md border border-amber-200 px-1.5 py-1 text-center font-bold disabled:opacity-50"
@@ -65,14 +71,16 @@ function ItemRow({ line, editable, projectId, account, onChanged, onEdit }) {
             onBlur={saveQuantity} onKeyDown={(event) => {
               event.stopPropagation();
               if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); }
-            }} /> : <b>{fmt(line.this_month_qty)}</b>}
-          {line.corrections ? ` (−${line.corrections})` : ''} · {fmt(line.cumulative_qty)} {line.unit}
+            }} /> : <b>{fmt(line.this_month_qty)}</b>} {line.unit}
+          </>}
+          {!measured && line.corrections ? ` (−${line.corrections})` : ''}
+        </span>
+        <span className="tabular-nums">
+          {line.unit_price != null ? <><b>{money(line.this_month_amount)}</b> · מצטבר {money(line.cumulative_amount)}</>
+            : <>מצטבר {fmt(line.cumulative_qty)}{measured ? ` ${line.unit}` : ''}</>}
+          {!measured && !fixed && line.unit_price == null && line.code && <> · <span dir="ltr" className="font-mono">{line.code}</span></>}
         </span>
       </div>
-      {line.unit_price != null && <div className="flex justify-between text-[11px] text-slate-500 mt-0.5">
-        <span>{money(line.unit_price)} ל{line.unit}{line.price_by_unit_type ? ' · לפי סוג דירה' : ''}</span>
-        <span><b>{money(line.this_month_amount)}</b> החודש · {money(line.cumulative_amount)} מצטבר</span>
-      </div>}
       {measured && <div className="flex justify-between text-[11px] text-slate-500 mt-0.5">
         <span>{line.measurement ? `הוקלד ${dayMonth(line.measurement.at)} · ${line.measurement.by?.name || ''}` : 'לא הוקלד החודש = 0'}</span>
         {editable && <span>✎ הערה</span>}
@@ -90,17 +98,19 @@ export default function ContractItemsRows({ contractor, stage, account, projectI
   const edit = (line = null) => { setItem(line); setOpen(true); };
   if (!lines.length && !editable) return null;
   const addText = stage
-    ? (lines.length ? '+ סעיף' : contractor.has_items ? 'בלי סעיף — נכנס לחשבון כ״דירות״ · + סעיף' : '+ סעיף')
-    : (lines.length ? '+ סעיף נמדד' : '+ סעיף נמדד · למה שלא במטריצה');
+    ? (lines.length ? '+ עוד תשלום על השלב' : '+ מה משלמים?')
+    : (lines.length ? '+ עבודה שמודדים בשטח' : '+ עבודה שמודדים בשטח (לא במטריצה)');
   return (
     <div className={!stage && lines.length ? 'mt-3 border-t border-slate-100 pt-3' : ''}>
       {!stage && !!lines.length && <h3 className="text-xs font-bold text-slate-700">
-        נמדד ידנית <span className="font-normal text-slate-500">· מקלידים כל חודש</span>
+        עבודות שמודדים בשטח <span className="font-normal text-slate-500">· לא במטריצה</span>
       </h3>}
       {lines.map((line) => <ItemRow key={line.item_id} line={line} editable={editable}
         projectId={projectId} account={account} onChanged={onChanged} onEdit={edit} />)}
       {editable && <button type="button" onClick={() => edit()}
-        className="min-h-[44px] text-amber-700 font-bold text-xs">{addText}</button>}
+        className="min-h-[44px] text-amber-700 font-bold text-xs">
+        {stage && !lines.length && contractor.has_items && <span className="font-normal text-slate-500">עוד לא הוגדר מה משלמים על השלב · </span>}
+        {addText}</button>}
       <ContractItemSheet open={open && editable} onOpenChange={setOpen} projectId={projectId}
         contractor={contractor} stage={stage} item={item} account={account} onSaved={onChanged} />
     </div>
