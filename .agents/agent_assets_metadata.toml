@@ -1145,3 +1145,17 @@ mtime_ms = 1790252050107
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/38a6c73a-a75c-4ff5-9537-2c415f4fe39e/a38edd9b-4160-4e7d-8a89-9287b869e465"
 storage_version_token = "1790252472620726"
 content_type = "text/plain"
+
+[[outputs]]
+id = "yJLDUgyTpbOjNdALuRkDa"
+uri = "file://attached_assets/review-batch610.txt"
+type = "text"
+title = "דוח review — Batch #610"
+description = "הדוח המלא לעבודה האחרונה: קוד, שינויים ותוצאות הבדיקות. עותק משוחזר; review.txt המקורי לא שונה."
+logical_id = "a63b5681-cdb3-45ec-846d-e4d43da69cab"
+content_hash = "sha256:75136bbe96213280031fd8c18c1c0a146923823d1a863f5822a6cbc9e9b2719d"
+size = 51235
+mtime_ms = 1791353605931
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/a63b5681-cdb3-45ec-846d-e4d43da69cab/8988e24a-9d06-4086-9de6-66b7d14e3396"
+storage_version_token = "1791353607932899"
+content_type = "text/plain"
