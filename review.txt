@@ -8738,3 +8738,222 @@ wc -c /tmp/batch610/review-section.txt
 ```
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#610-FIX-1 (7.10)
+
+Implemented the supplied patch: only status stages enter monthly accounts; stale/tag mappings are filtered before settings validation; writable open-month contractor cards start expanded; mapping and zero-activity displays are quieter. The extra removal of the unused companies definition was explicitly approved by Zahi.
+
+V1 — changed regions, three lines of context
+
+```diff
+--- backend/contractor_ops/monthly_close.py (before)
++++ backend/contractor_ops/monthly_close.py (after)
+@@ -83,6 +83,17 @@
+     return {'stage_companies': {}, 'contractor_visible': False, 'updated_at': None, 'updated_by': None}
+ 
+ 
++def account_stages(stages):
++    """Only status stages are work stages; tag columns are matrix metadata."""
++    return [s for s in stages if s.get('type', 'status') == 'status']
++
++
++def known_settings(settings, stages):
++    ids = {s['id'] for s in stages}
++    mapping = settings.get('stage_companies') or {}
++    return {**settings, 'stage_companies': {k: v for k, v in mapping.items() if k in ids}}
++
++
+ def validate_settings(body, stage_ids, company_ids):
+     mapping = body.get('stage_companies', {})
+     if not isinstance(mapping, dict) or any(
+@@ -243,7 +254,7 @@
+     project = await db.projects.find_one({'id': project_id}, {'_id': 0})
+     config = await db.execution_matrix.find_one({'project_id': project_id, 'deletedAt': None}, {'_id': 0}) or {}
+     tpl = await _get_template(db, project_id=project_id)
+-    stages = _resolve_visible_stages(config, tpl)
++    stages = account_stages(_resolve_visible_stages(config, tpl))
+     units = await db.units.find({'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(2000)
+     floor_ids = list({u['floor_id'] for u in units if u.get('floor_id')})
+     building_ids = list({u['building_id'] for u in units if u.get('building_id')})
+@@ -266,7 +277,7 @@
+             runs_by_unit[r['unit_id']] = r['id']
+     return {'project': project, 'stages': stages, 'units': units, 'floors': floors, 'buildings': buildings,
+             'contract_items': await db.contract_items.find({'project_id': project_id, 'active': True}, {'_id': 0}).to_list(None),
+-            'cells': cells, 'companies': companies, 'settings': project.get('monthly_close_settings') or default_settings(),
++            'cells': cells, 'companies': companies, 'settings': known_settings(project.get('monthly_close_settings') or default_settings(), stages),
+             'snapshots': snapshots, 'runs_by_floor': runs_by_floor, 'runs_by_unit': runs_by_unit}
+```
+
+```diff
+--- frontend/src/components/monthly/ContractorAccountCard.js (before)
++++ frontend/src/components/monthly/ContractorAccountCard.js (after)
+@@ -14,7 +14,7 @@
+ export default function ContractorAccountCard({ contractor, month, projectId, canExport, onExport, canWrite = false, onChanged = () => {} }) {
+   const navigate = useNavigate();
+   const location = useLocation();
+-  const [expanded, setExpanded] = useState((contractor.totals?.this_month || 0) > 0 || !!contractor.corrections?.length);
++  const [expanded, setExpanded] = useState((canWrite && month.status === 'open') || (contractor.totals?.this_month || 0) > 0 || !!contractor.corrections?.length);
+   const [fullStages, setFullStages] = useState({});
+   const [exporting, setExporting] = useState(false);
+   const rows = contractor.stages || [];
+```
+
+```diff
+--- frontend/src/pages/MonthlyClosePage.js (before)
++++ frontend/src/pages/MonthlyClosePage.js (after)
+@@ -77,7 +77,6 @@
+   const total = account?.totals?.stages ?? 0;
+   const unmapped = account?.unmapped_stages?.length ?? 0;
+   const mapped = Math.max(0, total - unmapped);
+-  const companies = account?.contractors?.filter((company) => company.stages?.length).length ?? 0;
+   const snapshotCompanies = Object.values(account?.settings_snapshot?.stage_companies || {}).filter((id) => id != null);
+   const contractorView = account?.permissions?.role === 'contractor';
+   const contractor = account?.contractors?.[0];
+@@ -126,19 +125,15 @@
+               disabled={monthIndex(account.month) >= monthIndex(currentMonth || account.month)}
+               className="min-h-[44px] rounded-lg px-2 disabled:opacity-30"><ChevronLeft className="h-5 w-5" /></button>
+           </div>
+-          {canWrite && account.status === 'open' && <section className={`mb-4 rounded-xl border bg-white p-4 shadow-sm ${unmapped ? 'border-amber-300' : 'border-slate-200'}`}>
+-            <div className="flex items-center justify-between gap-2">
+-              <h2 className="font-bold text-slate-900">שיוך שלבים לקבלנים</h2>
+-              <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{mapped}/{total} שלבים</span>
+-            </div>
+-            <p className="mt-2 text-sm text-slate-700">{mapped} שלבים משויכים ל-{companies} קבלנים</p>
+-            {unmapped > 0 && <p className="mt-1 text-sm text-amber-800">{unmapped} שלבים ללא קבלן — לא ייכנסו לאף חשבון</p>}
+-            <p className="mt-2 text-xs text-slate-500">בדוק את השיוך לפני כל סגירת חודש — שלב ללא קבלן לא נספר, וקבלן חדש צריך שיוך.</p>
++          {canWrite && account.status === 'open' && (mapped === 0 ? <section className="mb-4 rounded-xl border border-amber-300 bg-white p-4 shadow-sm">
++            <h2 className="font-bold text-slate-900">שיוך שלבים לקבלנים</h2>
++            <p className="mt-2 text-sm text-slate-700">החשבון נבנה לפי השיוך: כל שלב — הקבלן שמבצע אותו. בלי שיוך אין מה לחשב.</p>
+             <button type="button" onClick={() => setSettingsOpen(true)}
+-              className={`mt-3 min-h-[44px] w-full rounded-lg font-bold ${unmapped ? 'bg-amber-500 text-white' : 'border border-amber-300 text-amber-800'}`}>
+-              עדכן שיוך שלבים
+-            </button>
+-          </section>}
++              className="mt-3 min-h-[44px] w-full rounded-lg bg-amber-500 font-bold text-white">שייך שלבים לקבלנים</button>
++          </section> : <div className="mb-4 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm shadow-sm">
++            <span>שיוך שלבים <b>{mapped}/{total}</b>{unmapped > 0 && <span className="text-amber-800"> · {unmapped} ללא קבלן</span>}</span>
++            <button type="button" onClick={() => setSettingsOpen(true)} className="min-h-[44px] px-2 font-bold text-amber-700">עדכן</button>
++          </div>)}
+           {canWrite && account.status === 'closed' && <p className="mb-4 text-sm text-slate-600">
+             השיוך בסגירה: {snapshotCompanies.length}/{total} שלבים · {new Set(snapshotCompanies).size} קבלנים
+           </p>}
+@@ -150,7 +145,9 @@
+               ? 'חודש זה לא נסגר ב-BrikOps'
+               : `תצוגה מקדימה — הסגירה תתאפשר אחרי ${monthLabel(account.next_closable)}`}
+           </div>}
+-          <div className="mb-4 grid grid-cols-3 gap-2">
++          {account.status === 'open' && !account.kpis?.this_month ? <p className="mb-4 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600">
++            עדיין לא בוצעו שלבי-דירה ב{account.label || monthLabel(account.month)} — הכמויות יתמלאו מהמטריצה ומבקרת הביצוע.
++          </p> : <div className="mb-4 grid grid-cols-3 gap-2">
+             {[
+               [account.kpis?.this_month, 'שלבי-דירה בוצעו החודש'],
+               [account.kpis?.qc, 'אושרו בבקרת ביצוע'],
+@@ -159,7 +156,7 @@
+               <strong className="block text-2xl text-slate-900">{value || 0}</strong>
+               <span className="text-xs text-slate-500">{text}</span>
+             </div>)}
+-          </div>
++          </div>}
+           {hasVisibleBaseline && <p className="mb-4 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600">
+             מצטבר קודם — לא נספר בחשבון זה
+           </p>}
+```
+
+### New test file — full text
+backend/tests/test_monthly_close_stage_types.py
+```python
+"""Monthly accounts exclude matrix metadata without mutating stored settings."""
+from copy import deepcopy
+from contractor_ops.monthly_close import account_stages, known_settings, validate_settings
+
+
+def test_account_stages_keeps_status_and_legacy_in_order():
+    stages = [{'id': 'legacy'}, {'id': 'tag', 'type': 'tag'},
+              {'id': 'status', 'type': 'status'}, {'id': 'tag2', 'type': 'tag'}]
+    original = deepcopy(stages)
+    assert account_stages(stages) == [stages[0], stages[2]]
+    assert stages == original
+
+
+def test_known_settings_filters_stale_ids_without_mutation():
+    settings = {'stage_companies': {'work': 'c1', 'unassigned': None,
+                                   'tag': None, 'deleted': 'c2'},
+                'contractor_visible': True, 'updated_at': '2026-10-07',
+                'updated_by': 'pm'}
+    original = deepcopy(settings)
+    clean = known_settings(settings, [{'id': 'work'}, {'id': 'unassigned'}])
+    assert clean == {**settings, 'stage_companies': {'work': 'c1', 'unassigned': None}}
+    assert settings == original
+    assert clean['stage_companies'] is not settings['stage_companies']
+
+
+def test_settings_round_trip_accepts_cleaned_tag_mapping():
+    stages = account_stages([{'id': 'work'}, {'id': 'custom_tag', 'type': 'tag'}])
+    stale = {'stage_companies': {'work': 'c1', 'custom_tag': None},
+             'contractor_visible': True}
+    clean = known_settings(stale, stages)
+    assert validate_settings(clean, {s['id'] for s in stages}, {'c1'}) == {
+        'stage_companies': {'work': 'c1'}, 'contractor_visible': True}
+```
+
+### wc -l — four files
+```text
+  291 backend/contractor_ops/monthly_close.py
+  104 frontend/src/components/monthly/ContractorAccountCard.js
+  187 frontend/src/pages/MonthlyClosePage.js
+   32 backend/tests/test_monthly_close_stage_types.py
+  614 total
+```
+
+Manifest: SHA256 comparison confirms exactly the three modified files above and the single new test file. Nothing else under backend/ or frontend/src changed (generated Python caches excluded). Existing monthly-close and contract-item tests are byte-identical. AST comparison confirms build_account, build_snapshot and validate_settings unchanged. No matrix, snapshot, export, contract-item or other component changes.
+
+V2 — fresh verification
+
+1. cd backend && python -m pytest -q tests/test_monthly_close_stage_types.py tests/test_monthly_close.py tests/test_contract_items.py
+EXIT 0
+```text
+........................................................................ [ 83%]
+..............                                                           [100%]
+=============================== warnings summary ===============================
+contractor_ops/schemas.py:209
+  /home/runner/workspace/backend/contractor_ops/schemas.py:209: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    @validator('trade', pre=True, always=True)
+
+contractor_ops/schemas.py:612
+  /home/runner/workspace/backend/contractor_ops/schemas.py:612: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    @validator('trade', pre=True, always=True)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+86 passed, 2 warnings in 5.45s
+```
+
+2. cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+EXIT 0
+```text
+Compiled successfully.
+Done in 30.06s.
+```
+Zero compiler/lint warnings. Tooling notices remain: Node DEP0176 (fs.F_OK deprecation) and outdated Browserslist data; therefore this is not a claim of zero notices across all tooling. No dependency updates.
+
+3. cd frontend && CI=true yarn test --watchAll=false
+EXIT 1 — blocked by libuuid.so.1: cannot open shared object file; 8 suites failed to start, 0 tests ran; no harness fix.
+
+4. grep -rn "בק״ב\|בק\"ב" frontend/src/pages/MonthlyClosePage.js frontend/src/components/monthly
+EXIT 1 (no matches); no output.
+
+Evidence: /tmp/batch610fix1/pytest.log, build.log, jest.log and their .exit files; abbreviation-scan.txt/.exit; source.before.sha256 and source.after.sha256. The original generated frontend/build was restored after verification; the freshly built output is retained at /tmp/batch610fix1/verified-build.
+
+V3 — not run — local harness (Zahi verifies on staging).
+
+V4 — review.txt preserved byte-for-byte; no edits or append
+```text
+467122 review.txt
+13430 /tmp/batch610fix1/review-section.txt
+```
+
+.local/.commit_message:
+monthly close: only status stages enter the account (tag columns out), contractor cards open for the PM, calmer page (#610-FIX-1)
+
+No Git commands, deployment, production access or additional dependencies.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
