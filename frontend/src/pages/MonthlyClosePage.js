@@ -77,7 +77,6 @@ export default function MonthlyClosePage() {
   const total = account?.totals?.stages ?? 0;
   const unmapped = account?.unmapped_stages?.length ?? 0;
   const mapped = Math.max(0, total - unmapped);
-  const companies = account?.contractors?.filter((company) => company.stages?.length).length ?? 0;
   const snapshotCompanies = Object.values(account?.settings_snapshot?.stage_companies || {}).filter((id) => id != null);
   const contractorView = account?.permissions?.role === 'contractor';
   const contractor = account?.contractors?.[0];
@@ -126,19 +125,15 @@ export default function MonthlyClosePage() {
               disabled={monthIndex(account.month) >= monthIndex(currentMonth || account.month)}
               className="min-h-[44px] rounded-lg px-2 disabled:opacity-30"><ChevronLeft className="h-5 w-5" /></button>
           </div>
-          {canWrite && account.status === 'open' && <section className={`mb-4 rounded-xl border bg-white p-4 shadow-sm ${unmapped ? 'border-amber-300' : 'border-slate-200'}`}>
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="font-bold text-slate-900">שיוך שלבים לקבלנים</h2>
-              <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{mapped}/{total} שלבים</span>
-            </div>
-            <p className="mt-2 text-sm text-slate-700">{mapped} שלבים משויכים ל-{companies} קבלנים</p>
-            {unmapped > 0 && <p className="mt-1 text-sm text-amber-800">{unmapped} שלבים ללא קבלן — לא ייכנסו לאף חשבון</p>}
-            <p className="mt-2 text-xs text-slate-500">בדוק את השיוך לפני כל סגירת חודש — שלב ללא קבלן לא נספר, וקבלן חדש צריך שיוך.</p>
+          {canWrite && account.status === 'open' && (mapped === 0 ? <section className="mb-4 rounded-xl border border-amber-300 bg-white p-4 shadow-sm">
+            <h2 className="font-bold text-slate-900">שיוך שלבים לקבלנים</h2>
+            <p className="mt-2 text-sm text-slate-700">החשבון נבנה לפי השיוך: כל שלב — הקבלן שמבצע אותו. בלי שיוך אין מה לחשב.</p>
             <button type="button" onClick={() => setSettingsOpen(true)}
-              className={`mt-3 min-h-[44px] w-full rounded-lg font-bold ${unmapped ? 'bg-amber-500 text-white' : 'border border-amber-300 text-amber-800'}`}>
-              עדכן שיוך שלבים
-            </button>
-          </section>}
+              className="mt-3 min-h-[44px] w-full rounded-lg bg-amber-500 font-bold text-white">שייך שלבים לקבלנים</button>
+          </section> : <div className="mb-4 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm shadow-sm">
+            <span>שיוך שלבים <b>{mapped}/{total}</b>{unmapped > 0 && <span className="text-amber-800"> · {unmapped} ללא קבלן</span>}</span>
+            <button type="button" onClick={() => setSettingsOpen(true)} className="min-h-[44px] px-2 font-bold text-amber-700">עדכן</button>
+          </div>)}
           {canWrite && account.status === 'closed' && <p className="mb-4 text-sm text-slate-600">
             השיוך בסגירה: {snapshotCompanies.length}/{total} שלבים · {new Set(snapshotCompanies).size} קבלנים
           </p>}
@@ -150,7 +145,9 @@ export default function MonthlyClosePage() {
               ? 'חודש זה לא נסגר ב-BrikOps'
               : `תצוגה מקדימה — הסגירה תתאפשר אחרי ${monthLabel(account.next_closable)}`}
           </div>}
-          <div className="mb-4 grid grid-cols-3 gap-2">
+          {account.status === 'open' && !account.kpis?.this_month ? <p className="mb-4 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600">
+            עדיין לא בוצעו שלבי-דירה ב{account.label || monthLabel(account.month)} — הכמויות יתמלאו מהמטריצה ומבקרת הביצוע.
+          </p> : <div className="mb-4 grid grid-cols-3 gap-2">
             {[
               [account.kpis?.this_month, 'שלבי-דירה בוצעו החודש'],
               [account.kpis?.qc, 'אושרו בבקרת ביצוע'],
@@ -159,7 +156,7 @@ export default function MonthlyClosePage() {
               <strong className="block text-2xl text-slate-900">{value || 0}</strong>
               <span className="text-xs text-slate-500">{text}</span>
             </div>)}
-          </div>
+          </div>}
           {hasVisibleBaseline && <p className="mb-4 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600">
             מצטבר קודם — לא נספר בחשבון זה
           </p>}

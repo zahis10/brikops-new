@@ -83,6 +83,17 @@ def default_settings():
     return {'stage_companies': {}, 'contractor_visible': False, 'updated_at': None, 'updated_by': None}
 
 
+def account_stages(stages):
+    """Only status stages are work stages; tag columns are matrix metadata."""
+    return [s for s in stages if s.get('type', 'status') == 'status']
+
+
+def known_settings(settings, stages):
+    ids = {s['id'] for s in stages}
+    mapping = settings.get('stage_companies') or {}
+    return {**settings, 'stage_companies': {k: v for k, v in mapping.items() if k in ids}}
+
+
 def validate_settings(body, stage_ids, company_ids):
     mapping = body.get('stage_companies', {})
     if not isinstance(mapping, dict) or any(
@@ -243,7 +254,7 @@ async def load_inputs(db, project_id):
     project = await db.projects.find_one({'id': project_id}, {'_id': 0})
     config = await db.execution_matrix.find_one({'project_id': project_id, 'deletedAt': None}, {'_id': 0}) or {}
     tpl = await _get_template(db, project_id=project_id)
-    stages = _resolve_visible_stages(config, tpl)
+    stages = account_stages(_resolve_visible_stages(config, tpl))
     units = await db.units.find({'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(2000)
     floor_ids = list({u['floor_id'] for u in units if u.get('floor_id')})
     building_ids = list({u['building_id'] for u in units if u.get('building_id')})
@@ -266,7 +277,7 @@ async def load_inputs(db, project_id):
             runs_by_unit[r['unit_id']] = r['id']
     return {'project': project, 'stages': stages, 'units': units, 'floors': floors, 'buildings': buildings,
             'contract_items': await db.contract_items.find({'project_id': project_id, 'active': True}, {'_id': 0}).to_list(None),
-            'cells': cells, 'companies': companies, 'settings': project.get('monthly_close_settings') or default_settings(),
+            'cells': cells, 'companies': companies, 'settings': known_settings(project.get('monthly_close_settings') or default_settings(), stages),
             'snapshots': snapshots, 'runs_by_floor': runs_by_floor, 'runs_by_unit': runs_by_unit}
 
 

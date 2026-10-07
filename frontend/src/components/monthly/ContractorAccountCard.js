@@ -14,7 +14,7 @@ const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.sl
 export default function ContractorAccountCard({ contractor, month, projectId, canExport, onExport, canWrite = false, onChanged = () => {} }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [expanded, setExpanded] = useState((contractor.totals?.this_month || 0) > 0 || !!contractor.corrections?.length);
+  const [expanded, setExpanded] = useState((canWrite && month.status === 'open') || (contractor.totals?.this_month || 0) > 0 || !!contractor.corrections?.length);
   const [fullStages, setFullStages] = useState({});
   const [exporting, setExporting] = useState(false);
   const rows = contractor.stages || [];
