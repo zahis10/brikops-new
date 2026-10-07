@@ -7640,3 +7640,1101 @@ V4 — review.txt before/after: 402741 bytes; cmp against /tmp/batch608/review.o
 .local/.commit_message: defect page: WhatsApp button reads "שלח תזכורת לקבלן" (#608)
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#610 (6.10)
+
+ADDENDUM-1 — fresh verification run, 2026-10-07. Exactly the three approved one-line fixes applied; no other source/test changes.
+Original six wiring diffs below were reconstructed after the original /tmp report was lost; all other file contents, line counts and V2 results below were read or run afresh for this addendum.
+
+V1 — FIX-1 / FIX-2 / FIX-3, three context lines
+
+```diff
+--- backend/contractor_ops/contract_items.py (before addendum)
++++ backend/contractor_ops/contract_items.py (after addendum)
+@@ -125,7 +125,7 @@
+             prev_amt = prior.get('cumulative_amount') if prior else (None if price is None else prev_qty * price)
+             lines.append(_line(item, prev_cumulative_qty=prev_qty, this_month_qty=qty,
+                 cumulative_qty=prev_qty + qty, prev_cumulative_amount=prev_amt, measurement=entry,
+-                this_month_amount=None if price is None else qty * price,
++                this_month_amount=None if price is None else (prev_qty + qty) * price - (prev_amt or 0),
+                 cumulative_amount=None if price is None else (prev_qty + qty) * price))
+         c['items'], c['has_items'] = lines, bool(mine)
+         priced = [l for l in lines if l['cumulative_amount'] is not None]
+```
+
+```diff
+--- frontend/src/services/contractItemsService.js (before addendum)
++++ frontend/src/services/contractItemsService.js (after addendum)
+@@ -2,7 +2,7 @@
+ import { API, getAuthHeader } from './api';
+ 
+ const path = (projectId) => `${API}/projects/${projectId}/contract-items`;
+-const options = () => ({ headers: getAuthHeader(), withCredentials: true });
++const options = () => ({ headers: getAuthHeader() });
+ 
+ export const contractItemsService = {
+   async list(projectId) {
+```
+
+```diff
+--- frontend/src/components/monthly/ContractItemsRows.js (before addendum)
++++ frontend/src/components/monthly/ContractItemsRows.js (after addendum)
+@@ -90,7 +90,7 @@
+   const edit = (line = null) => { setItem(line); setOpen(true); };
+   if (!lines.length && !editable) return null;
+   const addText = stage
+-    ? (lines.length ? '+ סעיף' : 'בלי סעיף — נכנס לחשבון כ״דירות״ · + סעיף')
++    ? (lines.length ? '+ סעיף' : contractor.has_items ? 'בלי סעיף — נכנס לחשבון כ״דירות״ · + סעיף' : '+ סעיף')
+     : (lines.length ? '+ סעיף נמדד' : '+ סעיף נמדד · למה שלא במטריצה');
+   return (
+     <div className={!stage && lines.length ? 'mt-3 border-t border-slate-100 pt-3' : ''}>
+```
+
+### Seven new production files — full current text
+
+### backend/contractor_ops/contract_items.py
+```python
+"""Contract quantities layered over the unchanged monthly progress engine."""
+import logging
+import math
+from fastapi import HTTPException
+
+
+def _number(value, low, high, detail, positive=False):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise HTTPException(422, detail)
+    if value < low or value > high or (positive and value == 0):
+        raise HTTPException(422, detail)
+    return float(value)
+
+
+def validate_item(body, *, stages, company_ids, unit_type_tags, existing=None):
+    def text(key, maximum, default=''):
+        value = body.get(key, default)
+        if not isinstance(value, str) or len(value.strip()) > maximum:
+            raise HTTPException(422, 'נדרש תיאור לסעיף' if key == 'description' else 'ערך לא תקין')
+        return value.strip()
+    description = text('description', 120)
+    if not description:
+        raise HTTPException(422, 'נדרש תיאור לסעיף')
+    source, company, stage = body.get('source'), body.get('company_id'), body.get('stage_id')
+    if source not in ('stage', 'measured'):
+        raise HTTPException(422, 'סוג סעיף לא תקין')
+    if body.get('basis', 'unit') != 'unit':
+        raise HTTPException(422, 'כמות לקומה — בשלב הבא')
+    if not isinstance(company, str) or company not in company_ids:
+        raise HTTPException(422, 'הקבלן לא בפרויקט')
+    if source == 'stage' and (not isinstance(stage, str) or stage not in stages):
+        raise HTTPException(422, 'שלב לא קיים')
+    stage = stage if source == 'stage' else None
+    if existing and any(existing.get(k) != v for k, v in
+                        [('company_id', company), ('source', source), ('stage_id', stage)]):
+        raise HTTPException(422, 'אי אפשר לשנות שלב או קבלן — צור סעיף חדש')
+    qty = _number(body.get('qty', 1), 0, 1000000, 'כמות לא תקינה', True)
+    price = body.get('unit_price')
+    if price is not None:
+        price = _number(price, 0, 10000000, 'מחיר לא תקין')
+    def overrides(key, maximum, positive):
+        values = body.get(key)
+        if values is None:
+            return None
+        if not isinstance(values, dict):
+            raise HTTPException(422, 'ערך לא תקין')
+        for tag, value in values.items():
+            if tag not in unit_type_tags:
+                raise HTTPException(422, 'סוג דירה לא קיים בפרויקט')
+            _number(value, 0, maximum, 'כמות לא תקינה' if positive else 'מחיר לא תקין', positive)
+        return dict(values) or None
+    quantities = overrides('qty_by_unit_type', 1000000, True)
+    prices = overrides('price_by_unit_type', 10000000, False)
+    if prices and price is None:
+        raise HTTPException(422, 'נדרש מחיר ברירת מחדל')
+    unit = text('unit', 20, 'דירה' if source == 'stage' and qty == 1 and not quantities else 'יח׳')
+    if not unit:
+        raise HTTPException(422, 'נדרשת יחידה')
+    code = body.get('code')
+    code = text('code', 40) if code is not None else None
+    return dict(company_id=company, source=source, stage_id=stage, basis='unit', code=code or None,
+                description=description, unit=unit, qty=qty, qty_by_unit_type=quantities,
+                unit_price=price, price_by_unit_type=prices)
+
+
+def _line(item, stage=None, **values):
+    result = {k: item.get(k) for k in ('source', 'code', 'description', 'unit', 'qty',
+                                      'qty_by_unit_type', 'unit_price', 'price_by_unit_type')}
+    result.update(item_id=item.get('id'), stage_id=(stage or {}).get('stage_id'),
+                  stage_title=(stage or {}).get('title'), units_this_month=0, corrections=0,
+                  measurement=None, evidence_rows=None)
+    result.update(values)
+    return {k: round(v, 2) if isinstance(v, float) else v for k, v in result.items()}
+
+
+def attach_contract_items(account, inputs):
+    items = [i for i in inputs.get('contract_items') or [] if i.get('active', True)]
+    month = account['month']
+    before = [s for s in inputs.get('snapshots') or [] if s.get('month', '') < month]
+    previous = max(before, key=lambda s: s['month']) if before else {}
+    tags = {u.get('id'): u.get('unit_type_tag') for u in inputs.get('units') or []}
+    for c in account.get('contractors') or []:
+        cid = c['company_id']
+        c['account_no'] = 1 + sum(any(p.get('company_id') == cid for p in s.get('contractors', [])) for s in before)
+        prev_c = next((p for p in previous.get('contractors', []) if p.get('company_id') == cid), {})
+        prev_lines = {l['item_id']: l for l in prev_c.get('items', []) if l.get('item_id')}
+        mine = [i for i in items if i.get('company_id') == cid]
+        lines, start = [], 1
+        for stage in c.get('stages') or []:
+            sid, size = stage.get('stage_id'), len(stage.get('evidence') or [])
+            evidence = [start, start + size - 1] if size else None
+            start += size
+            still = set(stage.get('still_unit_ids') or [])
+            counted = still | set(stage.get('unit_ids_this_month') or [])
+            corrections = sum(r.get('stage_id') == sid for r in c.get('corrections') or [])
+            stage_items = [i for i in mine if i.get('source') == 'stage' and i.get('stage_id') == sid]
+            extra = dict(units_this_month=len(stage.get('unit_ids_this_month') or []),
+                         corrections=corrections, evidence_rows=evidence)
+            if not stage_items and mine:
+                prev_stage = next((s for s in prev_c.get('stages', []) if s.get('stage_id') == sid), {})
+                prev = prev_stage.get('cumulative', stage.get('still_paid', 0))
+                total = stage.get('cumulative', 0)
+                lines.append(_line(dict(source='stage_units', unit='דירות', qty=1,
+                    description=f"{stage.get('title', '')} (שלב בלי סעיף)"), stage,
+                    prev_cumulative_qty=prev, cumulative_qty=total, this_month_qty=total - prev,
+                    prev_cumulative_amount=None, cumulative_amount=None, this_month_amount=None, **extra))
+            for item in stage_items:
+                def sums(ids):
+                    quantities = [(item.get('qty_by_unit_type') or {}).get(tags.get(uid), item['qty']) for uid in ids]
+                    prices = [(item.get('price_by_unit_type') or {}).get(tags.get(uid), item.get('unit_price')) for uid in ids]
+                    return sum(quantities), None if item.get('unit_price') is None else sum(q * p for q, p in zip(quantities, prices))
+                total, amount = sums(sorted(counted))
+                prev_qty, prev_amt = sums(sorted(still))
+                prior = prev_lines.get(item['id'])
+                if prior:
+                    prev_qty, prev_amt = prior.get('cumulative_qty', 0), prior.get('cumulative_amount')
+                lines.append(_line(item, stage, prev_cumulative_qty=prev_qty, cumulative_qty=total,
+                    this_month_qty=total - prev_qty, prev_cumulative_amount=prev_amt, cumulative_amount=amount,
+                    this_month_amount=None if amount is None else amount - (prev_amt or 0), **extra))
+        for item in (i for i in mine if i.get('source') == 'measured'):
+            entries = item.get('measurements') or {}
+            entry, prior = entries.get(month), prev_lines.get(item['id'])
+            prev_qty = prior.get('cumulative_qty', 0) if prior else sum(e.get('qty', 0) for m, e in entries.items() if m < month)
+            qty, price = (entry or {}).get('qty', 0), item.get('unit_price')
+            prev_amt = prior.get('cumulative_amount') if prior else (None if price is None else prev_qty * price)
+            lines.append(_line(item, prev_cumulative_qty=prev_qty, this_month_qty=qty,
+                cumulative_qty=prev_qty + qty, prev_cumulative_amount=prev_amt, measurement=entry,
+                this_month_amount=None if price is None else (prev_qty + qty) * price - (prev_amt or 0),
+                cumulative_amount=None if price is None else (prev_qty + qty) * price))
+        c['items'], c['has_items'] = lines, bool(mine)
+        priced = [l for l in lines if l['cumulative_amount'] is not None]
+        c['totals_money'] = {k: round(sum(l[f'{k}_amount'] for l in priced), 2)
+                             for k in ('this_month', 'cumulative')} if priced else None
+    return account
+
+
+async def ensure_indexes(db):
+    try:
+        await db.contract_items.create_index([('project_id', 1), ('company_id', 1), ('active', 1)],
+                                             name='contract_items_company')
+        await db.contract_items.create_index([('project_id', 1), ('company_id', 1), ('code', 1)],
+            name='uniq_contract_item_code', unique=True,
+            partialFilterExpression={'code': {'$type': 'string'}, 'active': True})
+    except Exception:
+        logging.getLogger(__name__).exception('Contract item index creation failed')
+```
+
+### backend/contractor_ops/contract_items_router.py
+```python
+"""Project-scoped contract item authoring; never writes execution data."""
+from uuid import uuid4
+from fastapi import APIRouter, Depends, HTTPException
+from pymongo.errors import DuplicateKeyError
+from contractor_ops.monthly_close_router import _access, _require
+from contractor_ops.monthly_close import load_inputs, current_il_month, _month_parts
+from contractor_ops.router import get_db, get_current_user, _now, _audit
+from contractor_ops.contract_items import validate_item, _number
+
+router = APIRouter(prefix='/api')
+DUPLICATE = 'קוד הסעיף כבר קיים אצל הקבלן הזה'
+
+
+def _tags(inputs):
+    return sorted({u['unit_type_tag'] for u in inputs.get('units', []) if u.get('unit_type_tag')})
+
+
+async def _context(project_id, user, write=False):
+    db = get_db()
+    access = await _access(user, project_id, db)
+    if write:
+        _require(access, write=True)
+    return db, access
+
+
+async def _item(db, project_id, item_id):
+    doc = await db.contract_items.find_one({'id': item_id, 'project_id': project_id}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, 'הסעיף לא נמצא')
+    return doc
+
+
+async def _clean(db, project_id, body, existing=None):
+    inputs = await load_inputs(db, project_id)
+    clean = validate_item(body, stages={s['id'] for s in inputs['stages']},
+        company_ids={c['id'] for c in inputs['companies']}, unit_type_tags=_tags(inputs), existing=existing)
+    if clean['code']:
+        query = dict(project_id=project_id, company_id=clean['company_id'], code=clean['code'], active=True)
+        if existing:
+            query['id'] = {'$ne': existing['id']}
+        if await db.contract_items.find_one(query, {'_id': 0, 'id': 1}):
+            raise HTTPException(409, DUPLICATE)
+    return clean
+
+
+@router.get('/projects/{project_id}/contract-items')
+async def list_items(project_id: str, user: dict = Depends(get_current_user)):
+    db, access = await _context(project_id, user)
+    inputs = await load_inputs(db, project_id)
+    items = inputs.get('contract_items') or []
+    if access['role'] == 'contractor':
+        items = [i for i in items if i.get('company_id') == access['company_id']]
+    return {'items': items, 'unit_type_tags': _tags(inputs),
+            'stages': [{k: s.get(k) for k in ('id', 'title', 'scope')} for s in inputs['stages']],
+            'can_write': access['can_write']}
+
+
+@router.post('/projects/{project_id}/contract-items')
+async def create_item(project_id: str, body: dict, user: dict = Depends(get_current_user)):
+    db, _ = await _context(project_id, user, True)
+    clean = await _clean(db, project_id, body)
+    now = _now()
+    doc = dict(clean, id=str(uuid4()), project_id=project_id, measurements={}, active=True,
+               created_at=now, created_by=user['id'], updated_at=now, updated_by=user['id'], deactivated_at=None)
+    try:
+        await db.contract_items.insert_one(dict(doc))
+    except DuplicateKeyError:
+        raise HTTPException(409, DUPLICATE)
+    await _audit('contract_item', doc['id'], 'create', user['id'],
+                 {k: doc[k] for k in ('company_id', 'code', 'description', 'source', 'stage_id')})
+    return doc
+
+
+@router.patch('/projects/{project_id}/contract-items/{item_id}')
+async def update_item(project_id: str, item_id: str, body: dict, user: dict = Depends(get_current_user)):
+    db, _ = await _context(project_id, user, True)
+    doc = await _item(db, project_id, item_id)
+    if body.get('active') is False:
+        changes, action = {'active': False, 'deactivated_at': _now()}, 'deactivate'
+    else:
+        changes, action = await _clean(db, project_id, {**doc, **body}, doc), 'update'
+    changes.update(updated_at=_now(), updated_by=user['id'])
+    try:
+        await db.contract_items.update_one({'id': item_id, 'project_id': project_id}, {'$set': changes})
+    except DuplicateKeyError:
+        raise HTTPException(409, DUPLICATE)
+    await _audit('contract_item', item_id, action, user['id'], changes)
+    return {**doc, **changes}
+
+
+@router.put('/projects/{project_id}/contract-items/{item_id}/measurements/{month}')
+async def set_measurement(project_id: str, item_id: str, month: str, body: dict,
+                          user: dict = Depends(get_current_user)):
+    db, _ = await _context(project_id, user, True)
+    _month_parts(month)
+    doc = await _item(db, project_id, item_id)
+    if doc.get('source') != 'measured' or not doc.get('active'):
+        raise HTTPException(422, 'הקלדה אפשרית רק בסעיף נמדד')
+    if await db.monthly_progress_closes.find_one({'project_id': project_id, 'month': month}):
+        raise HTTPException(409, 'החודש כבר נסגר')
+    if month > current_il_month():
+        raise HTTPException(422, 'אי אפשר להקליד לחודש עתידי')
+    qty = body.get('qty')
+    qty = 0 if qty is None else _number(qty, 0, 1000000, 'כמות לא תקינה')
+    note = body.get('note', '')
+    if not isinstance(note, str) or len(note) > 300:
+        raise HTTPException(422, 'הערה לא תקינה')
+    entry = {'qty': qty, 'note': note, 'by': {'id': user['id'], 'name': user.get('name', '')}, 'at': _now()}
+    path = f'measurements.{month}'
+    change = {'$set': {path: entry}} if qty else {'$unset': {path: ''}}
+    result = await db.contract_items.update_one(
+        {'id': item_id, 'project_id': project_id, 'active': True, 'source': 'measured'}, change)
+    if result.matched_count == 0:
+        raise HTTPException(422, 'הקלדה אפשרית רק בסעיף נמדד')
+    await _audit('contract_item', item_id, 'measure', user['id'], {'month': month, 'qty': qty})
+    entries = dict(doc.get('measurements') or {})
+    if qty:
+        entries[month] = entry
+    else:
+        entries.pop(month, None)
+    return {**doc, 'measurements': entries}
+```
+
+### backend/contractor_ops/contract_items_export.py
+```python
+"""Additional safe quantities sheet; legacy sheets remain unchanged."""
+from openpyxl.styles import Font
+from contractor_ops.xlsx_safe import append_row, set_cell
+
+QUANTITY_HEADERS = ['מס׳ סעיף', 'תיאור', 'יח׳', 'מצטבר קודם', 'בוצע החודש', 'מצטבר',
+                    'מחיר יח׳', 'סכום החודש', 'סכום מצטבר', 'דירות החודש', 'ראיות']
+
+
+def add_quantities_sheet(wb, project, account, contractor):
+    if not contractor.get('items'):
+        return None
+    # Lazy read-only imports avoid a cycle with the existing workbook builder.
+    from contractor_ops.monthly_close_export import _sheet, _il_date, _month_label
+    ws = _sheet(wb, 'כמויות לחשבון', QUANTITY_HEADERS, 4)
+    ws.column_dimensions['J'].width, ws.column_dimensions['K'].width = 16, 40
+    label = account.get('label') or _month_label(account.get('month'))
+    set_cell(ws, 1, 1, f"כמויות לחשבון {contractor.get('account_no', '')} — {contractor.get('name', '')} — {label}")
+    ws['A1'].font = Font(bold=True, size=14)
+    month = account.get('month', '')
+    period = f'{month[5:7]}/{month[:4]}'
+    status = (f"נסגר {_il_date(account.get('closed_at'))} ע״י {(account.get('closed_by') or {}).get('name', '')}"
+              if account.get('status') == 'closed' else 'טיוטה — החודש עדיין פתוח')
+    set_cell(ws, 2, 1, f'חודש ביצוע {period} · {status}')
+    money = contractor.get('totals_money')
+    set_cell(ws, 3, 1, 'סכומים לפי המחירים שהוזנו ב-BrikOps · לפני מע״מ, לפני עכבון והצמדה'
+             if money else 'כמויות בלבד — המחירים במערכת החשבונות')
+    for line in contractor['items']:
+        measured = line.get('source') == 'measured'
+        evidence, entry = line.get('evidence_rows'), line.get('measurement')
+        if measured:
+            reference = (f"הוקלד {_il_date(entry.get('at'))} · {(entry.get('by') or {}).get('name', '')}"
+                         + (f" · {entry['note']}" if entry.get('note') else '')) if entry else 'לא הוקלד החודש'
+        else:
+            reference = f'גיליון ראיות · שורות {evidence[0]}–{evidence[1]}' if evidence else '—'
+        units = '—' if measured else str(line.get('units_this_month', 0))
+        if not measured and line.get('corrections'):
+            units += f" (−{line['corrections']})"
+        numbers = [line.get(k) for k in ('prev_cumulative_qty', 'this_month_qty', 'cumulative_qty',
+                                        'unit_price', 'this_month_amount', 'cumulative_amount')]
+        append_row(ws, [line.get('code') or '—', line.get('description', ''), line.get('unit', ''),
+                        *[n if n is not None else '' for n in numbers], units, reference])
+    if money:
+        append_row(ws, ['סה״כ', '', '', '', '', '', '', money['this_month'], money['cumulative'], '', ''])
+        for cell in ws[ws.max_row]:
+            cell.font = Font(bold=True)
+    if any(l.get('corrections') for l in contractor['items']):
+        append_row(ws, ['', 'תיקונים שנכללו בחודש זה — כבר מופחתים ב״בוצע החודש״ (גיליון תיקונים)', *[''] * 9])
+    return ws
+```
+
+### frontend/src/services/contractItemsService.js
+```jsx
+import axios from 'axios';
+import { API, getAuthHeader } from './api';
+
+const path = (projectId) => `${API}/projects/${projectId}/contract-items`;
+const options = () => ({ headers: getAuthHeader() });
+
+export const contractItemsService = {
+  async list(projectId) {
+    const response = await axios.get(path(projectId), options());
+    return response.data;
+  },
+  async create(projectId, body) {
+    const response = await axios.post(path(projectId), body, options());
+    return response.data;
+  },
+  async update(projectId, itemId, body) {
+    const response = await axios.patch(`${path(projectId)}/${itemId}`, body, options());
+    return response.data;
+  },
+  async setMeasurement(projectId, itemId, month, body) {
+    const response = await axios.put(`${path(projectId)}/${itemId}/measurements/${month}`, body, options());
+    return response.data;
+  },
+};
+```
+
+### frontend/src/components/monthly/ContractItemsRows.js
+```jsx
+import React, { useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { contractItemsService } from '../../services/contractItemsService';
+import ContractItemSheet from './ContractItemSheet';
+
+const fmt = (n) => new Intl.NumberFormat('he-IL', { maximumFractionDigits: 2 }).format(n ?? 0);
+const money = (n) => `${fmt(n)} ₪`;
+const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}` : '';
+
+function ItemRow({ line, editable, projectId, account, onChanged, onEdit }) {
+  const [value, setValue] = useState(String(line.this_month_qty ?? 0));
+  const [saving, setSaving] = useState(false);
+  const pending = useRef(false);
+  const saved = useRef(String(line.this_month_qty ?? 0));
+  const alive = useRef(true);
+  const measured = line.source === 'measured';
+  useEffect(() => {
+    saved.current = String(line.this_month_qty ?? 0);
+    setValue(saved.current);
+  }, [line.this_month_qty, account.month]);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const saveQuantity = async () => {
+    if (!editable || pending.current || Number(value || 0) === Number(saved.current)) return;
+    const qty = Number(value || 0);
+    if (!Number.isFinite(qty) || qty < 0 || qty > 1000000) {
+      toast.error('כמות לא תקינה');
+      return;
+    }
+    pending.current = true;
+    setSaving(true);
+    try {
+      await contractItemsService.setMeasurement(projectId, line.item_id, account.month, {
+        qty, note: line.measurement?.note || '',
+      });
+      if (!alive.current) return;
+      saved.current = String(qty);
+      toast.success('הכמות נשמרה');
+      onChanged();
+    } catch (error) {
+      if (alive.current) toast.error(error.response?.data?.detail || 'לא ניתן לשמור את הכמות');
+    } finally {
+      pending.current = false;
+      if (alive.current) setSaving(false);
+    }
+  };
+  return (
+    <div role={editable ? 'button' : undefined} tabIndex={editable ? 0 : undefined}
+      onClick={editable ? () => { if (!pending.current) onEdit(line); } : undefined}
+      onKeyDown={editable ? (event) => {
+        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          if (!pending.current) onEdit(line);
+        }
+      } : undefined}
+      className={`rounded-lg bg-slate-50 border border-slate-100 px-2.5 py-1.5 text-xs mt-1.5 ${editable ? 'cursor-pointer' : ''}`}>
+      <div className="flex items-center gap-2">
+        <span className="font-mono font-bold" dir="ltr">{line.code || '—'}</span>
+        <span className="flex-1 truncate text-slate-700">{line.description}</span>
+        <span className="text-slate-500" dir={measured ? undefined : 'ltr'}>{measured ? line.unit : `×${fmt(line.qty)}`}</span>
+        <span className="tabular-nums whitespace-nowrap">
+          {measured && editable ? <input type="number" inputMode="decimal" min="0" step="any"
+            value={value} disabled={saving} aria-label="כמות החודש"
+            className="w-16 rounded-md border border-amber-200 px-1.5 py-1 text-center font-bold disabled:opacity-50"
+            onClick={(event) => event.stopPropagation()} onChange={(event) => setValue(event.target.value)}
+            onBlur={saveQuantity} onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); }
+            }} /> : <b>{fmt(line.this_month_qty)}</b>}
+          {line.corrections ? ` (−${line.corrections})` : ''} · {fmt(line.cumulative_qty)} {line.unit}
+        </span>
+      </div>
+      {line.unit_price != null && <div className="flex justify-between text-[11px] text-slate-500 mt-0.5">
+        <span>{money(line.unit_price)} ל{line.unit}{line.price_by_unit_type ? ' · לפי סוג דירה' : ''}</span>
+        <span><b>{money(line.this_month_amount)}</b> החודש · {money(line.cumulative_amount)} מצטבר</span>
+      </div>}
+      {measured && <div className="flex justify-between text-[11px] text-slate-500 mt-0.5">
+        <span>{line.measurement ? `הוקלד ${dayMonth(line.measurement.at)} · ${line.measurement.by?.name || ''}` : 'לא הוקלד החודש = 0'}</span>
+        {editable && <span>✎ הערה</span>}
+      </div>}
+    </div>
+  );
+}
+
+export default function ContractItemsRows({ contractor, stage, account, projectId, canWrite, onChanged }) {
+  const [open, setOpen] = useState(false);
+  const [item, setItem] = useState(null);
+  const editable = canWrite && account.status === 'open';
+  const lines = (contractor.items || []).filter((line) => stage
+    ? line.source === 'stage' && line.stage_id === stage.stage_id : line.source === 'measured');
+  const edit = (line = null) => { setItem(line); setOpen(true); };
+  if (!lines.length && !editable) return null;
+  const addText = stage
+    ? (lines.length ? '+ סעיף' : contractor.has_items ? 'בלי סעיף — נכנס לחשבון כ״דירות״ · + סעיף' : '+ סעיף')
+    : (lines.length ? '+ סעיף נמדד' : '+ סעיף נמדד · למה שלא במטריצה');
+  return (
+    <div className={!stage && lines.length ? 'mt-3 border-t border-slate-100 pt-3' : ''}>
+      {!stage && !!lines.length && <h3 className="text-xs font-bold text-slate-700">
+        נמדד ידנית <span className="font-normal text-slate-500">· מקלידים כל חודש</span>
+      </h3>}
+      {lines.map((line) => <ItemRow key={line.item_id} line={line} editable={editable}
+        projectId={projectId} account={account} onChanged={onChanged} onEdit={edit} />)}
+      {editable && <button type="button" onClick={() => edit()}
+        className="min-h-[44px] text-amber-700 font-bold text-xs">{addText}</button>}
+      <ContractItemSheet open={open && editable} onOpenChange={setOpen} projectId={projectId}
+        contractor={contractor} stage={stage} item={item} account={account} onSaved={onChanged} />
+    </div>
+  );
+}
+```
+
+### frontend/src/components/monthly/ContractItemSheet.js
+```jsx
+import React, { useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
+import { MobileSelect } from '../ui/mobile-select';
+import { contractItemsService } from '../../services/contractItemsService';
+
+const UNITS = ['דירה', 'יח׳', 'קומפ׳', 'נק׳', 'מ״ר', 'מ״א', 'מ״ק', 'ק״ג', 'טון', 'ש״ע'];
+const inputClass = 'min-h-[44px] w-full rounded-md border border-slate-200 px-3 py-2';
+const overrides = (values) => {
+  const entries = Object.entries(values || {}).filter(([, value]) => String(value).trim() !== '');
+  return entries.length ? Object.fromEntries(entries.map(([tag, value]) => [tag, Number(value)])) : null;
+};
+
+export default function ContractItemSheet({ open, onOpenChange, projectId, contractor, stage, item, account, onSaved }) {
+  const [data, setData] = useState(null);
+  const [form, setForm] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const generation = useRef(0);
+  const busy = useRef(false);
+  const itemId = item?.item_id;
+  const stageId = stage?.stage_id;
+  const month = account.month;
+  useEffect(() => {
+    const token = ++generation.current;
+    if (!open) return undefined;
+    setLoading(true); setFailed(false); setData(null); setForm(null); setExpanded(false); setSaving(false);
+    const load = async () => {
+      try {
+        const result = await contractItemsService.list(projectId);
+        if (generation.current !== token) return;
+        const raw = itemId ? (result.items || []).find((entry) => entry.id === itemId) : null;
+        if (itemId && !raw) throw new Error('הסעיף לא נמצא');
+        const unit = raw?.unit || (stageId ? 'דירה' : 'יח׳');
+        const measurement = raw?.measurements?.[month];
+        setForm({ code: raw?.code || '', description: raw?.description || '', qty: raw?.qty ?? 1,
+          unit, customUnit: !UNITS.includes(unit), price: raw?.unit_price ?? '',
+          quantities: { ...(raw?.qty_by_unit_type || {}) }, prices: { ...(raw?.price_by_unit_type || {}) },
+          measuredQty: measurement?.qty ?? 0, note: measurement?.note || '' });
+        setData(result);
+      } catch (error) {
+        if (generation.current === token) {
+          setFailed(true);
+          toast.error(error.response?.data?.detail || (error.message === 'הסעיף לא נמצא' ? 'הסעיף לא נמצא' : 'לא ניתן לטעון את הסעיף'));
+        }
+      } finally {
+        if (generation.current === token) setLoading(false);
+      }
+    };
+    load();
+    return () => { generation.current += 1; };
+  }, [open, projectId, itemId, stageId, month, retry]);
+  const change = (key, value) => setForm((previous) => ({ ...previous, [key]: value }));
+  const changeOverride = (key, tag, value) => setForm((previous) => ({
+    ...previous, [key]: { ...previous[key], [tag]: value },
+  }));
+  const editable = account.status === 'open' && data?.can_write;
+  const save = async () => {
+    if (!form || !editable || busy.current) return;
+    const qty = stage ? Number(form.qty) : 1;
+    const price = String(form.price).trim() === '' ? null : Number(form.price);
+    const quantities = stage ? overrides(form.quantities) : null;
+    const prices = stage && price != null ? overrides(form.prices) : null;
+    if (!form.description.trim() || form.description.trim().length > 120) return toast.error('נדרש תיאור לסעיף');
+    if (!Number.isFinite(qty) || qty <= 0 || qty > 1000000 ||
+      Object.values(quantities || {}).some((n) => !Number.isFinite(n) || n <= 0 || n > 1000000)) return toast.error('כמות לא תקינה');
+    if ((price != null && (!Number.isFinite(price) || price < 0 || price > 10000000)) ||
+      Object.values(prices || {}).some((n) => !Number.isFinite(n) || n < 0 || n > 10000000)) return toast.error('מחיר לא תקין');
+    if (itemId && !stage && (!Number.isFinite(Number(form.measuredQty)) ||
+      Number(form.measuredQty) < 0 || Number(form.measuredQty) > 1000000)) return toast.error('כמות לא תקינה');
+    busy.current = true; setSaving(true);
+    const token = generation.current;
+    try {
+      const body = { company_id: contractor.company_id, source: stage ? 'stage' : 'measured',
+        stage_id: stageId ?? null, basis: 'unit', code: form.code.trim() || null,
+        description: form.description.trim(), unit: form.unit.trim(), qty,
+        qty_by_unit_type: quantities, unit_price: price, price_by_unit_type: prices };
+      if (itemId) await contractItemsService.update(projectId, itemId, body);
+      else await contractItemsService.create(projectId, body);
+      if (itemId && !stage) await contractItemsService.setMeasurement(projectId, itemId, month, {
+        qty: Number(form.measuredQty) || 0, note: form.note,
+      });
+      if (generation.current !== token) return;
+      toast.success(itemId ? 'הסעיף עודכן' : 'הסעיף נוסף');
+      onOpenChange(false); onSaved();
+    } catch (error) {
+      if (generation.current === token) toast.error(error.response?.data?.detail || 'לא ניתן לשמור את הסעיף');
+    } finally {
+      busy.current = false;
+      if (generation.current === token) setSaving(false);
+    }
+  };
+  const deactivate = async () => {
+    if (!editable || busy.current || !window.confirm('להסיר את הסעיף מהחשבונות הבאים? חודשים שנסגרו לא משתנים.')) return;
+    busy.current = true; setSaving(true);
+    const token = generation.current;
+    try {
+      await contractItemsService.update(projectId, itemId, { active: false });
+      if (generation.current !== token) return;
+      toast.success('הסעיף עודכן'); onOpenChange(false); onSaved();
+    } catch (error) {
+      if (generation.current === token) toast.error(error.response?.data?.detail || 'לא ניתן לשמור את הסעיף');
+    } finally {
+      busy.current = false;
+      if (generation.current === token) setSaving(false);
+    }
+  };
+  const tags = data?.unit_type_tags || [];
+  const scope = data?.stages?.find((entry) => entry.id === stageId)?.scope || stage?.scope;
+  return (
+    <Dialog open={open} onOpenChange={(next) => { if (!busy.current) onOpenChange(next); }}>
+      <DialogContent dir="rtl" className="max-w-lg max-h-[90vh] overflow-y-auto text-right">
+        <DialogHeader className="text-right">
+          <DialogTitle>{item ? 'עריכת סעיף' : stage ? `סעיף לשלב ״${stage.title}״` : 'סעיף נמדד'}</DialogTitle>
+          <DialogDescription className="text-right">{stage
+            ? 'כל דירה שהשלב מסומן בה ״בוצע״ מוסיפה את הכמות לסעיף.'
+            : 'הכמות מוקלדת כל חודש בכרטיס הקבלן. מה שלא במטריצה — נכנס לחשבון מכאן.'}</DialogDescription>
+        </DialogHeader>
+        {loading && <div role="status" aria-label="טוען סעיף" className="animate-pulse space-y-3">
+          <div className="h-12 rounded-md bg-slate-100" /><div className="h-12 rounded-md bg-slate-100" />
+          <div className="h-24 rounded-md bg-slate-100" />
+        </div>}
+        {!loading && failed && <button type="button" onClick={() => setRetry((value) => value + 1)}
+          className="min-h-[44px] text-amber-700">נסה שוב</button>}
+        {!loading && form && data && <form noValidate onSubmit={(event) => { event.preventDefault(); save(); }}>
+          <fieldset disabled={saving || !editable} className="space-y-4 disabled:opacity-60">
+            <label className="block text-sm">קוד הסעיף — כמו בחוזה / בפריוריטי (רשות)
+              <input dir="ltr" maxLength={40} className={`${inputClass} font-mono`} value={form.code}
+                onChange={(event) => change('code', event.target.value)} />
+            </label>
+            <label className="block text-sm">תיאור
+              <input required maxLength={120} className={inputClass} value={form.description}
+                onChange={(event) => change('description', event.target.value)} />
+            </label>
+            <div className="flex gap-3">
+              {stage && <label className="min-w-0 flex-1 text-sm">כמות לדירה
+                <input type="number" inputMode="decimal" step="any" min="0" className={inputClass}
+                  value={form.qty} onChange={(event) => change('qty', event.target.value)} />
+              </label>}
+              <div className="min-w-0 flex-1 text-sm"><span>יחידה</span>
+                <MobileSelect value={form.customUnit ? 'other' : form.unit}
+                  options={[...UNITS.map((unit) => ({ value: unit, label: unit })), { value: 'other', label: 'אחר…' }]}
+                  onChange={(event) => setForm((previous) => ({ ...previous,
+                    customUnit: event.target.value === 'other', unit: event.target.value === 'other' ? '' : event.target.value }))} />
+                {form.customUnit && <input aria-label="יחידה" maxLength={20} className={`${inputClass} mt-2`}
+                  value={form.unit} onChange={(event) => change('unit', event.target.value)} />}
+              </div>
+            </div>
+            <label className="block text-sm">מחיר ליחידה (רשות — רק אם החשבון נסגר ב-BrikOps)
+              <div className="flex items-center gap-2"><input type="number" inputMode="decimal" min="0" step="any"
+                className={inputClass} value={form.price} onChange={(event) => change('price', event.target.value)} /><span>₪</span></div>
+            </label>
+            {stage && scope === 'floor' && <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+              שלב קומתי — כאן הכמות היא לדירה. כמות לקומה (בטון, קומה יצוקה) מגיעה בשלב הבא.
+            </p>}
+            {stage && !!tags.length && <div>
+              <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}
+                className="min-h-[44px] text-sm text-slate-600">עוד אפשרויות ▾</button>
+              {expanded && <table className="w-full text-xs"><thead><tr><th className="text-right">סוג דירה</th>
+                <th>כמות לדירה</th>{String(form.price).trim() !== '' && <th>מחיר ליחידה</th>}</tr></thead>
+                <tbody>{tags.map((tag) => <tr key={tag}><td>{tag}</td><td>
+                  <input aria-label={`כמות ${tag}`} type="number" inputMode="decimal" min="0" step="any"
+                    className={`${inputClass} min-w-0`} placeholder={String(form.qty)} value={form.quantities[tag] ?? ''}
+                    onChange={(event) => changeOverride('quantities', tag, event.target.value)} />
+                </td>{String(form.price).trim() !== '' && <td>
+                  <input aria-label={`מחיר ${tag}`} type="number" inputMode="decimal" min="0" step="any"
+                    className={`${inputClass} min-w-0`} placeholder={String(form.price)} value={form.prices[tag] ?? ''}
+                    onChange={(event) => changeOverride('prices', tag, event.target.value)} />
+                </td>}</tr>)}</tbody></table>}
+            </div>}
+            {itemId && !stage && account.status === 'open' && <section className="space-y-3 border-t border-slate-100 pt-3">
+              <label className="block text-sm">כמות {account.label}<input type="number" inputMode="decimal" min="0" step="any"
+                className={inputClass} value={form.measuredQty} onChange={(event) => change('measuredQty', event.target.value)} /></label>
+              <label className="block text-sm">הערה (רשות)<input maxLength={300} className={inputClass}
+                value={form.note} onChange={(event) => change('note', event.target.value)} /></label>
+            </section>}
+            <button type="submit" className="min-h-[44px] w-full rounded-lg bg-amber-500 font-bold text-white">שמור</button>
+            {itemId && <button type="button" onClick={deactivate} className="min-h-[44px] text-sm text-slate-500">
+              הסר מהחשבונות הבאים
+            </button>}
+          </fieldset>
+        </form>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+### frontend/src/components/monthly/AccountMoneyTotal.js
+```jsx
+import React from 'react';
+
+const money = (n) => `${new Intl.NumberFormat('he-IL', { maximumFractionDigits: 2 }).format(n ?? 0)} ₪`;
+
+export default function AccountMoneyTotal({ contractor, account }) {
+  if (!contractor.totals_money) return null;
+  return (
+    <div className="mt-3 flex items-baseline justify-between flex-wrap rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
+      <span>סה״כ לחשבון {account.label}</span>
+      <span><b>{money(contractor.totals_money.this_month)}</b>{' '}
+        <span className="text-[11px] text-amber-800">לפני מע״מ · לפני עכבון</span>
+      </span>
+      <div className="mt-0.5 w-full text-[11px] text-amber-800">מצטבר {money(contractor.totals_money.cumulative)}</div>
+    </div>
+  );
+}
+```
+
+### Six existing files — reconstructed wiring diffs (unchanged)
+
+```diff
+--- backend/contractor_ops/monthly_close.py (reconstructed before)
++++ backend/contractor_ops/monthly_close.py (current)
+@@ -185,6 +185,7 @@
+             'this_month': len(evidence), 'cumulative': cumulative, 'still_paid': len(still),
+             'total_units': len(units), 'pct': round(100 * cumulative / len(units)) if units else 0,
+             'qc_count': qc, 'manual_count': len(evidence) - qc, 'by_building': by_building,
++            'still_unit_ids': sorted(still),
+             'unit_ids_this_month': [e['unit_id'] for e in evidence], 'evidence': evidence})
+         for key, amount in [('this_month', len(evidence)), ('cumulative', cumulative),
+                             ('qc', qc), ('manual', len(evidence) - qc)]:
+@@ -264,6 +265,7 @@
+                                        'scope': 'unit'}, {'_id': 0, 'id': 1, 'unit_id': 1}):
+             runs_by_unit[r['unit_id']] = r['id']
+     return {'project': project, 'stages': stages, 'units': units, 'floors': floors, 'buildings': buildings,
++            'contract_items': await db.contract_items.find({'project_id': project_id, 'active': True}, {'_id': 0}).to_list(None),
+             'cells': cells, 'companies': companies, 'settings': project.get('monthly_close_settings') or default_settings(),
+             'snapshots': snapshots, 'runs_by_floor': runs_by_floor, 'runs_by_unit': runs_by_unit}
+ 
+```
+
+```diff
+--- backend/contractor_ops/monthly_close_router.py (reconstructed before)
++++ backend/contractor_ops/monthly_close_router.py (current)
+@@ -11,6 +11,7 @@
+     load_inputs, month_label, next_month, suggest_stage_companies, validate_settings,
+ )
+ from contractor_ops.monthly_close_export import build_monthly_close_xlsx
++from contractor_ops.contract_items import attach_contract_items
+ from contractor_ops.notification_helpers import create_defect_notification
+ from contractor_ops.router import (
+     _audit, _get_project_role, _is_super_admin, _now, get_current_user, get_db, get_public_base_url,
+@@ -77,11 +78,11 @@
+ 
+ 
+ def _live(month, inputs):
+-    account = build_account(month, **{k: v for k, v in inputs.items() if k != 'project'}, now=_now())
++    account = build_account(month, **{k: v for k, v in inputs.items() if k not in ('project', 'contract_items')}, now=_now())
+     project = inputs['project']
+     account.update({'project_id': project['id'], 'project_name': project.get('name', ''),
+                     'project': {'id': project['id'], 'name': project.get('name', '')}, 'is_snapshot': False})
+-    return account
++    return attach_contract_items(account, inputs)
+ 
+ 
+ async def _account(db, project_id, month):
+```
+
+```diff
+--- backend/contractor_ops/monthly_close_export.py (reconstructed before)
++++ backend/contractor_ops/monthly_close_export.py (current)
+@@ -9,6 +9,7 @@
+ from contractor_ops.execution_matrix_export import HEADER_FILL
+ from contractor_ops.utils.timezone import IL_TZ
+ from contractor_ops.xlsx_safe import append_row, set_cell
++from contractor_ops.contract_items_export import add_quantities_sheet
+ 
+ 
+ SUMMARY_HEADERS = [
+@@ -88,6 +89,7 @@
+     """Create a workbook from stored snapshot rows (or the same live account shape)."""
+     wb = Workbook()
+     wb.remove(wb.active)
++    add_quantities_sheet(wb, project, account, contractor)
+     summary = _sheet(wb, 'סיכום', SUMMARY_HEADERS, 4)
+     set_cell(summary, 1, 1, (
+         f"דוח התקדמות לחשבון — {contractor.get('name', '')} — "
+```
+
+```diff
+--- backend/server.py (reconstructed before)
++++ backend/server.py (current)
+@@ -547,6 +547,9 @@
+ from contractor_ops.monthly_close_router import router as monthly_close_router
+ from contractor_ops import monthly_close
+ app.include_router(monthly_close_router)
++from contractor_ops.contract_items_router import router as contract_items_router
++from contractor_ops import contract_items
++app.include_router(contract_items_router)
+ 
+ from contractor_ops.tasks_router import router as tasks_router
+ app.include_router(tasks_router)
+@@ -612,6 +615,7 @@
+         await _ensure_field_escalation_indexes()
+         await activity_hours.ensure_indexes(db)
+         await monthly_close.ensure_indexes(db)
++        await contract_items.ensure_indexes(db)
+         await db.users.create_index("email", unique=True, sparse=True)
+         await db.auth_failed_attempts.create_index(
+             [("identifier", 1), ("ip", 1)],
+```
+
+```diff
+--- frontend/src/components/monthly/ContractorAccountCard.js (reconstructed before)
++++ frontend/src/components/monthly/ContractorAccountCard.js (current)
+@@ -2,6 +2,8 @@
+ import { useLocation, useNavigate } from 'react-router-dom';
+ import { Download, ChevronDown } from 'lucide-react';
+ import { toast } from 'sonner';
++import ContractItemsRows from './ContractItemsRows';
++import AccountMoneyTotal from './AccountMoneyTotal';
+ 
+ const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+ const label = (month) => month === 'baseline' ? 'לפני החשבון הראשון ב-BrikOps' :
+@@ -9,7 +11,7 @@
+ // Dates arrive already formatted in Israel on the server; do not parse through a browser timezone.
+ const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}` : '';
+ 
+-export default function ContractorAccountCard({ contractor, month, projectId, canExport, onExport }) {
++export default function ContractorAccountCard({ contractor, month, projectId, canExport, onExport, canWrite = false, onChanged = () => {} }) {
+   const navigate = useNavigate();
+   const location = useLocation();
+   const [expanded, setExpanded] = useState((contractor.totals?.this_month || 0) > 0 || !!contractor.corrections?.length);
+@@ -61,6 +63,7 @@
+             <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+               <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(stage.pct || 0, 100))}%` }} />
+             </div>
++            <ContractItemsRows contractor={contractor} stage={stage} account={month} projectId={projectId} canWrite={canWrite} onChanged={onChanged} />
+             {!!stage.evidence?.length && <div className="mt-3 rounded-lg bg-slate-50 p-2 text-xs">
+               <div className={fullStages[stage.stage_id] ? 'max-h-60 space-y-2 overflow-y-auto' : 'space-y-2'}>
+                 {(fullStages[stage.stage_id] ? stage.evidence : stage.evidence.slice(0, 3)).map((evidence, index) => (
+@@ -82,6 +85,7 @@
+             </div>}
+           </section>
+         ))}
++        <ContractItemsRows contractor={contractor} stage={null} account={month} projectId={projectId} canWrite={canWrite} onChanged={onChanged} />
+         {corrections.map((correction, index) => (
+           <div key={`${correction.stage_id}-${correction.unit_id}-${index}`}
+             className="my-2 rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900">
+@@ -89,6 +93,7 @@
+               ? 'נספרה לפני החשבון הראשון ב-BrikOps' : `נספרה ב-${label(correction.counted_in_month)}`})
+           </div>
+         ))}
++        <AccountMoneyTotal contractor={contractor} account={month} />
+         {canExport && <button type="button" onClick={exportFile} disabled={exporting}
+           className="mt-3 flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700 disabled:opacity-50">
+           <Download className="h-4 w-4" />
+```
+
+```diff
+--- frontend/src/pages/MonthlyClosePage.js (reconstructed before)
++++ frontend/src/pages/MonthlyClosePage.js (current)
+@@ -170,6 +170,7 @@
+               className="mt-3 rounded-lg bg-amber-500 px-4 py-2 font-bold text-white">הגדר שיוך</button>}
+           </div> : <div className="space-y-3">{account.contractors.map((company) => (
+             <ContractorAccountCard key={company.company_id} contractor={company} month={account}
++              canWrite={canWrite} onChanged={refresh}
+               projectId={projectId} canExport onExport={exportCompany} />
+           ))}</div>}
+           {canWrite && account.permissions?.can_close && <div className="sticky bottom-3 z-10 mt-6 rounded-xl border border-amber-200 bg-white p-4 shadow-lg">
+```
+
+### Fresh wc -l — all fourteen files
+```text
+   145 backend/contractor_ops/contract_items.py
+   121 backend/contractor_ops/contract_items_router.py
+    48 backend/contractor_ops/contract_items_export.py
+    24 frontend/src/services/contractItemsService.js
+   108 frontend/src/components/monthly/ContractItemsRows.js
+   189 frontend/src/components/monthly/ContractItemSheet.js
+    16 frontend/src/components/monthly/AccountMoneyTotal.js
+   216 backend/tests/test_contract_items.py
+   280 backend/contractor_ops/monthly_close.py
+   204 backend/contractor_ops/monthly_close_router.py
+   165 backend/contractor_ops/monthly_close_export.py
+  1646 backend/server.py
+   104 frontend/src/components/monthly/ContractorAccountCard.js
+   190 frontend/src/pages/MonthlyClosePage.js
+  3456 total
+```
+
+### Test names (test file itself not printed)
+Command: grep -n "^def test_\|^async def test_" backend/tests/test_contract_items.py
+```text
+40:def test_uniform_types_and_no_items():
+61:def test_previous_corrections_and_new_items(new, still, with_line, expected):
+69:def test_repricing_and_prices():
+84:def test_measurements_numbers_snapshots_and_scope():
+104:def test_validation_and_indexes():
+138:def test_create_permissions_duplicate_validation_and_get(api):
+165:def test_update_and_deactivate(api):
+181:def test_measurement_guards_and_save(api):
+203:def test_export_sheet_headers_numbers_evidence_and_legacy(price):
+```
+
+V2 — fresh commands and real output
+
+1. cd backend && python -m pytest -q tests/test_contract_items.py tests/test_monthly_close.py
+EXIT 0
+```text
+........................................................................ [ 86%]
+...........                                                              [100%]
+=============================== warnings summary ===============================
+contractor_ops/schemas.py:209
+  /home/runner/workspace/backend/contractor_ops/schemas.py:209: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    @validator('trade', pre=True, always=True)
+
+contractor_ops/schemas.py:612
+  /home/runner/workspace/backend/contractor_ops/schemas.py:612: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    @validator('trade', pre=True, always=True)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+83 passed, 2 warnings in 4.48s
+```
+
+2. cd backend && python -m pytest -q tests
+EXIT 3
+```text
+2 warnings in 4.39s
+```
+Full suite did not complete: pre-existing test_object_storage_shapes.py calls sys.exit(0) at import/collection, producing INTERNALERROR/SystemExit: 0. Not fixed, no tests excluded, no retry. Safety-only subprocess environment: local Mongo/test API, APP_MODE=test, AWS credential variables unset for the child process, and /tmp/batch610/isolation/sitecustomize.py blocks non-local DNS/socket connections. A 180-second timeout was configured but was not reached. No project environment files or secrets were changed.
+
+3. cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+EXIT 0
+```text
+yarn run v1.22.22
+$ craco build
+(node:620) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Creating an optimized production build...
+Browserslist: browsers data (caniuse-lite) is 8 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Browserslist: browsers data (caniuse-lite) is 8 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Compiled successfully.
+
+File sizes after gzip:
+
+  217.06 kB (+6 B)    build/static/js/main.c1d2f022.js
+  127.15 kB           build/static/js/3421.df72f0b6.chunk.js
+  110.41 kB           build/static/js/2116.e7e66a46.chunk.js
+  110.15 kB           build/static/js/4731.713418f6.chunk.js
+  47.65 kB            build/static/js/3509.98d78c44.chunk.js
+  46.24 kB            build/static/js/2570.372dab5d.chunk.js
+  45.89 kB            build/static/js/8671.8b55820c.chunk.js
+  45.44 kB            build/static/js/6985.ce305e65.chunk.js
+  42.94 kB            build/static/js/2239.ed3f5604.chunk.js
+  25.86 kB            build/static/js/8298.5a02e7d0.chunk.js
+  25.4 kB             build/static/js/3900.647b9ab6.chunk.js
+  23.01 kB (-28 B)    build/static/css/main.e08543ec.css
+  18.87 kB            build/static/js/1576.4b5bb923.chunk.js
+  18.36 kB            build/static/js/2089.7b5f0a18.chunk.js
+  17 kB               build/static/js/6703.6dd45d9b.chunk.js
+  16.68 kB            build/static/js/1872.9e0f0079.chunk.js
+  16.52 kB            build/static/js/1456.a8ca8671.chunk.js
+  15.72 kB            build/static/js/2434.3eab2e6a.chunk.js
+  15.53 kB            build/static/js/1329.eefac137.chunk.js
+  14.42 kB            build/static/js/1494.bc6b9401.chunk.js
+  14.38 kB            build/static/js/9736.74332796.chunk.js
+  12.79 kB            build/static/js/9397.3a317a65.chunk.js
+  11.8 kB             build/static/js/4355.f5198ebb.chunk.js
+  10.86 kB            build/static/js/7082.2bc11ba7.chunk.js
+  10.84 kB            build/static/js/7268.1fd02f2d.chunk.js
+  10.73 kB            build/static/js/9189.b414a9f1.chunk.js
+  9.85 kB             build/static/js/3805.1ff41c40.chunk.js
+  9.66 kB             build/static/js/32.a2e77e59.chunk.js
+  9.56 kB             build/static/js/3396.175ec191.chunk.js
+  9.28 kB             build/static/js/9466.4864e9f7.chunk.js
+  9.23 kB             build/static/js/6900.78a9e7b9.chunk.js
+  9.08 kB             build/static/js/130.0c47bc55.chunk.js
+  9.06 kB             build/static/js/8501.73826165.chunk.js
+  8.8 kB              build/static/js/8680.c68735ae.chunk.js
+  8.45 kB             build/static/js/1034.755c435c.chunk.js
+  8.2 kB              build/static/js/3100.f56e3b54.chunk.js
+  7.94 kB             build/static/js/6621.a6ca8686.chunk.js
+  7.53 kB             build/static/js/3559.1fff5864.chunk.js
+  7.4 kB              build/static/js/5383.f902971c.chunk.js
+  7.4 kB              build/static/js/4195.e0c1642e.chunk.js
+  7.1 kB              build/static/js/8844.01a42720.chunk.js
+  7.1 kB              build/static/js/8223.f7b16794.chunk.js
+  6.86 kB             build/static/js/7459.1715588f.chunk.js
+  6.67 kB             build/static/js/2631.b1e21e5b.chunk.js
+  6.22 kB             build/static/js/1993.0fdb2a80.chunk.js
+  5.93 kB             build/static/js/5226.26aec16e.chunk.js
+  5.25 kB             build/static/js/1651.c0ac0592.chunk.js
+  5.24 kB             build/static/js/7959.ff6f6fdb.chunk.js
+  5.18 kB             build/static/js/1052.7483f94b.chunk.js
+  5.07 kB             build/static/js/3022.07d4a3bb.chunk.js
+  5.03 kB             build/static/js/5055.2eb7c205.chunk.js
+  5.02 kB             build/static/js/3447.87971734.chunk.js
+  4.93 kB             build/static/js/3330.0321740e.chunk.js
+  4.9 kB              build/static/js/5828.532efb88.chunk.js
+  4.87 kB             build/static/js/1990.262fd472.chunk.js
+  4.66 kB             build/static/js/7761.f7f29f07.chunk.js
+  4.57 kB             build/static/js/7341.2718d69c.chunk.js
+  4.36 kB             build/static/js/6141.02dbce71.chunk.js
+  4.36 kB             build/static/js/283.69d8d10d.chunk.js
+  4.32 kB             build/static/js/2202.e191d1a0.chunk.js
+  4.25 kB             build/static/js/5993.619d62ed.chunk.js
+  4.09 kB             build/static/js/5198.6cd5cb2c.chunk.js
+  3.86 kB             build/static/js/7387.c18565e4.chunk.js
+  3.82 kB             build/static/js/6494.f000bf3b.chunk.js
+  3.78 kB             build/static/js/5757.61d1107c.chunk.js
+  3.77 kB             build/static/js/8971.3d1ebb1a.chunk.js
+  3.69 kB (-1.01 kB)  build/static/js/6146.5dece4b1.chunk.js
+  3.59 kB             build/static/js/8701.44b21129.chunk.js
+  2.98 kB             build/static/js/5126.e58e6860.chunk.js
+  2.93 kB             build/static/js/3557.645d0f46.chunk.js
+  2.88 kB             build/static/js/33.b7f0ca86.chunk.js
+  2.77 kB             build/static/js/7753.b623070c.chunk.js
+  2.31 kB             build/static/js/1987.a64aed1b.chunk.js
+  1.47 kB             build/static/js/5373.df496ce0.chunk.js
+  1.05 kB             build/static/js/133.c889e72b.chunk.js
+  626 B               build/static/js/9789.7487b0f3.chunk.js
+  404 B               build/static/js/6970.57873c2e.chunk.js
+  307 B               build/static/js/722.75da6952.chunk.js
+  247 B               build/static/js/7948.dda5190a.chunk.js
+  247 B               build/static/js/746.fd7f0321.chunk.js
+  194 B               build/static/js/6767.2cf9a575.chunk.js
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  yarn global add serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+
+Done in 25.67s.
+```
+
+4. cd frontend && CI=true yarn test --watchAll=false
+EXIT 1
+```text
+    libuuid.so.1: cannot open shared object file: No such file or directory
+      at Object.<anonymous> (node_modules/canvas/lib/bindings.js:3:18)
+
+Test Suites: 8 failed, 8 total
+Tests:       0 total
+Snapshots:   0 total
+Time:        3.855 s
+Ran all test suites.
+error Command failed with exit code 1.
+info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.
+```
+Jest failed before running any tests because libuuid.so.1 could not be loaded. No harness fix, package installation or retry was performed. This run is NOT reported as 43 passing tests.
+
+5. grep -rn "בק״ב\|בק\"ב" frontend/src/components/monthly backend/contractor_ops/contract_items*.py
+EXIT 1 (no matches); stdout empty (0 bytes).
+
+All fresh logs and exit-code files are under /tmp/batch610: pytest-focused, pytest-full, build, jest, abbreviation-scan. Original generated frontend/build restored; fresh verified output is /tmp/batch610/verified-build.
+
+V3 — not run — local harness
+Start application remains failed; /tmp/batch606/normal-launch.sh is absent. No repair, startup workaround, HTTP/browser attempt, production access or contract-item data creation.
+
+V4 — preservation and fresh sizes
+Source SHA256 before/after comparison: exactly the three approved source files changed, no added/deleted source files, and all test files unchanged. Each changed file has exactly one removed line and one added line. review.txt and .local/.commit_message compare byte-identical with their pre-addendum copies. No Git command or deployment.
+
+wc -c review.txt
+```text
+406069 review.txt
+```
+wc -c /tmp/batch610/review-section.txt
+```text
+61052 /tmp/batch610/review-section.txt
+```
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
