@@ -4,6 +4,9 @@ import { Download, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import ContractItemsRows from './ContractItemsRows';
 import AccountMoneyTotal from './AccountMoneyTotal';
+import AccountAddSheet from './AccountAddSheet';
+import StageUnitsSheet from './StageUnitsSheet';
+import ContractItemSheet from './ContractItemSheet';
 
 const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
 const label = (month) => month === 'baseline' ? 'לפני החשבון הראשון ב-BrikOps' :
@@ -17,6 +20,9 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
   const [expanded, setExpanded] = useState((canWrite && month.status === 'open') || (contractor.totals?.this_month || 0) > 0 || !!contractor.corrections?.length);
   const [fullStages, setFullStages] = useState({});
   const [exporting, setExporting] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [unitsStage, setUnitsStage] = useState(null);
+  const [create, setCreate] = useState(null);
   const rows = contractor.stages || [];
   const corrections = contractor.corrections || [];
   const cumulative = contractor.totals?.cumulative ?? rows.reduce((sum, stage) => sum + (stage.cumulative || 0), 0);
@@ -52,7 +58,7 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
         {rows.map((stage) => (
           <section key={stage.stage_id} className="border-t border-slate-100 py-4">
             <div className="flex flex-wrap items-center justify-between gap-1 text-sm">
-              <strong className="text-slate-900">{stage.title}</strong>
+              <button type="button" onClick={() => setUnitsStage(stage)} className="font-bold text-amber-800 underline decoration-dotted underline-offset-4 text-right">{stage.title} ›</button>
               <span className="text-slate-600">החודש <b>{stage.this_month}</b> · מצטבר {stage.cumulative}/{stage.total_units}</span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
@@ -86,6 +92,7 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
           </section>
         ))}
         <ContractItemsRows contractor={contractor} stage={null} account={month} projectId={projectId} canWrite={canWrite} onChanged={onChanged} />
+        {canWrite && month.status === 'open' && <button type="button" onClick={() => setAdding(true)} className="mt-3 min-h-[44px] w-full rounded-xl border border-dashed border-amber-300 bg-white font-bold text-amber-700">+ הוספה לחשבון</button>}
         {corrections.map((correction, index) => (
           <div key={`${correction.stage_id}-${correction.unit_id}-${index}`}
             className="my-2 rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900">
@@ -99,6 +106,9 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
           <Download className="h-4 w-4" />
           {exporting ? 'מייצא…' : `אקסל — ${contractor.name} · ${month.label}`}
         </button>}
+        <AccountAddSheet open={adding} onOpenChange={setAdding} contractor={contractor} onUnits={(s) => setUnitsStage(s)} onTerms={(s) => setCreate({ stage: s })} onMeasured={() => setCreate({ stage: null })} />
+        {unitsStage && <StageUnitsSheet open onOpenChange={(o) => { if (!o) setUnitsStage(null); }} projectId={projectId} stage={unitsStage} contractor={contractor} account={month} canWrite={canWrite} onChanged={onChanged} />}
+        {create && <ContractItemSheet open onOpenChange={(o) => { if (!o) setCreate(null); }} projectId={projectId} contractor={contractor} stage={create.stage} item={null} account={month} onSaved={onChanged} />}
       </>}
     </article>
   );

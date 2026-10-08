@@ -88,31 +88,13 @@ function ItemRow({ line, editable, projectId, account, onChanged, onEdit }) {
     </div>
   );
 }
-
 export default function ContractItemsRows({ contractor, stage, account, projectId, canWrite, onChanged }) {
   const [open, setOpen] = useState(false);
   const [item, setItem] = useState(null);
   const editable = canWrite && account.status === 'open';
   const lines = (contractor.items || []).filter((line) => stage
     ? line.source === 'stage' && line.stage_id === stage.stage_id : line.source === 'measured');
-  const edit = (line = null) => { setItem(line); setOpen(true); };
-  if (!lines.length && !editable) return null;
-  const addText = stage
-    ? (lines.length ? '+ עוד תשלום על השלב' : '+ מה משלמים?')
-    : (lines.length ? '+ עבודה שמודדים בשטח' : '+ עבודה שמודדים בשטח (לא במטריצה)');
-  return (
-    <div className={!stage && lines.length ? 'mt-3 border-t border-slate-100 pt-3' : ''}>
-      {!stage && !!lines.length && <h3 className="text-xs font-bold text-slate-700">
-        עבודות שמודדים בשטח <span className="font-normal text-slate-500">· לא במטריצה</span>
-      </h3>}
-      {lines.map((line) => <ItemRow key={line.item_id} line={line} editable={editable}
-        projectId={projectId} account={account} onChanged={onChanged} onEdit={edit} />)}
-      {editable && <button type="button" onClick={() => edit()}
-        className="min-h-[44px] text-amber-700 font-bold text-xs">
-        {stage && !lines.length && contractor.has_items && <span className="font-normal text-slate-500">עוד לא הוגדר מה משלמים על השלב · </span>}
-        {addText}</button>}
-      <ContractItemSheet open={open && editable} onOpenChange={setOpen} projectId={projectId}
-        contractor={contractor} stage={stage} item={item} account={account} onSaved={onChanged} />
-    </div>
-  );
+  const edit = (line) => { setItem(line); setOpen(true); };
+  if (!lines.length) return stage && editable ? <p className="text-xs text-slate-500">עוד לא הוגדר מה משלמים על השלב — נספר כדירות</p> : null;
+  return <div className={!stage ? 'mt-3 border-t border-slate-100 pt-3' : ''}>{!stage && <h3 className="text-xs font-bold text-slate-700">עבודות שמודדים בשטח <span className="font-normal text-slate-500">· לא במטריצה</span></h3>}{lines.map((line) => <ItemRow key={line.item_id} line={line} editable={editable} projectId={projectId} account={account} onChanged={onChanged} onEdit={edit} />)}<ContractItemSheet open={open && editable} onOpenChange={setOpen} projectId={projectId} contractor={contractor} stage={stage} item={item} account={account} onSaved={onChanged} /></div>;
 }

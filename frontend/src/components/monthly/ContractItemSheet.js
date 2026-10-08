@@ -75,7 +75,7 @@ export default function ContractItemSheet({ open, onOpenChange, projectId, contr
       Object.values(quantities || {}).some((n) => !Number.isFinite(n) || n <= 0 || n > 1000000)) return toast.error('כמות לא תקינה');
     if ((price != null && (!Number.isFinite(price) || price < 0 || price > 10000000)) ||
       Object.values(prices || {}).some((n) => !Number.isFinite(n) || n < 0 || n > 10000000)) return toast.error('מחיר לא תקין');
-    if (itemId && !stage && (!Number.isFinite(Number(form.measuredQty)) ||
+    if (!stage && (!Number.isFinite(Number(form.measuredQty)) ||
       Number(form.measuredQty) < 0 || Number(form.measuredQty) > 1000000)) return toast.error('כמות לא תקינה');
     busy.current = true; setSaving(true);
     const token = generation.current;
@@ -85,7 +85,12 @@ export default function ContractItemSheet({ open, onOpenChange, projectId, contr
         description: fixed ? stage.title : form.description.trim(), unit: fixed ? 'דירה' : form.unit.trim(), qty,
         qty_by_unit_type: quantities, unit_price: price, price_by_unit_type: prices };
       if (itemId) await contractItemsService.update(projectId, itemId, body);
-      else await contractItemsService.create(projectId, body);
+      else {
+        const created = await contractItemsService.create(projectId, body);
+        if (!stage && Number(form.measuredQty) > 0) await contractItemsService.setMeasurement(projectId, created.id, month, {
+          qty: Number(form.measuredQty), note: form.note,
+        });
+      }
       if (itemId && !stage) await contractItemsService.setMeasurement(projectId, itemId, month, {
         qty: Number(form.measuredQty) || 0, note: form.note,
       });
@@ -212,7 +217,7 @@ export default function ContractItemSheet({ open, onOpenChange, projectId, contr
             {stage && scope === 'floor' && <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
               שלב קומתי — כאן משלמים לפי דירה. תשלום לפי קומה (בטון, קומה יצוקה) מגיע בשלב הבא.
             </p>}
-            {itemId && !stage && account.status === 'open' && <section className="space-y-3 border-t border-slate-100 pt-3">
+            {!stage && account.status === 'open' && <section className="space-y-3 border-t border-slate-100 pt-3">
               <label className="block text-sm">כמה בוצע ב{account.label}<input type="number" inputMode="decimal" min="0" step="any"
                 className={inputClass} value={form.measuredQty} onChange={(event) => change('measuredQty', event.target.value)} /></label>
               <label className="block text-sm">הערה (רשות)<input maxLength={300} className={inputClass}
