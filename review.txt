@@ -8957,3 +8957,503 @@ monthly close: only status stages enter the account (tag columns out), contracto
 No Git commands, deployment, production access or additional dependencies.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+
+#610-FIX-3 (8.10)
+
+Frontend-only implementation: one add button per contractor; stage titles open apartment marking; new field work can record the current month quantity.
+
+STEP 0: review.txt was 480553 bytes, not 508922. FIX-2 has not been appended. Continuing as explicitly instructed; the append remains Zahi’s responsibility. review.txt is untouched.
+
+Approved clarification: after any successful marking, set a dirty ref and reload only the sheet. Refresh the account exactly once on close when dirty, never during save; MonthlyClosePage remains untouched. Retain a newly created item id in state so retry after a failed measurement does not create another item. Same toasts.
+
+V1 — full source files
+
+### frontend/src/components/monthly/AccountAddSheet.js
+```javascript
+import React, { useEffect, useState } from 'react';
+import { House, Ruler } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
+
+export default function AccountAddSheet({ open, onOpenChange, contractor, onUnits, onTerms, onMeasured }) {
+  const [choice, setChoice] = useState(null);
+  const stages = contractor.stages || [];
+  useEffect(() => { if (open) setChoice(null); }, [open]);
+  const chooseStage = (stage) => {
+    if (choice === 'units') onUnits(stage);
+    else onTerms(stage);
+    onOpenChange(false);
+  };
+  const options = [
+    { id: 'units', icon: <House className="h-5 w-5" />, title: 'דירות שבוצעו',
+      description: 'בוחרים שלב ומסמנים דירות — הסימון נרשם במטריצה' },
+    { id: 'measured', icon: <Ruler className="h-5 w-5" />, title: 'עבודה שלא במטריצה',
+      description: 'קירות תמך, חפירה… מקלידים כמה בוצע החודש' },
+    { id: 'terms', icon: '₪', title: 'מה משלמים על שלב',
+      description: 'סכום קבוע לדירה או לפי כמות — פעם אחת לכל שלב' },
+  ];
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent dir="rtl" className="max-w-lg max-h-[90vh] overflow-y-auto text-right" aria-describedby={undefined}>
+        <DialogHeader className="text-right">
+          <DialogTitle>{`מה להוסיף לחשבון של ${contractor.name}?`}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2">
+          {options.map((option) => {
+            const disabled = option.id !== 'measured' && !stages.length;
+            return <button key={option.id} type="button" disabled={disabled}
+              aria-pressed={choice === option.id}
+              onClick={() => {
+                if (option.id === 'measured') { onMeasured(); onOpenChange(false); }
+                else setChoice(option.id);
+              }}
+              className="min-h-[56px] w-full rounded-xl border border-slate-200 bg-white p-3 text-right flex items-center gap-3 disabled:opacity-50">
+              <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-800" aria-hidden="true">{option.icon}</span>
+              <span><strong className="block text-sm text-slate-900">{option.title}</strong>
+                <span className="text-xs text-slate-500">{disabled ? 'אין שלבים משויכים לקבלן' : option.description}</span></span>
+            </button>;
+          })}
+        </div>
+        {choice && <div>
+          <p className="mb-2 text-sm font-bold text-slate-700">באיזה שלב?</p>
+          <div className="flex flex-wrap gap-2">
+            {stages.map((stage) => <button key={stage.stage_id} type="button" onClick={() => chooseStage(stage)}
+              className="min-h-[44px] rounded-full border border-amber-200 px-3 text-sm text-amber-800">{stage.title}</button>)}
+          </div>
+        </div>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+### frontend/src/components/monthly/StageUnitsSheet.js
+```javascript
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
+import { matrixService } from '../../services/matrixService';
+
+const compare = (a, b) => String(a ?? '').localeCompare(String(b ?? ''), 'he', { numeric: true });
+const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}` : '';
+
+export default function StageUnitsSheet({ open, onOpenChange, projectId, stage, contractor, account, canWrite, onChanged }) {
+  const navigate = useNavigate();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [buildingId, setBuildingId] = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [saving, setSaving] = useState(false);
+  const generation = useRef(0);
+  const busy = useRef(false);
+  const dirty = useRef(false);
+  const changeOpen = (next) => {
+    if (busy.current) return;
+    onOpenChange(next);
+    if (!next && dirty.current) { dirty.current = false; onChanged(); }
+  };
+  const stageId = stage.stage_id;
+  const load = useCallback(async () => {
+    const token = ++generation.current;
+    setLoading(true); setFailed(false); setData(null); setSelected(new Set());
+    try {
+      const result = await matrixService.getMatrix(projectId);
+      if (generation.current !== token) return;
+      const buildings = [...(result.buildings || [])].sort((a, b) => compare(a.name, b.name) || compare(a.id, b.id));
+      setData(result);
+      setBuildingId((current) => buildings.some((building) => building.id === current) ? current : buildings[0]?.id ?? null);
+    } catch (error) {
+      if (generation.current === token) {
+        setFailed(true);
+        toast.error(error.response?.data?.detail || 'לא ניתן לטעון את הדירות');
+      }
+    } finally {
+      if (generation.current === token) setLoading(false);
+    }
+  }, [projectId]);
+  useEffect(() => {
+    if (open) { setBuildingId(null); load(); }
+    return () => { generation.current += 1; };
+  }, [open, stageId, load]);
+  const editable = !!(canWrite && account.status === 'open' && data?.permissions?.can_edit);
+  const buildings = [...(data?.buildings || [])].sort((a, b) => compare(a.name, b.name) || compare(a.id, b.id));
+  const floors = [...(data?.floors || [])].sort((a, b) => compare(a.floor_number, b.floor_number) || compare(a.id, b.id));
+  const cells = new Map((data?.cells || []).filter((cell) => cell.stage_id === stageId).map((cell) => [cell.unit_id, cell]));
+  const buildingOrder = new Map(buildings.map((building, index) => [building.id, index]));
+  const floorOrder = new Map(floors.map((floor, index) => [floor.id, index]));
+  const units = [...(data?.units || [])].sort((a, b) =>
+    (buildingOrder.get(a.building_id) ?? -1) - (buildingOrder.get(b.building_id) ?? -1) ||
+    (floorOrder.get(a.floor_id) ?? -1) - (floorOrder.get(b.floor_id) ?? -1) ||
+    compare(a.unit_no, b.unit_no) || compare(a.id, b.id));
+  const eligible = (unit) => !['completed', 'not_relevant'].includes(cells.get(unit.id)?.status);
+  const done = units.filter((unit) => cells.get(unit.id)?.status === 'completed').length;
+  const toggle = (id) => {
+    if (!editable || busy.current) return;
+    setSelected((previous) => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  };
+  const selectFloor = (floorUnits) => {
+    if (!editable || busy.current) return;
+    setSelected((previous) => new Set([...previous, ...floorUnits.filter(eligible).map((unit) => unit.id)]));
+  };
+  const chosen = units.filter((unit) => selected.has(unit.id) && eligible(unit));
+  const save = async () => {
+    if (!editable || busy.current || !chosen.length) return;
+    busy.current = true; setSaving(true);
+    const token = generation.current;
+    let saved = 0;
+    let failure = null;
+    try {
+      for (const unit of chosen) {
+        try {
+          await matrixService.updateCell(projectId, unit.id, stageId, { status: 'completed' });
+          saved += 1;
+          dirty.current = true;
+        } catch (error) { failure = error; break; }
+      }
+      if (generation.current !== token) return;
+      if (failure) toast.error(`${failure.response?.data?.detail || 'הסימון נכשל'} · נשמרו ${saved} דירות`);
+      else toast.success(`סומנו ${saved} דירות — נרשם במטריצה`);
+      if (saved > 0) {
+        // Refresh only the sheet; the account refreshes once on close.
+        setSelected(new Set());
+        await load();
+      }
+    } finally {
+      busy.current = false;
+      setSaving(false);
+    }
+  };
+  return (
+    <Dialog open={open} onOpenChange={changeOpen}>
+      <DialogContent dir="rtl" className="max-w-lg max-h-[90vh] overflow-y-auto text-right" aria-describedby={undefined}>
+        <DialogHeader className="text-right"><DialogTitle>{stage.title}</DialogTitle></DialogHeader>
+        {loading && <div role="status" aria-label="טוען דירות" className="animate-pulse space-y-3">
+          <div className="h-8 rounded-lg bg-slate-100" /><div className="h-12 rounded-lg bg-slate-100" /><div className="h-12 rounded-lg bg-slate-100" />
+        </div>}
+        {!loading && failed && <button type="button" disabled={saving} onClick={() => { if (!busy.current) load(); }}
+          className="min-h-[44px] text-amber-700">נסה שוב</button>}
+        {!loading && data && <>
+          <div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">{`${done} בוצעו · ${units.length - done} לא`}</span>
+            {editable && <p className="mt-3 text-xs text-slate-600">דירה שתסמן כאן נרשמת במטריצה כסימון ידני (מי ומתי) ונכנסת לחשבון של {account.label}.</p>}
+          </div>
+          {buildings.length > 1 && <div className="flex flex-wrap gap-2">
+            {buildings.map((building) => <button key={building.id} type="button" disabled={saving} aria-pressed={buildingId === building.id}
+              onClick={() => { if (!busy.current) setBuildingId(building.id); }}
+              className={`min-h-[44px] rounded-full border px-3 text-sm ${buildingId === building.id ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-600'}`}>{building.name}</button>)}
+          </div>}
+          {!units.length && <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">אין דירות להצגה</p>}
+          <div className="space-y-4" aria-label={`דירות בשלבי ${contractor.name}`}>
+            {floors.filter((floor) => floor.building_id === buildingId).map((floor) => {
+              const floorUnits = units.filter((unit) => unit.floor_id === floor.id && unit.building_id === buildingId);
+              return <section key={floor.id}>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-slate-700">קומה {floor.floor_number}</h3>
+                  {editable && <button type="button" disabled={saving || !floorUnits.some(eligible)} onClick={() => selectFloor(floorUnits)}
+                    className="min-h-[44px] text-xs text-amber-700 disabled:opacity-50">סמן את כל הקומה</button>}
+                </div>
+                {floorUnits.map((unit) => {
+                  const cell = cells.get(unit.id);
+                  const completed = cell?.status === 'completed';
+                  const irrelevant = cell?.status === 'not_relevant';
+                  return <div key={unit.id} className="flex min-h-[44px] items-center justify-between gap-3 border-b border-slate-100 py-2 text-xs">
+                    <label className="flex items-center gap-2 text-slate-700">
+                      {completed ? <span className="text-emerald-600" aria-label="בוצע">✓</span> :
+                        !irrelevant && (editable ? <input type="checkbox" checked={selected.has(unit.id)} disabled={saving}
+                          onChange={() => toggle(unit.id)} className="h-4 w-4 accent-amber-500" /> : <span className="h-4 w-4 rounded border border-slate-300" />)}
+                      דירה {unit.unit_no}
+                    </label>
+                    <span className={completed ? 'text-emerald-700' : 'text-slate-500'}>
+                      {completed ? `בוצע ${dayMonth(cell.last_updated_at)} · ${cell.synced_from_qc ? 'בקרת ביצוע' : 'סימון ידני'}` : irrelevant ? 'לא רלוונטי' : 'לא בוצע'}
+                    </span>
+                  </div>;
+                })}
+              </section>;
+            })}
+          </div>
+          {editable && <button type="button" onClick={save} disabled={!chosen.length || saving}
+            className="min-h-[44px] w-full rounded-lg bg-amber-500 font-bold text-white disabled:opacity-50">{`סמן ${chosen.length} דירות כבוצע במטריצה`}</button>}
+        </>}
+        <button type="button" disabled={saving} onClick={() => { if (!busy.current) { changeOpen(false); navigate(`/projects/${projectId}/execution-matrix`); } }}
+          className="min-h-[44px] text-sm text-amber-700 disabled:opacity-50">לפתוח את המטריצה המלאה ›</button>
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+### frontend/src/components/monthly/ContractItemsRows.js
+```javascript
+import React, { useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { contractItemsService } from '../../services/contractItemsService';
+import ContractItemSheet from './ContractItemSheet';
+
+const fmt = (n) => new Intl.NumberFormat('he-IL', { maximumFractionDigits: 2 }).format(n ?? 0);
+const money = (n) => `${fmt(n)} ₪`;
+const lump = (line) => line.unit === 'דירה' && Number(line.qty) === 1 && line.unit_price != null;
+const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}` : '';
+
+function ItemRow({ line, editable, projectId, account, onChanged, onEdit }) {
+  const [value, setValue] = useState(String(line.this_month_qty ?? 0));
+  const [saving, setSaving] = useState(false);
+  const pending = useRef(false);
+  const saved = useRef(String(line.this_month_qty ?? 0));
+  const alive = useRef(true);
+  const measured = line.source === 'measured';
+  const fixed = !measured && lump(line);
+  useEffect(() => {
+    saved.current = String(line.this_month_qty ?? 0);
+    setValue(saved.current);
+  }, [line.this_month_qty, account.month]);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const saveQuantity = async () => {
+    if (!editable || pending.current || Number(value || 0) === Number(saved.current)) return;
+    const qty = Number(value || 0);
+    if (!Number.isFinite(qty) || qty < 0 || qty > 1000000) {
+      toast.error('כמות לא תקינה');
+      return;
+    }
+    pending.current = true;
+    setSaving(true);
+    try {
+      await contractItemsService.setMeasurement(projectId, line.item_id, account.month, {
+        qty, note: line.measurement?.note || '',
+      });
+      if (!alive.current) return;
+      saved.current = String(qty);
+      toast.success('הכמות נשמרה');
+      onChanged();
+    } catch (error) {
+      if (alive.current) toast.error(error.response?.data?.detail || 'לא ניתן לשמור את הכמות');
+    } finally {
+      pending.current = false;
+      if (alive.current) setSaving(false);
+    }
+  };
+  return (
+    <div role={editable ? 'button' : undefined} tabIndex={editable ? 0 : undefined}
+      onClick={editable ? () => { if (!pending.current) onEdit(line); } : undefined}
+      onKeyDown={editable ? (event) => {
+        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          if (!pending.current) onEdit(line);
+        }
+      } : undefined}
+      className={`rounded-lg bg-slate-50 border border-slate-100 px-2.5 py-1.5 text-xs mt-1.5 ${editable ? 'cursor-pointer' : ''}`}>
+      <div className="text-slate-700">
+        {fixed ? <><b>{money(line.unit_price)} לדירה</b>{line.price_by_unit_type ? ' · לפי סוג דירה' : ''}</>
+          : <><b>{line.description}</b> · {measured ? line.unit : `${fmt(line.qty)} לדירה`}
+            {line.unit_price != null ? ` · ${money(line.unit_price)} ל${line.unit}` : ''}</>}
+      </div>
+      <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-slate-500">
+        <span className="tabular-nums">
+          החודש {fixed ? `${line.units_this_month ?? 0} דירות` :
+          <>
+          {measured && editable ? <input type="number" inputMode="decimal" min="0" step="any"
+            value={value} disabled={saving} aria-label="כמות החודש"
+            className="w-16 rounded-md border border-amber-200 px-1.5 py-1 text-center font-bold disabled:opacity-50"
+            onClick={(event) => event.stopPropagation()} onChange={(event) => setValue(event.target.value)}
+            onBlur={saveQuantity} onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); }
+            }} /> : <b>{fmt(line.this_month_qty)}</b>} {line.unit}
+          </>}
+          {!measured && line.corrections ? ` (−${line.corrections})` : ''}
+        </span>
+        <span className="tabular-nums">
+          {line.unit_price != null ? <><b>{money(line.this_month_amount)}</b> · מצטבר {money(line.cumulative_amount)}</>
+            : <>מצטבר {fmt(line.cumulative_qty)}{measured ? ` ${line.unit}` : ''}</>}
+          {!measured && !fixed && line.unit_price == null && line.code && <> · <span dir="ltr" className="font-mono">{line.code}</span></>}
+        </span>
+      </div>
+      {measured && <div className="flex justify-between text-[11px] text-slate-500 mt-0.5">
+        <span>{line.measurement ? `הוקלד ${dayMonth(line.measurement.at)} · ${line.measurement.by?.name || ''}` : 'לא הוקלד החודש = 0'}</span>
+        {editable && <span>✎ הערה</span>}
+      </div>}
+    </div>
+  );
+}
+export default function ContractItemsRows({ contractor, stage, account, projectId, canWrite, onChanged }) {
+  const [open, setOpen] = useState(false);
+  const [item, setItem] = useState(null);
+  const editable = canWrite && account.status === 'open';
+  const lines = (contractor.items || []).filter((line) => stage
+    ? line.source === 'stage' && line.stage_id === stage.stage_id : line.source === 'measured');
+  const edit = (line) => { setItem(line); setOpen(true); };
+  if (!lines.length) return stage && editable ? <p className="text-xs text-slate-500">עוד לא הוגדר מה משלמים על השלב — נספר כדירות</p> : null;
+  return <div className={!stage ? 'mt-3 border-t border-slate-100 pt-3' : ''}>{!stage && <h3 className="text-xs font-bold text-slate-700">עבודות שמודדים בשטח <span className="font-normal text-slate-500">· לא במטריצה</span></h3>}{lines.map((line) => <ItemRow key={line.item_id} line={line} editable={editable} projectId={projectId} account={account} onChanged={onChanged} onEdit={edit} />)}<ContractItemSheet open={open && editable} onOpenChange={setOpen} projectId={projectId} contractor={contractor} stage={stage} item={item} account={account} onSaved={onChanged} /></div>;
+}
+```
+
+### frontend/src/components/monthly/ContractItemSheet.js — changed regions with three lines of context
+```diff
+--- frontend/src/components/monthly/ContractItemSheet.js (before)
++++ frontend/src/components/monthly/ContractItemSheet.js (after)
+@@ -22,6 +22,7 @@
+   const [saving, setSaving] = useState(false);
+   const [expanded, setExpanded] = useState(false);
+   const [retry, setRetry] = useState(0);
++  const [createdId, setCreatedId] = useState(null);
+   const generation = useRef(0);
+   const busy = useRef(false);
+   const itemId = item?.item_id;
+@@ -31,6 +32,7 @@
+     const token = ++generation.current;
+     if (!open) return undefined;
+     setLoading(true); setFailed(false); setData(null); setForm(null); setExpanded(false); setSaving(false);
++    setCreatedId(null);
+     const load = async () => {
+       try {
+         const result = await contractItemsService.list(projectId);
+@@ -75,7 +77,7 @@
+       Object.values(quantities || {}).some((n) => !Number.isFinite(n) || n <= 0 || n > 1000000)) return toast.error('כמות לא תקינה');
+     if ((price != null && (!Number.isFinite(price) || price < 0 || price > 10000000)) ||
+       Object.values(prices || {}).some((n) => !Number.isFinite(n) || n < 0 || n > 10000000)) return toast.error('מחיר לא תקין');
+-    if (itemId && !stage && (!Number.isFinite(Number(form.measuredQty)) ||
++    if (!stage && (!Number.isFinite(Number(form.measuredQty)) ||
+       Number(form.measuredQty) < 0 || Number(form.measuredQty) > 1000000)) return toast.error('כמות לא תקינה');
+     busy.current = true; setSaving(true);
+     const token = generation.current;
+@@ -85,7 +87,13 @@
+         description: fixed ? stage.title : form.description.trim(), unit: fixed ? 'דירה' : form.unit.trim(), qty,
+         qty_by_unit_type: quantities, unit_price: price, price_by_unit_type: prices };
+       if (itemId) await contractItemsService.update(projectId, itemId, body);
+-      else await contractItemsService.create(projectId, body);
++      else {
++        let id = createdId;
++        if (!id) { const created = await contractItemsService.create(projectId, body); id = created.id; setCreatedId(id); }
++        if (!stage && Number(form.measuredQty) > 0) await contractItemsService.setMeasurement(projectId, id, month, {
++          qty: Number(form.measuredQty), note: form.note,
++        });
++      }
+       if (itemId && !stage) await contractItemsService.setMeasurement(projectId, itemId, month, {
+         qty: Number(form.measuredQty) || 0, note: form.note,
+       });
+@@ -212,7 +220,7 @@
+             {stage && scope === 'floor' && <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+               שלב קומתי — כאן משלמים לפי דירה. תשלום לפי קומה (בטון, קומה יצוקה) מגיע בשלב הבא.
+             </p>}
+-            {itemId && !stage && account.status === 'open' && <section className="space-y-3 border-t border-slate-100 pt-3">
++            {!stage && account.status === 'open' && <section className="space-y-3 border-t border-slate-100 pt-3">
+               <label className="block text-sm">כמה בוצע ב{account.label}<input type="number" inputMode="decimal" min="0" step="any"
+                 className={inputClass} value={form.measuredQty} onChange={(event) => change('measuredQty', event.target.value)} /></label>
+               <label className="block text-sm">הערה (רשות)<input maxLength={300} className={inputClass}
+```
+
+### frontend/src/components/monthly/ContractorAccountCard.js — changed regions with three lines of context
+```diff
+--- frontend/src/components/monthly/ContractorAccountCard.js (before)
++++ frontend/src/components/monthly/ContractorAccountCard.js (after)
+@@ -4,6 +4,9 @@
+ import { toast } from 'sonner';
+ import ContractItemsRows from './ContractItemsRows';
+ import AccountMoneyTotal from './AccountMoneyTotal';
++import AccountAddSheet from './AccountAddSheet';
++import StageUnitsSheet from './StageUnitsSheet';
++import ContractItemSheet from './ContractItemSheet';
+ 
+ const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+ const label = (month) => month === 'baseline' ? 'לפני החשבון הראשון ב-BrikOps' :
+@@ -17,6 +20,9 @@
+   const [expanded, setExpanded] = useState((canWrite && month.status === 'open') || (contractor.totals?.this_month || 0) > 0 || !!contractor.corrections?.length);
+   const [fullStages, setFullStages] = useState({});
+   const [exporting, setExporting] = useState(false);
++  const [adding, setAdding] = useState(false);
++  const [unitsStage, setUnitsStage] = useState(null);
++  const [create, setCreate] = useState(null);
+   const rows = contractor.stages || [];
+   const corrections = contractor.corrections || [];
+   const cumulative = contractor.totals?.cumulative ?? rows.reduce((sum, stage) => sum + (stage.cumulative || 0), 0);
+@@ -52,7 +58,7 @@
+         {rows.map((stage) => (
+           <section key={stage.stage_id} className="border-t border-slate-100 py-4">
+             <div className="flex flex-wrap items-center justify-between gap-1 text-sm">
+-              <strong className="text-slate-900">{stage.title}</strong>
++              <button type="button" onClick={() => setUnitsStage(stage)} className="font-bold text-amber-800 underline decoration-dotted underline-offset-4 text-right">{stage.title} ›</button>
+               <span className="text-slate-600">החודש <b>{stage.this_month}</b> · מצטבר {stage.cumulative}/{stage.total_units}</span>
+             </div>
+             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+@@ -86,6 +92,7 @@
+           </section>
+         ))}
+         <ContractItemsRows contractor={contractor} stage={null} account={month} projectId={projectId} canWrite={canWrite} onChanged={onChanged} />
++        {canWrite && month.status === 'open' && <button type="button" onClick={() => setAdding(true)} className="mt-3 min-h-[44px] w-full rounded-xl border border-dashed border-amber-300 bg-white font-bold text-amber-700">+ הוספה לחשבון</button>}
+         {corrections.map((correction, index) => (
+           <div key={`${correction.stage_id}-${correction.unit_id}-${index}`}
+             className="my-2 rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900">
+@@ -99,6 +106,9 @@
+           <Download className="h-4 w-4" />
+           {exporting ? 'מייצא…' : `אקסל — ${contractor.name} · ${month.label}`}
+         </button>}
++        <AccountAddSheet open={adding} onOpenChange={setAdding} contractor={contractor} onUnits={(s) => setUnitsStage(s)} onTerms={(s) => setCreate({ stage: s })} onMeasured={() => setCreate({ stage: null })} />
++        {unitsStage && <StageUnitsSheet open onOpenChange={(o) => { if (!o) setUnitsStage(null); }} projectId={projectId} stage={unitsStage} contractor={contractor} account={month} canWrite={canWrite} onChanged={onChanged} />}
++        {create && <ContractItemSheet open onOpenChange={(o) => { if (!o) setCreate(null); }} projectId={projectId} contractor={contractor} stage={create.stage} item={null} account={month} onSaved={onChanged} />}
+       </>}
+     </article>
+   );
+```
+
+### wc -l
+```text
+   54 frontend/src/components/monthly/AccountAddSheet.js
+  152 frontend/src/components/monthly/StageUnitsSheet.js
+  100 frontend/src/components/monthly/ContractItemsRows.js
+  238 frontend/src/components/monthly/ContractItemSheet.js
+  114 frontend/src/components/monthly/ContractorAccountCard.js
+  658 total
+```
+
+### Manifest
+```text
+MODIFIED frontend/src/components/monthly/ContractItemSheet.js
+MODIFIED frontend/src/components/monthly/ContractItemsRows.js
+MODIFIED frontend/src/components/monthly/ContractorAccountCard.js
+ADDED frontend/src/components/monthly/AccountAddSheet.js
+ADDED frontend/src/components/monthly/StageUnitsSheet.js
+PASS: nothing else under frontend/src and nothing under backend changed (generated Python caches excluded). MonthlyClosePage is byte-identical.
+PASS: review.txt byte-identical: 480553 bytes. FIX-2 has not been appended; append remains Zahi’s responsibility.
+PASS: all component line limits.
+```
+SHA256 manifests: /tmp/batch610fix3/source.before.sha256 and source.after.sha256. Exactly three modified and two new frontend files. Matrix page/service, api.js, account API, MonthlyClosePage, MonthlySettingsSheet, Excel and existing tests unchanged. Card wiring: ten added lines and one replaced title line. ContractItemsRows retains its original ItemRow logic. New measured quantity validation runs before creation.
+
+V2 — fresh verification
+
+1. cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+EXIT 0
+```text
+Compiled successfully.
+Done in 35.67s.
+```
+Zero compiler/lint warnings. Tooling notices remain: Node DEP0176 (fs.F_OK deprecation) and outdated Browserslist data; not a claim of zero tooling notices. No dependency changes. Full output: /tmp/batch610fix3/build.log. Original generated frontend/build restored; fresh build retained at /tmp/batch610fix3/verified-build.
+
+2. cd frontend && CI=true yarn test --watchAll=false
+EXIT 1 — blocked by missing libuuid.so.1; 8 suites failed to start, 0 tests ran (5.898 s); no harness fix. Full output: /tmp/batch610fix3/jest.log.
+
+3. grep -rn "+ עוד תשלום\|+ מה משלמים\|+ עבודה שמודדים" frontend/src
+EXIT 1 — no output, no matches.
+
+4. grep -rn "בק״ב\|בק\"ב" frontend/src/components/monthly
+EXIT 1 — no output, no matches.
+
+Supplementary handler-only checks: actual function bodies extracted from current source and executed with in-memory service/state stubs, no network. These are not React rendering, browser or staging tests, and do not repair or replace Jest.
+```text
+PASS: sequential matrix writes stop at first failure; partial/full success reload only the sheet; two batches trigger exactly one refresh on close; read-only save blocked.
+PASS: measurement failure retains created id; second save retries measurement without another create, then closes successfully.
+```
+
+V3 — not run — local harness. Zahi verifies on staging: open a stage, select two apartments, save to matrix; sheet remains open with refreshed completion rows; close sheet and card refreshes once, showing the new counted apartments. Also verify new field-work creation with month quantity.
+
+V4 — review.txt byte-identical to STEP 0
+```text
+480553 review.txt
+30390 /tmp/batch610fix3/review-section.txt
+```
+
+.local/.commit_message:
+monthly close: one "+ הוספה לחשבון" per contractor; stage title opens its apartments with marking that writes to the matrix; month quantity on new field work (#610-FIX-3)
+
+No Git commands, deployment, backend edits, review.txt edits or new dependencies.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
