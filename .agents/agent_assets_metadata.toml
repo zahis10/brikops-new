@@ -1187,3 +1187,17 @@ mtime_ms = 1791448309355
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/09ad642b-c0be-4018-a841-db77e207d578/88bb99b5-c207-4bd7-92b5-9b8c8806d857"
 storage_version_token = "1791448311419922"
 content_type = "text/plain"
+
+[[outputs]]
+id = "1YZ0zNCGiRNA61nIUaT6b"
+uri = "file://attached_assets/review-batch612a.txt"
+type = "text"
+title = "612-A — דוח backend מלא"
+description = "הקוד המלא של שני הקבצים החדשים, הבדלים בחמשת הקבצים הקיימים, 102 בדיקות שעברו ואימות היקף השינויים. review.txt לא שונה."
+logical_id = "ddbc3e1d-1f0e-4cd8-8e08-3c2d56998e01"
+content_hash = "sha256:a09ba2c4f320432a46ce06263dffeeb734f542782eedba781d10d42b6ed4cd94"
+size = 27685
+mtime_ms = 1791460361194
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/ddbc3e1d-1f0e-4cd8-8e08-3c2d56998e01/b7ffccbb-f160-4012-879c-ced2862e371c"
+storage_version_token = "1791460370066159"
+content_type = "text/plain"

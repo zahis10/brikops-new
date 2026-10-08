@@ -129,9 +129,13 @@ def build_monthly_close_xlsx(project, account, contractor, base_url):
             if counted == 'baseline' else f'(נספרה ב-{_month_label(counted)})'
         )
         reason = f"תיקון: דירה {correction.get('unit_no', '')} נפתחה מחדש {origin}"
+        value = -1
+        if correction.get('reason') == 'partial_reduced':
+            value = correction.get('delta')
+            reason = f"תיקון: דירה {correction.get('unit_no', '')} — חלקי {correction.get('pct', 0)}% במקום {correction.get('prior_pct', 0)}% (נספר ב-{_month_label(counted)})"
         append_row(summary, [
             contractor.get('name', ''), correction.get('stage_title', ''),
-            correction.get('building_name', ''), '', -1, '', '', '', reason,
+            correction.get('building_name', ''), '', value, '', '', '', reason,
         ])
 
     evidence = _sheet(wb, 'ראיות', EVIDENCE_HEADERS)
@@ -144,20 +148,34 @@ def build_monthly_close_xlsx(project, account, contractor, base_url):
                 source = (
                     'אושר בבקרת ביצוע' if row.get('source') == 'qc' else 'סומן ידנית'
                 ) + f" · אחרי סגירת {_month_label(row['late_from_month'])}"
+            if row.get('prior_pct'):
+                source += f" · היה חלקי {row['prior_pct']}% → {100 - row['prior_pct']}%"
             append_row(evidence, [
                 row_number, row.get('building_name', ''), row.get('floor_number', ''),
                 row.get('unit_no', ''), stage.get('title', ''),
                 _il_date(row.get('completed_at')), row.get('actor_name', ''),
                 source, _link(base_url, project.get('id'), row),
             ])
+        for row in stage.get('partials') or []:
+            row_number += 1
+            append_row(evidence, [
+                row_number, row.get('building_name', ''), row.get('floor_number', ''),
+                row.get('unit_no', ''), stage.get('title', ''), _il_date(row.get('updated_at')),
+                row.get('actor_name', ''),
+                f"חלקי {row.get('pct', 0)}%" + (f" (היה {row['prior_pct']}%)" if row.get('prior_pct') else ''),
+                _link(base_url, project.get('id'), row),
+            ])
 
     if contractor.get('corrections'):
         corrections = _sheet(wb, 'תיקונים', CORRECTION_HEADERS)
         for row in contractor['corrections']:
+            reason = 'נפתחה מחדש'
+            if row.get('reason') == 'partial_reduced':
+                reason = f"הופחת: {row.get('prior_pct', 0)}% → {row.get('pct', 0)}%"
             append_row(corrections, [
                 row.get('stage_title', ''), row.get('building_name', ''),
                 row.get('unit_no', ''), _month_label(row.get('counted_in_month')),
-                'נפתחה מחדש',
+                reason,
             ])
 
     buf = BytesIO()

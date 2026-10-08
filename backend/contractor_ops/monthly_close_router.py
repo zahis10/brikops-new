@@ -12,6 +12,7 @@ from contractor_ops.monthly_close import (
 )
 from contractor_ops.monthly_close_export import build_monthly_close_xlsx
 from contractor_ops.contract_items import attach_contract_items
+from contractor_ops.monthly_partials import apply_partials
 from contractor_ops.notification_helpers import create_defect_notification
 from contractor_ops.router import (
     _audit, _get_project_role, _is_super_admin, _now, get_current_user, get_db, get_public_base_url,
@@ -82,7 +83,7 @@ def _live(month, inputs):
     project = inputs['project']
     account.update({'project_id': project['id'], 'project_name': project.get('name', ''),
                     'project': {'id': project['id'], 'name': project.get('name', '')}, 'is_snapshot': False})
-    return attach_contract_items(account, inputs)
+    return attach_contract_items(apply_partials(account, inputs), inputs)
 
 
 async def _account(db, project_id, month):

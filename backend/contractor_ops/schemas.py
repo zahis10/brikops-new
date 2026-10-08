@@ -1116,6 +1116,7 @@ class MatrixCellUpdate(BaseModel):
     ]] = None
     note: Optional[str] = Field(None, max_length=500)
     text_value: Optional[str] = Field(None, max_length=200)
+    progress_pct: Optional[int] = Field(None, ge=1, le=99)  # #612 — share of the apartment done/paid (status 'partial')
 
 
 class MatrixCell(BaseModel):

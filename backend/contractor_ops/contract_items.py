@@ -94,7 +94,7 @@ def attach_contract_items(account, inputs):
             counted = still | set(stage.get('unit_ids_this_month') or [])
             corrections = sum(r.get('stage_id') == sid for r in c.get('corrections') or [])
             stage_items = [i for i in mine if i.get('source') == 'stage' and i.get('stage_id') == sid]
-            extra = dict(units_this_month=len(stage.get('unit_ids_this_month') or []),
+            extra = dict(units_this_month=stage.get('this_month', len(stage.get('unit_ids_this_month') or [])),
                          corrections=corrections, evidence_rows=evidence)
             if not stage_items and mine:
                 prev_stage = next((s for s in prev_c.get('stages', []) if s.get('stage_id') == sid), {})
@@ -104,13 +104,15 @@ def attach_contract_items(account, inputs):
                     description=f"{stage.get('title', '')} (שלב בלי סעיף)"), stage,
                     prev_cumulative_qty=prev, cumulative_qty=total, this_month_qty=total - prev,
                     prev_cumulative_amount=None, cumulative_amount=None, this_month_amount=None, **extra))
+            now_w = stage.get('unit_fractions') or {uid: 1 for uid in counted}
+            prev_w = stage.get('prev_fractions') or {uid: 1 for uid in still}
             for item in stage_items:
-                def sums(ids):
-                    quantities = [(item.get('qty_by_unit_type') or {}).get(tags.get(uid), item['qty']) for uid in ids]
-                    prices = [(item.get('price_by_unit_type') or {}).get(tags.get(uid), item.get('unit_price')) for uid in ids]
+                def sums(weights):
+                    quantities = [w * (item.get('qty_by_unit_type') or {}).get(tags.get(uid), item['qty']) for uid, w in sorted(weights.items())]
+                    prices = [(item.get('price_by_unit_type') or {}).get(tags.get(uid), item.get('unit_price')) for uid in sorted(weights)]
                     return sum(quantities), None if item.get('unit_price') is None else sum(q * p for q, p in zip(quantities, prices))
-                total, amount = sums(sorted(counted))
-                prev_qty, prev_amt = sums(sorted(still))
+                total, amount = sums(now_w)
+                prev_qty, prev_amt = sums(prev_w)
                 prior = prev_lines.get(item['id'])
                 if prior:
                     prev_qty, prev_amt = prior.get('cumulative_qty', 0), prior.get('cumulative_amount')

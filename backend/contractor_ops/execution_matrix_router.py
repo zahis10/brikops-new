@@ -204,6 +204,7 @@ def _summarize_cell(c):
         "status": c.get("status"),
         "text_value": c.get("text_value"),
         "note": c.get("note"),
+        "progress_pct": c.get("progress_pct"),
         "last_updated_at": c.get("last_updated_at"),
         "last_updated_by": c.get("last_updated_by"),
         "last_actor_name": last_audit.get("actor_name") if last_audit else None,
@@ -508,6 +509,7 @@ async def update_cell(
             status_code=400,
             detail=f"Status not in {MATRIX_STATUS_VALUES}",
         )
+    progress_pct = payload.progress_pct if new_status == 'partial' else None
 
     stage = next((s for s in visible_stages if s["id"] == stage_id), None)
     stage_type = (stage or {}).get("type", "status")
@@ -534,6 +536,8 @@ async def update_cell(
         "timestamp": now,
         "status_before": existing.get("status") if existing else None,
         "status_after": new_status,
+        "pct_before": existing.get("progress_pct") if existing else None,
+        "pct_after": progress_pct,
         "note_before": existing.get("note") if existing else None,
         "note_after": payload.note,
         "text_before": existing.get("text_value") if existing else None,
@@ -546,6 +550,7 @@ async def update_cell(
             {"project_id": project_id, "unit_id": unit_id, "stage_id": stage_id},
             {"$set": {
                 "status": new_status,
+                "progress_pct": progress_pct,
                 "note": payload.note,
                 "text_value": payload.text_value,
                 "audit": new_audit,
@@ -560,6 +565,7 @@ async def update_cell(
             "unit_id": unit_id,
             "stage_id": stage_id,
             "status": new_status,
+            "progress_pct": progress_pct,
             "note": payload.note,
             "text_value": payload.text_value,
             "audit": [audit_entry],
@@ -573,6 +579,7 @@ async def update_cell(
         "unit_id": unit_id,
         "stage_id": stage_id,
         "status": new_status,
+        "progress_pct": progress_pct,
         "note": payload.note,
         "text_value": payload.text_value,
         "last_updated_at": now,
