@@ -62,7 +62,7 @@ function ItemRow({ line, editable, projectId, account, onChanged, onEdit }) {
       </div>
       <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-slate-500">
         <span className="tabular-nums">
-          החודש {fixed ? `${line.units_this_month ?? 0} דירות` :
+          החודש {fixed ? `${fmt(line.units_this_month)} דירות` :
           <>
           {measured && editable ? <input type="number" inputMode="decimal" min="0" step="any"
             value={value} disabled={saving} aria-label="כמות החודש"

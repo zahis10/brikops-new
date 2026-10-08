@@ -34,18 +34,18 @@ export default function AccountAddSheet({ open, onOpenChange, contractor, onUnit
                 if (option.id === 'measured') { onMeasured(); onOpenChange(false); }
                 else setChoice(option.id);
               }}
-              className="min-h-[56px] w-full rounded-xl border border-slate-200 bg-white p-3 text-right flex items-center gap-3 disabled:opacity-50">
+              className={`min-h-[56px] w-full rounded-xl border border-slate-200 bg-white p-3 text-right flex items-center gap-3 disabled:opacity-50${choice === option.id ? ' border-2 border-amber-400 bg-amber-50' : choice ? ' opacity-50' : ''}`}>
               <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-800" aria-hidden="true">{option.icon}</span>
               <span><strong className="block text-sm text-slate-900">{option.title}</strong>
                 <span className="text-xs text-slate-500">{disabled ? 'אין שלבים משויכים לקבלן' : option.description}</span></span>
             </button>;
           })}
         </div>
-        {choice && <div>
-          <p className="mb-2 text-sm font-bold text-slate-700">באיזה שלב?</p>
+        {choice && <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-3">
+          <p className="mb-2 text-base font-bold text-amber-800">{choice === 'units' ? 'באיזה שלב לסמן דירות?' : 'על איזה שלב להגדיר תשלום?'}</p>
           <div className="flex flex-wrap gap-2">
             {stages.map((stage) => <button key={stage.stage_id} type="button" onClick={() => chooseStage(stage)}
-              className="min-h-[44px] rounded-full border border-amber-200 px-3 text-sm text-amber-800">{stage.title}</button>)}
+              className="min-h-[44px] rounded-full border border-amber-300 bg-white px-3 text-sm font-bold text-amber-800">{stage.title}</button>)}
           </div>
         </div>}
       </DialogContent>

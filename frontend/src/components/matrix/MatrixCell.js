@@ -28,6 +28,7 @@ export default function MatrixCell({ cell, stage, size = 'sm', onClick = null })
     const cfg = status ? MATRIX_STATUSES[status] : null;
     if (cfg) {
       const Icon = cfg.Icon;
+      const pct = cell?.progress_pct && !['completed', 'not_done', 'not_relevant'].includes(status) ? cell.progress_pct : 0;
       return (
         <div
           className={`relative flex items-center justify-center rounded-md border ${cfg.bg} ${cfg.text} ${cfg.border} ${
@@ -35,13 +36,14 @@ export default function MatrixCell({ cell, stage, size = 'sm', onClick = null })
           }`}
           title={
             cfg.label
+            + (pct ? ` ${pct}%` : '')
             + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')
             + (cell?.synced_from_qc ? ' • מסונכרן מבקרת ביצוע' : '')
             + (cell?.note ? `\n"${cell.note}"` : '')
           }
           dir="rtl"
         >
-          <Icon className={size === 'sm' ? 'w-4 h-4' : 'w-5 h-5'} />
+          {pct ? <span className="text-[10px] font-bold leading-none">{pct}%</span> : <Icon className={size === 'sm' ? 'w-4 h-4' : 'w-5 h-5'} />}
           {/* #503 — blue dot bottom-left when value came from QC sync. */}
           {cell?.synced_from_qc && (
             <span

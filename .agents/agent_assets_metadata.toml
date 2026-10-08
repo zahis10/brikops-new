@@ -1201,3 +1201,17 @@ mtime_ms = 1791460361194
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/ddbc3e1d-1f0e-4cd8-8e08-3c2d56998e01/b7ffccbb-f160-4012-879c-ced2862e371c"
 storage_version_token = "1791460370066159"
 content_type = "text/plain"
+
+[[outputs]]
+id = "ClO8ZfHa9alza4zJWt0ny"
+uri = "file://attached_assets/review-batch612b.txt"
+type = "text"
+title = "612-B — דוח frontend מלא"
+description = "קוד מלא, הבדלים, בדיקות ומגבלות האימות. כולל חריגת החיפוש בקובץ המסירות הקיים; review.txt לא שונה."
+logical_id = "eaff14f6-1e8e-41c6-ae7b-95a8acf0f63d"
+content_hash = "sha256:5185a3b3b86c7330c21aeff5b2cb54365d9c3570dc3ccd6375f938a9fb68ba23"
+size = 34810
+mtime_ms = 1791462767535
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/eaff14f6-1e8e-41c6-ae7b-95a8acf0f63d/15f74707-9900-49da-9f24-35ec3669295c"
+storage_version_token = "1791462769203240"
+content_type = "text/plain"

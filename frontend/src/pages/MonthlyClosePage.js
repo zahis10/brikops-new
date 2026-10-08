@@ -153,7 +153,7 @@ export default function MonthlyClosePage() {
               [account.kpis?.qc, 'אושרו בבקרת ביצוע'],
               [account.kpis?.manual, 'סומנו ידנית במטריצה'],
             ].map(([value, text]) => <div key={text} className="rounded-xl border border-slate-200 bg-white p-3 text-center shadow-sm">
-              <strong className="block text-2xl text-slate-900">{value || 0}</strong>
+              <strong className="block text-2xl text-slate-900">{new Intl.NumberFormat('he-IL', { maximumFractionDigits: 2 }).format(value || 0)}</strong>
               <span className="text-xs text-slate-500">{text}</span>
             </div>)}
           </div>}

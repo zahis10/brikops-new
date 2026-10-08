@@ -13,6 +13,7 @@ const label = (month) => month === 'baseline' ? 'לפני החשבון הראש�
   month && /^\d{4}-(0[1-9]|1[0-2])$/.test(month) ? `${MONTHS[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}` : '';
 // Dates arrive already formatted in Israel on the server; do not parse through a browser timezone.
 const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}` : '';
+const num = (n) => new Intl.NumberFormat('he-IL', { maximumFractionDigits: 2 }).format(n ?? 0);
 
 export default function ContractorAccountCard({ contractor, month, projectId, canExport, onExport, canWrite = false, onChanged = () => {} }) {
   const navigate = useNavigate();
@@ -51,7 +52,7 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
           {contractor.name} <ChevronDown className={`h-4 w-4 text-slate-400 ${expanded ? 'rotate-180' : ''}`} />
         </span>
         <span className={`rounded-full px-2 py-1 text-xs font-bold ${contractor.totals?.this_month ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
-          {expanded || contractor.totals?.this_month ? `החודש ${contractor.totals?.this_month || 0}` : `מצטבר ${cumulative}`}
+          {expanded || contractor.totals?.this_month ? `החודש ${num(contractor.totals?.this_month || 0)}` : `מצטבר ${num(cumulative)}`}
         </span>
       </button>
       {expanded && <>
@@ -59,11 +60,12 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
           <section key={stage.stage_id} className="border-t border-slate-100 py-4">
             <div className="flex flex-wrap items-center justify-between gap-1 text-sm">
               <strong className="text-slate-900">{stage.title}</strong>
-              <span className="text-slate-600">החודש <b>{stage.this_month}</b> · מצטבר {stage.cumulative}/{stage.total_units}</span>
+              <span className="text-slate-600">החודש <b>{num(stage.this_month)}</b> · מצטבר {num(stage.cumulative)}/{stage.total_units}</span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               {!!stage.qc_count && <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-800">{stage.qc_count} אושרו בבקרת ביצוע</span>}
               {!!stage.manual_count && <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-800">{stage.manual_count} סומנו ידנית</span>}
+              {!!stage.partial_count && <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-800">{stage.partial_count} חלקי</span>}
               <span className="text-slate-500">{stage.pct}%</span>
             </div>
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
@@ -77,6 +79,7 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
                   <button type="button" key={`${evidence.unit_id}-${index}`} onClick={() => openEvidence(evidence, stage)}
                     className="block w-full rounded p-1 text-right hover:bg-slate-100">
                     דירה {evidence.unit_no} · {dayMonth(evidence.completed_date_il)} · {evidence.actor_name}
+                    {!!evidence.prior_pct && <span className="text-slate-500"> · היה חלקי {evidence.prior_pct}% → {100 - evidence.prior_pct}%</span>}
                     <span className={`mr-2 rounded px-1.5 py-0.5 ${evidence.source === 'qc' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
                       {evidence.source === 'qc' ? 'בקרת ביצוע' : 'סימון ידני'}
                     </span>
@@ -90,6 +93,13 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
                 {fullStages[stage.stage_id] ? 'הצג פחות' : `עוד ${stage.evidence.length - 3} ›`}
               </button>}
             </div>}
+            {!!stage.partials?.length && <div className="mt-2 space-y-1 rounded-lg bg-amber-50 p-2 text-xs">
+              {stage.partials.map((row) => <button type="button" key={row.unit_id} onClick={() => openEvidence(row, stage)}
+                className="block w-full rounded p-1 text-right hover:bg-amber-100">
+                דירה {row.unit_no} · <b>חלקי {row.pct}%</b>{row.prior_pct ? ` (היה ${row.prior_pct}%)` : ''} · {dayMonth(row.updated_at)} · {row.actor_name}
+                <span className="mr-2 rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">סימון ידני</span>
+              </button>)}
+            </div>}
           </section>
         ))}
         <ContractItemsRows contractor={contractor} stage={null} account={month} projectId={projectId} canWrite={canWrite} onChanged={onChanged} />
@@ -97,8 +107,10 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
         {corrections.map((correction, index) => (
           <div key={`${correction.stage_id}-${correction.unit_id}-${index}`}
             className="my-2 rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900">
-            ⚠ תיקון: −1 · דירה {correction.unit_no} נפתחה מחדש בבקרת הביצוע ({correction.counted_in_month === 'baseline'
-              ? 'נספרה לפני החשבון הראשון ב-BrikOps' : `נספרה ב-${label(correction.counted_in_month)}`})
+            {correction.reason === 'partial_reduced'
+              ? `⚠ תיקון: −${Math.round(-correction.delta * 100)}% · דירה ${correction.unit_no} — חלקי ${correction.pct}% במקום ${correction.prior_pct}% שנספרו ב-${label(correction.counted_in_month)}`
+              : <>⚠ תיקון: −1 · דירה {correction.unit_no} נפתחה מחדש בבקרת הביצוע ({correction.counted_in_month === 'baseline'
+                ? 'נספרה לפני החשבון הראשון ב-BrikOps' : `נספרה ב-${label(correction.counted_in_month)}`})</>}
           </div>
         ))}
         <AccountMoneyTotal contractor={contractor} account={month} />
