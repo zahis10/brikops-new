@@ -10280,3 +10280,567 @@ $ wc -c /tmp/batch612a/review-section.txt
 monthly close: partial payment per apartment — 'partial' matrix cells carry progress_pct, the account counts fractions and pays only the difference (#612-A backend)
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#612-B (8.10)
+
+Frontend only — partial apartment payment in accounts; matrix percentage display is read-only.
+
+STEP 0
+$ wc -c review.txt
+556894 review.txt
+$ grep -n "^#612-A (8.10)" review.txt
+9776:#612-A (8.10)
+Backend prerequisite present. No Git command, backend edit, dependency change or deployment.
+review.txt is untouched. One standalone section for Zahi to append.
+
+IMPLEMENTATION
+F1: Partial draft Map, chooser with 25/50/75 and integer 1..99 validation, live share badges including QC intermediate states, mutually exclusive full/partial selection, floor full-selection clears drafts, unchanged percentages excluded. Draft removal cancels the pending percentage (does not erase a stored server share). Read-only and busy guards preserved. PUT bodies retain existing note or null. Sequential save/first-error stop, generation token, dirty ref, sheet-only reload and once-on-close account refresh retained. Sticky footer summarizes full/partial selections.
+F2–F4: Fractional counts formatted to two decimal places, partial count/evidence rows, prior-share completion annotation, partial-reduction correction label, fixed-price item count and KPI formatting. Existing reopened correction wording retained.
+F5: Chosen add option and stage choice visually emphasized, exact requested Hebrew prompts.
+F6: Matrix cell status span/title show percentage; edit dialog/status grid/data hook/page unchanged.
+
+V1 — full source and changed regions
+
+### frontend/src/components/monthly/StageUnitsSheet.js
+```javascript
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
+import { matrixService } from '../../services/matrixService';
+
+const compare = (a, b) => String(a ?? '').localeCompare(String(b ?? ''), 'he', { numeric: true });
+const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}` : '';
+const PICKS = [25, 50, 75];
+const livePct = (cell) => cell && !['completed', 'not_done', 'not_relevant'].includes(cell.status) && cell.progress_pct > 0 && cell.progress_pct < 100 ? cell.progress_pct : 0;
+
+export default function StageUnitsSheet({ open, onOpenChange, projectId, stage, contractor, account, canWrite, onChanged }) {
+  const navigate = useNavigate();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [buildingId, setBuildingId] = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [partial, setPartial] = useState(new Map());
+  const [picker, setPicker] = useState(null);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const generation = useRef(0);
+  const busy = useRef(false);
+  const dirty = useRef(false);
+  const changeOpen = (next) => {
+    if (busy.current) return;
+    onOpenChange(next);
+    if (!next && dirty.current) { dirty.current = false; onChanged(); }
+  };
+  const stageId = stage.stage_id;
+  const load = useCallback(async () => {
+    const token = ++generation.current;
+    setLoading(true); setFailed(false); setData(null); setSelected(new Set());
+    setPartial(new Map()); setPicker(null); setDraft('');
+    try {
+      const result = await matrixService.getMatrix(projectId);
+      if (generation.current !== token) return;
+      const buildings = [...(result.buildings || [])].sort((a, b) => compare(a.name, b.name) || compare(a.id, b.id));
+      setData(result);
+      setBuildingId((current) => buildings.some((building) => building.id === current) ? current : buildings[0]?.id ?? null);
+    } catch (error) {
+      if (generation.current === token) {
+        setFailed(true);
+        toast.error(error.response?.data?.detail || 'לא ניתן לטעון את הדירות');
+      }
+    } finally {
+      if (generation.current === token) setLoading(false);
+    }
+  }, [projectId]);
+  useEffect(() => {
+    if (open) { setBuildingId(null); load(); }
+    return () => { generation.current += 1; };
+  }, [open, stageId, load]);
+  const editable = !!(canWrite && account.status === 'open' && data?.permissions?.can_edit);
+  const buildings = [...(data?.buildings || [])].sort((a, b) => compare(a.name, b.name) || compare(a.id, b.id));
+  const floors = [...(data?.floors || [])].sort((a, b) => compare(a.floor_number, b.floor_number) || compare(a.id, b.id));
+  const cells = new Map((data?.cells || []).filter((cell) => cell.stage_id === stageId).map((cell) => [cell.unit_id, cell]));
+  const buildingOrder = new Map(buildings.map((building, index) => [building.id, index]));
+  const floorOrder = new Map(floors.map((floor, index) => [floor.id, index]));
+  const units = [...(data?.units || [])].sort((a, b) =>
+    (buildingOrder.get(a.building_id) ?? -1) - (buildingOrder.get(b.building_id) ?? -1) ||
+    (floorOrder.get(a.floor_id) ?? -1) - (floorOrder.get(b.floor_id) ?? -1) ||
+    compare(a.unit_no, b.unit_no) || compare(a.id, b.id));
+  const eligible = (unit) => !['completed', 'not_relevant'].includes(cells.get(unit.id)?.status);
+  const done = units.filter((unit) => cells.get(unit.id)?.status === 'completed').length;
+  const partialCount = units.filter((unit) => livePct(cells.get(unit.id))).length;
+  const toggle = (id) => {
+    if (!editable || busy.current) return;
+    setPartial((previous) => { const next = new Map(previous); next.delete(id); return next; });
+    setSelected((previous) => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  };
+  const selectFloor = (floorUnits) => {
+    if (!editable || busy.current) return;
+    setPartial((previous) => { const next = new Map(previous); floorUnits.filter(eligible).forEach((unit) => next.delete(unit.id)); return next; });
+    setSelected((previous) => new Set([...previous, ...floorUnits.filter(eligible).map((unit) => unit.id)]));
+  };
+  const openPicker = (id) => {
+    if (!editable || busy.current) return;
+    setPicker(id); setDraft(String(partial.get(id) || livePct(cells.get(id)) || ''));
+  };
+  const pick = (id, pct) => {
+    if (!editable || busy.current) return;
+    if (!Number.isInteger(pct) || pct < 1 || pct > 99) { toast.error('אחוז בין 1 ל-99'); return; }
+    setPartial((previous) => new Map(previous).set(id, pct));
+    setSelected((previous) => { const next = new Set(previous); next.delete(id); return next; });
+    setPicker(null); setDraft('');
+  };
+  const chosen = units.filter((unit) => eligible(unit) && (selected.has(unit.id) || (partial.has(unit.id) && partial.get(unit.id) !== livePct(cells.get(unit.id)))));
+  const full = chosen.filter((unit) => selected.has(unit.id)).length;
+  const part = chosen.length - full;
+  const save = async () => {
+    if (!editable || busy.current || !chosen.length) return;
+    busy.current = true; setSaving(true);
+    const token = generation.current;
+    let saved = 0;
+    let failure = null;
+    try {
+      for (const unit of chosen) {
+        try {
+          const cell = cells.get(unit.id);
+          const body = selected.has(unit.id)
+            ? { status: 'completed', note: cell?.note ?? null }
+            : { status: 'partial', progress_pct: partial.get(unit.id), note: cell?.note ?? null };
+          await matrixService.updateCell(projectId, unit.id, stageId, body);
+          saved += 1;
+          dirty.current = true;
+        } catch (error) { failure = error; break; }
+      }
+      if (generation.current !== token) return;
+      if (failure) toast.error(`${failure.response?.data?.detail || 'הסימון נכשל'} · נשמרו ${saved} דירות`);
+      else toast.success(`סומנו ${saved} דירות — נרשם במטריצה`);
+      if (saved > 0) {
+        // Refresh only the sheet; the account refreshes once on close.
+        setSelected(new Set()); setPartial(new Map());
+        await load();
+      }
+    } finally {
+      busy.current = false;
+      setSaving(false);
+    }
+  };
+  return (
+    <Dialog open={open} onOpenChange={changeOpen}>
+      <DialogContent dir="rtl" className="max-w-lg max-h-[90vh] overflow-y-auto text-right" aria-describedby={undefined}>
+        <DialogHeader className="text-right"><DialogTitle>{stage.title}</DialogTitle></DialogHeader>
+        {loading && <div role="status" aria-label="טוען דירות" className="animate-pulse space-y-3">
+          <div className="h-8 rounded-lg bg-slate-100" /><div className="h-12 rounded-lg bg-slate-100" /><div className="h-12 rounded-lg bg-slate-100" />
+        </div>}
+        {!loading && failed && <button type="button" disabled={saving} onClick={() => { if (!busy.current) load(); }}
+          className="min-h-[44px] text-amber-700">נסה שוב</button>}
+        {!loading && data && <>
+          <div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">{`${done} בוצעו · ${partialCount} חלקי · ${units.length - done - partialCount} לא`}</span>
+            {editable && <p className="mt-3 text-xs text-slate-600">✓ = בוצע, 100% מהמחיר לדירה. חלקי = משחררים חלק עכשיו — נרשם במטריצה ״חלקי N%״ (מי ומתי), וההמשך כשהדירה תסומן ״בוצע״.</p>}
+          </div>
+          {buildings.length > 1 && <div className="flex flex-wrap gap-2">
+            {buildings.map((building) => <button key={building.id} type="button" disabled={saving} aria-pressed={buildingId === building.id}
+              onClick={() => { if (!busy.current) setBuildingId(building.id); }}
+              className={`min-h-[44px] rounded-full border px-3 text-sm ${buildingId === building.id ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-600'}`}>{building.name}</button>)}
+          </div>}
+          {!units.length && <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">אין דירות להצגה</p>}
+          <div className="space-y-4" aria-label={`דירות בשלבי ${contractor.name}`}>
+            {floors.filter((floor) => floor.building_id === buildingId).map((floor) => {
+              const floorUnits = units.filter((unit) => unit.floor_id === floor.id && unit.building_id === buildingId);
+              return <section key={floor.id}>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-slate-700">קומה {floor.floor_number}</h3>
+                  {editable && <button type="button" disabled={saving || !floorUnits.some(eligible)} onClick={() => selectFloor(floorUnits)}
+                    className="min-h-[44px] text-xs text-amber-700 disabled:opacity-50">סמן את כל הקומה</button>}
+                </div>
+                {floorUnits.map((unit) => {
+                  const cell = cells.get(unit.id);
+                  const completed = cell?.status === 'completed';
+                  const irrelevant = cell?.status === 'not_relevant';
+                  return <React.Fragment key={unit.id}><div className="flex min-h-[44px] items-center justify-between gap-3 border-b border-slate-100 py-2 text-xs">
+                    <label className="flex items-center gap-2 text-slate-700">
+                      {completed ? <span className="text-emerald-600" aria-label="בוצע">✓</span> :
+                        !irrelevant && (editable ? <input type="checkbox" checked={selected.has(unit.id)} disabled={saving}
+                          onChange={() => toggle(unit.id)} className="h-4 w-4 accent-amber-500" /> : <span className="h-4 w-4 rounded border border-slate-300" />)}
+                      דירה {unit.unit_no}
+                    </label>
+                    <span className="flex items-center gap-2">
+                      {completed ? <span className="text-emerald-700">{`בוצע ${dayMonth(cell.last_updated_at)} · ${cell.synced_from_qc ? 'בקרת ביצוע' : 'סימון ידני'}`}</span> :
+                        irrelevant ? <span className="text-slate-500">לא רלוונטי</span> : <>
+                          {partial.has(unit.id) ? <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-bold text-amber-800">◔ {partial.get(unit.id)}%</span> :
+                            livePct(cell) ? <><span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-bold text-amber-800">◔ חלקי {livePct(cell)}%</span>
+                              <span className="text-slate-500">{dayMonth(cell.last_updated_at)} · {cell.last_actor_name || ''}</span></> :
+                              <span className="text-slate-500">{cell?.status === 'partial' ? 'חלקי — בלי אחוז' : 'לא בוצע'}</span>}
+                          {editable && <button type="button" disabled={saving} onClick={() => openPicker(unit.id)} className="min-h-[44px] text-amber-700 disabled:opacity-50">
+                            {partial.has(unit.id) || livePct(cell) ? 'שנה' : 'חלקי %'}</button>}
+                        </>}
+                    </span>
+                  </div>
+                    {editable && !completed && !irrelevant && picker === unit.id && <div className="mr-7 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs">
+                      <p className="mb-2 font-bold">כמה לשחרר על דירה {unit.unit_no}?</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {PICKS.map((pct) => <button key={pct} type="button" disabled={saving} onClick={() => pick(unit.id, pct)}
+                          className="min-h-[36px] rounded-full border border-amber-200 bg-white px-3 font-bold text-amber-800">{pct}%</button>)}
+                        <input type="number" inputMode="numeric" min="1" max="99" value={draft} disabled={saving} onChange={(event) => setDraft(event.target.value)} placeholder="אחר" aria-label="אחוז לשחרור"
+                          className="w-16 rounded-lg border border-amber-200 px-2 py-1 text-center font-bold" /> %
+                        <button type="button" disabled={saving} onClick={() => pick(unit.id, Number(draft))} className="min-h-[36px] font-bold text-amber-800">אישור</button>
+                        <button type="button" disabled={saving} onClick={() => { if (!busy.current) setPicker(null); }} className="min-h-[36px] text-slate-500">ביטול</button>
+                        {partial.has(unit.id) && <button type="button" disabled={saving} onClick={() => {
+                          if (busy.current) return;
+                          setPartial((previous) => { const next = new Map(previous); next.delete(unit.id); return next; }); setPicker(null); setDraft('');
+                        }} className="min-h-[36px] text-slate-500">הסר</button>}
+                      </div>
+                    </div>}
+                  </React.Fragment>;
+                })}
+              </section>;
+            })}
+          </div>
+        </>}
+        {!loading && data && <div className="sticky bottom-0 -mx-6 -mb-6 border-t border-slate-100 bg-white px-6 py-2">
+          {!!chosen.length && <p className="mb-2 text-xs text-slate-500">{`נבחרו ${chosen.length} דירות: ${full} בוצע · ${part} חלקי`}</p>}
+          {editable && <button type="button" onClick={save} disabled={!chosen.length || saving}
+            className="min-h-[48px] w-full rounded-lg bg-amber-500 font-bold text-white disabled:opacity-50">
+            {chosen.length ? `סמן ${chosen.length} דירות במטריצה` : 'בחר דירות ברשימה כדי לסמן'}</button>}
+          <button type="button" disabled={saving} onClick={() => { if (!busy.current) { changeOpen(false); navigate(`/projects/${projectId}/execution-matrix`); } }}
+            className="min-h-[44px] w-full text-sm text-amber-700 disabled:opacity-50">לפתוח את המטריצה המלאה ›</button>
+        </div>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+```
+
+### frontend/src/components/monthly/AccountAddSheet.js
+```javascript
+import React, { useEffect, useState } from 'react';
+import { House, Ruler } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
+
+export default function AccountAddSheet({ open, onOpenChange, contractor, onUnits, onTerms, onMeasured }) {
+  const [choice, setChoice] = useState(null);
+  const stages = contractor.stages || [];
+  useEffect(() => { if (open) setChoice(null); }, [open]);
+  const chooseStage = (stage) => {
+    if (choice === 'units') onUnits(stage);
+    else onTerms(stage);
+    onOpenChange(false);
+  };
+  const options = [
+    { id: 'units', icon: <House className="h-5 w-5" />, title: 'לסמן דירות שבוצעו',
+      description: 'בוחרים שלב, בניין וקומה ומסמנים דירות — נרשם במטריצה' },
+    { id: 'measured', icon: <Ruler className="h-5 w-5" />, title: 'להוסיף עבודה שלא במטריצה',
+      description: 'קירות תמך, חפירה… מקלידים כמה בוצע החודש' },
+    { id: 'terms', icon: '₪', title: 'להגדיר מה משלמים על שלב',
+      description: 'סכום קבוע לדירה או לפי כמות — פעם אחת לכל שלב' },
+  ];
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent dir="rtl" className="max-w-lg max-h-[90vh] overflow-y-auto text-right" aria-describedby={undefined}>
+        <DialogHeader className="text-right">
+          <DialogTitle>{`מה להוסיף לחשבון של ${contractor.name}?`}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2">
+          {options.map((option) => {
+            const disabled = option.id !== 'measured' && !stages.length;
+            return <button key={option.id} type="button" disabled={disabled}
+              aria-pressed={choice === option.id}
+              onClick={() => {
+                if (option.id === 'measured') { onMeasured(); onOpenChange(false); }
+                else setChoice(option.id);
+              }}
+              className={`min-h-[56px] w-full rounded-xl border border-slate-200 bg-white p-3 text-right flex items-center gap-3 disabled:opacity-50${choice === option.id ? ' border-2 border-amber-400 bg-amber-50' : choice ? ' opacity-50' : ''}`}>
+              <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-800" aria-hidden="true">{option.icon}</span>
+              <span><strong className="block text-sm text-slate-900">{option.title}</strong>
+                <span className="text-xs text-slate-500">{disabled ? 'אין שלבים משויכים לקבלן' : option.description}</span></span>
+            </button>;
+          })}
+        </div>
+        {choice && <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-3">
+          <p className="mb-2 text-base font-bold text-amber-800">{choice === 'units' ? 'באיזה שלב לסמן דירות?' : 'על איזה שלב להגדיר תשלום?'}</p>
+          <div className="flex flex-wrap gap-2">
+            {stages.map((stage) => <button key={stage.stage_id} type="button" onClick={() => chooseStage(stage)}
+              className="min-h-[44px] rounded-full border border-amber-300 bg-white px-3 text-sm font-bold text-amber-800">{stage.title}</button>)}
+          </div>
+        </div>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+```
+
+### frontend/src/components/matrix/MatrixCell.js
+```javascript
+import React from 'react';
+import { MATRIX_STATUSES, EMPTY_CELL_CONFIG } from './STATUS_CONFIG';
+
+export default function MatrixCell({ cell, stage, size = 'sm', onClick = null }) {
+  const isTag = stage?.type === 'tag';
+  const status = cell?.status;
+  const textValue = cell?.text_value;
+
+  const inner = (() => {
+    if (isTag) {
+      return (
+        <div
+          className={`flex items-center justify-center rounded-md border ${
+            textValue
+              ? 'bg-violet-50 text-violet-700 border-violet-200'
+              : `${EMPTY_CELL_CONFIG.bg} ${EMPTY_CELL_CONFIG.text} ${EMPTY_CELL_CONFIG.border}`
+          } ${size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'}`}
+          title={(textValue || 'ללא תגית') + (cell?.note ? `\n"${cell.note}"` : '')}
+          dir="rtl"
+        >
+          <span className="text-[10px] font-medium truncate px-1">
+            {textValue ? textValue.slice(0, 3) : '—'}
+          </span>
+        </div>
+      );
+    }
+
+    const cfg = status ? MATRIX_STATUSES[status] : null;
+    if (cfg) {
+      const Icon = cfg.Icon;
+      const pct = cell?.progress_pct && !['completed', 'not_done', 'not_relevant'].includes(status) ? cell.progress_pct : 0;
+      return (
+        <div
+          className={`relative flex items-center justify-center rounded-md border ${cfg.bg} ${cfg.text} ${cfg.border} ${
+            size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'
+          }`}
+          title={
+            cfg.label
+            + (pct ? ` ${pct}%` : '')
+            + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')
+            + (cell?.synced_from_qc ? ' • מסונכרן מבקרת ביצוע' : '')
+            + (cell?.note ? `\n"${cell.note}"` : '')
+          }
+          dir="rtl"
+        >
+          {pct ? <span className="text-[10px] font-bold leading-none">{pct}%</span> : <Icon className={size === 'sm' ? 'w-4 h-4' : 'w-5 h-5'} />}
+          {/* #503 — blue dot bottom-left when value came from QC sync. */}
+          {cell?.synced_from_qc && (
+            <span
+              aria-hidden="true"
+              className="absolute bottom-0.5 left-0.5 w-1.5 h-1.5 rounded-full bg-blue-500 ring-1 ring-white"
+            />
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div
+        className={`flex items-center justify-center rounded-md border ${EMPTY_CELL_CONFIG.bg} ${EMPTY_CELL_CONFIG.text} ${EMPTY_CELL_CONFIG.border} ${
+          size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'
+        }`}
+        title="לא סומן"
+        dir="rtl"
+      >
+        <span className="text-xs">—</span>
+      </div>
+    );
+  })();
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="cursor-pointer hover:opacity-80 active:scale-95 transition-all"
+        aria-label={`ערוך ${stage?.title || ''}`}
+      >
+        {inner}
+      </button>
+    );
+  }
+  return inner;
+}
+
+```
+
+### frontend/src/components/monthly/ContractorAccountCard.js — 3 lines of context
+```diff
+--- before/frontend/src/components/monthly/ContractorAccountCard.js
++++ after/frontend/src/components/monthly/ContractorAccountCard.js
+@@ -13,6 +13,7 @@
+   month && /^\d{4}-(0[1-9]|1[0-2])$/.test(month) ? `${MONTHS[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}` : '';
+ // Dates arrive already formatted in Israel on the server; do not parse through a browser timezone.
+ const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}` : '';
++const num = (n) => new Intl.NumberFormat('he-IL', { maximumFractionDigits: 2 }).format(n ?? 0);
+ 
+ export default function ContractorAccountCard({ contractor, month, projectId, canExport, onExport, canWrite = false, onChanged = () => {} }) {
+   const navigate = useNavigate();
+@@ -51,7 +52,7 @@
+           {contractor.name} <ChevronDown className={`h-4 w-4 text-slate-400 ${expanded ? 'rotate-180' : ''}`} />
+         </span>
+         <span className={`rounded-full px-2 py-1 text-xs font-bold ${contractor.totals?.this_month ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
+-          {expanded || contractor.totals?.this_month ? `החודש ${contractor.totals?.this_month || 0}` : `מצטבר ${cumulative}`}
++          {expanded || contractor.totals?.this_month ? `החודש ${num(contractor.totals?.this_month || 0)}` : `מצטבר ${num(cumulative)}`}
+         </span>
+       </button>
+       {expanded && <>
+@@ -59,11 +60,12 @@
+           <section key={stage.stage_id} className="border-t border-slate-100 py-4">
+             <div className="flex flex-wrap items-center justify-between gap-1 text-sm">
+               <strong className="text-slate-900">{stage.title}</strong>
+-              <span className="text-slate-600">החודש <b>{stage.this_month}</b> · מצטבר {stage.cumulative}/{stage.total_units}</span>
++              <span className="text-slate-600">החודש <b>{num(stage.this_month)}</b> · מצטבר {num(stage.cumulative)}/{stage.total_units}</span>
+             </div>
+             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+               {!!stage.qc_count && <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-800">{stage.qc_count} אושרו בבקרת ביצוע</span>}
+               {!!stage.manual_count && <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-800">{stage.manual_count} סומנו ידנית</span>}
++              {!!stage.partial_count && <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-800">{stage.partial_count} חלקי</span>}
+               <span className="text-slate-500">{stage.pct}%</span>
+             </div>
+             <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+@@ -77,6 +79,7 @@
+                   <button type="button" key={`${evidence.unit_id}-${index}`} onClick={() => openEvidence(evidence, stage)}
+                     className="block w-full rounded p-1 text-right hover:bg-slate-100">
+                     דירה {evidence.unit_no} · {dayMonth(evidence.completed_date_il)} · {evidence.actor_name}
++                    {!!evidence.prior_pct && <span className="text-slate-500"> · היה חלקי {evidence.prior_pct}% → {100 - evidence.prior_pct}%</span>}
+                     <span className={`mr-2 rounded px-1.5 py-0.5 ${evidence.source === 'qc' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                       {evidence.source === 'qc' ? 'בקרת ביצוע' : 'סימון ידני'}
+                     </span>
+@@ -90,6 +93,13 @@
+                 {fullStages[stage.stage_id] ? 'הצג פחות' : `עוד ${stage.evidence.length - 3} ›`}
+               </button>}
+             </div>}
++            {!!stage.partials?.length && <div className="mt-2 space-y-1 rounded-lg bg-amber-50 p-2 text-xs">
++              {stage.partials.map((row) => <button type="button" key={row.unit_id} onClick={() => openEvidence(row, stage)}
++                className="block w-full rounded p-1 text-right hover:bg-amber-100">
++                דירה {row.unit_no} · <b>חלקי {row.pct}%</b>{row.prior_pct ? ` (היה ${row.prior_pct}%)` : ''} · {dayMonth(row.updated_at)} · {row.actor_name}
++                <span className="mr-2 rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">סימון ידני</span>
++              </button>)}
++            </div>}
+           </section>
+         ))}
+         <ContractItemsRows contractor={contractor} stage={null} account={month} projectId={projectId} canWrite={canWrite} onChanged={onChanged} />
+@@ -97,8 +107,10 @@
+         {corrections.map((correction, index) => (
+           <div key={`${correction.stage_id}-${correction.unit_id}-${index}`}
+             className="my-2 rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900">
+-            ⚠ תיקון: −1 · דירה {correction.unit_no} נפתחה מחדש בבקרת הביצוע ({correction.counted_in_month === 'baseline'
+-              ? 'נספרה לפני החשבון הראשון ב-BrikOps' : `נספרה ב-${label(correction.counted_in_month)}`})
++            {correction.reason === 'partial_reduced'
++              ? `⚠ תיקון: −${Math.round(-correction.delta * 100)}% · דירה ${correction.unit_no} — חלקי ${correction.pct}% במקום ${correction.prior_pct}% שנספרו ב-${label(correction.counted_in_month)}`
++              : <>⚠ תיקון: −1 · דירה {correction.unit_no} נפתחה מחדש בבקרת הביצוע ({correction.counted_in_month === 'baseline'
++                ? 'נספרה לפני החשבון הראשון ב-BrikOps' : `נספרה ב-${label(correction.counted_in_month)}`})</>}
+           </div>
+         ))}
+         <AccountMoneyTotal contractor={contractor} account={month} />
+
+```
+
+### frontend/src/components/monthly/ContractItemsRows.js — 3 lines of context
+```diff
+--- before/frontend/src/components/monthly/ContractItemsRows.js
++++ after/frontend/src/components/monthly/ContractItemsRows.js
+@@ -62,7 +62,7 @@
+       </div>
+       <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-slate-500">
+         <span className="tabular-nums">
+-          החודש {fixed ? `${line.units_this_month ?? 0} דירות` :
++          החודש {fixed ? `${fmt(line.units_this_month)} דירות` :
+           <>
+           {measured && editable ? <input type="number" inputMode="decimal" min="0" step="any"
+             value={value} disabled={saving} aria-label="כמות החודש"
+
+```
+
+### frontend/src/pages/MonthlyClosePage.js — 3 lines of context
+```diff
+--- before/frontend/src/pages/MonthlyClosePage.js
++++ after/frontend/src/pages/MonthlyClosePage.js
+@@ -153,7 +153,7 @@
+               [account.kpis?.qc, 'אושרו בבקרת ביצוע'],
+               [account.kpis?.manual, 'סומנו ידנית במטריצה'],
+             ].map(([value, text]) => <div key={text} className="rounded-xl border border-slate-200 bg-white p-3 text-center shadow-sm">
+-              <strong className="block text-2xl text-slate-900">{value || 0}</strong>
++              <strong className="block text-2xl text-slate-900">{new Intl.NumberFormat('he-IL', { maximumFractionDigits: 2 }).format(value || 0)}</strong>
+               <span className="text-xs text-slate-500">{text}</span>
+             </div>)}
+           </div>}
+
+```
+
+$ wc -l frontend/src/components/monthly/StageUnitsSheet.js frontend/src/components/monthly/AccountAddSheet.js frontend/src/components/matrix/MatrixCell.js frontend/src/components/monthly/ContractorAccountCard.js frontend/src/components/monthly/ContractItemsRows.js frontend/src/pages/MonthlyClosePage.js
+  206 frontend/src/components/monthly/StageUnitsSheet.js
+   54 frontend/src/components/monthly/AccountAddSheet.js
+   84 frontend/src/components/matrix/MatrixCell.js
+  127 frontend/src/components/monthly/ContractorAccountCard.js
+  100 frontend/src/components/monthly/ContractItemsRows.js
+  188 frontend/src/pages/MonthlyClosePage.js
+  759 total
+
+Line caps: StageUnitsSheet 206 ≤235; ContractorAccountCard 127 ≤140; MatrixCell 84 ≤90.
+
+SHA-256 manifest comparison:
+Exactly 6 frontend/src files modified; no files added/deleted:
+frontend/src/components/matrix/MatrixCell.js
+frontend/src/components/monthly/AccountAddSheet.js
+frontend/src/components/monthly/ContractItemsRows.js
+frontend/src/components/monthly/ContractorAccountCard.js
+frontend/src/components/monthly/StageUnitsSheet.js
+frontend/src/pages/MonthlyClosePage.js
+All backend source and remaining frontend/src files unchanged.
+Generated __pycache__/.pytest_cache excluded.
+BYTE-IDENTICAL: frontend/src/components/matrix/CellEditDialog.js
+BYTE-IDENTICAL: frontend/src/hooks/useMatrixData.js
+BYTE-IDENTICAL: frontend/src/pages/ExecutionMatrixPage.js
+BYTE-IDENTICAL: frontend/src/components/matrix/StatusButtonGrid.js
+BYTE-IDENTICAL: frontend/src/pages/HandoverOverviewPage.js
+review.txt byte-identical: 556894 bytes.
+Before/after manifests: /tmp/batch612b/source.before.sha256 and source.after.sha256
+
+V2 — fresh verification
+$ cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+EXIT 0
+Compiled successfully. Done in 27.66s. Zero compiler/lint warnings.
+Console notices were not zero: existing Node DEP0176 fs.F_OK deprecation and outdated Browserslist/caniuse-lite notices appeared. No suppression, package update or harness repair.
+Full build log: /tmp/batch612b/build.log
+
+$ cd frontend && CI=true yarn test --watchAll=false
+EXIT 1 — libuuid.so.1 missing; 8 suites failed before running, 0 tests, 1.943s.
+
+$ grep -rln 'progress_pct' frontend/src
+frontend/src/components/matrix/MatrixCell.js
+frontend/src/components/monthly/StageUnitsSheet.js
+frontend/src/pages/HandoverOverviewPage.js
+EXIT 0
+
+$ grep -rn 'כמה לשחרר' frontend/src
+frontend/src/components/monthly/StageUnitsSheet.js:175:                      <p className="mb-2 font-bold">כמה לשחרר על דירה {unit.unit_no}?</p>
+EXIT 0
+
+$ grep -rn 'בק״ב\|בק"ב' frontend/src/components/monthly frontend/src/components/matrix
+(no output)
+EXIT 1
+
+GREP EXPECTATION EXCEPTION: progress_pct returns THREE paths, not two. The third is the pre-existing frontend/src/pages/HandoverOverviewPage.js (lines 439 and 442). Its SHA-256 is identical before/after. Only StageUnitsSheet and MatrixCell gained progress_pct in this change; the unrelated handover code was not modified to force an artificial grep result.
+
+Supplemental source-handler-only checks (not Jest, not browser V3):
+PASS selection: mutually exclusive full/partial, floor clears drafts, unchanged share excluded, invalid integer/range rejected, completed/irrelevant excluded
+PASS read-only: picker, selection and writes guarded
+PASS sequential save: note-preserving partial/full payloads, busy close blocked, reload sheet only, exactly one refresh on dirty close
+PASS failure: stop first error, partial-success reload/dirty close, zero-success retains drafts without account refresh
+Handler-only checks from current source; not a browser or staging V3 test.
+
+V3 — not run — local harness.
+The configured Start application workflow restart failed: /tmp/batch606/normal-launch.sh is missing. The app-preview screenshot failed with ERR_CONNECTION_REFUSED at port 5000. No workflow/harness repair.
+Zahi verifies on staging: account stage → apartments → apartment 14 partial 50% → save one apartment → saved partial badge, account fraction and amount, matrix 50% → full check marks completed. Prior-share evidence annotation only after a month with 50% was closed. These are staging acceptance steps, not claimed browser results.
+Verification build kept in /tmp/batch612b/verified-build; original frontend/build restored from its snapshot. No deployment.
+
+V4 — review preservation
+$ cmp review.txt /tmp/batch612b/review.original.txt
+EXIT 0 — byte-identical
+$ wc -c review.txt
+556894 review.txt
+$ wc -c /tmp/batch612b/review-section.txt
+34810 /tmp/batch612b/review-section.txt
+
+.local/.commit_message:
+monthly close: partial payment per apartment in the UI — "חלקי %" in the apartments sheet and the matrix cell, fractional counts and partial rows in the account (#612-B frontend)
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
