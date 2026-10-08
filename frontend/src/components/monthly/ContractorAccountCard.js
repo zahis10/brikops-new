@@ -58,7 +58,7 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
         {rows.map((stage) => (
           <section key={stage.stage_id} className="border-t border-slate-100 py-4">
             <div className="flex flex-wrap items-center justify-between gap-1 text-sm">
-              <button type="button" onClick={() => setUnitsStage(stage)} className="font-bold text-amber-800 underline decoration-dotted underline-offset-4 text-right">{stage.title} ›</button>
+              <strong className="text-slate-900">{stage.title}</strong>
               <span className="text-slate-600">החודש <b>{stage.this_month}</b> · מצטבר {stage.cumulative}/{stage.total_units}</span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
@@ -69,6 +69,7 @@ export default function ContractorAccountCard({ contractor, month, projectId, ca
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
               <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(stage.pct || 0, 100))}%` }} />
             </div>
+            {canWrite && month.status === 'open' && <button type="button" onClick={() => setUnitsStage(stage)} className="mt-1 min-h-[44px] font-bold text-amber-700">✓ סמן דירות שבוצעו ›</button>}
             <ContractItemsRows contractor={contractor} stage={stage} account={month} projectId={projectId} canWrite={canWrite} onChanged={onChanged} />
             {!!stage.evidence?.length && <div className="mt-3 rounded-lg bg-slate-50 p-2 text-xs">
               <div className={fullStages[stage.stage_id] ? 'max-h-60 space-y-2 overflow-y-auto' : 'space-y-2'}>

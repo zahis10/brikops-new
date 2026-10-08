@@ -141,11 +141,14 @@ export default function StageUnitsSheet({ open, onOpenChange, projectId, stage, 
               </section>;
             })}
           </div>
-          {editable && <button type="button" onClick={save} disabled={!chosen.length || saving}
-            className="min-h-[44px] w-full rounded-lg bg-amber-500 font-bold text-white disabled:opacity-50">{`סמן ${chosen.length} דירות כבוצע במטריצה`}</button>}
         </>}
-        <button type="button" disabled={saving} onClick={() => { if (!busy.current) { changeOpen(false); navigate(`/projects/${projectId}/execution-matrix`); } }}
-          className="min-h-[44px] text-sm text-amber-700 disabled:opacity-50">לפתוח את המטריצה המלאה ›</button>
+        {!loading && data && <div className="sticky bottom-0 -mx-6 -mb-6 border-t border-slate-100 bg-white px-6 py-2">
+          {editable && <button type="button" onClick={save} disabled={!chosen.length || saving}
+            className="min-h-[48px] w-full rounded-lg bg-amber-500 font-bold text-white disabled:opacity-50">
+            {chosen.length ? `סמן ${chosen.length} דירות כבוצע במטריצה` : 'בחר דירות ברשימה כדי לסמן'}</button>}
+          <button type="button" disabled={saving} onClick={() => { if (!busy.current) { changeOpen(false); navigate(`/projects/${projectId}/execution-matrix`); } }}
+            className="min-h-[44px] w-full text-sm text-amber-700 disabled:opacity-50">לפתוח את המטריצה המלאה ›</button>
+        </div>}
       </DialogContent>
     </Dialog>
   );

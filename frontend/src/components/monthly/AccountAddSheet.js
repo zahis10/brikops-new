@@ -12,11 +12,11 @@ export default function AccountAddSheet({ open, onOpenChange, contractor, onUnit
     onOpenChange(false);
   };
   const options = [
-    { id: 'units', icon: <House className="h-5 w-5" />, title: 'דירות שבוצעו',
-      description: 'בוחרים שלב ומסמנים דירות — הסימון נרשם במטריצה' },
-    { id: 'measured', icon: <Ruler className="h-5 w-5" />, title: 'עבודה שלא במטריצה',
+    { id: 'units', icon: <House className="h-5 w-5" />, title: 'לסמן דירות שבוצעו',
+      description: 'בוחרים שלב, בניין וקומה ומסמנים דירות — נרשם במטריצה' },
+    { id: 'measured', icon: <Ruler className="h-5 w-5" />, title: 'להוסיף עבודה שלא במטריצה',
       description: 'קירות תמך, חפירה… מקלידים כמה בוצע החודש' },
-    { id: 'terms', icon: '₪', title: 'מה משלמים על שלב',
+    { id: 'terms', icon: '₪', title: 'להגדיר מה משלמים על שלב',
       description: 'סכום קבוע לדירה או לפי כמות — פעם אחת לכל שלב' },
   ];
   return (

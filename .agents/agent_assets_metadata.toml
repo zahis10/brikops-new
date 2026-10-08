@@ -1173,3 +1173,17 @@ mtime_ms = 1791445306115
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/de84dacb-e4a1-4b93-8a4a-d29059cd80fd/d8d21be9-1455-48f3-ae19-d7e9d67d24c0"
 storage_version_token = "1791445307859805"
 content_type = "text/plain"
+
+[[outputs]]
+id = "K_mWM2thJjtJ1x_Cid2r9"
+uri = "file://attached_assets/review-batch610-fix4.txt"
+type = "text"
+title = "FIX-4 — דוח מלא"
+description = "סעיף הדוח המלא לצירוף: קוד, הבדלים, היקף השינויים ותוצאות הבדיקות. review.txt לא שונה."
+logical_id = "09ad642b-c0be-4018-a841-db77e207d578"
+content_hash = "sha256:7da8f5c52e4b3b83f878130ced9934fb7a988187816f1e0b6b563a7143c746f7"
+size = 18262
+mtime_ms = 1791448309355
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/09ad642b-c0be-4018-a841-db77e207d578/88bb99b5-c207-4bd7-92b5-9b8c8806d857"
+storage_version_token = "1791448311419922"
+content_type = "text/plain"
