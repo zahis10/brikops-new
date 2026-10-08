@@ -17,6 +17,12 @@ export default function StageUnitsSheet({ open, onOpenChange, projectId, stage, 
   const [saving, setSaving] = useState(false);
   const generation = useRef(0);
   const busy = useRef(false);
+  const dirty = useRef(false);
+  const changeOpen = (next) => {
+    if (busy.current) return;
+    onOpenChange(next);
+    if (!next && dirty.current) { dirty.current = false; onChanged(); }
+  };
   const stageId = stage.stage_id;
   const load = useCallback(async () => {
     const token = ++generation.current;
@@ -72,18 +78,16 @@ export default function StageUnitsSheet({ open, onOpenChange, projectId, stage, 
         try {
           await matrixService.updateCell(projectId, unit.id, stageId, { status: 'completed' });
           saved += 1;
+          dirty.current = true;
         } catch (error) { failure = error; break; }
       }
       if (generation.current !== token) return;
       if (failure) toast.error(`${failure.response?.data?.detail || 'הסימון נכשל'} · נשמרו ${saved} דירות`);
       else toast.success(`סומנו ${saved} דירות — נרשם במטריצה`);
       if (saved > 0) {
-        // Clear selections before either refresh, including partial success.
+        // Refresh only the sheet; the account refreshes once on close.
         setSelected(new Set());
-        await Promise.all([
-          load(),
-          Promise.resolve().then(() => onChanged()).catch(() => toast.error('לא ניתן לרענן את החשבון')),
-        ]);
+        await load();
       }
     } finally {
       busy.current = false;
@@ -91,7 +95,7 @@ export default function StageUnitsSheet({ open, onOpenChange, projectId, stage, 
     }
   };
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!busy.current) onOpenChange(next); }}>
+    <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent dir="rtl" className="max-w-lg max-h-[90vh] overflow-y-auto text-right" aria-describedby={undefined}>
         <DialogHeader className="text-right"><DialogTitle>{stage.title}</DialogTitle></DialogHeader>
         {loading && <div role="status" aria-label="טוען דירות" className="animate-pulse space-y-3">
@@ -140,7 +144,7 @@ export default function StageUnitsSheet({ open, onOpenChange, projectId, stage, 
           {editable && <button type="button" onClick={save} disabled={!chosen.length || saving}
             className="min-h-[44px] w-full rounded-lg bg-amber-500 font-bold text-white disabled:opacity-50">{`סמן ${chosen.length} דירות כבוצע במטריצה`}</button>}
         </>}
-        <button type="button" disabled={saving} onClick={() => { if (!busy.current) navigate(`/projects/${projectId}/execution-matrix`); }}
+        <button type="button" disabled={saving} onClick={() => { if (!busy.current) { changeOpen(false); navigate(`/projects/${projectId}/execution-matrix`); } }}
           className="min-h-[44px] text-sm text-amber-700 disabled:opacity-50">לפתוח את המטריצה המלאה ›</button>
       </DialogContent>
     </Dialog>

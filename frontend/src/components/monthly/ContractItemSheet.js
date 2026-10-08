@@ -22,6 +22,7 @@ export default function ContractItemSheet({ open, onOpenChange, projectId, contr
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [createdId, setCreatedId] = useState(null);
   const generation = useRef(0);
   const busy = useRef(false);
   const itemId = item?.item_id;
@@ -31,6 +32,7 @@ export default function ContractItemSheet({ open, onOpenChange, projectId, contr
     const token = ++generation.current;
     if (!open) return undefined;
     setLoading(true); setFailed(false); setData(null); setForm(null); setExpanded(false); setSaving(false);
+    setCreatedId(null);
     const load = async () => {
       try {
         const result = await contractItemsService.list(projectId);
@@ -86,8 +88,9 @@ export default function ContractItemSheet({ open, onOpenChange, projectId, contr
         qty_by_unit_type: quantities, unit_price: price, price_by_unit_type: prices };
       if (itemId) await contractItemsService.update(projectId, itemId, body);
       else {
-        const created = await contractItemsService.create(projectId, body);
-        if (!stage && Number(form.measuredQty) > 0) await contractItemsService.setMeasurement(projectId, created.id, month, {
+        let id = createdId;
+        if (!id) { const created = await contractItemsService.create(projectId, body); id = created.id; setCreatedId(id); }
+        if (!stage && Number(form.measuredQty) > 0) await contractItemsService.setMeasurement(projectId, id, month, {
           qty: Number(form.measuredQty), note: form.note,
         });
       }
