@@ -9457,3 +9457,318 @@ monthly close: one "+ הוספה לחשבון" per contractor; stage title opens
 No Git commands, deployment, backend edits, review.txt edits or new dependencies.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#610-FIX-4 (8.10)
+
+Frontend only. Explicit per-stage action, sticky apartment-sheet footer, and verb-led add options.
+
+STEP 0
+$ wc -c review.txt
+510945 review.txt
+Under 2 MB. No git command, no deployment, no backend edits, no dependencies or harness repairs.
+review.txt was not edited; this standalone section is for Zahi to append.
+
+V1 — source and scope
+
+### frontend/src/components/monthly/StageUnitsSheet.js
+```javascript
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
+import { matrixService } from '../../services/matrixService';
+
+const compare = (a, b) => String(a ?? '').localeCompare(String(b ?? ''), 'he', { numeric: true });
+const dayMonth = (date) => date ? `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}` : '';
+
+export default function StageUnitsSheet({ open, onOpenChange, projectId, stage, contractor, account, canWrite, onChanged }) {
+  const navigate = useNavigate();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [buildingId, setBuildingId] = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [saving, setSaving] = useState(false);
+  const generation = useRef(0);
+  const busy = useRef(false);
+  const dirty = useRef(false);
+  const changeOpen = (next) => {
+    if (busy.current) return;
+    onOpenChange(next);
+    if (!next && dirty.current) { dirty.current = false; onChanged(); }
+  };
+  const stageId = stage.stage_id;
+  const load = useCallback(async () => {
+    const token = ++generation.current;
+    setLoading(true); setFailed(false); setData(null); setSelected(new Set());
+    try {
+      const result = await matrixService.getMatrix(projectId);
+      if (generation.current !== token) return;
+      const buildings = [...(result.buildings || [])].sort((a, b) => compare(a.name, b.name) || compare(a.id, b.id));
+      setData(result);
+      setBuildingId((current) => buildings.some((building) => building.id === current) ? current : buildings[0]?.id ?? null);
+    } catch (error) {
+      if (generation.current === token) {
+        setFailed(true);
+        toast.error(error.response?.data?.detail || 'לא ניתן לטעון את הדירות');
+      }
+    } finally {
+      if (generation.current === token) setLoading(false);
+    }
+  }, [projectId]);
+  useEffect(() => {
+    if (open) { setBuildingId(null); load(); }
+    return () => { generation.current += 1; };
+  }, [open, stageId, load]);
+  const editable = !!(canWrite && account.status === 'open' && data?.permissions?.can_edit);
+  const buildings = [...(data?.buildings || [])].sort((a, b) => compare(a.name, b.name) || compare(a.id, b.id));
+  const floors = [...(data?.floors || [])].sort((a, b) => compare(a.floor_number, b.floor_number) || compare(a.id, b.id));
+  const cells = new Map((data?.cells || []).filter((cell) => cell.stage_id === stageId).map((cell) => [cell.unit_id, cell]));
+  const buildingOrder = new Map(buildings.map((building, index) => [building.id, index]));
+  const floorOrder = new Map(floors.map((floor, index) => [floor.id, index]));
+  const units = [...(data?.units || [])].sort((a, b) =>
+    (buildingOrder.get(a.building_id) ?? -1) - (buildingOrder.get(b.building_id) ?? -1) ||
+    (floorOrder.get(a.floor_id) ?? -1) - (floorOrder.get(b.floor_id) ?? -1) ||
+    compare(a.unit_no, b.unit_no) || compare(a.id, b.id));
+  const eligible = (unit) => !['completed', 'not_relevant'].includes(cells.get(unit.id)?.status);
+  const done = units.filter((unit) => cells.get(unit.id)?.status === 'completed').length;
+  const toggle = (id) => {
+    if (!editable || busy.current) return;
+    setSelected((previous) => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  };
+  const selectFloor = (floorUnits) => {
+    if (!editable || busy.current) return;
+    setSelected((previous) => new Set([...previous, ...floorUnits.filter(eligible).map((unit) => unit.id)]));
+  };
+  const chosen = units.filter((unit) => selected.has(unit.id) && eligible(unit));
+  const save = async () => {
+    if (!editable || busy.current || !chosen.length) return;
+    busy.current = true; setSaving(true);
+    const token = generation.current;
+    let saved = 0;
+    let failure = null;
+    try {
+      for (const unit of chosen) {
+        try {
+          await matrixService.updateCell(projectId, unit.id, stageId, { status: 'completed' });
+          saved += 1;
+          dirty.current = true;
+        } catch (error) { failure = error; break; }
+      }
+      if (generation.current !== token) return;
+      if (failure) toast.error(`${failure.response?.data?.detail || 'הסימון נכשל'} · נשמרו ${saved} דירות`);
+      else toast.success(`סומנו ${saved} דירות — נרשם במטריצה`);
+      if (saved > 0) {
+        // Refresh only the sheet; the account refreshes once on close.
+        setSelected(new Set());
+        await load();
+      }
+    } finally {
+      busy.current = false;
+      setSaving(false);
+    }
+  };
+  return (
+    <Dialog open={open} onOpenChange={changeOpen}>
+      <DialogContent dir="rtl" className="max-w-lg max-h-[90vh] overflow-y-auto text-right" aria-describedby={undefined}>
+        <DialogHeader className="text-right"><DialogTitle>{stage.title}</DialogTitle></DialogHeader>
+        {loading && <div role="status" aria-label="טוען דירות" className="animate-pulse space-y-3">
+          <div className="h-8 rounded-lg bg-slate-100" /><div className="h-12 rounded-lg bg-slate-100" /><div className="h-12 rounded-lg bg-slate-100" />
+        </div>}
+        {!loading && failed && <button type="button" disabled={saving} onClick={() => { if (!busy.current) load(); }}
+          className="min-h-[44px] text-amber-700">נסה שוב</button>}
+        {!loading && data && <>
+          <div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">{`${done} בוצעו · ${units.length - done} לא`}</span>
+            {editable && <p className="mt-3 text-xs text-slate-600">דירה שתסמן כאן נרשמת במטריצה כסימון ידני (מי ומתי) ונכנסת לחשבון של {account.label}.</p>}
+          </div>
+          {buildings.length > 1 && <div className="flex flex-wrap gap-2">
+            {buildings.map((building) => <button key={building.id} type="button" disabled={saving} aria-pressed={buildingId === building.id}
+              onClick={() => { if (!busy.current) setBuildingId(building.id); }}
+              className={`min-h-[44px] rounded-full border px-3 text-sm ${buildingId === building.id ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-600'}`}>{building.name}</button>)}
+          </div>}
+          {!units.length && <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">אין דירות להצגה</p>}
+          <div className="space-y-4" aria-label={`דירות בשלבי ${contractor.name}`}>
+            {floors.filter((floor) => floor.building_id === buildingId).map((floor) => {
+              const floorUnits = units.filter((unit) => unit.floor_id === floor.id && unit.building_id === buildingId);
+              return <section key={floor.id}>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-slate-700">קומה {floor.floor_number}</h3>
+                  {editable && <button type="button" disabled={saving || !floorUnits.some(eligible)} onClick={() => selectFloor(floorUnits)}
+                    className="min-h-[44px] text-xs text-amber-700 disabled:opacity-50">סמן את כל הקומה</button>}
+                </div>
+                {floorUnits.map((unit) => {
+                  const cell = cells.get(unit.id);
+                  const completed = cell?.status === 'completed';
+                  const irrelevant = cell?.status === 'not_relevant';
+                  return <div key={unit.id} className="flex min-h-[44px] items-center justify-between gap-3 border-b border-slate-100 py-2 text-xs">
+                    <label className="flex items-center gap-2 text-slate-700">
+                      {completed ? <span className="text-emerald-600" aria-label="בוצע">✓</span> :
+                        !irrelevant && (editable ? <input type="checkbox" checked={selected.has(unit.id)} disabled={saving}
+                          onChange={() => toggle(unit.id)} className="h-4 w-4 accent-amber-500" /> : <span className="h-4 w-4 rounded border border-slate-300" />)}
+                      דירה {unit.unit_no}
+                    </label>
+                    <span className={completed ? 'text-emerald-700' : 'text-slate-500'}>
+                      {completed ? `בוצע ${dayMonth(cell.last_updated_at)} · ${cell.synced_from_qc ? 'בקרת ביצוע' : 'סימון ידני'}` : irrelevant ? 'לא רלוונטי' : 'לא בוצע'}
+                    </span>
+                  </div>;
+                })}
+              </section>;
+            })}
+          </div>
+        </>}
+        {!loading && data && <div className="sticky bottom-0 -mx-6 -mb-6 border-t border-slate-100 bg-white px-6 py-2">
+          {editable && <button type="button" onClick={save} disabled={!chosen.length || saving}
+            className="min-h-[48px] w-full rounded-lg bg-amber-500 font-bold text-white disabled:opacity-50">
+            {chosen.length ? `סמן ${chosen.length} דירות כבוצע במטריצה` : 'בחר דירות ברשימה כדי לסמן'}</button>}
+          <button type="button" disabled={saving} onClick={() => { if (!busy.current) { changeOpen(false); navigate(`/projects/${projectId}/execution-matrix`); } }}
+            className="min-h-[44px] w-full text-sm text-amber-700 disabled:opacity-50">לפתוח את המטריצה המלאה ›</button>
+        </div>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+```
+
+### frontend/src/components/monthly/AccountAddSheet.js
+```javascript
+import React, { useEffect, useState } from 'react';
+import { House, Ruler } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
+
+export default function AccountAddSheet({ open, onOpenChange, contractor, onUnits, onTerms, onMeasured }) {
+  const [choice, setChoice] = useState(null);
+  const stages = contractor.stages || [];
+  useEffect(() => { if (open) setChoice(null); }, [open]);
+  const chooseStage = (stage) => {
+    if (choice === 'units') onUnits(stage);
+    else onTerms(stage);
+    onOpenChange(false);
+  };
+  const options = [
+    { id: 'units', icon: <House className="h-5 w-5" />, title: 'לסמן דירות שבוצעו',
+      description: 'בוחרים שלב, בניין וקומה ומסמנים דירות — נרשם במטריצה' },
+    { id: 'measured', icon: <Ruler className="h-5 w-5" />, title: 'להוסיף עבודה שלא במטריצה',
+      description: 'קירות תמך, חפירה… מקלידים כמה בוצע החודש' },
+    { id: 'terms', icon: '₪', title: 'להגדיר מה משלמים על שלב',
+      description: 'סכום קבוע לדירה או לפי כמות — פעם אחת לכל שלב' },
+  ];
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent dir="rtl" className="max-w-lg max-h-[90vh] overflow-y-auto text-right" aria-describedby={undefined}>
+        <DialogHeader className="text-right">
+          <DialogTitle>{`מה להוסיף לחשבון של ${contractor.name}?`}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2">
+          {options.map((option) => {
+            const disabled = option.id !== 'measured' && !stages.length;
+            return <button key={option.id} type="button" disabled={disabled}
+              aria-pressed={choice === option.id}
+              onClick={() => {
+                if (option.id === 'measured') { onMeasured(); onOpenChange(false); }
+                else setChoice(option.id);
+              }}
+              className="min-h-[56px] w-full rounded-xl border border-slate-200 bg-white p-3 text-right flex items-center gap-3 disabled:opacity-50">
+              <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-800" aria-hidden="true">{option.icon}</span>
+              <span><strong className="block text-sm text-slate-900">{option.title}</strong>
+                <span className="text-xs text-slate-500">{disabled ? 'אין שלבים משויכים לקבלן' : option.description}</span></span>
+            </button>;
+          })}
+        </div>
+        {choice && <div>
+          <p className="mb-2 text-sm font-bold text-slate-700">באיזה שלב?</p>
+          <div className="flex flex-wrap gap-2">
+            {stages.map((stage) => <button key={stage.stage_id} type="button" onClick={() => chooseStage(stage)}
+              className="min-h-[44px] rounded-full border border-amber-200 px-3 text-sm text-amber-800">{stage.title}</button>)}
+          </div>
+        </div>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+```
+
+### frontend/src/components/monthly/ContractorAccountCard.js — changed regions with 3 context lines
+```diff
+--- before/ContractorAccountCard.js
++++ after/ContractorAccountCard.js
+@@ -58,7 +58,7 @@
+         {rows.map((stage) => (
+           <section key={stage.stage_id} className="border-t border-slate-100 py-4">
+             <div className="flex flex-wrap items-center justify-between gap-1 text-sm">
+-              <button type="button" onClick={() => setUnitsStage(stage)} className="font-bold text-amber-800 underline decoration-dotted underline-offset-4 text-right">{stage.title} ›</button>
++              <strong className="text-slate-900">{stage.title}</strong>
+               <span className="text-slate-600">החודש <b>{stage.this_month}</b> · מצטבר {stage.cumulative}/{stage.total_units}</span>
+             </div>
+             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+@@ -69,6 +69,7 @@
+             <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+               <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(stage.pct || 0, 100))}%` }} />
+             </div>
++            {canWrite && month.status === 'open' && <button type="button" onClick={() => setUnitsStage(stage)} className="mt-1 min-h-[44px] font-bold text-amber-700">✓ סמן דירות שבוצעו ›</button>}
+             <ContractItemsRows contractor={contractor} stage={stage} account={month} projectId={projectId} canWrite={canWrite} onChanged={onChanged} />
+             {!!stage.evidence?.length && <div className="mt-3 rounded-lg bg-slate-50 p-2 text-xs">
+               <div className={fullStages[stage.stage_id] ? 'max-h-60 space-y-2 overflow-y-auto' : 'space-y-2'}>
+```
+
+$ wc -l frontend/src/components/monthly/{ContractorAccountCard,StageUnitsSheet,AccountAddSheet}.js
+  115 frontend/src/components/monthly/ContractorAccountCard.js
+  155 frontend/src/components/monthly/StageUnitsSheet.js
+   54 frontend/src/components/monthly/AccountAddSheet.js
+  324 total
+
+SHA-256 before/after manifest: exactly these three files changed:
+frontend/src/components/monthly/AccountAddSheet.js
+frontend/src/components/monthly/ContractorAccountCard.js
+frontend/src/components/monthly/StageUnitsSheet.js
+No other frontend/src files and no backend source files changed; added/deleted source files: none.
+Manifest covers all regular files except generated __pycache__ files.
+StageUnitsSheet load/save/selection handlers, dirty ref and refresh-on-close unchanged.
+AccountAddSheet callbacks, chips and disabled rules unchanged.
+MonthlyClosePage, matrix page/service, api.js, ContractItemsRows, ContractItemSheet, MonthlySettingsSheet and Excel untouched.
+
+V2 — fresh verification
+$ cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=http://localhost:5000 yarn build
+EXIT 0
+Compiled successfully. Done in 235.94s. Zero compiler/lint warnings.
+Not literally zero console notices: Node DEP0176 (fs.F_OK deprecated) and outdated Browserslist/caniuse-lite notices were emitted. No suppression or dependency update.
+Full build log: /tmp/batch610fix4/build.log
+
+$ cd frontend && CI=true yarn test --watchAll=false
+EXIT 1 — libuuid.so.1 missing; 8 suites failed before running, 0 tests, 6.305s; harness unchanged.
+
+$ grep -n 'decoration-dotted' frontend/src/components/monthly/ContractorAccountCard.js
+(no output)
+EXIT 1
+
+$ grep -c 'סמן דירות שבוצעו' frontend/src/components/monthly/ContractorAccountCard.js frontend/src/components/monthly/AccountAddSheet.js
+frontend/src/components/monthly/ContractorAccountCard.js:1
+frontend/src/components/monthly/AccountAddSheet.js:1
+EXIT 0
+
+$ grep -c 'sticky bottom-0' frontend/src/components/monthly/StageUnitsSheet.js
+1
+EXIT 0
+
+$ grep -rn 'בק״ב\|בק"ב' frontend/src/components/monthly
+(no output)
+EXIT 1
+
+V3 — not run — local harness.
+Zahi verifies on staging: explicit "✓ סמן דירות שבוצעו ›" action; selecting two apartments on floor 3 keeps "סמן 2 דירות כבוצע במטריצה" visible at the bottom.
+No browser interaction test was run. The configured Start application workflow restart failed because /tmp/batch606/normal-launch.sh does not exist. Preview screenshot attempt failed with ERR_CONNECTION_REFUSED at port 5000. No workflow configuration or harness repair made.
+The verification build is retained at /tmp/batch610fix4/verified-build; the pre-existing frontend/build was restored byte-for-byte from its snapshot. This is not a deploy.
+
+V4 — report preservation
+$ cmp review.txt /tmp/batch610fix4/review.original.txt
+EXIT 0 — byte-identical
+$ wc -c review.txt
+510945 review.txt
+$ wc -c /tmp/batch610fix4/review-section.txt
+18262 /tmp/batch610fix4/review-section.txt
+
+.local/.commit_message:
+monthly close: explicit "סמן דירות שבוצעו" per stage, sticky mark button in the apartments sheet, verbs in the add dialog (#610-FIX-4)
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
