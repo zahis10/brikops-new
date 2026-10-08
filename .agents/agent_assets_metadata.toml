@@ -89,14 +89,14 @@ logical_id = "4ab4f1b9-8f24-4fd2-8fc0-a34b79b076f5"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "review.txt"
-description = "קובץ הסקירה המלא, כולל סעיף ‎#602-FIX-1 והתוספת שאושרה."
+title = "review.txt — הדוח המצטבר"
+description = "הקובץ הנוכחי במלואו, כולל סעיף FIX-3. הקובץ לא שונה."
 logical_id = "7d838796-acac-4cf9-a239-06361cfc7b59"
-content_hash = "sha256:e5ca2aecda24ebb1d5cc1e6789ee719093f4add2bb92a8818fea195ef78e84f3"
-size = 371667
-mtime_ms = 1790579648544
-storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/d846b3da-6f15-4b2c-b355-ce98cce99c70"
-storage_version_token = "1790579944954323"
+content_hash = "sha256:80ccd5f9b8b557026435865f01eee9c0eb273bf62ea4e90d080205066fdb5d24"
+size = 510945
+mtime_ms = 1791442168708
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/7d838796-acac-4cf9-a239-06361cfc7b59/829e03ee-7af8-405d-ba6d-4055c0311cce"
+storage_version_token = "1791445309337126"
 content_type = "text/plain"
 
 [[outputs]]
@@ -1158,4 +1158,18 @@ size = 51235
 mtime_ms = 1791353605931
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/a63b5681-cdb3-45ec-846d-e4d43da69cab/8988e24a-9d06-4086-9de6-66b7d14e3396"
 storage_version_token = "1791353607932899"
+content_type = "text/plain"
+
+[[outputs]]
+id = "9xf4zsv6vGrinhB5UYxLH"
+uri = "file://attached_assets/review-batch610-fix3.txt"
+type = "text"
+title = "דוח העבודה האחרון — FIX-3"
+description = "הדוח המלא: קוד, שינויים, תוצאות בדיקות והבהרות שאישרת."
+logical_id = "de84dacb-e4a1-4b93-8a4a-d29059cd80fd"
+content_hash = "sha256:b63af24aa222a5996fc0627c2bf4e2c3a9005452e9b2b79a04765b3d46ce1728"
+size = 30390
+mtime_ms = 1791445306115
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/de84dacb-e4a1-4b93-8a4a-d29059cd80fd/d8d21be9-1455-48f3-ae19-d7e9d67d24c0"
+storage_version_token = "1791445307859805"
 content_type = "text/plain"
