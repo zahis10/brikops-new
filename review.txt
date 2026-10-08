@@ -9772,3 +9772,511 @@ $ wc -c /tmp/batch610fix4/review-section.txt
 monthly close: explicit "סמן דירות שבוצעו" per stage, sticky mark button in the apartments sheet, verbs in the add dialog (#610-FIX-4)
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#612-A (8.10)
+
+Backend only — partial payment per apartment-stage. Matrix progress_pct feeds account fractions; the monthly amount is the difference from earlier paid shares.
+
+STEP 0
+$ wc -c review.txt
+529208 review.txt
+Below 2 MB; continued. No Git commands. No deployment. No dependency or harness changes.
+review.txt is untouched. This is one standalone section for Zahi to append.
+
+IMPLEMENTATION
+A1: Optional progress_pct integer, 1..99, added only to MatrixCellUpdate.
+A2: Cell summary/update response, update/insert documents and pct_before/pct_after audit fields carry the share. Manual statuses other than partial clear it. QC sync unchanged.
+A3: monthly_partials.py matches the supplied implementation exactly (text comparison passed). 105 lines, below 150. It only enriches the in-memory account; no database writes.
+A4: Only the specified units_this_month and weighted sums change; previous snapshot lines, measured items and quantity-sheet code unchanged.
+A5: apply_partials runs between build_account and attach_contract_items in _live for reading/closing.
+A6: Excel evidence includes partial rows and prior-share completion labels. Both correction sections distinguish partial_reduced; original reopened labels remain unchanged. Building summaries stay whole apartments.
+T: 109-line pure in-memory test file, below 130; all seven requested scenarios covered (10 parameterized share inputs plus six scenario tests = 16 cases). Existing test modules unchanged.
+
+V1 — full new source and changed regions
+
+### backend/contractor_ops/monthly_partials.py
+```python
+"""#612 — partial payment per apartment.
+
+A matrix cell may carry progress_pct (1..99). The account counts an apartment-stage as a fraction:
+1.0 when the cell is 'completed'; progress_pct/100 while the cell is neither 'completed' nor
+'not_done'/'not_relevant' (QC states such as 'pending_review' keep the share); otherwise 0.
+Only the DIFFERENCE from what earlier accounts paid enters a month: 0→70% pays 70%, 70→100% pays
+the remaining 30%, 70→50% adds a correction row of −20%. The cumulative share of an apartment never
+exceeds 100%. Runs after build_account and before attach_contract_items; reads cells/units/snapshots
+and writes only into the account dict.
+"""
+from contractor_ops.execution_matrix_router import _unit_sort_key
+
+STOP = ('completed', 'not_done', 'not_relevant')
+
+
+def partial_pct(cell):
+    """The cell's current share in percent while it is a partial payment, else 0."""
+    if not cell or cell.get('status') in STOP:
+        return 0
+    pct = cell.get('progress_pct')
+    return int(pct) if isinstance(pct, (int, float)) and 0 < pct < 100 else 0
+
+
+def _unit_row(unit, buildings, floors):
+    floor = floors.get(unit.get('floor_id'), {})
+    return {'unit_id': unit['id'], 'unit_no': unit.get('unit_no', ''), 'floor_id': unit.get('floor_id'),
+            'floor_number': floor.get('floor_number'), 'building_id': unit.get('building_id'),
+            'building_name': buildings.get(unit.get('building_id'), {}).get('name', '')}
+
+
+def _actor(cell):
+    audit = (cell or {}).get('audit') or []
+    return (audit[-1].get('actor_name') if audit else '') or ''
+
+
+def apply_partials(account, inputs):
+    contractors = account.get('contractors') or []
+    if not contractors:
+        return account
+    month = account['month']
+    snapshots = inputs.get('snapshots') or []
+    active = not snapshots or bool(account.get('applying'))
+    before = [s for s in snapshots if s.get('month', '') < month]
+    previous = max(before, key=lambda s: s['month']) if before else {}
+    cells = {(c['stage_id'], c['unit_id']): c for c in inputs.get('cells') or []}
+    buildings = {b['id']: b for b in inputs.get('buildings') or []}
+    floors = {f['id']: f for f in inputs.get('floors') or []}
+    units = sorted(inputs.get('units') or [], key=lambda u: _unit_sort_key(u, buildings, floors))
+    for c in contractors:
+        prev_c = next((p for p in previous.get('contractors', []) if p.get('company_id') == c['company_id']), {})
+        for stage in c.get('stages') or []:
+            sid = stage['stage_id']
+            prev_stage = next((s for s in prev_c.get('stages', []) if s.get('stage_id') == sid), {})
+            prior = {k: int(v) for k, v in (prev_stage.get('partial_paid') or {}).items() if v}
+            still = set(stage.get('still_unit_ids') or [])
+            fractions = {uid: 1.0 for uid in still | set(stage.get('unit_ids_this_month') or [])}
+            prev_fractions = {uid: 1.0 for uid in still}
+            for uid, pct in prior.items():
+                prev_fractions.setdefault(uid, pct / 100)
+            for row in stage.get('evidence') or []:
+                pct = prior.get(row['unit_id'], 0)
+                row['prior_pct'] = pct
+                row['fraction'] = round(1 - pct / 100, 4)
+            partials, reductions = [], []
+            for unit in units:
+                uid = unit['id']
+                if uid in fractions:
+                    continue
+                cell, was = cells.get((sid, uid)), prior.get(uid, 0)
+                if cell and cell.get('status') == 'completed':
+                    if was:                       # completed, but counted in another month: keep the paid share
+                        fractions[uid] = was / 100
+                    continue
+                now = partial_pct(cell) if active else was
+                if not now and not was:
+                    continue
+                if now:
+                    fractions[uid] = now / 100
+                if now == was:
+                    continue
+                row = {**_unit_row(unit, buildings, floors), 'stage_id': sid, 'pct': now, 'prior_pct': was,
+                       'delta': round((now - was) / 100, 4), 'source': 'manual',
+                       'actor_name': _actor(cell), 'updated_at': (cell or {}).get('last_updated_at')}
+                (partials if row['delta'] > 0 else reductions).append(row)
+            stage['partials'] = partials
+            stage['partial_count'] = sum(1 for f in fractions.values() if 0 < f < 1)
+            stage['partial_paid'] = {uid: int(round(f * 100)) for uid, f in fractions.items() if 0 < f < 1}
+            stage['unit_fractions'] = fractions
+            stage['prev_fractions'] = prev_fractions
+            stage['this_month'] = round(sum(r['fraction'] for r in stage.get('evidence') or [])
+                                        + sum(r['delta'] for r in partials), 2)
+            stage['cumulative'] = round(sum(fractions.values()), 2)
+            total_units = stage.get('total_units') or 0
+            stage['pct'] = round(100 * stage['cumulative'] / total_units) if total_units else 0
+            for r in reductions:
+                c.setdefault('corrections', []).append({**r, 'stage_title': stage.get('title', ''),
+                    'company_id': c['company_id'], 'company_name': c.get('name', ''),
+                    'counted_in_month': previous.get('month'), 'reason': 'partial_reduced'})
+        totals = c.setdefault('totals', {})
+        totals['this_month'] = round(sum(s.get('this_month', 0) for s in c.get('stages') or []), 2)
+        totals['cumulative'] = round(sum(s.get('cumulative', 0) for s in c.get('stages') or []), 2)
+    kpis = account.setdefault('kpis', {})
+    kpis['this_month'] = round(sum((c.get('totals') or {}).get('this_month', 0) for c in contractors), 2)
+    kpis['corrections'] = sum(len(c.get('corrections') or []) for c in contractors)
+    return account
+```
+
+### backend/tests/test_monthly_partials.py
+```python
+"""Partial apartment payments: pure in-memory regression coverage."""
+import pytest
+from contractor_ops.contract_items import attach_contract_items
+from contractor_ops.monthly_partials import apply_partials, partial_pct
+from test_monthly_close import inputs
+
+
+def fixture(status='partial', pct=70, prior=None, applying=True, completed=False):
+    data = inputs()
+    data['cells'] = [{'unit_id': 'u4', 'stage_id': 's1', 'status': status, 'progress_pct': pct,
+                      'audit': [{'actor_name': 'מנהל'}], 'last_updated_at': '2026-09-06T10:00:00+00:00'}]
+    if prior is not None:
+        data['snapshots'] = [{'month': '2026-08', 'contractors': [{'company_id': 'c1',
+            'stages': [{'stage_id': 's1', 'partial_paid': {'u4': prior}}]}]}]
+    stage = {'stage_id': 's1', 'title': 'אינסטלציה', 'total_units': 6, 'still_unit_ids': [],
+             'unit_ids_this_month': ['u4'] if completed else [],
+             'evidence': [{'unit_id': 'u4'}] if completed else []}
+    account = {'month': '2026-09', 'applying': applying, 'contractors': [
+        {'company_id': 'c1', 'name': 'קבלן', 'stages': [stage], 'corrections': []}]}
+    return account, data, stage
+
+
+@pytest.mark.parametrize('cell,expected', [
+    ({'status': 'completed', 'progress_pct': 70}, 0),
+    ({'status': 'partial', 'progress_pct': 70}, 70),
+    ({'status': 'in_progress', 'progress_pct': 70}, 70),
+    ({'status': 'pending_review', 'progress_pct': 70}, 70),
+    ({'status': 'not_done', 'progress_pct': 70}, 0),
+    ({'status': 'not_relevant', 'progress_pct': 70}, 0),
+    ({'status': 'partial', 'progress_pct': None}, 0),
+    ({'status': 'partial', 'progress_pct': 0}, 0),
+    ({'status': 'partial', 'progress_pct': 100}, 0),
+    (None, 0),
+])
+def test_partial_pct(cell, expected):
+    assert partial_pct(cell) == expected
+
+
+def test_first_month_partial():
+    account, data, stage = fixture(applying=False)
+    assert apply_partials(account, data) is account
+    assert (stage['this_month'], stage['cumulative'], stage['pct']) == (0.7, 0.7, 12)
+    assert stage['partials'] == [{'unit_id': 'u4', 'unit_no': '4', 'floor_id': 'f2',
+        'floor_number': 2, 'building_id': 'b2', 'building_name': 'מגדל ב', 'stage_id': 's1',
+        'pct': 70, 'prior_pct': 0, 'delta': 0.7, 'source': 'manual',
+        'actor_name': 'מנהל', 'updated_at': '2026-09-06T10:00:00+00:00'}]
+    assert stage['partial_paid'] == {'u4': 70} and stage['partial_count'] == 1
+    assert account['contractors'][0]['totals'] == {'this_month': 0.7, 'cumulative': 0.7}
+    assert account['kpis'] == {'this_month': 0.7, 'corrections': 0}
+    assert not account['contractors'][0]['corrections']
+
+
+def test_completion_pays_remaining_share():
+    account, data, stage = fixture('completed', None, prior=70, completed=True)
+    apply_partials(account, data)
+    assert stage['evidence'] == [{'unit_id': 'u4', 'prior_pct': 70, 'fraction': 0.3}]
+    assert (stage['this_month'], stage['cumulative']) == (0.3, 1.0)
+    assert stage['partial_paid'] == {} and stage['partials'] == []
+    assert stage['unit_fractions'] == {'u4': 1.0}
+    assert stage['prev_fractions'] == {'u4': 0.7}
+
+
+def test_reduction_adds_negative_correction():
+    account, data, stage = fixture(pct=50, prior=70)
+    apply_partials(account, data)
+    corrections = account['contractors'][0]['corrections']
+    assert len(corrections) == 1
+    assert {k: corrections[0][k] for k in ('reason', 'delta', 'pct', 'prior_pct')} == {
+        'reason': 'partial_reduced', 'delta': -0.2, 'pct': 50, 'prior_pct': 70}
+    assert corrections[0]['counted_in_month'] == '2026-08'
+    assert (stage['this_month'], stage['cumulative']) == (0, 0.5)
+    assert stage['partial_paid'] == {'u4': 50}
+    assert account['kpis']['corrections'] == 1
+
+
+def test_inactive_month_keeps_paid_share():
+    account, data, stage = fixture(pct=90, prior=70, applying=False)
+    apply_partials(account, data)
+    assert stage['partials'] == [] and account['contractors'][0]['corrections'] == []
+    assert stage['cumulative'] == 0.7 and stage['partial_paid'] == {'u4': 70}
+    assert stage['this_month'] == 0
+
+
+def test_completed_elsewhere_keeps_paid_share():
+    account, data, stage = fixture('completed', None, prior=40)
+    apply_partials(account, data)
+    assert stage['cumulative'] == 0.4 and stage['partial_paid'] == {'u4': 40}
+    assert stage['partials'] == [] and stage['evidence'] == []
+    assert account['contractors'][0]['corrections'] == []
+
+
+def test_weighted_contract_items_and_legacy_fallback():
+    account, data, stage = fixture()
+    stage.update(still_unit_ids=['u1'], unit_ids_this_month=['u2'], this_month=0.7,
+                 unit_fractions={'u1': 1.0, 'u4': 0.7}, prev_fractions={'u1': 1.0})
+    data['contract_items'] = [{'id': 'i1', 'company_id': 'c1', 'source': 'stage',
+        'stage_id': 's1', 'qty': 1, 'unit': 'דירה', 'unit_price': 5000}]
+    attach_contract_items(account, data)
+    line = account['contractors'][0]['items'][0]
+    assert (line['this_month_qty'], line['this_month_amount']) == (0.7, 3500.0)
+    assert (line['cumulative_qty'], line['cumulative_amount']) == (1.7, 8500.0)
+    assert line['units_this_month'] == 0.7
+    for key in ('unit_fractions', 'prev_fractions', 'this_month'):
+        stage.pop(key)
+    attach_contract_items(account, data)
+    line = account['contractors'][0]['items'][0]
+    assert (line['this_month_qty'], line['this_month_amount']) == (1, 5000.0)
+    assert (line['cumulative_qty'], line['cumulative_amount']) == (2, 10000.0)
+    assert line['units_this_month'] == 1
+```
+
+### backend/contractor_ops/schemas.py — 3 lines of context
+```diff
+--- before/backend/contractor_ops/schemas.py
++++ after/backend/contractor_ops/schemas.py
+@@ -1116,6 +1116,7 @@
+     ]] = None
+     note: Optional[str] = Field(None, max_length=500)
+     text_value: Optional[str] = Field(None, max_length=200)
++    progress_pct: Optional[int] = Field(None, ge=1, le=99)  # #612 — share of the apartment done/paid (status 'partial')
+ 
+ 
+ class MatrixCell(BaseModel):
+```
+
+### backend/contractor_ops/execution_matrix_router.py — 3 lines of context
+```diff
+--- before/backend/contractor_ops/execution_matrix_router.py
++++ after/backend/contractor_ops/execution_matrix_router.py
+@@ -204,6 +204,7 @@
+         "status": c.get("status"),
+         "text_value": c.get("text_value"),
+         "note": c.get("note"),
++        "progress_pct": c.get("progress_pct"),
+         "last_updated_at": c.get("last_updated_at"),
+         "last_updated_by": c.get("last_updated_by"),
+         "last_actor_name": last_audit.get("actor_name") if last_audit else None,
+@@ -508,6 +509,7 @@
+             status_code=400,
+             detail=f"Status not in {MATRIX_STATUS_VALUES}",
+         )
++    progress_pct = payload.progress_pct if new_status == 'partial' else None
+ 
+     stage = next((s for s in visible_stages if s["id"] == stage_id), None)
+     stage_type = (stage or {}).get("type", "status")
+@@ -534,6 +536,8 @@
+         "timestamp": now,
+         "status_before": existing.get("status") if existing else None,
+         "status_after": new_status,
++        "pct_before": existing.get("progress_pct") if existing else None,
++        "pct_after": progress_pct,
+         "note_before": existing.get("note") if existing else None,
+         "note_after": payload.note,
+         "text_before": existing.get("text_value") if existing else None,
+@@ -546,6 +550,7 @@
+             {"project_id": project_id, "unit_id": unit_id, "stage_id": stage_id},
+             {"$set": {
+                 "status": new_status,
++                "progress_pct": progress_pct,
+                 "note": payload.note,
+                 "text_value": payload.text_value,
+                 "audit": new_audit,
+@@ -560,6 +565,7 @@
+             "unit_id": unit_id,
+             "stage_id": stage_id,
+             "status": new_status,
++            "progress_pct": progress_pct,
+             "note": payload.note,
+             "text_value": payload.text_value,
+             "audit": [audit_entry],
+@@ -573,6 +579,7 @@
+         "unit_id": unit_id,
+         "stage_id": stage_id,
+         "status": new_status,
++        "progress_pct": progress_pct,
+         "note": payload.note,
+         "text_value": payload.text_value,
+         "last_updated_at": now,
+```
+
+### backend/contractor_ops/contract_items.py — 3 lines of context
+```diff
+--- before/backend/contractor_ops/contract_items.py
++++ after/backend/contractor_ops/contract_items.py
+@@ -94,7 +94,7 @@
+             counted = still | set(stage.get('unit_ids_this_month') or [])
+             corrections = sum(r.get('stage_id') == sid for r in c.get('corrections') or [])
+             stage_items = [i for i in mine if i.get('source') == 'stage' and i.get('stage_id') == sid]
+-            extra = dict(units_this_month=len(stage.get('unit_ids_this_month') or []),
++            extra = dict(units_this_month=stage.get('this_month', len(stage.get('unit_ids_this_month') or [])),
+                          corrections=corrections, evidence_rows=evidence)
+             if not stage_items and mine:
+                 prev_stage = next((s for s in prev_c.get('stages', []) if s.get('stage_id') == sid), {})
+@@ -104,13 +104,15 @@
+                     description=f"{stage.get('title', '')} (שלב בלי סעיף)"), stage,
+                     prev_cumulative_qty=prev, cumulative_qty=total, this_month_qty=total - prev,
+                     prev_cumulative_amount=None, cumulative_amount=None, this_month_amount=None, **extra))
++            now_w = stage.get('unit_fractions') or {uid: 1 for uid in counted}
++            prev_w = stage.get('prev_fractions') or {uid: 1 for uid in still}
+             for item in stage_items:
+-                def sums(ids):
+-                    quantities = [(item.get('qty_by_unit_type') or {}).get(tags.get(uid), item['qty']) for uid in ids]
+-                    prices = [(item.get('price_by_unit_type') or {}).get(tags.get(uid), item.get('unit_price')) for uid in ids]
++                def sums(weights):
++                    quantities = [w * (item.get('qty_by_unit_type') or {}).get(tags.get(uid), item['qty']) for uid, w in sorted(weights.items())]
++                    prices = [(item.get('price_by_unit_type') or {}).get(tags.get(uid), item.get('unit_price')) for uid in sorted(weights)]
+                     return sum(quantities), None if item.get('unit_price') is None else sum(q * p for q, p in zip(quantities, prices))
+-                total, amount = sums(sorted(counted))
+-                prev_qty, prev_amt = sums(sorted(still))
++                total, amount = sums(now_w)
++                prev_qty, prev_amt = sums(prev_w)
+                 prior = prev_lines.get(item['id'])
+                 if prior:
+                     prev_qty, prev_amt = prior.get('cumulative_qty', 0), prior.get('cumulative_amount')
+```
+
+### backend/contractor_ops/monthly_close_router.py — 3 lines of context
+```diff
+--- before/backend/contractor_ops/monthly_close_router.py
++++ after/backend/contractor_ops/monthly_close_router.py
+@@ -12,6 +12,7 @@
+ )
+ from contractor_ops.monthly_close_export import build_monthly_close_xlsx
+ from contractor_ops.contract_items import attach_contract_items
++from contractor_ops.monthly_partials import apply_partials
+ from contractor_ops.notification_helpers import create_defect_notification
+ from contractor_ops.router import (
+     _audit, _get_project_role, _is_super_admin, _now, get_current_user, get_db, get_public_base_url,
+@@ -82,7 +83,7 @@
+     project = inputs['project']
+     account.update({'project_id': project['id'], 'project_name': project.get('name', ''),
+                     'project': {'id': project['id'], 'name': project.get('name', '')}, 'is_snapshot': False})
+-    return attach_contract_items(account, inputs)
++    return attach_contract_items(apply_partials(account, inputs), inputs)
+ 
+ 
+ async def _account(db, project_id, month):
+```
+
+### backend/contractor_ops/monthly_close_export.py — 3 lines of context
+```diff
+--- before/backend/contractor_ops/monthly_close_export.py
++++ after/backend/contractor_ops/monthly_close_export.py
+@@ -129,9 +129,13 @@
+             if counted == 'baseline' else f'(נספרה ב-{_month_label(counted)})'
+         )
+         reason = f"תיקון: דירה {correction.get('unit_no', '')} נפתחה מחדש {origin}"
++        value = -1
++        if correction.get('reason') == 'partial_reduced':
++            value = correction.get('delta')
++            reason = f"תיקון: דירה {correction.get('unit_no', '')} — חלקי {correction.get('pct', 0)}% במקום {correction.get('prior_pct', 0)}% (נספר ב-{_month_label(counted)})"
+         append_row(summary, [
+             contractor.get('name', ''), correction.get('stage_title', ''),
+-            correction.get('building_name', ''), '', -1, '', '', '', reason,
++            correction.get('building_name', ''), '', value, '', '', '', reason,
+         ])
+ 
+     evidence = _sheet(wb, 'ראיות', EVIDENCE_HEADERS)
+@@ -144,20 +148,34 @@
+                 source = (
+                     'אושר בבקרת ביצוע' if row.get('source') == 'qc' else 'סומן ידנית'
+                 ) + f" · אחרי סגירת {_month_label(row['late_from_month'])}"
++            if row.get('prior_pct'):
++                source += f" · היה חלקי {row['prior_pct']}% → {100 - row['prior_pct']}%"
+             append_row(evidence, [
+                 row_number, row.get('building_name', ''), row.get('floor_number', ''),
+                 row.get('unit_no', ''), stage.get('title', ''),
+                 _il_date(row.get('completed_at')), row.get('actor_name', ''),
+                 source, _link(base_url, project.get('id'), row),
+             ])
++        for row in stage.get('partials') or []:
++            row_number += 1
++            append_row(evidence, [
++                row_number, row.get('building_name', ''), row.get('floor_number', ''),
++                row.get('unit_no', ''), stage.get('title', ''), _il_date(row.get('updated_at')),
++                row.get('actor_name', ''),
++                f"חלקי {row.get('pct', 0)}%" + (f" (היה {row['prior_pct']}%)" if row.get('prior_pct') else ''),
++                _link(base_url, project.get('id'), row),
++            ])
+ 
+     if contractor.get('corrections'):
+         corrections = _sheet(wb, 'תיקונים', CORRECTION_HEADERS)
+         for row in contractor['corrections']:
++            reason = 'נפתחה מחדש'
++            if row.get('reason') == 'partial_reduced':
++                reason = f"הופחת: {row.get('prior_pct', 0)}% → {row.get('pct', 0)}%"
+             append_row(corrections, [
+                 row.get('stage_title', ''), row.get('building_name', ''),
+                 row.get('unit_no', ''), _month_label(row.get('counted_in_month')),
+-                'נפתחה מחדש',
++                reason,
+             ])
+ 
+     buf = BytesIO()
+```
+
+$ wc -l backend/contractor_ops/schemas.py backend/contractor_ops/execution_matrix_router.py backend/contractor_ops/monthly_partials.py backend/contractor_ops/contract_items.py backend/contractor_ops/monthly_close_router.py backend/contractor_ops/monthly_close_export.py backend/tests/test_monthly_partials.py
+  1247 backend/contractor_ops/schemas.py
+   831 backend/contractor_ops/execution_matrix_router.py
+   105 backend/contractor_ops/monthly_partials.py
+   147 backend/contractor_ops/contract_items.py
+   205 backend/contractor_ops/monthly_close_router.py
+   183 backend/contractor_ops/monthly_close_export.py
+   109 backend/tests/test_monthly_partials.py
+  2827 total
+
+SHA-256 source manifest comparison
+Modified (exactly 5):
+backend/contractor_ops/contract_items.py
+backend/contractor_ops/execution_matrix_router.py
+backend/contractor_ops/monthly_close_export.py
+backend/contractor_ops/monthly_close_router.py
+backend/contractor_ops/schemas.py
+Added (exactly 2):
+backend/contractor_ops/monthly_partials.py
+backend/tests/test_monthly_partials.py
+Deleted: none.
+All other backend files and all frontend/src files unchanged. Generated __pycache__/.pytest_cache excluded.
+review.txt byte-identical: 529208 bytes.
+Baseline/final manifests: /tmp/batch612a/source.before.sha256 and source.after.sha256
+
+V2 — fresh verification
+$ cd backend && python -m pytest -q tests/test_monthly_partials.py tests/test_monthly_close.py tests/test_contract_items.py tests/test_monthly_close_stage_types.py
+EXIT 0
+........................................................................ [ 70%]
+..............................                                           [100%]
+=============================== warnings summary ===============================
+contractor_ops/schemas.py:209
+  /home/runner/workspace/backend/contractor_ops/schemas.py:209: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    @validator('trade', pre=True, always=True)
+
+contractor_ops/schemas.py:612
+  /home/runner/workspace/backend/contractor_ops/schemas.py:612: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    @validator('trade', pre=True, always=True)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+102 passed, 2 warnings in 5.76s
+
+The two warnings originate from existing Pydantic V1-style validators; no warning suppression and no unrelated migration performed.
+
+$ cd backend && python -c "import contractor_ops.monthly_partials, contractor_ops.monthly_close_router, contractor_ops.execution_matrix_router"
+EXIT 0
+Successful imports; existing masked administrator-phone startup diagnostic omitted from this report.
+
+$ grep -n 'progress_pct' backend/contractor_ops/schemas.py backend/contractor_ops/execution_matrix_router.py
+backend/contractor_ops/schemas.py:1119:    progress_pct: Optional[int] = Field(None, ge=1, le=99)  # #612 — share of the apartment done/paid (status 'partial')
+backend/contractor_ops/execution_matrix_router.py:207:        "progress_pct": c.get("progress_pct"),
+backend/contractor_ops/execution_matrix_router.py:512:    progress_pct = payload.progress_pct if new_status == 'partial' else None
+backend/contractor_ops/execution_matrix_router.py:539:        "pct_before": existing.get("progress_pct") if existing else None,
+backend/contractor_ops/execution_matrix_router.py:540:        "pct_after": progress_pct,
+backend/contractor_ops/execution_matrix_router.py:553:                "progress_pct": progress_pct,
+backend/contractor_ops/execution_matrix_router.py:568:            "progress_pct": progress_pct,
+backend/contractor_ops/execution_matrix_router.py:582:        "progress_pct": progress_pct,
+EXIT 0
+
+$ grep -rn 'בק״ב\|בק"ב' backend/contractor_ops/monthly_partials.py backend/contractor_ops/monthly_close_export.py
+(no output)
+EXIT 1
+
+V3 — not run — local harness (Mongo down per supplied brief; not independently probed in this run).
+Zahi verifies on staging after #612-B. No frontend UI or live Mongo flow verification is claimed.
+The configured Start application workflow restart failed: /tmp/batch606/normal-launch.sh is missing. App-preview screenshot failed with ERR_CONNECTION_REFUSED at port 5000. No repair or workflow configuration changes were made.
+
+V4 — unchanged original and standalone section size
+$ cmp review.txt /tmp/batch612a/review.original.txt
+EXIT 0 — byte-identical
+$ wc -c review.txt
+529208 review.txt
+$ wc -c /tmp/batch612a/review-section.txt
+27685 /tmp/batch612a/review-section.txt
+
+.local/.commit_message:
+monthly close: partial payment per apartment — 'partial' matrix cells carry progress_pct, the account counts fractions and pays only the difference (#612-A backend)
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY

@@ -8,3 +8,9 @@ The payment percentage belongs in the execution matrix, not in an independent mo
 **Why:** The user wants to release part of an apartment's agreed amount now and the remainder later without paying twice.
 
 **How to apply:** Completed means 100%; not_done/not_relevant mean zero; intermediate QC states preserve the stored partial share. Partial changes enter the applying month, or any month before the first account closure. Preserve these semantics when adding the frontend or extending account calculations.
+
+Percentage editing belongs exclusively in the accounts apartments sheet. The matrix page displays the stored share read-only; its existing status dialog does not gain a percentage editor.
+
+**Why:** The user explicitly requires this feature to be isolated to accounts: "מנותק וקשור אך ורק לחלק של החשבונות".
+
+**How to apply:** Distinguish storage ownership (matrix cells) from editing location (accounts). Preserve the existing matrix status-change behavior, which clears the share on the server.
