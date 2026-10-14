@@ -106,7 +106,7 @@ def test_validation_and_indexes():
     clean = validate_item({**item(), 'code': '  ', 'description': ' צנרת '}, **args)
     assert clean['code'] is None and clean['description'] == 'צנרת'
     for change in ({'qty': 0}, {'qty': True}, {'qty': float('nan')}, {'unit_price': -1},
-                   {'basis': 'floor'}, {'stage_id': 'missing'}, {'company_id': 'missing'},
+                   {'stage_id': 'missing'}, {'company_id': 'missing'},
                    {'qty_by_unit_type': {'missing': 3}}, {'price_by_unit_type': {'3 חדרים': 3}}):
         with pytest.raises(HTTPException) as exc:
             validate_item({**item(), **change}, **args)
@@ -148,7 +148,7 @@ def test_create_permissions_duplicate_validation_and_get(api):
         asyncio.run(routes.create_item('p1', item(), user))
     assert exc.value.status_code == 409
     db.contract_items.insert_one.side_effect = None
-    for change in ({'basis': 'floor'}, {'stage_id': 'unknown'}):
+    for change in ({'stage_id': 'unknown'},):
         with pytest.raises(HTTPException) as exc:
             asyncio.run(routes.create_item('p1', {**item(), **change}, user))
         assert exc.value.status_code == 422

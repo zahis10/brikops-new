@@ -16,6 +16,8 @@ function ItemRow({ line, editable, projectId, account, onChanged, onEdit }) {
   const alive = useRef(true);
   const measured = line.source === 'measured';
   const fixed = !measured && lump(line);
+  const byFloor = line.basis === 'floor';
+  const floorLump = byFloor && line.unit === 'קומה' && Number(line.qty) === 1 && line.unit_price != null;
   useEffect(() => {
     saved.current = String(line.this_month_qty ?? 0);
     setValue(saved.current);
@@ -56,13 +58,15 @@ function ItemRow({ line, editable, projectId, account, onChanged, onEdit }) {
       } : undefined}
       className={`rounded-lg bg-slate-50 border border-slate-100 px-2.5 py-1.5 text-xs mt-1.5 ${editable ? 'cursor-pointer' : ''}`}>
       <div className="text-slate-700">
-        {fixed ? <><b>{money(line.unit_price)} לדירה</b>{line.price_by_unit_type ? ' · לפי סוג דירה' : ''}</>
+        {byFloor ? (floorLump ? <><b>{money(line.unit_price)} לקומה</b>{line.price_by_floor ? ' · חריגי קומות' : ''}</>
+          : <><b>{line.description}</b> · {fmt(line.qty)} {line.unit} לקומה{line.unit_price != null ? ` · ${money(line.unit_price)} ל${line.unit}` : ''}{line.qty_by_floor ? ' · חריגי קומות' : ''}</>)
+          : fixed ? <><b>{money(line.unit_price)} לדירה</b>{line.price_by_unit_type ? ' · לפי סוג דירה' : ''}</>
           : <><b>{line.description}</b> · {measured ? line.unit : `${fmt(line.qty)} לדירה`}
             {line.unit_price != null ? ` · ${money(line.unit_price)} ל${line.unit}` : ''}</>}
       </div>
       <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-slate-500">
         <span className="tabular-nums">
-          החודש {fixed ? `${fmt(line.units_this_month)} דירות` :
+          החודש {byFloor ? <><b>{fmt(line.floors_this_month)}</b> קומות</> : fixed ? `${fmt(line.units_this_month)} דירות` :
           <>
           {measured && editable ? <input type="number" inputMode="decimal" min="0" step="any"
             value={value} disabled={saving} aria-label="כמות החודש"
@@ -77,7 +81,7 @@ function ItemRow({ line, editable, projectId, account, onChanged, onEdit }) {
         </span>
         <span className="tabular-nums">
           {line.unit_price != null ? <><b>{money(line.this_month_amount)}</b> · מצטבר {money(line.cumulative_amount)}</>
-            : <>מצטבר {fmt(line.cumulative_qty)}{measured ? ` ${line.unit}` : ''}</>}
+            : <>מצטבר {fmt(line.cumulative_qty)}{measured || byFloor ? ` ${line.unit}` : ''}</>}
           {!measured && !fixed && line.unit_price == null && line.code && <> · <span dir="ltr" className="font-mono">{line.code}</span></>}
         </span>
       </div>

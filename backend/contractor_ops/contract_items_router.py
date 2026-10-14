@@ -33,7 +33,8 @@ async def _item(db, project_id, item_id):
 async def _clean(db, project_id, body, existing=None):
     inputs = await load_inputs(db, project_id)
     clean = validate_item(body, stages={s['id'] for s in inputs['stages']},
-        company_ids={c['id'] for c in inputs['companies']}, unit_type_tags=_tags(inputs), existing=existing)
+        company_ids={c['id'] for c in inputs['companies']}, unit_type_tags=_tags(inputs),
+        floor_ids={f['id'] for f in inputs.get('floors') or []}, existing=existing)
     if clean['code']:
         query = dict(project_id=project_id, company_id=clean['company_id'], code=clean['code'], active=True)
         if existing:
@@ -50,7 +51,11 @@ async def list_items(project_id: str, user: dict = Depends(get_current_user)):
     items = inputs.get('contract_items') or []
     if access['role'] == 'contractor':
         items = [i for i in items if i.get('company_id') == access['company_id']]
+    buildings = {b['id']: b for b in inputs.get('buildings') or []}
     return {'items': items, 'unit_type_tags': _tags(inputs),
+            'floors': [{'id': f['id'], 'floor_number': f.get('floor_number'), 'name': f.get('display_label') or f.get('name') or '',
+                        'building_id': f.get('building_id'), 'building_name': buildings.get(f.get('building_id'), {}).get('name', '')}
+                       for f in sorted(inputs.get('floors') or [], key=lambda f: (buildings.get(f.get('building_id'), {}).get('name', ''), f.get('floor_number') or 0))],
             'stages': [{k: s.get(k) for k in ('id', 'title', 'scope')} for s in inputs['stages']],
             'can_write': access['can_write']}
 

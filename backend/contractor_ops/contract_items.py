@@ -12,7 +12,7 @@ def _number(value, low, high, detail, positive=False):
     return float(value)
 
 
-def validate_item(body, *, stages, company_ids, unit_type_tags, existing=None):
+def validate_item(body, *, stages, company_ids, unit_type_tags, floor_ids=frozenset(), existing=None):
     def text(key, maximum, default=''):
         value = body.get(key, default)
         if not isinstance(value, str) or len(value.strip()) > maximum:
@@ -24,48 +24,54 @@ def validate_item(body, *, stages, company_ids, unit_type_tags, existing=None):
     source, company, stage = body.get('source'), body.get('company_id'), body.get('stage_id')
     if source not in ('stage', 'measured'):
         raise HTTPException(422, 'סוג סעיף לא תקין')
-    if body.get('basis', 'unit') != 'unit':
-        raise HTTPException(422, 'כמות לקומה — בשלב הבא')
+    basis = body.get('basis', 'unit')
+    if basis not in ('unit', 'floor'):
+        raise HTTPException(422, 'בסיס תשלום לא תקין')
+    if basis == 'floor' and source != 'stage':
+        raise HTTPException(422, 'תשלום לפי קומה — רק על שלב במטריצה')
     if not isinstance(company, str) or company not in company_ids:
         raise HTTPException(422, 'הקבלן לא בפרויקט')
     if source == 'stage' and (not isinstance(stage, str) or stage not in stages):
         raise HTTPException(422, 'שלב לא קיים')
     stage = stage if source == 'stage' else None
     if existing and any(existing.get(k) != v for k, v in
-                        [('company_id', company), ('source', source), ('stage_id', stage)]):
-        raise HTTPException(422, 'אי אפשר לשנות שלב או קבלן — צור סעיף חדש')
+                        [('company_id', company), ('source', source), ('stage_id', stage), ('basis', basis)]):
+        raise HTTPException(422, 'אי אפשר לשנות שלב, קבלן או בסיס — צור סעיף חדש')
     qty = _number(body.get('qty', 1), 0, 1000000, 'כמות לא תקינה', True)
     price = body.get('unit_price')
     if price is not None:
         price = _number(price, 0, 10000000, 'מחיר לא תקין')
-    def overrides(key, maximum, positive):
+    def overrides(key, maximum, positive, allowed, missing):
         values = body.get(key)
         if values is None:
             return None
         if not isinstance(values, dict):
             raise HTTPException(422, 'ערך לא תקין')
         for tag, value in values.items():
-            if tag not in unit_type_tags:
-                raise HTTPException(422, 'סוג דירה לא קיים בפרויקט')
+            if tag not in allowed:
+                raise HTTPException(422, missing)
             _number(value, 0, maximum, 'כמות לא תקינה' if positive else 'מחיר לא תקין', positive)
         return dict(values) or None
-    quantities = overrides('qty_by_unit_type', 1000000, True)
-    prices = overrides('price_by_unit_type', 10000000, False)
-    if prices and price is None:
+    by_floor = basis == 'floor'
+    quantities = overrides('qty_by_unit_type', 1000000, True, unit_type_tags, 'סוג דירה לא קיים בפרויקט') if not by_floor else None
+    prices = overrides('price_by_unit_type', 10000000, False, unit_type_tags, 'סוג דירה לא קיים בפרויקט') if not by_floor else None
+    floor_quantities = overrides('qty_by_floor', 1000000, True, floor_ids, 'קומה לא קיימת בפרויקט') if by_floor else None
+    floor_prices = overrides('price_by_floor', 10000000, False, floor_ids, 'קומה לא קיימת בפרויקט') if by_floor else None
+    if (prices or floor_prices) and price is None:
         raise HTTPException(422, 'נדרש מחיר ברירת מחדל')
-    unit = text('unit', 20, 'דירה' if source == 'stage' and qty == 1 and not quantities else 'יח׳')
+    unit = text('unit', 20, 'קומה' if by_floor and qty == 1 and not floor_quantities else 'דירה' if source == 'stage' and qty == 1 and not quantities else 'יח׳')
     if not unit:
         raise HTTPException(422, 'נדרשת יחידה')
     code = body.get('code')
     code = text('code', 40) if code is not None else None
-    return dict(company_id=company, source=source, stage_id=stage, basis='unit', code=code or None,
+    return dict(company_id=company, source=source, stage_id=stage, basis=basis, code=code or None,
                 description=description, unit=unit, qty=qty, qty_by_unit_type=quantities,
-                unit_price=price, price_by_unit_type=prices)
+                unit_price=price, price_by_unit_type=prices, qty_by_floor=floor_quantities, price_by_floor=floor_prices)
 
 
 def _line(item, stage=None, **values):
     result = {k: item.get(k) for k in ('source', 'code', 'description', 'unit', 'qty',
-                                      'qty_by_unit_type', 'unit_price', 'price_by_unit_type')}
+                                      'qty_by_unit_type', 'unit_price', 'price_by_unit_type', 'basis', 'qty_by_floor', 'price_by_floor')}
     result.update(item_id=item.get('id'), stage_id=(stage or {}).get('stage_id'),
                   stage_title=(stage or {}).get('title'), units_this_month=0, corrections=0,
                   measurement=None, evidence_rows=None)
@@ -79,6 +85,18 @@ def attach_contract_items(account, inputs):
     before = [s for s in inputs.get('snapshots') or [] if s.get('month', '') < month]
     previous = max(before, key=lambda s: s['month']) if before else {}
     tags = {u.get('id'): u.get('unit_type_tag') for u in inputs.get('units') or []}
+    unit_floor = {u['id']: u.get('floor_id') for u in inputs.get('units') or [] if u.get('id') and u.get('floor_id')}
+    irrelevant = {(c.get('stage_id'), c.get('unit_id')) for c in inputs.get('cells') or [] if c.get('status') == 'not_relevant'}
+
+    def floor_weights(sid, weights):
+        """Share of each floor done for the stage: mean apartment shares, excluding not-relevant."""
+        totals, counts = {}, {}
+        for uid, fid in unit_floor.items():
+            if (sid, uid) in irrelevant:
+                continue
+            counts[fid] = counts.get(fid, 0) + 1
+            totals[fid] = totals.get(fid, 0) + weights.get(uid, 0)
+        return {fid: totals[fid] / counts[fid] for fid in counts}
     for c in account.get('contractors') or []:
         cid = c['company_id']
         c['account_no'] = 1 + sum(any(p.get('company_id') == cid for p in s.get('contractors', [])) for s in before)
@@ -106,19 +124,26 @@ def attach_contract_items(account, inputs):
                     prev_cumulative_amount=None, cumulative_amount=None, this_month_amount=None, **extra))
             now_w = stage.get('unit_fractions') or {uid: 1 for uid in counted}
             prev_w = stage.get('prev_fractions') or {uid: 1 for uid in still}
+            now_f, prev_f = floor_weights(sid, now_w), floor_weights(sid, prev_w)
             for item in stage_items:
+                by_floor = item.get('basis') == 'floor'
                 def sums(weights):
-                    quantities = [w * (item.get('qty_by_unit_type') or {}).get(tags.get(uid), item['qty']) for uid, w in sorted(weights.items())]
-                    prices = [(item.get('price_by_unit_type') or {}).get(tags.get(uid), item.get('unit_price')) for uid in sorted(weights)]
+                    qmap = item.get('qty_by_floor' if by_floor else 'qty_by_unit_type') or {}
+                    pmap = item.get('price_by_floor' if by_floor else 'price_by_unit_type') or {}
+                    key = (lambda k: k) if by_floor else tags.get
+                    quantities = [w * qmap.get(key(k), item['qty']) for k, w in sorted(weights.items())]
+                    prices = [pmap.get(key(k), item.get('unit_price')) for k in sorted(weights)]
                     return sum(quantities), None if item.get('unit_price') is None else sum(q * p for q, p in zip(quantities, prices))
-                total, amount = sums(now_w)
-                prev_qty, prev_amt = sums(prev_w)
+                total, amount = sums(now_f if by_floor else now_w)
+                prev_qty, prev_amt = sums(prev_f if by_floor else prev_w)
                 prior = prev_lines.get(item['id'])
                 if prior:
                     prev_qty, prev_amt = prior.get('cumulative_qty', 0), prior.get('cumulative_amount')
+                floors = {'floors_this_month': round(sum(now_f.values()) - sum(prev_f.values()), 2),
+                          'floors_total': len(now_f)} if by_floor else {}
                 lines.append(_line(item, stage, prev_cumulative_qty=prev_qty, cumulative_qty=total,
                     this_month_qty=total - prev_qty, prev_cumulative_amount=prev_amt, cumulative_amount=amount,
-                    this_month_amount=None if amount is None else amount - (prev_amt or 0), **extra))
+                    this_month_amount=None if amount is None else amount - (prev_amt or 0), **extra, **floors))
         for item in (i for i in mine if i.get('source') == 'measured'):
             entries = item.get('measurements') or {}
             entry, prior = entries.get(month), prev_lines.get(item['id'])

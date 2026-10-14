@@ -1215,3 +1215,17 @@ mtime_ms = 1791462767535
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/eaff14f6-1e8e-41c6-ae7b-95a8acf0f63d/15f74707-9900-49da-9f24-35ec3669295c"
 storage_version_token = "1791462769203240"
 content_type = "text/plain"
+
+[[outputs]]
+id = "VCdmBwYmsg0y1VV45j8CQ"
+uri = "file://attached_assets/review-batch611.txt"
+type = "text"
+title = "611 — דוח מימוש ובדיקות מלא"
+description = "הבדלי קוד, הקבצים המלאים שנדרשו, 105 בדיקות שעברו, בניית CI ומגבלות Jest/V3. ממתין לאישור, ללא פריסה."
+logical_id = "943ab8b2-a781-4477-be0b-87785dd9d2d8"
+content_hash = "sha256:f8d96783e41d438dedd20b629d35331c2ab91ade8ec457d0166bae4e5d0954f0"
+size = 42663
+mtime_ms = 1791958322632
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/943ab8b2-a781-4477-be0b-87785dd9d2d8/678af1a8-7d88-4e83-9609-23ac713895fe"
+storage_version_token = "1791958324208811"
+content_type = "text/plain"

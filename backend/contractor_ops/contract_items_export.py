@@ -32,7 +32,7 @@ def add_quantities_sheet(wb, project, account, contractor):
                          + (f" · {entry['note']}" if entry.get('note') else '')) if entry else 'לא הוקלד החודש'
         else:
             reference = f'גיליון ראיות · שורות {evidence[0]}–{evidence[1]}' if evidence else '—'
-        units = '—' if measured else str(line.get('units_this_month', 0))
+        units = '—' if measured else (f"{line.get('floors_this_month', 0)} קומות" if line.get('basis') == 'floor' else str(line.get('units_this_month', 0)))
         if not measured and line.get('corrections'):
             units += f" (−{line['corrections']})"
         numbers = [line.get(k) for k in ('prev_cumulative_qty', 'this_month_qty', 'cumulative_qty',
