@@ -14,3 +14,4 @@
 - [Review evidence preservation](review-evidence-preservation.md) — repeated approval markers are unsafe append anchors; verify the original review remains an exact byte prefix.
 - [Local verification isolation](local-verification-isolation.md) — redirect-following can escape browser interception; verify local asset fingerprints and qualify any lost snapshot evidence.
 - [Partial payment rules](partial-payment-domain.md) — the matrix owns apartment-stage shares; monthly accounts pay only changes from previously paid shares.
+- [Floor payment rules](floor-payment-domain.md) — per-floor payments average apartment shares, excluding not-relevant apartments; quantities can vary by floor.
