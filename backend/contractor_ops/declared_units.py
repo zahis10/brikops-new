@@ -12,6 +12,10 @@ def is_trial_status(sub) -> bool:
     return compute_subscription_snapshot(sub)['subscription_status'] == 'trial'
 
 
+def should_sync_billing(contracted_units, previous_total) -> bool:
+    return contracted_units in (None, 0, previous_total)
+
+
 def validate_declared_units(new_total, current_total: int, active_count: int) -> int:
     """Return a validated int, or raise ValueError with a Hebrew message.
 

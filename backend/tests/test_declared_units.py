@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from contractor_ops.declared_units import is_trial_status, validate_declared_units
+from contractor_ops.declared_units import is_trial_status, validate_declared_units, should_sync_billing
 
 
 def test_trial_status():
@@ -32,3 +32,11 @@ def test_increase(new, current, active):
 def test_invalid_declaration(new, current, active):
     with pytest.raises(ValueError):
         validate_declared_units(new, current, active)
+
+
+@pytest.mark.parametrize('contracted,previous,expected', [
+    (None, 24, True), (0, 24, True), (24, 24, True),
+    (16, 24, False), (40, 24, False),
+])
+def test_should_sync_billing(contracted, previous, expected):
+    assert should_sync_billing(contracted, previous) is expected
