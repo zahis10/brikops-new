@@ -11481,3 +11481,431 @@ $ wc -c /tmp/batch611/review-section.txt
 monthly close: pay per floor — contract items with basis 'floor' (קומה יצוקה, בטון לפי קומה, חריגי קומות); floors count by the share of their apartments (#611)
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#613-A (14.10)
+BATCH 613-A v2 + approved ADDENDUM-1 + bounded ADDENDUM-2 (billing sync). User additionally approved clearing the prior result/duplicate state on quota stop and reloading the project after declaration update. No Git commands, deployment, dependency changes or harness repairs.
+V1 — Full new files and changed regions (3 context lines)
+
+--- backend/contractor_ops/declared_units.py ---
+"""The declared apartment count stays the single cap and price basis.
+
+During a trial an authorized manager may explicitly increase it, with an audit.
+Outside a trial, changes go through the admin quota request.
+"""
+from contractor_ops.billing import compute_subscription_snapshot
+
+MAX_DECLARED_UNITS = 5000
+
+
+def is_trial_status(sub) -> bool:
+    return compute_subscription_snapshot(sub)['subscription_status'] == 'trial'
+
+
+def should_sync_billing(contracted_units, previous_total) -> bool:
+    return contracted_units in (None, 0, previous_total)
+
+
+def validate_declared_units(new_total, current_total: int, active_count: int) -> int:
+    """Return a validated int, or raise ValueError with a Hebrew message.
+
+    Policy: only increases through the product; lowering is admin-only so units
+    cannot be raised and then lowered before month-end.
+    """
+    if isinstance(new_total, bool) or not isinstance(new_total, int):
+        raise ValueError('כמות הדירות חייבת להיות מספר שלם')
+    if new_total < 1 or new_total > MAX_DECLARED_UNITS:
+        raise ValueError(f'כמות הדירות חייבת להיות בין 1 ל-{MAX_DECLARED_UNITS}')
+    if new_total <= int(current_total or 0):
+        raise ValueError(f'אפשר רק להגדיל את כמות הדירות (רשום כיום {current_total})')
+    if new_total < active_count:
+        raise ValueError(f'לא ניתן להצהיר על {new_total} דירות כשיש כבר {active_count} דירות פעילות')
+    return new_total
+
+--- backend/contractor_ops/declared_units_router.py ---
+from fastapi import APIRouter, Depends, HTTPException
+
+from contractor_ops.billing import get_subscription, update_project_billing, recalc_org_total
+from contractor_ops.declared_units import is_trial_status, validate_declared_units, should_sync_billing
+from contractor_ops.router import (
+    get_db, get_current_user, _check_project_access, _check_structure_admin,
+    _audit, _now, logger,
+)
+
+router = APIRouter(prefix="/api")
+
+
+@router.put("/projects/{project_id}/declared-units")
+async def update_declared_units(project_id: str, body: dict,
+                                user: dict = Depends(get_current_user)):
+    await _check_project_access(user, project_id)
+    await _check_structure_admin(user, project_id)
+    db = get_db()
+    project = await db.projects.find_one(
+        {'id': project_id}, {'_id': 0, 'id': 1, 'org_id': 1, 'total_units': 1, 'name': 1},
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
+    sub = await get_subscription(project['org_id'])
+    if not is_trial_status(sub):
+        raise HTTPException(status_code=403, detail={
+            'detail': 'מחוץ לתקופת הניסיון שינוי הכמות המוצהרת נעשה בבקשה לאדמין',
+            'error_code': 'NOT_TRIAL',
+        })
+    active_count = await db.units.count_documents(
+        {'project_id': project_id, 'archived': {'$ne': True}},
+    )
+    try:
+        new_total = validate_declared_units(
+            body.get('total_units'), project.get('total_units') or 0, active_count,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await db.projects.update_one(
+        {'id': project_id}, {'$set': {'total_units': new_total, 'updated_at': _now()}},
+    )
+    billing_synced = False
+    contracted_units = None
+    try:
+        pb = await db.project_billing.find_one({'project_id': project_id}, {'_id': 0})
+        if pb:
+            contracted_units = pb.get('contracted_units')
+            if should_sync_billing(contracted_units, project.get('total_units')):
+                await update_project_billing(pb['id'], {'contracted_units': new_total}, user['id'])
+                contracted_units = new_total
+                await recalc_org_total(project['org_id'])
+                billing_synced = True
+    except Exception as exc:
+        logger.warning("Billing sync failed for project %s after total_units change: %s",
+                       project_id, exc)
+    await _audit('project', project_id, 'total_units_changed', user['id'],
+                 {'previous': project.get('total_units'), 'new': new_total,
+                  'reason': 'pm_trial_update', 'org_id': project['org_id'],
+                  'billing_synced': billing_synced, 'contracted_units': contracted_units})
+    logger.info("[DECLARED-UNITS] project=%s org=%s %s -> %s (actor=%s, trial)",
+                project_id, project['org_id'], project.get('total_units'), new_total, user['id'])
+    return {'ok': True, 'project_id': project_id,
+            'previous_total_units': project.get('total_units'), 'new_total_units': new_total,
+            'billing_synced': billing_synced, 'contracted_units': contracted_units}
+
+--- backend/tests/test_declared_units.py ---
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from contractor_ops.declared_units import is_trial_status, validate_declared_units, should_sync_billing
+
+
+def test_trial_status():
+    future = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    past = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    assert not is_trial_status(None)
+    assert is_trial_status({'status': 'trialing', 'trial_end_at': future})
+    assert not is_trial_status({'status': 'trialing', 'trial_end_at': past})
+    assert not is_trial_status({
+        'status': 'active', 'paid_until': future, 'trial_end_at': future,
+    })
+    assert not is_trial_status({
+        'status': 'trialing', 'trial_end_at': future,
+        'manual_override': {'is_suspended': True},
+    })
+
+
+@pytest.mark.parametrize('new,current,active', [(32, 24, 16), (25, 24, 16)])
+def test_increase(new, current, active):
+    assert validate_declared_units(new, current, active) == new
+
+
+@pytest.mark.parametrize('new,current,active', [
+    (24, 24, 16), (20, 24, 16), (30, 24, 32), (0, 0, 0),
+    ('32', 24, 0), (True, 24, 0), (5001, 24, 0),
+])
+def test_invalid_declaration(new, current, active):
+    with pytest.raises(ValueError):
+        validate_declared_units(new, current, active)
+
+
+@pytest.mark.parametrize('contracted,previous,expected', [
+    (None, 24, True), (0, 24, True), (24, 24, True),
+    (16, 24, False), (40, 24, False),
+])
+def test_should_sync_billing(contracted, previous, expected):
+    assert should_sync_billing(contracted, previous) is expected
+
+--- frontend/src/services/declaredUnitsService.js ---
+import axios from 'axios';
+import { API, getAuthHeader } from './api';
+
+export const declaredUnitsService = {
+  async update(projectId, totalUnits) {
+    const res = await axios.put(`${API}/projects/${projectId}/declared-units`, { total_units: totalUnits }, { headers: getAuthHeader() });
+    return res.data;
+  },
+};
+
+--- before/backend/server.py
++++ after/backend/server.py
+@@ -550,6 +550,8 @@
+ from contractor_ops.contract_items_router import router as contract_items_router
+ from contractor_ops import contract_items
+ app.include_router(contract_items_router)
++from contractor_ops.declared_units_router import router as declared_units_router
++app.include_router(declared_units_router)
+ 
+ from contractor_ops.tasks_router import router as tasks_router
+ app.include_router(tasks_router)
+
+--- before/frontend/src/pages/ProjectControlPage.js
++++ after/frontend/src/pages/ProjectControlPage.js
+@@ -5,11 +5,13 @@
+ import * as SheetPrimitive from '@radix-ui/react-dialog';
+ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+ import { useAuth } from '../contexts/AuthContext';
++import { useBilling } from '../contexts/BillingContext';
++import { declaredUnitsService } from '../services/declaredUnitsService';
+ import {
+   projectService, buildingService, floorService, membershipService,
+   projectCompanyService, teamInviteService, projectStatsService, excelService, tradeService,
+   sortIndexService, archiveService, stepupService, isStepupError, billingService,
+-  qcService, companySearchService, templateService, projectQcService, handoverService, taskService
++  qcService, companySearchService, templateService, projectQcService, handoverService, taskService, clearProjectCache
+ } from '../services/api';
+ import { toast } from 'sonner';
+ import { formatUnitLabel } from '../utils/formatters';
+@@ -310,7 +312,7 @@
+   return name;
+ };
+ 
+-const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = [], onClose, onSuccess }) => {
++const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = [], onClose, onSuccess, onRequestQuota }) => {
+   const [step, setStep] = useState(1);
+   const [buildingName, setBuildingName] = useState('');
+   const [buildingCode, setBuildingCode] = useState('');
+@@ -328,6 +330,10 @@
+   const [dupName, setDupName] = useState('');
+   const [prefillFrom, setPrefillFrom] = useState(null);
+   const [copiedFrom, setCopiedFrom] = useState('');
++  const { billing } = useBilling();
++  const isTrialOrg = billing?.subscription_status === 'trial';
++  const [capOverride, setCapOverride] = useState(null);
++  const [updatingCap, setUpdatingCap] = useState(false);
+ 
+   const existingBuildingNames = [
+     ...hierarchy.map(b => b.name).filter(Boolean),
+@@ -363,7 +369,7 @@
+   }
+   const totalUnits = floorsList.reduce((sum, f) => sum + f.units, 0);
+   const floorsWithoutUnits = floorsList.filter(f => f.units === 0).length;
+-  const projectCap = project?.total_units;
++  const projectCap = capOverride ?? project?.total_units;
+   const effectiveCurrent = Math.max(currentUnitCount, initialUnitCount + unitsCreatedThisSession);
+   const wouldExceed = projectCap != null && projectCap > 0 && (effectiveCurrent + totalUnits) > projectCap;
+ 
+@@ -467,6 +473,12 @@
+   const handleBack = () => setStep(s => Math.max(s - 1, 1));
+ 
+   const handleGenerate = async (overrides = {}) => {
++    if (wouldExceed && !overrides.skipCapCheck) {
++      setResult(null);
++      setShowDupConfirm(false);
++      setStep(4);
++      return;
++    }
+     const effName = (overrides.nameOverride ?? buildingName).trim();
+     const effCode = (overrides.codeOverride ?? buildingCode).trim();
+     setSubmitting(true);
+@@ -552,6 +564,22 @@
+     } finally {
+       setSubmitting(false);
+     }
++  };
++
++  const handleUpdateDeclarationAndCreate = async () => {
++    const target = effectiveCurrent + totalUnits;
++    setUpdatingCap(true);
++    try {
++      await declaredUnitsService.update(projectId, target);
++      clearProjectCache(projectId);
++      setCapOverride(target);
++      onSuccess();
++      toast.success(`הכמות המוצהרת עודכנה ל-${target} דירות`);
++      await handleGenerate({ skipCapCheck: true });
++    } catch (err) {
++      const d = err.response?.data?.detail;
++      toast.error(typeof d === 'string' ? d : (d?.detail || 'עדכון הכמות המוצהרת נכשל'));
++    } finally { setUpdatingCap(false); }
+   };
+ 
+   const handleUndoBatch = async () => {
+@@ -779,15 +807,14 @@
+                 </div>
+               </div>
+               {wouldExceed && (
+-                <div className="bg-amber-50 border border-amber-300 rounded-lg p-3">
+-                  <div className="flex items-start gap-2">
+-                    <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+-                    <div className="space-y-1">
+-                      <div className="font-semibold text-amber-800">חריגה מהכמות המוצהרת</div>
+-                      <div className="text-xs text-amber-700">הפרויקט הוצהר ל-{projectCap} יחידות. יש {currentUnitCount} פעילות, ניסית להוסיף {totalUnits}.</div>
+-                      <div className="text-xs text-amber-700">הבניין והקומות ייווצרו. בקשה אוטומטית להגדלת הכמות תישלח לאדמין עבור הדירות שבחריגה.</div>
+-                    </div>
++                <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 space-y-2">
++                  <div className="text-base font-bold text-amber-800">כמה דירות יש בפרויקט?</div>
++                  <div className="flex gap-2">
++                    <div className="flex-1 bg-white border border-amber-200 rounded-md px-2 py-1 text-xs text-amber-800">רשום בפרויקט<div className="text-lg font-bold text-slate-800">{projectCap}</div></div>
++                    <div className="flex-1 bg-white border border-amber-200 rounded-md px-2 py-1 text-xs text-amber-800">עם הבניין הזה<div className="text-lg font-bold text-slate-800">{effectiveCurrent + totalUnits}</div></div>
+                   </div>
++                  <div className="text-xs text-amber-800">המספר צריך להתאים להיתר הבנייה.</div>
++                  {!isTrialOrg && <div className="text-xs text-amber-800">במנוי פעיל העדכון נעשה דרך המנהל; הבניין ייווצר אחרי האישור.</div>}
+                 </div>
+               )}
+             </div>
+@@ -795,13 +822,18 @@
+ 
+           <div className="flex gap-2 mt-3">
+             {step > 1 && (
+-              <Button onClick={handleBack} variant="outline" className="flex-1 text-sm" disabled={submitting}>
+-                חזרה
++              <Button onClick={handleBack} variant="outline" className="flex-1 text-sm" disabled={submitting || updatingCap}>
++                {step === 4 && wouldExceed ? 'חזרה לתיקון הבניין' : 'חזרה'}
+               </Button>
+             )}
+             {step < 4 ? (
+               <Button onClick={handleNext} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm">
+                 הבא
++              </Button>
++            ) : wouldExceed ? (
++              <Button onClick={isTrialOrg ? handleUpdateDeclarationAndCreate : () => onRequestQuota?.(effectiveCurrent + totalUnits)}
++                disabled={updatingCap || submitting} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm">
++                {effectiveCurrent + totalUnits} נכון — {isTrialOrg ? 'עדכן והמשך' : 'בקש עדכון מהמנהל'}
+               </Button>
+             ) : (
+               <Button onClick={() => handleGenerate()} disabled={submitting} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm">
+@@ -3329,6 +3361,8 @@
+ const ProjectControlPage = () => {
+   const { projectId } = useParams();
+   const { user, features, logout } = useAuth();
++  const { billing } = useBilling();
++  const isTrialOrg = billing?.subscription_status === 'trial';
+   const navigate = useNavigate();
+   const [searchParams, setSearchParams] = useSearchParams();
+ 
+@@ -3726,12 +3760,13 @@
+   }, [hierarchy, projectId]);
+ 
+   const handleRefresh = useCallback(() => {
++    loadProject();
+     loadHierarchy();
+     loadStats();
+     loadCompanies();
+     loadTrades();
+     loadMemberCount();
+-  }, [loadHierarchy, loadStats, loadCompanies, loadTrades, loadMemberCount]);
++  }, [loadProject, loadHierarchy, loadStats, loadCompanies, loadTrades, loadMemberCount]);
+ 
+   const handleOnboardingDismiss = useCallback(async (isAutoComplete) => {
+     setOnboardingDismissed(true);
+@@ -3813,7 +3848,7 @@
+               <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
+               {project?.total_units != null && project.total_units > 0 && (() => {
+                 const activeUnits = hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0);
+-                const atCap = activeUnits >= project.total_units;
++                const atCap = !isTrialOrg && activeUnits >= project.total_units;
+                 return (
+                   <div className={`flex items-center gap-1 text-xs mt-0.5 mr-1 ${atCap ? 'text-red-300' : 'text-white/70'}`}>
+                     <span>יחידות דיור:</span>
+@@ -4215,7 +4250,7 @@
+         </button>
+       )}
+ 
+-      {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} hierarchy={hierarchy} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
++      {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} hierarchy={hierarchy} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} onRequestQuota={(n) => { setQuotaRequestAmount(String(n)); setShowQuickSetup(false); setShowQuotaRequestModal(true); }} />}
+       {showAddBuilding && <AddBuildingForm projectId={projectId} onClose={() => setShowAddBuilding(false)} onSuccess={handleRefresh} />}
+       {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} hierarchy={hierarchy} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
+       {showBulkUnits && <BulkUnitsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkUnits(false)} onSuccess={handleRefresh} />}
+
+--- before/frontend/src/pages/MyProjectsPage.js
++++ after/frontend/src/pages/MyProjectsPage.js
+@@ -59,7 +59,7 @@
+     }
+     const unitsNum = parseInt(totalUnits, 10);
+     if (!totalUnits.trim() || isNaN(unitsNum) || unitsNum < 1) {
+-      setUnitsError('חובה להזין כמות יחידות דיור (לפחות 1)');
++      setUnitsError('חובה להזין את כמות הדירות לפי ההיתר (לפחות 1)');
+       hasError = true;
+     }
+     if (hasError) return;
+@@ -129,7 +129,7 @@
+               </div>
+               <div className="space-y-1.5">
+                 <label htmlFor="create-proj-units" className="block text-sm font-medium text-slate-700">
+-                  כמות יחידות דיור <span className="text-red-500">*</span>
++                  כמות דירות לפי היתר הבנייה <span className="text-red-500">*</span>
+                 </label>
+                 <input
+                   id="create-proj-units"
+@@ -142,7 +142,7 @@
+                   className={`w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400 ${unitsError ? 'border-red-500' : 'border-slate-300'}`}
+                 />
+                 {unitsError && <p className="text-xs text-red-500">{unitsError}</p>}
+-                <p className="text-xs text-slate-500">מספר זה לקוח מהיתר הבנייה ויקבע את מחיר המנוי החודשי.</p>
++                <p className="text-xs text-slate-500">כמה דירות יש בכל הפרויקט, לפי היתר הבנייה. אפשר לתקן בתקופת הניסיון.</p>
+               </div>
+               <Button
+                 type="submit"
+
+--- before/frontend/src/pages/OnboardingPage.js
++++ after/frontend/src/pages/OnboardingPage.js
+@@ -630,8 +630,8 @@
+     }
+     const unitsNum = parseInt(totalUnits, 10);
+     if (!totalUnits || isNaN(unitsNum) || unitsNum < 1) {
+-      setUnitsError('חובה להזין כמות יחידות דיור (לפחות 1)');
+-      toast.error('חובה להזין כמות יחידות דיור (לפחות 1)');
++      setUnitsError('חובה להזין את כמות הדירות לפי ההיתר (לפחות 1)');
++      toast.error('חובה להזין את כמות הדירות לפי ההיתר (לפחות 1)');
+       return;
+     }
+     setUnitsError('');
+@@ -1661,7 +1661,7 @@
+             </div>
+             <div className="space-y-2">
+               <label htmlFor="onb-totalunits" className="block text-sm font-medium text-slate-700">
+-                כמות יחידות דיור <span className="text-red-500">*</span>
++                כמות דירות לפי היתר הבנייה <span className="text-red-500">*</span>
+               </label>
+               <input
+                 id="onb-totalunits"
+
+V2 — Added/removed line counts, computed from saved originals without Git
+backend/contractor_ops/declared_units.py: +33 / -0
+backend/contractor_ops/declared_units_router.py: +64 / -0
+backend/tests/test_declared_units.py: +42 / -0
+frontend/src/services/declaredUnitsService.js: +9 / -0
+backend/server.py: +2 / -0
+frontend/src/pages/ProjectControlPage.js: +51 / -16
+frontend/src/pages/MyProjectsPage.js: +3 / -3
+frontend/src/pages/OnboardingPage.js: +3 / -3
+
+V3 — not run — local harness
+pytest: PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=backend python -m pytest backend/tests/test_declared_units.py -q -p no:cacheprovider — exit 0; 15 passed in 0.63s (final run after ADDENDUM-2; includes None/zero/equal sync and lower/higher agreed-quantity preservation).
+Jest: CI=true npm test -- --watchAll=false --runInBand — exit 1; libuuid.so.1 missing; 8 suites failed before execution, 0 tests, 3.144s; no harness repair.
+Build: CI=true REACT_APP_BACKEND_URL=https://<workspace-dev-domain> BUILD_PATH=/tmp/batch613a/verified-build npm run build — exit 0, Compiled with warnings: three missing Apple sign-in dependency source maps (definitions.ts, index.ts, web.ts); stale Browserslist notice. No lint errors reported. Initial build stopped at missing REACT_APP_BACKEND_URL guard; retry supplied the workspace dev URL for this process only. Existing frontend/build untouched; generated verification output is outside the workspace.
+Workflow restart attempted once: failed because /tmp/batch606/normal-launch.sh is absent. Screenshot attempt: ERR_CONNECTION_REFUSED. No interactive browser/API/staging test was run or claimed.
+Required greps: unchanged quota helper/caller lines 25,81,99,491,561,612,937; server declared_units registration exactly 2 lines; declared-units route/service one each; wizard guard/handler/capOverride/quota callback present; isTrialOrg in wizard and page counter.
+
+V4 — Answers
+(a) Count NOT AVAILABLE. A read-only aggregation against the configured workspace Mongo connection was attempted, grouping subscriptions with status trialing by org_id and looking up project_billing. Connection initialization failed with Mongo ConfigurationError / DNS SRV resolution failure. No count is inferred; no production query claimed. ADDENDUM-2 subsequently authorized bounded billing synchronization based on confirmed auto-creation in projects_router.py and onboarding_router.py.
+(b) Exact audit call:
+    await _audit('project', project_id, 'total_units_changed', user['id'],
+                 {'previous': project.get('total_units'), 'new': new_total,
+                  'reason': 'pm_trial_update', 'org_id': project['org_id'],
+                  'billing_synced': billing_synced, 'contracted_units': contracted_units})
+(c) Reuse clearProjectCache(projectId) immediately after declaredUnitsService.update succeeds. api.js is unchanged. The approved extra fix calls onSuccess after updating the declaration and adds loadProject to handleRefresh (including its dependencies), so project state is reloaded even if subsequent building creation fails. The normal post-creation refresh remains.
+Approved duplicate-flow fix: guard clears result and showDupConfirm before setStep(4), so the previous success screen no longer hides the question. Existing duplicate naming setters remain unchanged.
+Scope: four new files + four edited files only. New-file line limits: 33/40, 64/80, 42/50, 9/20. All other baseline backend Python/frontend source files and review.txt are byte-identical.
+review.txt remains 634369 bytes. Zahi appends this section; expected appended size = 634369 + 1 + section byte size.
+
+ADDENDUM-2: After declaration persistence, read existing project_billing. Only None, zero, or previous declaration qualifies for update_project_billing followed by recalc_org_total. A different agreed quantity remains unchanged. No billing record is created if absent. Audit and response include billing_synced and contracted_units. Sync exceptions log a warning and do not fail the declaration update. billing_synced becomes true only after update and recalculation succeed; if recalculation fails after update, false is returned with the newly updated contracted value. No billing.py/admin_router.py changes. Pure-helper tests do not claim live DB or endpoint integration coverage. Prior frontend build/Jest and harness results remain unchanged; no repeat or repair. Final baseline comparison again confirms only the four allowed existing application files differ; review.txt remains byte-identical.
+
+V5
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
