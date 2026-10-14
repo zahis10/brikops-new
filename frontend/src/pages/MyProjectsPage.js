@@ -59,7 +59,7 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
     }
     const unitsNum = parseInt(totalUnits, 10);
     if (!totalUnits.trim() || isNaN(unitsNum) || unitsNum < 1) {
-      setUnitsError('חובה להזין כמות יחידות דיור (לפחות 1)');
+      setUnitsError('חובה להזין את כמות הדירות לפי ההיתר (לפחות 1)');
       hasError = true;
     }
     if (hasError) return;
@@ -129,7 +129,7 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
               </div>
               <div className="space-y-1.5">
                 <label htmlFor="create-proj-units" className="block text-sm font-medium text-slate-700">
-                  כמות יחידות דיור <span className="text-red-500">*</span>
+                  כמות דירות לפי היתר הבנייה <span className="text-red-500">*</span>
                 </label>
                 <input
                   id="create-proj-units"
@@ -142,7 +142,7 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
                   className={`w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400 ${unitsError ? 'border-red-500' : 'border-slate-300'}`}
                 />
                 {unitsError && <p className="text-xs text-red-500">{unitsError}</p>}
-                <p className="text-xs text-slate-500">מספר זה לקוח מהיתר הבנייה ויקבע את מחיר המנוי החודשי.</p>
+                <p className="text-xs text-slate-500">כמה דירות יש בכל הפרויקט, לפי היתר הבנייה. אפשר לתקן בתקופת הניסיון.</p>
               </div>
               <Button
                 type="submit"

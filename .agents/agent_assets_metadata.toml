@@ -1229,3 +1229,17 @@ mtime_ms = 1791958322632
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/943ab8b2-a781-4477-be0b-87785dd9d2d8/678af1a8-7d88-4e83-9609-23ac713895fe"
 storage_version_token = "1791958324208811"
 content_type = "text/plain"
+
+[[outputs]]
+id = "ZzZoE2DfJxAW2B9uJ_9rE"
+uri = "file://attached_assets/review-batch613a.txt"
+type = "text"
+title = "סעיף ביקורת #613-A (14.10)"
+description = "הסעיף המלא להוספה ידנית, כולל השינויים, תוצאות הבדיקות ומגבלות האימות. review.txt לא שונה."
+logical_id = "d7e4a448-2110-4ac2-a3d2-1957ab5e255c"
+content_hash = "sha256:bc1cc88518b81049d493b41a616caccb6d416439a8d8ea4dde5d54ac19f5306c"
+size = 22366
+mtime_ms = 1791968309831
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/d7e4a448-2110-4ac2-a3d2-1957ab5e255c/807bdc4b-9509-443f-9317-415a8f649529"
+storage_version_token = "1791968311395191"
+content_type = "text/plain"

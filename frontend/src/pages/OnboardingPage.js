@@ -630,8 +630,8 @@ const OnboardingPage = () => {
     }
     const unitsNum = parseInt(totalUnits, 10);
     if (!totalUnits || isNaN(unitsNum) || unitsNum < 1) {
-      setUnitsError('חובה להזין כמות יחידות דיור (לפחות 1)');
-      toast.error('חובה להזין כמות יחידות דיור (לפחות 1)');
+      setUnitsError('חובה להזין את כמות הדירות לפי ההיתר (לפחות 1)');
+      toast.error('חובה להזין את כמות הדירות לפי ההיתר (לפחות 1)');
       return;
     }
     setUnitsError('');
@@ -1661,7 +1661,7 @@ const OnboardingPage = () => {
             </div>
             <div className="space-y-2">
               <label htmlFor="onb-totalunits" className="block text-sm font-medium text-slate-700">
-                כמות יחידות דיור <span className="text-red-500">*</span>
+                כמות דירות לפי היתר הבנייה <span className="text-red-500">*</span>
               </label>
               <input
                 id="onb-totalunits"

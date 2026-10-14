@@ -5,11 +5,13 @@ import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescript
 import * as SheetPrimitive from '@radix-ui/react-dialog';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useBilling } from '../contexts/BillingContext';
+import { declaredUnitsService } from '../services/declaredUnitsService';
 import {
   projectService, buildingService, floorService, membershipService,
   projectCompanyService, teamInviteService, projectStatsService, excelService, tradeService,
   sortIndexService, archiveService, stepupService, isStepupError, billingService,
-  qcService, companySearchService, templateService, projectQcService, handoverService, taskService
+  qcService, companySearchService, templateService, projectQcService, handoverService, taskService, clearProjectCache
 } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
@@ -310,7 +312,7 @@ const suggestNextBuildingName = (base, takenNames) => {
   return name;
 };
 
-const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = [], onClose, onSuccess }) => {
+const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = [], onClose, onSuccess, onRequestQuota }) => {
   const [step, setStep] = useState(1);
   const [buildingName, setBuildingName] = useState('');
   const [buildingCode, setBuildingCode] = useState('');
@@ -328,6 +330,10 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = []
   const [dupName, setDupName] = useState('');
   const [prefillFrom, setPrefillFrom] = useState(null);
   const [copiedFrom, setCopiedFrom] = useState('');
+  const { billing } = useBilling();
+  const isTrialOrg = billing?.subscription_status === 'trial';
+  const [capOverride, setCapOverride] = useState(null);
+  const [updatingCap, setUpdatingCap] = useState(false);
 
   const existingBuildingNames = [
     ...hierarchy.map(b => b.name).filter(Boolean),
@@ -363,7 +369,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = []
   }
   const totalUnits = floorsList.reduce((sum, f) => sum + f.units, 0);
   const floorsWithoutUnits = floorsList.filter(f => f.units === 0).length;
-  const projectCap = project?.total_units;
+  const projectCap = capOverride ?? project?.total_units;
   const effectiveCurrent = Math.max(currentUnitCount, initialUnitCount + unitsCreatedThisSession);
   const wouldExceed = projectCap != null && projectCap > 0 && (effectiveCurrent + totalUnits) > projectCap;
 
@@ -467,6 +473,12 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = []
   const handleBack = () => setStep(s => Math.max(s - 1, 1));
 
   const handleGenerate = async (overrides = {}) => {
+    if (wouldExceed && !overrides.skipCapCheck) {
+      setResult(null);
+      setShowDupConfirm(false);
+      setStep(4);
+      return;
+    }
     const effName = (overrides.nameOverride ?? buildingName).trim();
     const effCode = (overrides.codeOverride ?? buildingCode).trim();
     setSubmitting(true);
@@ -552,6 +564,22 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = []
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleUpdateDeclarationAndCreate = async () => {
+    const target = effectiveCurrent + totalUnits;
+    setUpdatingCap(true);
+    try {
+      await declaredUnitsService.update(projectId, target);
+      clearProjectCache(projectId);
+      setCapOverride(target);
+      onSuccess();
+      toast.success(`הכמות המוצהרת עודכנה ל-${target} דירות`);
+      await handleGenerate({ skipCapCheck: true });
+    } catch (err) {
+      const d = err.response?.data?.detail;
+      toast.error(typeof d === 'string' ? d : (d?.detail || 'עדכון הכמות המוצהרת נכשל'));
+    } finally { setUpdatingCap(false); }
   };
 
   const handleUndoBatch = async () => {
@@ -779,15 +807,14 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = []
                 </div>
               </div>
               {wouldExceed && (
-                <div className="bg-amber-50 border border-amber-300 rounded-lg p-3">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <div className="font-semibold text-amber-800">חריגה מהכמות המוצהרת</div>
-                      <div className="text-xs text-amber-700">הפרויקט הוצהר ל-{projectCap} יחידות. יש {currentUnitCount} פעילות, ניסית להוסיף {totalUnits}.</div>
-                      <div className="text-xs text-amber-700">הבניין והקומות ייווצרו. בקשה אוטומטית להגדלת הכמות תישלח לאדמין עבור הדירות שבחריגה.</div>
-                    </div>
+                <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 space-y-2">
+                  <div className="text-base font-bold text-amber-800">כמה דירות יש בפרויקט?</div>
+                  <div className="flex gap-2">
+                    <div className="flex-1 bg-white border border-amber-200 rounded-md px-2 py-1 text-xs text-amber-800">רשום בפרויקט<div className="text-lg font-bold text-slate-800">{projectCap}</div></div>
+                    <div className="flex-1 bg-white border border-amber-200 rounded-md px-2 py-1 text-xs text-amber-800">עם הבניין הזה<div className="text-lg font-bold text-slate-800">{effectiveCurrent + totalUnits}</div></div>
                   </div>
+                  <div className="text-xs text-amber-800">המספר צריך להתאים להיתר הבנייה.</div>
+                  {!isTrialOrg && <div className="text-xs text-amber-800">במנוי פעיל העדכון נעשה דרך המנהל; הבניין ייווצר אחרי האישור.</div>}
                 </div>
               )}
             </div>
@@ -795,13 +822,18 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = []
 
           <div className="flex gap-2 mt-3">
             {step > 1 && (
-              <Button onClick={handleBack} variant="outline" className="flex-1 text-sm" disabled={submitting}>
-                חזרה
+              <Button onClick={handleBack} variant="outline" className="flex-1 text-sm" disabled={submitting || updatingCap}>
+                {step === 4 && wouldExceed ? 'חזרה לתיקון הבניין' : 'חזרה'}
               </Button>
             )}
             {step < 4 ? (
               <Button onClick={handleNext} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm">
                 הבא
+              </Button>
+            ) : wouldExceed ? (
+              <Button onClick={isTrialOrg ? handleUpdateDeclarationAndCreate : () => onRequestQuota?.(effectiveCurrent + totalUnits)}
+                disabled={updatingCap || submitting} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm">
+                {effectiveCurrent + totalUnits} נכון — {isTrialOrg ? 'עדכן והמשך' : 'בקש עדכון מהמנהל'}
               </Button>
             ) : (
               <Button onClick={() => handleGenerate()} disabled={submitting} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm">
@@ -3329,6 +3361,8 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
 const ProjectControlPage = () => {
   const { projectId } = useParams();
   const { user, features, logout } = useAuth();
+  const { billing } = useBilling();
+  const isTrialOrg = billing?.subscription_status === 'trial';
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -3726,12 +3760,13 @@ const ProjectControlPage = () => {
   }, [hierarchy, projectId]);
 
   const handleRefresh = useCallback(() => {
+    loadProject();
     loadHierarchy();
     loadStats();
     loadCompanies();
     loadTrades();
     loadMemberCount();
-  }, [loadHierarchy, loadStats, loadCompanies, loadTrades, loadMemberCount]);
+  }, [loadProject, loadHierarchy, loadStats, loadCompanies, loadTrades, loadMemberCount]);
 
   const handleOnboardingDismiss = useCallback(async (isAutoComplete) => {
     setOnboardingDismissed(true);
@@ -3813,7 +3848,7 @@ const ProjectControlPage = () => {
               <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
               {project?.total_units != null && project.total_units > 0 && (() => {
                 const activeUnits = hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0);
-                const atCap = activeUnits >= project.total_units;
+                const atCap = !isTrialOrg && activeUnits >= project.total_units;
                 return (
                   <div className={`flex items-center gap-1 text-xs mt-0.5 mr-1 ${atCap ? 'text-red-300' : 'text-white/70'}`}>
                     <span>יחידות דיור:</span>
@@ -4215,7 +4250,7 @@ const ProjectControlPage = () => {
         </button>
       )}
 
-      {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} hierarchy={hierarchy} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
+      {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} hierarchy={hierarchy} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} onRequestQuota={(n) => { setQuotaRequestAmount(String(n)); setShowQuickSetup(false); setShowQuotaRequestModal(true); }} />}
       {showAddBuilding && <AddBuildingForm projectId={projectId} onClose={() => setShowAddBuilding(false)} onSuccess={handleRefresh} />}
       {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} hierarchy={hierarchy} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
       {showBulkUnits && <BulkUnitsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkUnits(false)} onSuccess={handleRefresh} />}

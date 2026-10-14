@@ -550,6 +550,8 @@ app.include_router(monthly_close_router)
 from contractor_ops.contract_items_router import router as contract_items_router
 from contractor_ops import contract_items
 app.include_router(contract_items_router)
+from contractor_ops.declared_units_router import router as declared_units_router
+app.include_router(declared_units_router)
 
 from contractor_ops.tasks_router import router as tasks_router
 app.include_router(tasks_router)
