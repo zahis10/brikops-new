@@ -157,9 +157,9 @@ const ApartmentDashboardPage = () => {
     }
   }, [features, projectId, unitId, navigate]);
 
-  const loadUnit = useCallback(async () => {
+  const loadUnit = useCallback(async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const data = await unitService.get(unitId);
       setUnitData(data);
     } catch (err) {
@@ -1159,7 +1159,7 @@ const ApartmentDashboardPage = () => {
           onClose={() => setShowDefectModal(false)}
           onSuccess={(taskId) => {
             setHighlightTaskId(taskId || null);
-            loadUnit();
+            loadUnit({ silent: true });
             loadTasks();
             window.setTimeout(() => setHighlightTaskId(null), 4000);
           }}

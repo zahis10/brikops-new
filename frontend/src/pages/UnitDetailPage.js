@@ -81,9 +81,9 @@ const UnitDetailPage = () => {
 
   const canCreateDefect = user && user.role === 'project_manager';
 
-  const loadUnit = useCallback(async () => {
+  const loadUnit = useCallback(async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const data = await unitService.get(unitId);
       setUnitData(data);
     } catch (err) {
@@ -150,7 +150,7 @@ const UnitDetailPage = () => {
   }, [location.key, unitId]);
 
   const handleDefectSuccess = () => {
-    loadUnit();
+    loadUnit({ silent: true });
     loadTasks();
   };
 
