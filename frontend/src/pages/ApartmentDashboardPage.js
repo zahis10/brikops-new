@@ -107,6 +107,8 @@ const ApartmentDashboardPage = () => {
   const [blockingOpen, setBlockingOpen] = useState(false);
   const [editingUnit, setEditingUnit] = useState(null);
   const [showDefectModal, setShowDefectModal] = useState(false);
+  const [highlightTaskId, setHighlightTaskId] = useState(null);
+  const highlightRef = useRef(null);
 
   // Auto-open NewDefectModal when arriving with ?reopenDefect=1 (from the
   // "add contractor and return" flow). Clears the param so back/refresh
@@ -216,6 +218,11 @@ const ApartmentDashboardPage = () => {
   }, [unitId]);
 
   // Revoke any synthesized pending blob URLs on unmount (no leak).
+  useEffect(() => {
+    if (!highlightTaskId || !highlightRef.current) return;
+    try { highlightRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {}
+  }, [highlightTaskId, tasks]);
+
   useEffect(() => () => {
     pendingUrlsRef.current.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} });
     pendingUrlsRef.current = [];
@@ -1074,11 +1081,12 @@ const ApartmentDashboardPage = () => {
               return (
                 <button
                   key={task.id}
+                  ref={task.id === highlightTaskId ? highlightRef : null}
                   onClick={() => {
                     if (task._pendingUpload) { toast.info('הליקוי ממתין לשליחה — יישלח כשתחזור הרשת'); return; }
                     navigate(`/tasks/${task.id}`, { state: { returnTo: location.pathname + location.search } });
                   }}
-                  className="w-full bg-white rounded-xl border border-slate-200 p-3.5 text-right hover:shadow-md transition-shadow active:bg-slate-50"
+                  className={`w-full bg-white rounded-xl border border-slate-200 p-3.5 text-right hover:shadow-md transition-shadow active:bg-slate-50${task.id === highlightTaskId ? ' ring-2 ring-amber-400 bg-amber-50' : ''}`}
                 >
                   <div className="flex items-start gap-3">
                     {hasImage && (
@@ -1149,10 +1157,13 @@ const ApartmentDashboardPage = () => {
         <NewDefectModal
           isOpen={showDefectModal}
           onClose={() => setShowDefectModal(false)}
-          onSuccess={() => {
+          onSuccess={(taskId) => {
+            setHighlightTaskId(taskId || null);
             loadUnit();
             loadTasks();
+            window.setTimeout(() => setHighlightTaskId(null), 4000);
           }}
+          onAddAnother={() => setShowDefectModal(true)}
           prefillData={{
             project_id: project?.id || unit?.project_id || projectId,
             building_id: building?.id || unit?.building_id || '',

@@ -53,7 +53,7 @@ const PRIORITIES = [
   { value: 'critical', label: 'קריטי', color: 'text-red-600' },
 ];
 
-const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData, onAddAnother }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const hasPrefill = !!(prefillData && prefillData.project_id && prefillData.unit_id);
@@ -109,6 +109,15 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setPhotoFirst(on);
     try { window.localStorage.setItem('brikops_defect_photo_first_v1', on ? '1' : '0'); } catch {}
   };
+  // #613-B: opt-in rapid entry — off by default, remembered per device.
+  const [rapidEntry, setRapidEntry] = useState(() => {
+    try { return window.localStorage.getItem('brikops_defect_rapid_entry_v1') === '1'; } catch { return false; }
+  });
+  const toggleRapidEntry = (on) => {
+    setRapidEntry(on);
+    try { window.localStorage.setItem('brikops_defect_rapid_entry_v1', on ? '1' : '0'); } catch {}
+  };
+  const [savedCount, setSavedCount] = useState(0);
   const effectivePhotoFirst = FEATURES.DEFECT_PHOTO_FIRST && photoFirst;
   // BATCH AI Phase 2c E3a: AI suggestion only in photo-first + behind the flag.
   const effectiveAiSuggest = FEATURES.DEFECT_AI_SUGGEST && effectivePhotoFirst;
@@ -190,6 +199,10 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       }
     }
   }, [isOpen, hasPrefill, prefillData, loadProjects, loadCompanies]);
+
+  // #613-B: new counting session per open. Deliberately NOT in the prefill effect above —
+  // prefillData changes identity on every parent render and would reset the counter mid-session.
+  useEffect(() => { if (isOpen) setSavedCount(0); }, [isOpen]);
 
   // Restore in-progress draft from the "+ הוסף קבלן" → add contractor → return flow.
   // Gated on FEATURES.DEFECT_DRAFT_PRESERVATION; off = no-op (matches pre-batch).
@@ -547,6 +560,59 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     return Object.keys(errs).length === 0;
   }, [projectId, buildingId, floorId, unitId, category, title, images]);
 
+  // #613-B: reset block moved from the assigned success path.
+  const resetAfterSave = () => {
+    clearDraftImages(); // BATCH defect-photo-first E3e: terminal outcome — drop any stale stash
+    images.forEach(img => { try { URL.revokeObjectURL(img.preview); } catch (_) {} });
+    setProjectId('');
+    setBuildingId('');
+    setFloorId('');
+    setUnitId('');
+    setCategory('');
+    setTitle('');
+    setDescription('');
+    setPriority('medium');
+    setIsSafety(false);
+    setCompanyId('');
+    setAssigneeId('');
+    setAutoSelectedCompany(false);
+    setAutoSelectedAssignee(false);
+    setImages([]);
+    setPendingFile(null);
+    setAnnotatingIndex(null);
+    setErrors({});
+    setCreatedTaskId(null);
+    setUploadError(null);
+    // BATCH AI Phase 2c E3b: reset AI state on successful submit.
+    aiTriedRef.current = false;
+    setAiState('idle');
+    setAiSuggestion(null);
+    setAiSurface(null);
+    setAiAutoFilled(false);
+    if (hasPrefill) {
+      setProjectId(prefillData.project_id);
+      setBuildingId(prefillData.building_id);
+      setFloorId(prefillData.floor_id);
+      setUnitId(prefillData.unit_id);
+    }
+  };
+
+  // #613-B: single exit for every successful save (online / assigned / offline queue).
+  const afterSave = (savedId, message) => {
+    setSavedCount(c => c + 1);
+    resetAfterSave();
+    if (rapidEntry) {
+      toast.success(message);
+      onSuccess?.(savedId);
+      return;
+    }
+    toast.success(message, onAddAnother
+      ? { duration: 6000, action: { label: '+ ליקוי נוסף', onClick: () => onAddAnother() } }
+      : undefined);
+    onSuccess?.(savedId);
+    handleClose();
+  };
+
   const doUploadAndAssign = async (taskId) => {
     setUploadError(null);
 
@@ -623,8 +689,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     const isContactFallback = assigneeId === '__company_contact__';
     const effectiveAssigneeId = isContactFallback ? null : assigneeId;
     if (!companyId) {
-      toast.success('הליקוי נוצר בהצלחה!');
-      onSuccess?.(taskId);
+      afterSave(taskId, 'הליקוי נשמר');
       return;
     }
 
@@ -648,8 +713,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       }
       return;
     }
-
-    toast.success('הליקוי נוצר בהצלחה!');
 
     const ns = assignResult?.notification_status;
     if (ns) {
@@ -683,34 +746,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       }
     }
 
-    clearDraftImages(); // BATCH defect-photo-first E3e: terminal outcome — drop any stale stash
-    images.forEach(img => URL.revokeObjectURL(img.preview));
-    setProjectId('');
-    setBuildingId('');
-    setFloorId('');
-    setUnitId('');
-    setCategory('');
-    setTitle('');
-    setDescription('');
-    setPriority('medium');
-    setIsSafety(false);
-    setCompanyId('');
-    setAssigneeId('');
-    setAutoSelectedCompany(false);
-    setAutoSelectedAssignee(false);
-    setImages([]);
-    setPendingFile(null);
-    setAnnotatingIndex(null);
-    setErrors({});
-    setCreatedTaskId(null);
-    setUploadError(null);
-    // BATCH AI Phase 2c E3b: reset AI state on successful submit.
-    aiTriedRef.current = false;
-    setAiState('idle');
-    setAiSuggestion(null);
-    setAiSurface(null);
-    setAiAutoFilled(false);
-    onSuccess(taskId);
+    afterSave(taskId, 'הליקוי נשמר ונשלח לקבלן');
   };
 
   const handleSubmit = async () => {
@@ -797,9 +833,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         });
         clearDefectDraft();
         clearDraftImages(); // BATCH defect-photo-first E3e: terminal outcome — drop any stale stash
-        toast.success('הליקוי נשמר במכשיר — יישלח כשתחזור הרשת');
-        images.forEach(img => { try { URL.revokeObjectURL(img.preview); } catch (_) {} });
-        onSuccess?.(clientId);
+        afterSave(clientId, 'הליקוי נשמר במכשיר — יישלח כשתחזור הרשת');
       };
 
       // Proactive: known-offline ⇒ skip the network entirely and queue now.
@@ -951,6 +985,11 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         </div>
 
         <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+          {rapidEntry && savedCount > 0 && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg px-3 py-2 text-right" dir="rtl">
+              {savedCount === 1 ? 'נשמר ליקוי אחד' : `נשמרו ${savedCount} ליקויים`} בסבב הזה · הטופס אופס לליקוי הבא
+            </div>
+          )}
           {/* BATCH defect-photo-first E3d: opt-in mode toggle. Renders ONLY when the
               flag is on — flag off = zero visual change from today. */}
           {FEATURES.DEFECT_PHOTO_FIRST && (
@@ -1321,7 +1360,14 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           </div>
         )}
 
-        <div className="border-t px-6 py-4 flex gap-3" dir="rtl">
+        <div className="border-t px-6 pt-3" dir="rtl">
+          <label className="flex items-center gap-2 text-xs text-slate-500 select-none cursor-pointer">
+            <input type="checkbox" className="h-4 w-4 accent-amber-500" checked={rapidEntry} disabled={submitting}
+                   onChange={(e) => toggleRapidEntry(e.target.checked)} />
+            <span><span className="font-semibold text-slate-600">הזנה רציפה</span> — להשאיר את הטופס פתוח אחרי שמירה (למפקחים)</span>
+          </label>
+        </div>
+        <div className="px-6 pb-4 pt-3 flex gap-3" dir="rtl">
           <Button
             onClick={handleSubmit}
             disabled={submitting}

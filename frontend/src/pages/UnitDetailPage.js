@@ -149,11 +149,9 @@ const UnitDetailPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.key, unitId]);
 
-  const handleDefectSuccess = (taskId) => {
-    setShowDefectModal(false);
+  const handleDefectSuccess = () => {
     loadUnit();
     loadTasks();
-    toast.success('הליקוי נוצר בהצלחה!');
   };
 
   if (loading) {
@@ -364,6 +362,7 @@ const UnitDetailPage = () => {
           isOpen={showDefectModal}
           onClose={() => setShowDefectModal(false)}
           onSuccess={handleDefectSuccess}
+          onAddAnother={() => setShowDefectModal(true)}
           prefillData={{
             project_id: project?.id || projectId,
             building_id: building?.id || '',

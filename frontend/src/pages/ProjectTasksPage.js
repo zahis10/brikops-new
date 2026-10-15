@@ -580,7 +580,6 @@ const ProjectTasksPage = () => {
           isOpen={showNewDefect}
           onClose={() => setShowNewDefect(false)}
           onSuccess={() => {
-            setShowNewDefect(false);
             taskIdsRef.current.clear();
             setTasks([]);
             setOffset(0);
@@ -589,6 +588,7 @@ const ProjectTasksPage = () => {
             setInitialLoading(true);
             loadMore(0, isContractor);
           }}
+          onAddAnother={() => setShowNewDefect(true)}
           prefillData={{ project_id: projectId }}
         />
       )}
