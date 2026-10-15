@@ -1243,3 +1243,17 @@ mtime_ms = 1791974311049
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/d7e4a448-2110-4ac2-a3d2-1957ab5e255c/4158bda7-f02a-42ea-b3d4-57bb23a4e525"
 storage_version_token = "1791974317923621"
 content_type = "text/plain"
+
+[[outputs]]
+id = "zct5DY0ICSVvBaGKD_LyZ"
+uri = "file://attached_assets/review-batch613b.txt"
+type = "text"
+title = "review — BATCH 613-B"
+description = "סעיף הסקירה המלא, כולל ADDENDUM-1 ותיקון הרענון השקט. review.txt הראשי לא שונה."
+logical_id = "46cb3fc3-981b-49db-b957-d71a07bc9b58"
+content_hash = "sha256:1fc65cb6f03e5bc8e5b7dcff787fce6793e0831f96f2c1745c92b6d82a6d8b2f"
+size = 15099
+mtime_ms = 1792045124671
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/46cb3fc3-981b-49db-b957-d71a07bc9b58/061f48da-41c2-4337-86d1-89cecdcd6ac6"
+storage_version_token = "1792045131129733"
+content_type = "text/plain"
