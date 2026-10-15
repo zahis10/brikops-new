@@ -12585,3 +12585,138 @@ Accepted residual window (ADDENDUM-1): the exact aiModeAllowed formula retains c
 
 V5
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#613-D (15.10)
+
+STEP 0: review.txt = 691178 bytes (below 2 MB). Final SHA-256 matches the pre-edit baseline. review.txt untouched.
+Six existing application files edited, zero new application files. No Git, deploy, dependency installation, environment changes or harness repair.
+
+V1 — changed regions, three context lines
+
+--- a/frontend/src/components/ProjectSwitcher.js
++++ b/frontend/src/components/ProjectSwitcher.js
+@@ -46,7 +46,7 @@
+     <div className="relative" ref={ref}>
+       <button
+         onClick={() => showSwitcher && setOpen(!open)}
+-        className={`flex items-center gap-1.5 min-w-0 ${showSwitcher ? 'cursor-pointer hover:bg-slate-700/50 rounded-lg min-h-[44px] px-3 transition-colors' : ''}`}
++        className={`flex items-center gap-1.5 min-w-0 w-full max-w-full text-right ${showSwitcher ? 'cursor-pointer hover:bg-slate-700/50 rounded-lg min-h-[44px] px-3 transition-colors' : ''}`}
+         disabled={!showSwitcher}
+       >
+         <h1 className="text-lg font-bold leading-tight truncate">{currentProjectName}</h1>
+
+--- a/frontend/src/i18n/ar.json
++++ b/frontend/src/i18n/ar.json
+@@ -150,6 +150,8 @@
+     "searchPlaceholder": "البحث حسب الاسم، الرمز أو العنوان...",
+     "emptyState": "ليس لديك مشاريع بعد",
+     "emptyStateHint": "تواصل مع مدير النظام للحصول على صلاحية الوصول",
++    "emptyStateHintCreator": "الخطوة الأولى: إنشاء مشروع — الاسم والعنوان وعدد الشقق حسب رخصة البناء. بعد ذلك أضف المباني والطوابق، ويمكنك فتح أول عيب.",
++    "noSearchResults": "لا توجد مشاريع تطابق هذا البحث",
+     "lastProject": "متابعة آخر مشروع",
+     "enterProject": "دخول",
+     "newProject": "مشروع جديد",
+
+--- a/frontend/src/i18n/en.json
++++ b/frontend/src/i18n/en.json
+@@ -149,6 +149,8 @@
+     "searchPlaceholder": "Search by name, code or address...",
+     "emptyState": "You don't have any projects yet",
+     "emptyStateHint": "Contact your system administrator to get access to a project",
++    "emptyStateHintCreator": "First step: create a project — name, address and the number of apartments per the building permit. Then add buildings and floors, and you can open the first defect.",
++    "noSearchResults": "No projects match this search",
+     "lastProject": "Continue to last project",
+     "enterProject": "Enter",
+     "newProject": "New Project",
+
+--- a/frontend/src/i18n/he.json
++++ b/frontend/src/i18n/he.json
+@@ -167,6 +167,8 @@
+     "searchPlaceholder": "חפש לפי שם, קוד או כתובת...",
+     "emptyState": "אין לך פרויקטים עדיין",
+     "emptyStateHint": "פנה למנהל המערכת כדי לקבל גישה לפרויקט",
++    "emptyStateHintCreator": "הצעד הראשון: יוצרים פרויקט — שם, כתובת וכמה דירות יש לפי היתר הבנייה. אחר כך מוסיפים בניינים וקומות, וכבר אפשר לפתוח ליקוי ראשון.",
++    "noSearchResults": "לא נמצאו פרויקטים לחיפוש הזה",
+     "lastProject": "המשך לפרויקט האחרון",
+     "enterProject": "היכנס",
+     "newProject": "פרויקט חדש",
+
+--- a/frontend/src/i18n/zh.json
++++ b/frontend/src/i18n/zh.json
+@@ -150,6 +150,8 @@
+     "searchPlaceholder": "按名称、代码或地址搜索...",
+     "emptyState": "您还没有任何项目",
+     "emptyStateHint": "请联系系统管理员获取项目访问权限",
++    "emptyStateHintCreator": "第一步：创建项目——名称、地址和按建筑许可的套数。然后添加楼栋和楼层，就可以录入第一个缺陷。",
++    "noSearchResults": "没有符合此搜索的项目",
+     "lastProject": "继续上次项目",
+     "enterProject": "进入",
+     "newProject": "新项目",
+
+--- a/frontend/src/pages/MyProjectsPage.js
++++ b/frontend/src/pages/MyProjectsPage.js
+@@ -317,6 +317,7 @@
+               </Card>
+             )}
+ 
++            {projects.length > 0 && (
+             <div className="flex gap-2 items-center">
+               <div className="flex-1 relative">
+                 <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+@@ -338,12 +339,15 @@
+                 </Button>
+               )}
+             </div>
++            )}
+ 
+             {filteredProjects.length === 0 ? (
+               <div className="flex flex-col items-center justify-center py-16 text-center">
+                 <FolderOpen className="w-16 h-16 text-slate-300 mb-4" />
++                {projects.length === 0 ? (
++                <>
+                 <h2 className="text-lg font-semibold text-slate-600">{t('myProjects', 'emptyState')}</h2>
+-                <p className="text-sm text-slate-400 mt-2 max-w-xs">{t('myProjects', 'emptyStateHint')}</p>
++                <p className="text-sm text-slate-400 mt-2 max-w-xs leading-relaxed">{t('myProjects', canCreate ? 'emptyStateHintCreator' : 'emptyStateHint')}</p>
+                 {canCreate && (
+                   <Button
+                     onClick={() => setShowCreateDialog(true)}
+@@ -352,6 +356,10 @@
+                     <Plus className="w-5 h-5" />
+                     צור פרויקט חדש
+                   </Button>
++                )}
++                </>
++                ) : (
++                  <h2 className="text-lg font-semibold text-slate-600">{t('myProjects', 'noSearchResults')}</h2>
+                 )}
+               </div>
+             ) : (
+
+V2 — added/removed (difflib; no Git)
+frontend/src/components/ProjectSwitcher.js: +1/-1
+frontend/src/i18n/ar.json: +2/-0
+frontend/src/i18n/en.json: +2/-0
+frontend/src/i18n/he.json: +2/-0
+frontend/src/i18n/zh.json: +2/-0
+frontend/src/pages/MyProjectsPage.js: +9/-1
+Total: +18/-2; net 16
+
+V3 — checks
+PASS: JSON.parse for he/en/ar/zh.
+PASS: required key grep — 8 translation lines + 2 page references.
+PASS: projects.length grep — new search-row wrapper and empty-state branch, plus pre-existing trial-limit and offline conditions unchanged.
+PASS: max-w-full grep — one match in ProjectSwitcher button, with w-full and text-right. Existing h1 truncate and ChevronDown flex-shrink-0 unchanged.
+PASS: CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=https://$REPLIT_DEV_DOMAIN BUILD_PATH=/tmp/batch613d/verified-build npm run build (from frontend); exit 0, Compiled successfully. Browserslist printed its existing data-age notice.
+Jest: blocked — 8 suites failed before tests ran (0 tests), missing libuuid.so.1 from canvas; no harness repair.
+Manual checks (PM with zero projects, search zzz without matches, long-name ellipsis before bell): not run — local harness. Start application restart failed: /tmp/batch606/normal-launch.sh missing. Screenshot /projects failed with ERR_CONNECTION_REFUSED. No authenticated browser or visual success claimed.
+Scope verification: hashes of frontend/src files, backend Python files and review.txt compared to baseline; only the six approved existing files changed. No permission, filtering, creation-handler, grid, parent-page or i18n-loader changes.
+
+V4 — answers
+(a) MyProjectsPage.js:174–178: canCreate requires user.role project_manager OR user.platform_role super_admin. A trialing PM with at least one project is excluded; super_admin bypasses this trial limit. With zero projects either role qualifies for the creator hint/button. Other roles see the existing access-request hint without the creation button. No permissions were modified.
+(b) Search across frontend/src found no other consumer of emptyStateHint outside MyProjectsPage.js; its four JSON definitions remain unchanged. The new creator hint is selected using the same canCreate condition.
+(c) frontend/src/i18n/index.js:30–33 uses current locale value ?? Hebrew value ?? key. A missing/null key in zh or another locale falls back to he; if missing in Hebrew too, it displays the key. An empty string does not trigger nullish fallback. Loader unchanged.
+
+Behavior confirmed from the diff: search row, including its existing plus button, is wrapped using the UNFILTERED projects list; when there are projects but no search matches, only the noSearchResults heading is rendered inside the empty-state block, without its hint/create button. The top search-row plus remains governed by the existing canCreate rule. The large create button and its handler are unchanged.
+
+V5
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
