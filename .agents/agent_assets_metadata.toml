@@ -1271,3 +1271,17 @@ mtime_ms = 1792056748223
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/99251ace-0a52-44ee-8c2d-11331529639a/f7ac2ec6-dd4a-4df0-8f21-087fe26ed887"
 storage_version_token = "1792056749116427"
 content_type = "text/plain"
+
+[[outputs]]
+id = "ZAqomaHHyjMGLNEnAoEof"
+uri = "file://attached_assets/batch613d-review-section.txt"
+type = "text"
+title = "סקירה מלאה — BATCH 613-D"
+description = "סעיף יחיד עם diff, ספירת שורות, תוצאות הבדיקות ותשובות V4. review.txt ללא שינוי."
+logical_id = "90abd2f9-0328-4453-8a9e-aed845c06d44"
+content_hash = "sha256:ac4243ee740367a67d4aef93c7e201786b43c6ec56b590fbb322428f1367676d"
+size = 8542
+mtime_ms = 1792067829430
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/90abd2f9-0328-4453-8a9e-aed845c06d44/65df2bf0-75fd-43f0-9908-a1f2a6d3066b"
+storage_version_token = "1792067831096695"
+content_type = "text/plain"

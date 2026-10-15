@@ -317,6 +317,7 @@ const MyProjectsPage = () => {
               </Card>
             )}
 
+            {projects.length > 0 && (
             <div className="flex gap-2 items-center">
               <div className="flex-1 relative">
                 <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -338,12 +339,15 @@ const MyProjectsPage = () => {
                 </Button>
               )}
             </div>
+            )}
 
             {filteredProjects.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-center">
                 <FolderOpen className="w-16 h-16 text-slate-300 mb-4" />
+                {projects.length === 0 ? (
+                <>
                 <h2 className="text-lg font-semibold text-slate-600">{t('myProjects', 'emptyState')}</h2>
-                <p className="text-sm text-slate-400 mt-2 max-w-xs">{t('myProjects', 'emptyStateHint')}</p>
+                <p className="text-sm text-slate-400 mt-2 max-w-xs leading-relaxed">{t('myProjects', canCreate ? 'emptyStateHintCreator' : 'emptyStateHint')}</p>
                 {canCreate && (
                   <Button
                     onClick={() => setShowCreateDialog(true)}
@@ -352,6 +356,10 @@ const MyProjectsPage = () => {
                     <Plus className="w-5 h-5" />
                     צור פרויקט חדש
                   </Button>
+                )}
+                </>
+                ) : (
+                  <h2 className="text-lg font-semibold text-slate-600">{t('myProjects', 'noSearchResults')}</h2>
                 )}
               </div>
             ) : (

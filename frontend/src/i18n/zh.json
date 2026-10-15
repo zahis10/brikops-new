@@ -150,6 +150,8 @@
     "searchPlaceholder": "按名称、代码或地址搜索...",
     "emptyState": "您还没有任何项目",
     "emptyStateHint": "请联系系统管理员获取项目访问权限",
+    "emptyStateHintCreator": "第一步：创建项目——名称、地址和按建筑许可的套数。然后添加楼栋和楼层，就可以录入第一个缺陷。",
+    "noSearchResults": "没有符合此搜索的项目",
     "lastProject": "继续上次项目",
     "enterProject": "进入",
     "newProject": "新项目",
