@@ -11909,3 +11909,368 @@ ADDENDUM-2: After declaration persistence, read existing project_billing. Only N
 
 V5
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#613-B (14.10)
+
+BATCH 613-B + ADDENDUM-1 + explicitly approved silent post-save refresh in the two apartment pages. No Git, deployment, dependency or harness changes.
+
+V1 — Changed regions (three context lines)
+
+--- before/frontend/src/components/NewDefectModal.js
++++ after/frontend/src/components/NewDefectModal.js
+@@ -53,7 +53,7 @@
+   { value: 'critical', label: 'קריטי', color: 'text-red-600' },
+ ];
+ 
+-const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
++const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData, onAddAnother }) => {
+   const navigate = useNavigate();
+   const location = useLocation();
+   const hasPrefill = !!(prefillData && prefillData.project_id && prefillData.unit_id);
+@@ -109,6 +109,15 @@
+     setPhotoFirst(on);
+     try { window.localStorage.setItem('brikops_defect_photo_first_v1', on ? '1' : '0'); } catch {}
+   };
++  // #613-B: opt-in rapid entry — off by default, remembered per device.
++  const [rapidEntry, setRapidEntry] = useState(() => {
++    try { return window.localStorage.getItem('brikops_defect_rapid_entry_v1') === '1'; } catch { return false; }
++  });
++  const toggleRapidEntry = (on) => {
++    setRapidEntry(on);
++    try { window.localStorage.setItem('brikops_defect_rapid_entry_v1', on ? '1' : '0'); } catch {}
++  };
++  const [savedCount, setSavedCount] = useState(0);
+   const effectivePhotoFirst = FEATURES.DEFECT_PHOTO_FIRST && photoFirst;
+   // BATCH AI Phase 2c E3a: AI suggestion only in photo-first + behind the flag.
+   const effectiveAiSuggest = FEATURES.DEFECT_AI_SUGGEST && effectivePhotoFirst;
+@@ -190,6 +199,10 @@
+       }
+     }
+   }, [isOpen, hasPrefill, prefillData, loadProjects, loadCompanies]);
++
++  // #613-B: new counting session per open. Deliberately NOT in the prefill effect above —
++  // prefillData changes identity on every parent render and would reset the counter mid-session.
++  useEffect(() => { if (isOpen) setSavedCount(0); }, [isOpen]);
+ 
+   // Restore in-progress draft from the "+ הוסף קבלן" → add contractor → return flow.
+   // Gated on FEATURES.DEFECT_DRAFT_PRESERVATION; off = no-op (matches pre-batch).
+@@ -547,6 +560,59 @@
+     return Object.keys(errs).length === 0;
+   }, [projectId, buildingId, floorId, unitId, category, title, images]);
+ 
++  // #613-B: reset block moved from the assigned success path.
++  const resetAfterSave = () => {
++    clearDraftImages(); // BATCH defect-photo-first E3e: terminal outcome — drop any stale stash
++    images.forEach(img => { try { URL.revokeObjectURL(img.preview); } catch (_) {} });
++    setProjectId('');
++    setBuildingId('');
++    setFloorId('');
++    setUnitId('');
++    setCategory('');
++    setTitle('');
++    setDescription('');
++    setPriority('medium');
++    setIsSafety(false);
++    setCompanyId('');
++    setAssigneeId('');
++    setAutoSelectedCompany(false);
++    setAutoSelectedAssignee(false);
++    setImages([]);
++    setPendingFile(null);
++    setAnnotatingIndex(null);
++    setErrors({});
++    setCreatedTaskId(null);
++    setUploadError(null);
++    // BATCH AI Phase 2c E3b: reset AI state on successful submit.
++    aiTriedRef.current = false;
++    setAiState('idle');
++    setAiSuggestion(null);
++    setAiSurface(null);
++    setAiAutoFilled(false);
++    if (hasPrefill) {
++      setProjectId(prefillData.project_id);
++      setBuildingId(prefillData.building_id);
++      setFloorId(prefillData.floor_id);
++      setUnitId(prefillData.unit_id);
++    }
++  };
++
++  // #613-B: single exit for every successful save (online / assigned / offline queue).
++  const afterSave = (savedId, message) => {
++    setSavedCount(c => c + 1);
++    resetAfterSave();
++    if (rapidEntry) {
++      toast.success(message);
++      onSuccess?.(savedId);
++      return;
++    }
++    toast.success(message, onAddAnother
++      ? { duration: 6000, action: { label: '+ ליקוי נוסף', onClick: () => onAddAnother() } }
++      : undefined);
++    onSuccess?.(savedId);
++    handleClose();
++  };
++
+   const doUploadAndAssign = async (taskId) => {
+     setUploadError(null);
+ 
+@@ -623,8 +689,7 @@
+     const isContactFallback = assigneeId === '__company_contact__';
+     const effectiveAssigneeId = isContactFallback ? null : assigneeId;
+     if (!companyId) {
+-      toast.success('הליקוי נוצר בהצלחה!');
+-      onSuccess?.(taskId);
++      afterSave(taskId, 'הליקוי נשמר');
+       return;
+     }
+ 
+@@ -648,8 +713,6 @@
+       }
+       return;
+     }
+-
+-    toast.success('הליקוי נוצר בהצלחה!');
+ 
+     const ns = assignResult?.notification_status;
+     if (ns) {
+@@ -683,34 +746,7 @@
+       }
+     }
+ 
+-    clearDraftImages(); // BATCH defect-photo-first E3e: terminal outcome — drop any stale stash
+-    images.forEach(img => URL.revokeObjectURL(img.preview));
+-    setProjectId('');
+-    setBuildingId('');
+-    setFloorId('');
+-    setUnitId('');
+-    setCategory('');
+-    setTitle('');
+-    setDescription('');
+-    setPriority('medium');
+-    setIsSafety(false);
+-    setCompanyId('');
+-    setAssigneeId('');
+-    setAutoSelectedCompany(false);
+-    setAutoSelectedAssignee(false);
+-    setImages([]);
+-    setPendingFile(null);
+-    setAnnotatingIndex(null);
+-    setErrors({});
+-    setCreatedTaskId(null);
+-    setUploadError(null);
+-    // BATCH AI Phase 2c E3b: reset AI state on successful submit.
+-    aiTriedRef.current = false;
+-    setAiState('idle');
+-    setAiSuggestion(null);
+-    setAiSurface(null);
+-    setAiAutoFilled(false);
+-    onSuccess(taskId);
++    afterSave(taskId, 'הליקוי נשמר ונשלח לקבלן');
+   };
+ 
+   const handleSubmit = async () => {
+@@ -797,9 +833,7 @@
+         });
+         clearDefectDraft();
+         clearDraftImages(); // BATCH defect-photo-first E3e: terminal outcome — drop any stale stash
+-        toast.success('הליקוי נשמר במכשיר — יישלח כשתחזור הרשת');
+-        images.forEach(img => { try { URL.revokeObjectURL(img.preview); } catch (_) {} });
+-        onSuccess?.(clientId);
++        afterSave(clientId, 'הליקוי נשמר במכשיר — יישלח כשתחזור הרשת');
+       };
+ 
+       // Proactive: known-offline ⇒ skip the network entirely and queue now.
+@@ -951,6 +985,11 @@
+         </div>
+ 
+         <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
++          {rapidEntry && savedCount > 0 && (
++            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg px-3 py-2 text-right" dir="rtl">
++              {savedCount === 1 ? 'נשמר ליקוי אחד' : `נשמרו ${savedCount} ליקויים`} בסבב הזה · הטופס אופס לליקוי הבא
++            </div>
++          )}
+           {/* BATCH defect-photo-first E3d: opt-in mode toggle. Renders ONLY when the
+               flag is on — flag off = zero visual change from today. */}
+           {FEATURES.DEFECT_PHOTO_FIRST && (
+@@ -1321,7 +1360,14 @@
+           </div>
+         )}
+ 
+-        <div className="border-t px-6 py-4 flex gap-3" dir="rtl">
++        <div className="border-t px-6 pt-3" dir="rtl">
++          <label className="flex items-center gap-2 text-xs text-slate-500 select-none cursor-pointer">
++            <input type="checkbox" className="h-4 w-4 accent-amber-500" checked={rapidEntry} disabled={submitting}
++                   onChange={(e) => toggleRapidEntry(e.target.checked)} />
++            <span><span className="font-semibold text-slate-600">הזנה רציפה</span> — להשאיר את הטופס פתוח אחרי שמירה (למפקחים)</span>
++          </label>
++        </div>
++        <div className="px-6 pb-4 pt-3 flex gap-3" dir="rtl">
+           <Button
+             onClick={handleSubmit}
+             disabled={submitting}
+
+
+--- before/frontend/src/pages/ProjectTasksPage.js
++++ after/frontend/src/pages/ProjectTasksPage.js
+@@ -580,7 +580,6 @@
+           isOpen={showNewDefect}
+           onClose={() => setShowNewDefect(false)}
+           onSuccess={() => {
+-            setShowNewDefect(false);
+             taskIdsRef.current.clear();
+             setTasks([]);
+             setOffset(0);
+@@ -589,6 +588,7 @@
+             setInitialLoading(true);
+             loadMore(0, isContractor);
+           }}
++          onAddAnother={() => setShowNewDefect(true)}
+           prefillData={{ project_id: projectId }}
+         />
+       )}
+
+
+--- before/frontend/src/pages/UnitDetailPage.js
++++ after/frontend/src/pages/UnitDetailPage.js
+@@ -81,9 +81,9 @@
+ 
+   const canCreateDefect = user && user.role === 'project_manager';
+ 
+-  const loadUnit = useCallback(async () => {
++  const loadUnit = useCallback(async ({ silent = false } = {}) => {
+     try {
+-      setLoading(true);
++      if (!silent) setLoading(true);
+       const data = await unitService.get(unitId);
+       setUnitData(data);
+     } catch (err) {
+@@ -149,11 +149,9 @@
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [location.key, unitId]);
+ 
+-  const handleDefectSuccess = (taskId) => {
+-    setShowDefectModal(false);
+-    loadUnit();
++  const handleDefectSuccess = () => {
++    loadUnit({ silent: true });
+     loadTasks();
+-    toast.success('הליקוי נוצר בהצלחה!');
+   };
+ 
+   if (loading) {
+@@ -364,6 +362,7 @@
+           isOpen={showDefectModal}
+           onClose={() => setShowDefectModal(false)}
+           onSuccess={handleDefectSuccess}
++          onAddAnother={() => setShowDefectModal(true)}
+           prefillData={{
+             project_id: project?.id || projectId,
+             building_id: building?.id || '',
+
+
+--- before/frontend/src/pages/ApartmentDashboardPage.js
++++ after/frontend/src/pages/ApartmentDashboardPage.js
+@@ -107,6 +107,8 @@
+   const [blockingOpen, setBlockingOpen] = useState(false);
+   const [editingUnit, setEditingUnit] = useState(null);
+   const [showDefectModal, setShowDefectModal] = useState(false);
++  const [highlightTaskId, setHighlightTaskId] = useState(null);
++  const highlightRef = useRef(null);
+ 
+   // Auto-open NewDefectModal when arriving with ?reopenDefect=1 (from the
+   // "add contractor and return" flow). Clears the param so back/refresh
+@@ -155,9 +157,9 @@
+     }
+   }, [features, projectId, unitId, navigate]);
+ 
+-  const loadUnit = useCallback(async () => {
++  const loadUnit = useCallback(async ({ silent = false } = {}) => {
+     try {
+-      setLoading(true);
++      if (!silent) setLoading(true);
+       const data = await unitService.get(unitId);
+       setUnitData(data);
+     } catch (err) {
+@@ -216,6 +218,11 @@
+   }, [unitId]);
+ 
+   // Revoke any synthesized pending blob URLs on unmount (no leak).
++  useEffect(() => {
++    if (!highlightTaskId || !highlightRef.current) return;
++    try { highlightRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {}
++  }, [highlightTaskId, tasks]);
++
+   useEffect(() => () => {
+     pendingUrlsRef.current.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} });
+     pendingUrlsRef.current = [];
+@@ -1074,11 +1081,12 @@
+               return (
+                 <button
+                   key={task.id}
++                  ref={task.id === highlightTaskId ? highlightRef : null}
+                   onClick={() => {
+                     if (task._pendingUpload) { toast.info('הליקוי ממתין לשליחה — יישלח כשתחזור הרשת'); return; }
+                     navigate(`/tasks/${task.id}`, { state: { returnTo: location.pathname + location.search } });
+                   }}
+-                  className="w-full bg-white rounded-xl border border-slate-200 p-3.5 text-right hover:shadow-md transition-shadow active:bg-slate-50"
++                  className={`w-full bg-white rounded-xl border border-slate-200 p-3.5 text-right hover:shadow-md transition-shadow active:bg-slate-50${task.id === highlightTaskId ? ' ring-2 ring-amber-400 bg-amber-50' : ''}`}
+                 >
+                   <div className="flex items-start gap-3">
+                     {hasImage && (
+@@ -1149,10 +1157,13 @@
+         <NewDefectModal
+           isOpen={showDefectModal}
+           onClose={() => setShowDefectModal(false)}
+-          onSuccess={() => {
+-            loadUnit();
++          onSuccess={(taskId) => {
++            setHighlightTaskId(taskId || null);
++            loadUnit({ silent: true });
+             loadTasks();
++            window.setTimeout(() => setHighlightTaskId(null), 4000);
+           }}
++          onAddAnother={() => setShowDefectModal(true)}
+           prefillData={{
+             project_id: project?.id || unit?.project_id || projectId,
+             building_id: building?.id || unit?.building_id || '',
+
+
+V2 — Line counts without Git
+
+frontend/src/components/NewDefectModal.js: +83 / -37
+
+frontend/src/pages/ProjectTasksPage.js: +1 / -1
+
+frontend/src/pages/UnitDetailPage.js: +5 / -6
+
+frontend/src/pages/ApartmentDashboardPage.js: +16 / -5
+
+Only these four baseline source files changed; review.txt byte-identical at 659365 bytes.
+
+V3 — not run — local harness
+
+Build before the final approved silent-refresh edit: CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=https://<workspace-dev-domain> BUILD_PATH=/tmp/batch613b/verified-build npm run build — exit 0, Compiled successfully. Stale Browserslist notice.
+
+Jest: CI=true npm test -- --watchAll=false --runInBand — exit 1; libuuid.so.1 missing, 8 suites failed before execution, 0 tests (4.44s).
+
+Required grep checks: three afterSave call sites; rapid-entry state/helpers/banner/footer present; onAddAnother in exactly three parent pages; highlight state/effect/ref/class/callback/timeout present; old success text count zero in NewDefectModal and UnitDetailPage.
+
+Workflow restart once: failed, /tmp/batch606/normal-launch.sh missing. Screenshot: ERR_CONNECTION_REFUSED. No manual/browser/staging verification claimed.
+
+V4 — Answers
+
+(a) Existing assigned-success reset block matches specified setters, with one setter per line. Moved verbatim into resetAfterSave except allowed try/catch around revokeObjectURL, followed by four guarded prefill setters. Existing prefill effect unchanged; separate isOpen-only counter effect added.
+
+(b) Yes: frontend/node_modules/sonner/dist/index.d.ts:62 defines action; :124 ExternalToast inherits it; :131 toast.success accepts ExternalToast.
+
+(c) Exactly ApartmentDashboardPage, UnitDetailPage, ProjectTasksPage contain <NewDefectModal; no other parent found.
+
+
+
+Final focused checks: Babel parse passed for both edited apartment pages. Asserted loadUnit matches the original with ONLY optional silent parameter and guarded setLoading(true); one silent invocation per page; loadTasks byte-identical. Other callers unchanged. Full build was not repeated after this bounded edit; final browser checks: not run — local harness.
+
+Approved resolution: post-save loadUnit({ silent: true }) avoids the full-page loader that unmounted the modal and reset its counter. All initial/effect/manual refresh callers retain normal loading. Same fetch, setUnitData, catch/toast and finally preserved. No browser observation claimed.
+
+V5
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
