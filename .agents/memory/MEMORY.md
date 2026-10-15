@@ -16,3 +16,4 @@
 - [Partial payment rules](partial-payment-domain.md) — the matrix owns apartment-stage shares; monthly accounts pay only changes from previously paid shares.
 - [Floor payment rules](floor-payment-domain.md) — per-floor payments average apartment shares, excluding not-relevant apartments; quantities can vary by floor.
 - [Declared apartment count](declared-apartment-count.md) — permit quantity stays the sole cap; trial corrections require explicit confirmation, never auto-extension.
+- [Defect AI rollout](defect-ai-rollout.md) — classic by default; context fallback before each fresh flag response is an explicitly accepted limitation.

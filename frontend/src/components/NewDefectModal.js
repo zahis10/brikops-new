@@ -1115,14 +1115,14 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData, onAddAnother 
           {effectiveAiSuggest && aiState === 'analyzing' && (
             <div dir="rtl" className="flex items-center gap-2 text-sm text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>✨ מזהה קטגוריה…</span>
+              <span>מזהה קטגוריה…</span>
             </div>
           )}
           {effectiveAiSuggest && aiState === 'done' && aiSuggestion && (
             <div dir="rtl" className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
-                  <span className="text-sm font-semibold text-indigo-800">הצעת AI ✨</span>
+                  <span className="text-sm font-semibold text-indigo-800">הצעת AI</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">ניסיוני</span>
                 </span>
                 <span className={`text-xs px-2 py-0.5 rounded-full ${aiSuggestion.low_confidence ? 'bg-slate-200 text-slate-600' : 'bg-indigo-200 text-indigo-800'}`}>

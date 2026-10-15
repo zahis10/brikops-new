@@ -1257,3 +1257,17 @@ mtime_ms = 1792045124671
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/46cb3fc3-981b-49db-b957-d71a07bc9b58/061f48da-41c2-4337-86d1-89cecdcd6ac6"
 storage_version_token = "1792045131129733"
 content_type = "text/plain"
+
+[[outputs]]
+id = "A626Koc_TRxRIb6rTeC_-"
+uri = "file://attached_assets/batch614-review-section.txt"
+type = "text"
+title = "סקירה מלאה — BATCH 614"
+description = "הסעיף המלא והמאומת: קוד, diff, תוצאות בדיקות ומגבלות. ללא פריסה."
+logical_id = "99251ace-0a52-44ee-8c2d-11331529639a"
+content_hash = "sha256:773bbb8296f346a7b48a26a7e9562ceaf4f4a19141f0af85cccc90588322bbc2"
+size = 16712
+mtime_ms = 1792056748223
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/99251ace-0a52-44ee-8c2d-11331529639a/f7ac2ec6-dd4a-4df0-8f21-087fe26ed887"
+storage_version_token = "1792056749116427"
+content_type = "text/plain"
