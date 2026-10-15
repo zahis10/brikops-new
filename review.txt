@@ -12274,3 +12274,314 @@ Approved resolution: post-save loadUnit({ silent: true }) avoids the full-page l
 V5
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#614 (15.10)
+
+STEP 0: review.txt = 674465 bytes; SHA-256 unchanged against baseline.
+Scope: 3 new + 5 edited application/test files. No Git, deployment, dependency installation, harness repair or production data changes. ADDENDUM-1 preserved. User additionally approved removing the two remaining sparkle emojis in the analysis/suggestion labels.
+
+V1 — full new files and diffs with 3 context lines
+
+NEW backend/contractor_ops/platform_flags.py
+"""Platform-wide runtime switches in app_config; missing values default to OFF."""
+from datetime import datetime, timezone
+
+DEFECT_AI_MODE_KEY = 'defect_ai_mode_enabled'
+
+
+def coerce_flag(doc, default: bool = False) -> bool:
+    """Accept only boolean values; missing or malformed values use default."""
+    if not isinstance(doc, dict):
+        return default
+    value = doc.get('value')
+    return value if isinstance(value, bool) else default
+
+
+async def get_defect_ai_mode(db) -> bool:
+    doc = await db.app_config.find_one({'key': DEFECT_AI_MODE_KEY}, {'_id': 0})
+    return coerce_flag(doc, False)
+
+
+async def set_defect_ai_mode(db, enabled: bool, actor_id: str) -> dict:
+    """Upsert and return the stored value and update metadata."""
+    now = datetime.now(timezone.utc).isoformat()
+    stored = {'value': bool(enabled), 'updated_at': now, 'updated_by': actor_id}
+    await db.app_config.update_one(
+        {'key': DEFECT_AI_MODE_KEY}, {'$set': stored}, upsert=True,
+    )
+    return stored
+
+NEW backend/tests/test_platform_flags.py
+import pytest
+
+from contractor_ops.platform_flags import DEFECT_AI_MODE_KEY, coerce_flag
+
+
+@pytest.mark.parametrize('doc,expected', [
+    (None, False), ({}, False), ({'value': True}, True),
+    ({'value': False}, False), ({'value': 'true'}, False),
+    ({'value': 1}, False), ({'value': None}, False),
+])
+def test_coerce_flag(doc, expected):
+    assert coerce_flag(doc) is expected
+
+
+def test_default_and_key():
+    assert coerce_flag(None, True) is True
+    assert DEFECT_AI_MODE_KEY == 'defect_ai_mode_enabled'
+
+NEW frontend/src/components/admin/PlatformFeatureToggles.js
+import React, { useState, useEffect } from 'react';
+import { Switch } from '../ui/switch';
+import { Loader2, Settings2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { billingService } from '../../services/api';
+
+export default function PlatformFeatureToggles() {
+  const [config, setConfig] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    billingService.getDefectAiMode()
+      .then(data => { if (alive) setConfig(data); })
+      .catch(() => { if (alive) setError('שגיאה בטעינת הגדרות הפלטפורמה'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+  const toggle = async (next) => {
+    setSaving(true);
+    try {
+      const data = await billingService.setDefectAiMode(next);
+      setConfig(data);
+      toast.success(next ? 'מצב AI פעיל לכל המשתמשים' : 'מצב AI כבוי — כולם בטופס הקלאסי');
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'שגיאה');
+    } finally { setSaving(false); }
+  };
+  const { enabled, updated_at } = config || {};
+  return (
+    <div className="bg-white rounded-xl border shadow-sm p-4" dir="rtl">
+      <div className="flex items-center gap-2 mb-3">
+        <Settings2 className="w-4 h-4 text-slate-500" />
+        <h3 className="text-sm font-bold text-slate-700">הגדרות פלטפורמה</h3>
+      </div>
+      {loading ? <Loader2 className="w-5 h-5 animate-spin text-slate-500" aria-label="טוען הגדרות" /> : error ? (
+        <div className="text-xs text-red-600" role="alert">{error}</div>
+      ) : (
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-medium text-slate-800">מצב AI בטופס ליקוי</div>
+            <div className="text-xs text-slate-500 mt-0.5">{enabled ? 'פעיל לכל המשתמשים — המתג "מצב מילוי" מוצג בטופס' : 'כבוי לכל המשתמשים — כולם רואים את הטופס הקלאסי'}</div>
+            {updated_at && <div className="text-[11px] text-slate-400 mt-1">עודכן {new Date(updated_at).toLocaleString('he-IL')}</div>}
+          </div>
+          <Switch checked={enabled} disabled={saving} onCheckedChange={toggle} aria-label="מצב AI בטופס ליקוי" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+--- a/backend/contractor_ops/config_router.py
++++ b/backend/contractor_ops/config_router.py
+@@ -9,10 +9,18 @@
+ async def get_feature_flags():
+     from config import ENABLE_ONBOARDING_V2, ENABLE_DEFECTS_V2
+     from contractor_ops.billing import BILLING_V1_ENABLED
++    from contractor_ops.router import get_db, logger
++    from contractor_ops.platform_flags import get_defect_ai_mode
++    try:
++        defect_ai_mode = await get_defect_ai_mode(get_db())
++    except Exception as exc:
++        logger.warning("Failed to read defect AI mode: %s", exc)
++        defect_ai_mode = False
+     return {
+         "feature_flags": {
+             "onboarding_v2": ENABLE_ONBOARDING_V2,
+             "billing_v1_enabled": BILLING_V1_ENABLED,
+             "defects_v2": ENABLE_DEFECTS_V2,
++            "defect_ai_mode": defect_ai_mode,
+         }
+     }
+
+--- a/backend/contractor_ops/admin_router.py
++++ b/backend/contractor_ops/admin_router.py
+@@ -648,6 +648,32 @@
+     }
+ 
+ 
++@router.get("/admin/config/defect-ai-mode")
++async def admin_get_defect_ai_mode(user: dict = Depends(require_super_admin)):
++    from contractor_ops.platform_flags import DEFECT_AI_MODE_KEY, coerce_flag
++    db = get_db()
++    doc = await db.app_config.find_one({'key': DEFECT_AI_MODE_KEY}, {'_id': 0})
++    return {'enabled': coerce_flag(doc, False), 'updated_at': (doc or {}).get('updated_at'),
++            'updated_by': (doc or {}).get('updated_by')}
++
++
++@router.patch("/admin/config/defect-ai-mode")
++async def admin_set_defect_ai_mode(request: Request, user: dict = Depends(require_super_admin)):
++    from contractor_ops.platform_flags import set_defect_ai_mode
++    body = await request.json()
++    enabled = body.get('enabled') if isinstance(body, dict) else None
++    if not isinstance(enabled, bool):
++        raise HTTPException(status_code=400, detail='enabled must be boolean')
++    db = get_db()
++    stored = await set_defect_ai_mode(db, enabled, user['id'])
++    await db.audit_events.insert_one({
++        'id': str(uuid.uuid4()), 'event_type': 'set_defect_ai_mode', 'entity_type': 'platform',
++        'actor_id': user['id'], 'payload': {'enabled': enabled},
++        'created_at': stored['updated_at'],
++    })
++    return {'ok': True, 'enabled': enabled, 'updated_at': stored['updated_at'], 'updated_by': user['id']}
++
++
+ @router.get("/admin/billing/migration/dry-run")
+ async def admin_migration_dry_run(user: dict = Depends(require_super_admin)):
+     from contractor_ops.billing import BILLING_V1_ENABLED, dry_run_org_id_backfill
+
+--- a/frontend/src/services/api.js
++++ b/frontend/src/services/api.js
+@@ -1903,6 +1903,14 @@
+     const response = await axios.get(`${API}/admin/config/founder-plan`, { headers: getAuthHeader() });
+     return response.data;
+   },
++  async getDefectAiMode() {
++    const response = await axios.get(`${API}/admin/config/defect-ai-mode`, { headers: getAuthHeader() });
++    return response.data;
++  },
++  async setDefectAiMode(enabled) {
++    const response = await axios.patch(`${API}/admin/config/defect-ai-mode`, { enabled }, { headers: getAuthHeader() });
++    return response.data;
++  },
+   async toggleFounderPlan(enabled) {
+     const response = await axios.patch(`${API}/admin/config/founder-plan`,
+       { enabled },
+
+--- a/frontend/src/components/NewDefectModal.js
++++ b/frontend/src/components/NewDefectModal.js
+@@ -1,6 +1,7 @@
+ import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
+ import { useNavigate, useLocation } from 'react-router-dom';
+-import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL, classifyDefectPhoto } from '../services/api';
++import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL, classifyDefectPhoto, configService } from '../services/api';
++import { useAuth } from '../contexts/AuthContext';
+ import { toast } from 'sonner';
+ import { formatUnitLabel } from '../utils/formatters';
+ import {
+@@ -118,7 +119,11 @@
+     try { window.localStorage.setItem('brikops_defect_rapid_entry_v1', on ? '1' : '0'); } catch {}
+   };
+   const [savedCount, setSavedCount] = useState(0);
+-  const effectivePhotoFirst = FEATURES.DEFECT_PHOTO_FIRST && photoFirst;
++  // #614: context for first paint, then the last fetched value for this mount.
++  const { features } = useAuth();
++  const [aiModeLive, setAiModeLive] = useState(null);
++  const aiModeAllowed = FEATURES.DEFECT_PHOTO_FIRST && (aiModeLive ?? features?.defect_ai_mode) === true;
++  const effectivePhotoFirst = aiModeAllowed && photoFirst;
+   // BATCH AI Phase 2c E3a: AI suggestion only in photo-first + behind the flag.
+   const effectiveAiSuggest = FEATURES.DEFECT_AI_SUGGEST && effectivePhotoFirst;
+   // BATCH AI Phase 2c E3b: AI suggestion state (all reset on open/close + submit).
+@@ -203,6 +208,16 @@
+   // #613-B: new counting session per open. Deliberately NOT in the prefill effect above —
+   // prefillData changes identity on every parent render and would reset the counter mid-session.
+   useEffect(() => { if (isOpen) setSavedCount(0); }, [isOpen]);
++
++  // #614: re-check on each open without resetting the last fetched value.
++  useEffect(() => {
++    if (!isOpen) return;
++    let alive = true;
++    configService.getFeatures()
++      .then(d => { if (alive) setAiModeLive(d?.feature_flags?.defect_ai_mode === true); })
++      .catch(() => { if (alive) setAiModeLive(false); });
++    return () => { alive = false; };
++  }, [isOpen]);
+ 
+   // Restore in-progress draft from the "+ הוסף קבלן" → add contractor → return flow.
+   // Gated on FEATURES.DEFECT_DRAFT_PRESERVATION; off = no-op (matches pre-batch).
+@@ -992,14 +1007,14 @@
+           )}
+           {/* BATCH defect-photo-first E3d: opt-in mode toggle. Renders ONLY when the
+               flag is on — flag off = zero visual change from today. */}
+-          {FEATURES.DEFECT_PHOTO_FIRST && (
++          {aiModeAllowed && (
+             <div className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
+               <span className="text-xs text-slate-500">מצב מילוי</span>
+               <div className="inline-flex bg-slate-100 rounded-lg p-0.5">
+                 <button type="button" onClick={() => applyPhotoFirst(false)}
+                   className={`px-3 py-1 text-xs rounded-md ${!photoFirst ? 'bg-amber-500 text-white font-semibold' : 'text-slate-500'}`}>קלאסי</button>
+                 <button type="button" onClick={() => applyPhotoFirst(true)}
+-                  className={`px-3 py-1 text-xs rounded-md ${photoFirst ? 'bg-amber-500 text-white font-semibold' : 'text-slate-500'}`}>✨ מצב AI</button>
++                  className={`px-3 py-1 text-xs rounded-md ${photoFirst ? 'bg-amber-500 text-white font-semibold' : 'text-slate-500'}`}>מצב AI</button>
+               </div>
+             </div>
+           )}
+@@ -1100,14 +1115,14 @@
+           {effectiveAiSuggest && aiState === 'analyzing' && (
+             <div dir="rtl" className="flex items-center gap-2 text-sm text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+               <Loader2 className="w-4 h-4 animate-spin" />
+-              <span>✨ מזהה קטגוריה…</span>
++              <span>מזהה קטגוריה…</span>
+             </div>
+           )}
+           {effectiveAiSuggest && aiState === 'done' && aiSuggestion && (
+             <div dir="rtl" className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-2">
+               <div className="flex items-center justify-between">
+                 <span className="flex items-center gap-1.5">
+-                  <span className="text-sm font-semibold text-indigo-800">הצעת AI ✨</span>
++                  <span className="text-sm font-semibold text-indigo-800">הצעת AI</span>
+                   <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">ניסיוני</span>
+                 </span>
+                 <span className={`text-xs px-2 py-0.5 rounded-full ${aiSuggestion.low_confidence ? 'bg-slate-200 text-slate-600' : 'bg-indigo-200 text-indigo-800'}`}>
+
+--- a/frontend/src/pages/AdminPage.js
++++ b/frontend/src/pages/AdminPage.js
+@@ -2,6 +2,7 @@
+ import { useNavigate } from 'react-router-dom';
+ import { useAuth } from '../contexts/AuthContext';
+ import { BACKEND_URL } from '../services/api';
++import PlatformFeatureToggles from '../components/admin/PlatformFeatureToggles';
+ import {
+   HardHat, ArrowRight, Users, Loader2, RefreshCw,
+   Shield, BarChart3, Building2, CreditCard, ClipboardList,
+@@ -450,6 +451,7 @@
+                   </div>
+                 )}
+               </div>
++              <PlatformFeatureToggles />
+             </div>
+ 
+             {(systemInfo || apiHealthy === false) && (
+
+V2 — added/removed (difflib, no Git)
+backend/contractor_ops/platform_flags.py: +27/-0
+backend/tests/test_platform_flags.py: +17/-0
+frontend/src/components/admin/PlatformFeatureToggles.js: +52/-0
+backend/contractor_ops/config_router.py: +8/-0
+backend/contractor_ops/admin_router.py: +26/-0
+frontend/src/services/api.js: +8/-0
+frontend/src/components/NewDefectModal.js: +21/-6
+frontend/src/pages/AdminPage.js: +2/-0
+TOTAL: 161 6
+
+V3 — verification
+- Pure pytest: 8 passed (PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=backend python -m pytest backend/tests/test_platform_flags.py -q -p no:cacheprovider).
+- CI=true GENERATE_SOURCEMAP=false craco production build: PASS; output /tmp/batch614/verified-build. Existing Browserslist data-age notice. Build preceded the final two text-only emoji removals; those removals were checked by exact diff and zero-count, not another build.
+- Jest: blocked — 8 suites failed before any test ran because libuuid.so.1 is missing. Harness not repaired.
+- Required searches confirmed public flag, admin handlers, key/helpers, modal state/effect/gates and card import/render.
+- Final sparkle count in NewDefectModal.js: 0.
+- Card placement confirmed in source: fourth card immediately after recent activity, within the existing overview grid.
+- Baseline hashes: only five approved existing application files changed. review.txt unchanged. New files: 27/17/52 lines, within 40/30/70 limits.
+- Manual off/on/off reopening and authenticated admin interaction: not run — local harness. Start application failed because /tmp/batch606/normal-launch.sh is missing. Screenshot attempt failed with connection refused. No browser/runtime verification claimed.
+
+V4 — answers
+(a) Source-only: backend/contractor_ops/router.py:332 require_super_admin requires phone allowlist membership AND _is_super_admin (platform_role super_admin), with rate limiting. Both routes use this guard without step-up. The role alone is insufficient. No specific account was inspected or verified; no account details disclosed.
+(b) /api/config/features has no authentication dependency. AuthContext fetchFeatures runs in a token-gated effect, NOT on every unauthenticated app load. configService.getFeatures uses direct axios without application caching. The added get_db/flag read is wrapped in try/except with warning + False, preventing flag-read exceptions from propagating a 500. This is a code inspection result, not a guarantee against unrelated endpoint/middleware failures.
+(c) Search of frontend/src found other references only in frontend/src/config/features.js (definitions/comment); unchanged. No other consumers found.
+
+Accepted residual window (ADDENDUM-1): the exact aiModeAllowed formula retains context fallback while aiModeLive is null. No reset to null occurs in the per-open effect. Stale True context can temporarily show AI until the fresh request returns False or fails. The three parent pages unmount the modal on close; remounting can recreate the window, NOT only once per login. After False/failure, the classic form is used and mode selection is hidden. localStorage preferences remain intact. This is a UI availability toggle, not a new server-side classification authorization gate.
+
+V5
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
