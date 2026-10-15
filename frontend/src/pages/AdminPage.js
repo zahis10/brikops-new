@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { BACKEND_URL } from '../services/api';
+import PlatformFeatureToggles from '../components/admin/PlatformFeatureToggles';
 import {
   HardHat, ArrowRight, Users, Loader2, RefreshCw,
   Shield, BarChart3, Building2, CreditCard, ClipboardList,
@@ -450,6 +451,7 @@ const AdminPage = () => {
                   </div>
                 )}
               </div>
+              <PlatformFeatureToggles />
             </div>
 
             {(systemInfo || apiHealthy === false) && (

@@ -648,6 +648,32 @@ async def admin_get_founder_config(user: dict = Depends(require_super_admin)):
     }
 
 
+@router.get("/admin/config/defect-ai-mode")
+async def admin_get_defect_ai_mode(user: dict = Depends(require_super_admin)):
+    from contractor_ops.platform_flags import DEFECT_AI_MODE_KEY, coerce_flag
+    db = get_db()
+    doc = await db.app_config.find_one({'key': DEFECT_AI_MODE_KEY}, {'_id': 0})
+    return {'enabled': coerce_flag(doc, False), 'updated_at': (doc or {}).get('updated_at'),
+            'updated_by': (doc or {}).get('updated_by')}
+
+
+@router.patch("/admin/config/defect-ai-mode")
+async def admin_set_defect_ai_mode(request: Request, user: dict = Depends(require_super_admin)):
+    from contractor_ops.platform_flags import set_defect_ai_mode
+    body = await request.json()
+    enabled = body.get('enabled') if isinstance(body, dict) else None
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail='enabled must be boolean')
+    db = get_db()
+    stored = await set_defect_ai_mode(db, enabled, user['id'])
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()), 'event_type': 'set_defect_ai_mode', 'entity_type': 'platform',
+        'actor_id': user['id'], 'payload': {'enabled': enabled},
+        'created_at': stored['updated_at'],
+    })
+    return {'ok': True, 'enabled': enabled, 'updated_at': stored['updated_at'], 'updated_by': user['id']}
+
+
 @router.get("/admin/billing/migration/dry-run")
 async def admin_migration_dry_run(user: dict = Depends(require_super_admin)):
     from contractor_ops.billing import BILLING_V1_ENABLED, dry_run_org_id_backfill

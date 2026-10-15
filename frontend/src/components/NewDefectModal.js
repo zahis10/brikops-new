@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL, classifyDefectPhoto } from '../services/api';
+import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL, classifyDefectPhoto, configService } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import {
@@ -118,7 +119,11 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData, onAddAnother 
     try { window.localStorage.setItem('brikops_defect_rapid_entry_v1', on ? '1' : '0'); } catch {}
   };
   const [savedCount, setSavedCount] = useState(0);
-  const effectivePhotoFirst = FEATURES.DEFECT_PHOTO_FIRST && photoFirst;
+  // #614: context for first paint, then the last fetched value for this mount.
+  const { features } = useAuth();
+  const [aiModeLive, setAiModeLive] = useState(null);
+  const aiModeAllowed = FEATURES.DEFECT_PHOTO_FIRST && (aiModeLive ?? features?.defect_ai_mode) === true;
+  const effectivePhotoFirst = aiModeAllowed && photoFirst;
   // BATCH AI Phase 2c E3a: AI suggestion only in photo-first + behind the flag.
   const effectiveAiSuggest = FEATURES.DEFECT_AI_SUGGEST && effectivePhotoFirst;
   // BATCH AI Phase 2c E3b: AI suggestion state (all reset on open/close + submit).
@@ -203,6 +208,16 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData, onAddAnother 
   // #613-B: new counting session per open. Deliberately NOT in the prefill effect above —
   // prefillData changes identity on every parent render and would reset the counter mid-session.
   useEffect(() => { if (isOpen) setSavedCount(0); }, [isOpen]);
+
+  // #614: re-check on each open without resetting the last fetched value.
+  useEffect(() => {
+    if (!isOpen) return;
+    let alive = true;
+    configService.getFeatures()
+      .then(d => { if (alive) setAiModeLive(d?.feature_flags?.defect_ai_mode === true); })
+      .catch(() => { if (alive) setAiModeLive(false); });
+    return () => { alive = false; };
+  }, [isOpen]);
 
   // Restore in-progress draft from the "+ הוסף קבלן" → add contractor → return flow.
   // Gated on FEATURES.DEFECT_DRAFT_PRESERVATION; off = no-op (matches pre-batch).
@@ -992,14 +1007,14 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData, onAddAnother 
           )}
           {/* BATCH defect-photo-first E3d: opt-in mode toggle. Renders ONLY when the
               flag is on — flag off = zero visual change from today. */}
-          {FEATURES.DEFECT_PHOTO_FIRST && (
+          {aiModeAllowed && (
             <div className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
               <span className="text-xs text-slate-500">מצב מילוי</span>
               <div className="inline-flex bg-slate-100 rounded-lg p-0.5">
                 <button type="button" onClick={() => applyPhotoFirst(false)}
                   className={`px-3 py-1 text-xs rounded-md ${!photoFirst ? 'bg-amber-500 text-white font-semibold' : 'text-slate-500'}`}>קלאסי</button>
                 <button type="button" onClick={() => applyPhotoFirst(true)}
-                  className={`px-3 py-1 text-xs rounded-md ${photoFirst ? 'bg-amber-500 text-white font-semibold' : 'text-slate-500'}`}>✨ מצב AI</button>
+                  className={`px-3 py-1 text-xs rounded-md ${photoFirst ? 'bg-amber-500 text-white font-semibold' : 'text-slate-500'}`}>מצב AI</button>
               </div>
             </div>
           )}

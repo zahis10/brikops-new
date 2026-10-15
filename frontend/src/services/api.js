@@ -1903,6 +1903,14 @@ export const billingService = {
     const response = await axios.get(`${API}/admin/config/founder-plan`, { headers: getAuthHeader() });
     return response.data;
   },
+  async getDefectAiMode() {
+    const response = await axios.get(`${API}/admin/config/defect-ai-mode`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async setDefectAiMode(enabled) {
+    const response = await axios.patch(`${API}/admin/config/defect-ai-mode`, { enabled }, { headers: getAuthHeader() });
+    return response.data;
+  },
   async toggleFounderPlan(enabled) {
     const response = await axios.patch(`${API}/admin/config/founder-plan`,
       { enabled },
