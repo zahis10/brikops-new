@@ -12855,3 +12855,487 @@ Behavior confirmed from the diff: search row, including its existing plus button
 
 V5
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#615 (18.10)
+
+STEP 0
+review.txt = 708264 bytes, below 2 MB. Final SHA-256 matches baseline; review.txt untouched.
+17 existing application files edited, zero new application files. No Git, deploy, dependency installation, data changes, environment changes or harness repair.
+Approved extensions included: SpareTilesPage lower assignment bar background only; ADDENDUM-2 horizon glow. ProjectsSceneBand changes only five specified lines/literals. 14 bg-navy lines across 12 page files.
+
+V1 — changed regions with 3 context lines
+
+--- a/frontend/public/index.html
++++ b/frontend/public/index.html
+@@ -4,7 +4,7 @@
+         <meta charset="utf-8" />
+         <meta name="google" content="notranslate" />
+         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+-        <meta name="theme-color" content="#0F172A" />
++        <meta name="theme-color" content="#14213D" />
+         <meta name="description" content="BrikOps - ניהול משימות קבלן" />
+         <link rel="icon" type="image/png" href="%PUBLIC_URL%/favicon.png" />
+         <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
+
+--- a/frontend/public/manifest.json
++++ b/frontend/public/manifest.json
+@@ -10,6 +10,6 @@
+   ],
+   "start_url": "/",
+   "display": "standalone",
+-  "theme_color": "#0F172A",
++  "theme_color": "#14213D",
+   "background_color": "#ffffff"
+ }
+
+--- a/frontend/src/components/ProjectsSceneBand.js
++++ b/frontend/src/components/ProjectsSceneBand.js
+@@ -11,14 +11,14 @@
+     style={{
+       height: 118,
+       background:
+-        'radial-gradient(260px 120px at 50% 20%, rgba(245,158,11,.14), transparent 70%), ' +
+-        'linear-gradient(178deg, #17202b 0%, #212d3b 100%)',
++        'radial-gradient(260px 120px at 50% 20%, rgba(232,100,27,.14), transparent 70%), ' +
++        'linear-gradient(178deg, #14213D 0%, #1F3159 100%)',
+     }}
+   >
+     <div className="absolute inset-0 mx-auto" style={{ maxWidth: 560, WebkitMaskImage: FADE, maskImage: FADE }}>
+       <div
+         className="absolute left-0 right-0"
+-        style={{ bottom: 58, height: 2, background: 'linear-gradient(90deg, transparent, rgba(245,158,11,.5), transparent)', filter: 'blur(1px)' }}
++        style={{ bottom: 58, height: 2, background: 'linear-gradient(90deg, transparent, rgba(232,100,27,.5), transparent)', filter: 'blur(1px)' }}
+       />
+       <svg
+         className="absolute bottom-0 left-0 right-0 w-full"
+@@ -26,7 +26,7 @@
+         viewBox="0 0 340 96"
+         preserveAspectRatio="xMidYMax slice"
+       >
+-        <g fill="#111a24">
++        <g fill="#0E172B">
+           <rect x="0" y="44" width="42" height="52" /><rect x="46" y="58" width="30" height="38" />
+           <rect x="80" y="36" width="36" height="60" /><rect x="120" y="64" width="26" height="32" />
+           <rect x="196" y="50" width="40" height="46" /><rect x="240" y="62" width="28" height="34" />
+@@ -34,7 +34,7 @@
+           <rect x="156" y="10" width="4" height="86" /><rect x="124" y="10" width="96" height="4" />
+           <path d="M158 10 L142 26 L158 26 Z" opacity=".9" />
+         </g>
+-        <g fill="#f5a623" opacity=".3">
++        <g fill="#E8641B" opacity=".3">
+           <rect x="8" y="52" width="4" height="4" /><rect x="88" y="46" width="4" height="4" />
+           <rect x="204" y="58" width="4" height="4" /><rect x="282" y="50" width="4" height="4" />
+         </g>
+
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -13,7 +13,7 @@
+   font-family: 'Heebo', sans-serif;
+   -webkit-font-smoothing: antialiased;
+   -moz-osx-font-smoothing: grayscale;
+-  background-color: #F8FAFC;
++  background-color: #F4F3EF;
+ }
+ 
+ iframe[src*="emergent"],
+@@ -37,25 +37,25 @@
+ @layer base {
+   :root {
+     /* LIGHT THEME - High contrast for readability */
+-    --background: 210 40% 98%;
+-    --foreground: 222.2 84% 4.9%;
++    --background: 48 18.5% 94.7%;
++    --foreground: 221.4 50.9% 11.2%;
+     --card: 0 0% 100%;
+-    --card-foreground: 222.2 84% 4.9%;
++    --card-foreground: 221.4 50.9% 11.2%;
+     --popover: 0 0% 100%;
+-    --popover-foreground: 222.2 84% 4.9%;
+-    --primary: 217.2 91.2% 59.8%;
++    --popover-foreground: 221.4 50.9% 11.2%;
++    --primary: 19.9 84.5% 40.6%;
+     --primary-foreground: 0 0% 100%;
+-    --secondary: 210 40% 96.1%;
+-    --secondary-foreground: 222.2 47.4% 11.2%;
+-    --muted: 210 40% 96.1%;
+-    --muted-foreground: 215.4 16.3% 46.9%;
+-    --accent: 210 40% 96.1%;
+-    --accent-foreground: 222.2 47.4% 11.2%;
+-    --destructive: 0 84.2% 60.2%;
++    --secondary: 46.7 18.4% 90.4%;
++    --secondary-foreground: 221.4 50.9% 11.2%;
++    --muted: 46.7 18.4% 90.4%;
++    --muted-foreground: 220 8.3% 35.5%;
++    --accent: 46.7 18.4% 90.4%;
++    --accent-foreground: 221.4 50.9% 11.2%;
++    --destructive: 3.2 71.3% 41%;
+     --destructive-foreground: 0 0% 100%;
+-    --border: 214.3 31.8% 91.4%;
+-    --input: 214.3 31.8% 91.4%;
+-    --ring: 217.2 91.2% 59.8%;
++    --border: 45 13.6% 82.7%;
++    --input: 45 13.6% 82.7%;
++    --ring: 19.9 84.5% 40.6%;
+     --radius: 0.5rem;
+   }
+ }
+@@ -70,21 +70,21 @@
+   
+   /* Force light theme colors for form elements */
+   input, select, textarea {
+-    color: #1e293b !important; /* text-slate-800 */
++    color: #0E172B !important; /* ink */
+     background-color: #ffffff !important;
+   }
+   
+   input::placeholder, textarea::placeholder {
+-    color: #94a3b8 !important; /* text-slate-400 */
++    color: #646972 !important; /* text-slate-400 */
+   }
+   
+   select option {
+-    color: #1e293b !important;
++    color: #0E172B !important;
+     background-color: #ffffff !important;
+   }
+   
+   label {
+-    color: #334155 !important; /* text-slate-700 */
++    color: #2A3345 !important; /* text-slate-700 */
+   }
+   
+   /* Keep native select appearance on ALL devices for maximum compatibility */
+@@ -130,8 +130,8 @@
+ }
+ 
+ @keyframes highlightFlash {
+-  0% { background-color: rgb(251 191 36 / 0.3); }
+-  50% { background-color: rgb(251 191 36 / 0.15); }
++  0% { background-color: rgb(234 123 76 / 0.3); }
++  50% { background-color: rgb(234 123 76 / 0.15); }
+   100% { background-color: transparent; }
+ }
+ 
+@@ -140,9 +140,9 @@
+ }
+ 
+ @keyframes renewPulse {
+-  0% { border-color: rgb(251 191 36); box-shadow: 0 0 0 0 rgb(251 191 36 / 0.4); }
+-  50% { border-color: rgb(245 158 11); box-shadow: 0 0 0 6px rgb(251 191 36 / 0); }
+-  100% { border-color: rgb(254 215 170); box-shadow: 0 0 0 0 rgb(251 191 36 / 0); }
++  0% { border-color: rgb(234 123 76); box-shadow: 0 0 0 0 rgb(234 123 76 / 0.4); }
++  50% { border-color: rgb(191 74 16); box-shadow: 0 0 0 6px rgb(234 123 76 / 0); }
++  100% { border-color: rgb(239 205 151); box-shadow: 0 0 0 0 rgb(234 123 76 / 0); }
+ }
+ 
+ .renew-highlight {
+@@ -150,8 +150,8 @@
+ }
+ 
+ @keyframes billingFlash {
+-  0% { background-color: rgb(254 243 199); box-shadow: 0 0 0 2px rgb(245 158 11 / 0.4); }
+-  100% { background-color: rgb(248 250 252); box-shadow: none; }
++  0% { background-color: rgb(253 218 197); box-shadow: 0 0 0 2px rgb(191 74 16 / 0.4); }
++  100% { background-color: rgb(244 243 239); box-shadow: none; }
+ }
+ 
+ .billing-highlight-flash {
+@@ -169,4 +169,13 @@
+ .h-dvh-fallback {
+   height: 100vh;
+   height: 100dvh;
++}
++
++/* #615 — tertiary text inside dark (navy) containers: slate-400 is tuned for light backgrounds (5.5:1 on white),
++   so inside navy headers/toolbars it is lifted to slate-300 (8.2:1). Elements that set their own background
++   (chips like bg-slate-100 text-slate-500) are excluded. */
++.bg-slate-800 .text-slate-400:not([class*="bg-"]),
++.bg-slate-900 .text-slate-400:not([class*="bg-"]),
++.bg-navy .text-slate-400:not([class*="bg-"]) {
++  color: #BDB9AE;
+ }
+--- a/frontend/src/pages/AdminActivityPage.js
++++ b/frontend/src/pages/AdminActivityPage.js
+@@ -255,7 +255,7 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
+-      <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)' }}>
++      <header className="bg-navy text-white sticky top-0 z-50">
+         <div className="max-w-[1200px] mx-auto px-4 py-3 flex items-center gap-3">
+           <button onClick={() => navigate('/admin')} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
+             <ChevronRight className="w-5 h-5" />
+
+--- a/frontend/src/pages/AdminBillingPage.js
++++ b/frontend/src/pages/AdminBillingPage.js
+@@ -607,7 +607,7 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50" dir="rtl">
+-      <header className="bg-gradient-to-l from-slate-900 to-slate-800 text-white">
++      <header className="bg-navy text-white">
+         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
+           <button onClick={goBack} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
+             <ArrowRight className="w-5 h-5" />
+
+--- a/frontend/src/pages/AdminDashboardPage.js
++++ b/frontend/src/pages/AdminDashboardPage.js
+@@ -167,7 +167,7 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50 pb-10" dir="rtl">
+-      <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
++      <header className="bg-navy text-white sticky top-0 z-50 shadow-md">
+         <div className="max-w-[1200px] mx-auto px-4 py-3 flex items-center gap-3">
+           <button onClick={() => navigate('/admin')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
+             <ArrowRight className="w-5 h-5" />
+
+--- a/frontend/src/pages/AdminOrgsPage.js
++++ b/frontend/src/pages/AdminOrgsPage.js
+@@ -275,7 +275,7 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50" dir="rtl">
+-      <header className="bg-gradient-to-l from-slate-900 to-slate-800 text-white">
++      <header className="bg-navy text-white">
+         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
+           <button onClick={() => navigate('/admin')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
+             <ArrowRight className="w-5 h-5" />
+
+--- a/frontend/src/pages/AdminPage.js
++++ b/frontend/src/pages/AdminPage.js
+@@ -262,7 +262,7 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
+-      <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
++      <header className="bg-navy text-white sticky top-0 z-50 shadow-md">
+         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-3">
+           <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
+             <ArrowRight className="w-5 h-5" />
+@@ -288,7 +288,7 @@
+             return (
+               <button key={tab.id} onClick={() => handleTabClick(tab.id)}
+                 className={`flex items-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation whitespace-nowrap ${
+-                  isActive ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25' : 'text-slate-400 hover:bg-slate-50'
++                  isActive ? 'bg-amber-500 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'
+                 }`}>
+                 <Icon className="w-4 h-4" />
+                 {tab.label}
+
+--- a/frontend/src/pages/AdminUsersPage.js
++++ b/frontend/src/pages/AdminUsersPage.js
+@@ -294,7 +294,7 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50" dir="rtl">
+-      <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
++      <header className="bg-navy text-white sticky top-0 z-50 shadow-md">
+         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-3">
+           <button onClick={goBack} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
+             <ArrowRight className="w-5 h-5" />
+@@ -336,7 +336,7 @@
+                 onClick={() => setActiveFilter(f.id)}
+                 className={`flex items-center gap-1 py-1.5 px-3 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${
+                   isActive
+-                    ? 'bg-amber-500 text-white shadow-sm shadow-amber-500/25'
++                    ? 'bg-amber-500 text-white shadow-sm'
+                     : 'bg-white border border-slate-200 text-slate-500 hover:border-slate-300'
+                 }`}
+               >
+@@ -451,7 +451,7 @@
+           <DialogPrimitive.Content className="fixed inset-y-0 right-0 z-50 bg-white w-full max-w-lg h-full overflow-y-auto shadow-2xl outline-none" dir="rtl">
+             <SheetTitle className="sr-only">פרטי משתמש</SheetTitle>
+             <SheetDescription className="sr-only">צפייה ועריכת פרטי משתמש</SheetDescription>
+-            <div className="sticky top-0 z-10" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)' }}>
++            <div className="bg-navy sticky top-0 z-10">
+               <div className="px-4 py-3 flex items-center justify-between text-white">
+                 <h2 className="font-bold text-sm">פרטי משתמש</h2>
+                 <SheetClose asChild>
+
+--- a/frontend/src/pages/GateStationPage.js
++++ b/frontend/src/pages/GateStationPage.js
+@@ -278,7 +278,7 @@
+   return (
+     <div dir="rtl" className="min-h-screen bg-[#10161f] text-white flex flex-col relative overflow-hidden">
+       {/* header strip */}
+-      <header className="bg-[#1c2735] px-4 py-3 flex items-center justify-between shrink-0 z-10">
++      <header className="bg-navy px-4 py-3 flex items-center justify-between shrink-0 z-10">
+         <h1 className="text-base font-bold truncate">
+           עמדת שער{meta?.project_name ? ` · ${meta.project_name}` : ''}
+         </h1>
+
+--- a/frontend/src/pages/HandoverOverviewPage.js
++++ b/frontend/src/pages/HandoverOverviewPage.js
+@@ -226,7 +226,7 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
+-      <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white sticky top-0 z-50 shadow-md">
++      <header className="bg-navy text-white sticky top-0 z-50 shadow-md">
+         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
+           <button onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקט">
+             <ChevronRight className="w-4 h-4" />
+
+--- a/frontend/src/pages/MyProjectsPage.js
++++ b/frontend/src/pages/MyProjectsPage.js
+@@ -232,7 +232,7 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50" style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #eef2f8 60%, #e9eef6 100%)' }} dir="rtl">
+-      <header className="bg-[#1c2735] text-white shadow-lg sticky top-0 z-50">
++      <header className="bg-navy text-white shadow-lg sticky top-0 z-50">
+         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
+           {user?.profile_photo_display_url ? (
+             <img
+
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -3829,7 +3829,7 @@
+   return (
+     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
+       <div className="sticky top-0 z-50">
+-        <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-md">
++        <header className="bg-navy text-white shadow-md">
+           <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
+             <button
+               onClick={() => {
+@@ -3874,7 +3874,7 @@
+               const isActive = workMode === wt.id;
+               return (
+                 <button key={wt.id} onClick={() => handleWorkTab(wt.id)}
+-                  className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25' : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}>
++                  className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md' : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}>
+                   <Icon className="w-4 h-4" />
+                   {wt.label}
+                 </button>
+
+--- a/frontend/src/pages/ProjectDashboardPage.js
++++ b/frontend/src/pages/ProjectDashboardPage.js
+@@ -283,7 +283,7 @@
+   return (
+     <div className="min-h-screen pb-24" dir="rtl" style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #eef2f8 60%, #e9eef6 100%)' }}>
+       <ProjectsLightSkyline />
+-      <header className="text-white sticky top-0 z-50" style={{ background: '#1c2735', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
++      <header className="bg-navy text-white sticky top-0 z-50 shadow-md">
+         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
+           <button onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)} className="p-3 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה">
+             <ArrowRight className="w-5 h-5" />
+
+--- a/frontend/src/pages/SpareTilesPage.js
++++ b/frontend/src/pages/SpareTilesPage.js
+@@ -98,7 +98,7 @@
+   if (error) return <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6" dir="rtl"><div className="text-center bg-white p-7 rounded-2xl border border-amber-200"><p className="text-slate-700 mb-4">{error}</p><button onClick={load} className="px-4 py-2 bg-amber-500 text-white rounded-lg">נסה שוב</button></div></div>;
+ 
+   return <main className="min-h-screen bg-[#f4f5f3] pb-24" dir="rtl">
+-    <header className="bg-[#202d38] text-white border-b-4 border-amber-500">
++    <header className="bg-navy text-white border-b-4 border-amber-500">
+       <div className="max-w-5xl mx-auto px-4 py-4 flex gap-3 items-center">
+         <button onClick={() => navigate(`/projects/${projectId}/dashboard`)} className="p-2 rounded-lg bg-white/10 hover:bg-white/20"><ArrowRight className="w-5 h-5" /></button>
+         <div className="flex-1"><p className="text-[11px] text-amber-300 tracking-wide">ניהול מלאי באתר</p><h1 className="text-xl font-bold">ריצוף ספייר</h1></div>
+@@ -133,7 +133,7 @@
+       </section> : <section className="space-y-4">
+         <div className="bg-white rounded-2xl border border-slate-200 p-4 grid gap-3 sm:grid-cols-2"><label className="text-xs font-bold text-slate-600">פרופיל<select value={profileId} onChange={e => switchProfile(e.target.value)} className="mt-1 block w-full border rounded-lg p-2.5"><option value="">בחר פרופיל</option>{savedProfiles.map(p => <option key={p.id} value={p.id}>{p.name || 'פרופיל ללא שם'}</option>)}</select></label><label className="text-xs font-bold text-slate-600">בניין<select value={buildingId} onChange={e => setBuildingId(e.target.value)} className="mt-1 block w-full border rounded-lg p-2.5">{assignments?.buildings?.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label></div>
+         {!profileId ? <div className="text-center p-10 bg-white border rounded-2xl text-slate-500">יש ליצור ולבחור פרופיל לפני שיוך דירות.</div> : (assignments?.floors || []).map(floor => <article key={floor.id} className="bg-white rounded-2xl border border-slate-200 overflow-hidden"><div className="p-3 flex justify-between border-b"><div><h2 className="font-bold text-slate-800">{floor.name}</h2><p className="text-xs text-slate-500">{floor.units?.length || 0} דירות</p></div><button disabled={!canWrite} onClick={() => { const ids = floor.units.map(u => u.id); const all = ids.every(id => selected.has(id)); setSelected(prev => { const next = new Set(prev); ids.forEach(id => all ? next.delete(id) : next.add(id)); return next; }); }} className="text-xs font-bold text-amber-700 disabled:opacity-40">בחר הכל בקומה</button></div><div className="p-3 flex flex-wrap gap-2">{floor.units?.map(unit => { const active = selected.has(unit.id); const label = unit.display_label || unit.unit_no; const assigned = unit.spare_profile_id ? names[unit.spare_profile_id] : null; return <button key={unit.id} disabled={!canWrite} onClick={() => setSelected(prev => { const next = new Set(prev); active ? next.delete(unit.id) : next.add(unit.id); return next; })} className={`min-w-[78px] p-2 rounded-lg border text-right transition ${active ? 'bg-amber-50 border-amber-400 text-amber-900' : 'bg-slate-50 border-slate-200 text-slate-600'} disabled:opacity-70`}><span className="block text-sm font-bold">{active && <Check className="inline w-3.5 h-3.5 ml-1" />}{label}</span><span className="block text-[10px] mt-1 text-slate-500">{assigned || 'אחר'}</span></button>; })}</div></article>)}
+-        <div className="sticky bottom-3 bg-[#202d38] text-white rounded-xl p-3 flex items-center gap-3 shadow-lg"><Building2 className="w-5 h-5 text-amber-300" /><div className="flex-1 text-xs"><b>{selected.size} נבחרו</b><span className="mr-2 text-emerald-300">+{addCount}</span><span className="mr-2 text-rose-300">−{removeCount}</span></div><button disabled={!canWrite || saving || (!addCount && !removeCount)} onClick={saveAssignments} className="bg-amber-400 text-slate-900 px-3 py-2 rounded-lg text-sm font-bold disabled:opacity-40">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'שמור שיוך'}</button></div>
++        <div className="sticky bottom-3 bg-navy text-white rounded-xl p-3 flex items-center gap-3 shadow-lg"><Building2 className="w-5 h-5 text-amber-300" /><div className="flex-1 text-xs"><b>{selected.size} נבחרו</b><span className="mr-2 text-emerald-300">+{addCount}</span><span className="mr-2 text-rose-300">−{removeCount}</span></div><button disabled={!canWrite || saving || (!addCount && !removeCount)} onClick={saveAssignments} className="bg-amber-400 text-slate-900 px-3 py-2 rounded-lg text-sm font-bold disabled:opacity-40">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'שמור שיוך'}</button></div>
+       </section>}
+     </div>
+   </main>;
+
+--- a/frontend/tailwind.config.js
++++ b/frontend/tailwind.config.js
+@@ -10,7 +10,17 @@
+                 borderRadius: {
+                         lg: 'var(--radius)',
+                         md: 'calc(var(--radius) - 2px)',
+-                        sm: 'calc(var(--radius) - 4px)'
++                        sm: 'calc(var(--radius) - 4px)',
++                        xl: '0.5rem',
++                        '2xl': '0.75rem',
++                },
++                boxShadow: {
++                        sm:      '0 1px 2px 0 rgb(20 33 61 / 0.06)',
++                        DEFAULT: '0 1px 3px 0 rgb(20 33 61 / 0.10), 0 1px 2px -1px rgb(20 33 61 / 0.08)',
++                        md:      '0 2px 8px 0 rgb(20 33 61 / 0.14)',
++                        lg:      '0 2px 8px 0 rgb(20 33 61 / 0.18)',
++                        xl:      '0 8px 24px -4px rgb(20 33 61 / 0.28)',
++                        '2xl':   '0 8px 24px -4px rgb(20 33 61 / 0.28)',
+                 },
+                 colors: {
+                         background: 'hsl(var(--background))',
+@@ -52,7 +62,22 @@
+                                 '3': 'hsl(var(--chart-3))',
+                                 '4': 'hsl(var(--chart-4))',
+                                 '5': 'hsl(var(--chart-5))'
+-                        }
++                        },
++                        // #615 — BrikOps palette. The Tailwind family names keep their MEANING; only the values change.
++                        slate:   { 50: '#F4F3EF', 100: '#EBE9E2', 200: '#D9D6CD', 300: '#BDB9AE', 400: '#646972', 500: '#535862', 600: '#3E4553', 700: '#2A3345', 800: '#14213D', 900: '#0E172B', 950: '#080E1C' },
++                        amber:   { 50: '#FBE9DD', 100: '#FDDAC5', 200: '#FFC1A1', 300: '#FCA67F', 400: '#EA7B4C', 500: '#BF4A10', 600: '#A33D0B', 700: '#8A320E', 800: '#72290E', 900: '#5A210E', 950: '#3F1508' },
++                        orange:  { 50: '#F9F2E4', 100: '#F4E3C4', 200: '#EFCD97', 300: '#E5B568', 400: '#CF901C', 500: '#A46500', 600: '#8E5400', 700: '#784500', 800: '#643800', 900: '#502B00', 950: '#381C00' },
++                        red:     { 50: '#F7E1DF', 100: '#FDD5D1', 200: '#FFB9B1', 300: '#FD978C', 400: '#ED695C', 500: '#C7342A', 600: '#B3261E', 700: '#971B17', 800: '#7E1414', 900: '#641212', 950: '#460A0B' },
++                        green:   { 50: '#E3F1E8', 100: '#CCEAD6', 200: '#A9E0BD', 300: '#7ED09C', 400: '#4AB074', 500: '#2E8151', 600: '#276B43', 700: '#1F5A37', 800: '#194B2D', 900: '#133C22', 950: '#0C2815' },
++                        emerald: { 50: '#E3F1E8', 100: '#CCEAD6', 200: '#A9E0BD', 300: '#7ED09C', 400: '#4AB074', 500: '#2E8151', 600: '#276B43', 700: '#1F5A37', 800: '#194B2D', 900: '#133C22', 950: '#0C2815' },
++                        blue:    { 50: '#E2EAF6', 100: '#D0E1FB', 200: '#B2D1FF', 300: '#90BCFF', 400: '#6498EB', 500: '#3D6FC2', 600: '#2F5DA8', 700: '#254D90', 800: '#204079', 900: '#1A3363', 950: '#112245' },
++                        // named tokens — for NEW code only (nothing existing is renamed in this batch)
++                        surface: '#F4F3EF', 'surface-2': '#EBE9E2', line: '#D9D6CD', 'line-2': '#BDB9AE',
++                        ink: '#0E172B', 'ink-2': '#535862', 'ink-3': '#646972',
++                        navy: '#14213D', 'navy-2': '#1F3159',
++                        action: '#BF4A10', 'action-2': '#A33D0B', 'action-soft': '#FBE9DD', brand: '#E8641B',
++                        ok: '#276B43', 'ok-soft': '#E3F1E8', warn: '#A46500', 'warn-soft': '#F9F2E4',
++                        danger: '#B3261E', 'danger-soft': '#F7E1DF', info: '#2F5DA8', 'info-soft': '#E2EAF6',
+                 },
+                 fontSize: {
+                         'caption': ['12px', { lineHeight: '16px', letterSpacing: '0.01em' }],
+
+V2 — added/removed per file (difflib; no Git)
+frontend/public/index.html: +1/-1
+frontend/public/manifest.json: +1/-1
+frontend/src/components/ProjectsSceneBand.js: +5/-5
+frontend/src/index.css: +36/-27
+frontend/src/pages/AdminActivityPage.js: +1/-1
+frontend/src/pages/AdminBillingPage.js: +1/-1
+frontend/src/pages/AdminDashboardPage.js: +1/-1
+frontend/src/pages/AdminOrgsPage.js: +1/-1
+frontend/src/pages/AdminPage.js: +2/-2
+frontend/src/pages/AdminUsersPage.js: +3/-3
+frontend/src/pages/GateStationPage.js: +1/-1
+frontend/src/pages/HandoverOverviewPage.js: +1/-1
+frontend/src/pages/MyProjectsPage.js: +1/-1
+frontend/src/pages/ProjectControlPage.js: +2/-2
+frontend/src/pages/ProjectDashboardPage.js: +1/-1
+frontend/src/pages/SpareTilesPage.js: +2/-2
+frontend/tailwind.config.js: +27/-2
+TOTAL +87/-53
+
+V3 — checks actually run
+1. Config probe PASS: #BF4A10 #14213D #14213D true 0.5rem sm,DEFAULT,md,lg,xl,2xl.
+2. Filtered legacy-dark/gradient/amber-shadow grep: 0 lines, PASS (specified exclusions retained).
+3. bg-navy: 12 page files, 14 lines. AdminUsersPage=2, SpareTilesPage=2; AdminActivityPage, AdminBillingPage, AdminDashboardPage, AdminOrgsPage, AdminPage, GateStationPage, HandoverOverviewPage, MyProjectsPage, ProjectControlPage, ProjectDashboardPage=1 each.
+4. Public theme files: old 0F172A=0; 14213D=1 in each file, PASS.
+5. Specified legacy RGB/hex grep in src/index.css: 0, PASS.
+6. CI build PASS, exit 0: from frontend, CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL=https://$REPLIT_DEV_DOMAIN BUILD_PATH=/tmp/batch615/verified-build npm run build. Compiled successfully; existing Browserslist data-age notice. Build output stays outside workspace.
+7. Built CSS:
+   .bg-amber-500{--tw-bg-opacity:1;background-color:#bf4a10;background-color:rgb(191 74 16/var(--tw-bg-opacity,1))}
+   .bg-slate-800{--tw-bg-opacity:1;background-color:#14213d;background-color:rgb(20 33 61/var(--tw-bg-opacity,1))}
+   .rounded-xl{border-radius:.5rem}
+   .shadow-lg{--tw-shadow:0 2px 8px 0 #14213d2e;--tw-shadow-colored:0 2px 8px 0 var(--tw-shadow-color)}
+   The minifier emits the approved shadow color/alpha as hex rather than the literal 20 33 61. Semantic value matches; literal RGB expectation is not met.
+   245 158 11: 1 occurrence (not the expected 0). It belongs exclusively to the pre-existing arbitrary bg-[#f59e0b] class, not the amber family. #f59e0b: 2 occurrences, one in that escaped selector and one in its fallback declaration. No out-of-scope fix applied.
+8. Jest: blocked — 8 suites failed before any test executed (0 tests), missing libuuid.so.1 in canvas; no harness repair.
+9. Browser: not run — local harness. Start application restart failed because /tmp/batch606/normal-launch.sh is missing. Screenshot attempt failed with ERR_CONNECTION_REFUSED. No visual/accessibility/browser pass claimed.
+10. Baseline hash comparison confirms exactly the 17 allowed application files changed and review.txt is unchanged. JSX parsing used for V4(d) succeeded across frontend/src. Existing logic, layout classes, fonts, unrelated colors and other application files remain untouched.
+
+V4 — read-only answers
+(a) resolveConfig|tailwind.config search in frontend/src: 0 matches; no runtime consumer of the config found in that scope. The pre-existing public/index.html iframe script separately assigns window.tailwind configuration and loads Tailwind CDN; this is outside the requested src search and remains unchanged except theme-color. Its effect on a running iframe was not browser-verified.
+(b) Requested file-level intersection (text-slate-400 plus bg-[#17202b] or bg-[#1c2735]):
+frontend/src/components/HamburgerMenu.js
+This is a file-level search result, not proof that every matching text element is a descendant of that dark container. No edit applied there.
+(c) Built CSS #f59e0b occurrence count: 2. Both come from the single generated arbitrary utility; source: frontend/src/components/HamburgerMenu.js:161, bg-[#f59e0b]. Inline hex literals elsewhere remain out of scope and are not counted as generated CSS utilities.
+(d) Badge and Button both use bg-primary in their default variants. JSX opening-tag counts with neither variant nor className, including multiline tags: pages — Button 1, Badge 0; all frontend/src — Button 2, Badge 0. These are static source counts, not runtime observations.
+
+Limitations: the approved descendant selector is preserved exactly, not broadened. The palette contrast table is not treated as a full application accessibility audit. Excluded inline colors, category families, dark menu, splash, fonts and other deferred areas remain as specified. Built-CSS literal-check discrepancies above are reported rather than hidden or fixed outside scope.
+
+V5
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
