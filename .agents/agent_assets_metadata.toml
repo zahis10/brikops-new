@@ -1299,3 +1299,17 @@ mtime_ms = 1792326799859
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/88d1a891-9d41-4ec3-a9b4-80a420e57f8e/d768c26e-33dd-44c2-9ab4-5d16ff8ecc3a"
 storage_version_token = "1792326801535003"
 content_type = "text/plain"
+
+[[outputs]]
+id = "0pC9wG49ZyYlMimqyWkQS"
+uri = "file://attached_assets/batch615fix1-review-section.txt"
+type = "text"
+title = "סקירה מלאה — #615-fix1 (18.10)"
+description = "סעיף יחיד עם diff מלא, ספירות, תוצאות הבדיקות ושתי תשובות V4. ללא שינוי ב-review.txt וללא פריסה."
+logical_id = "031adcf9-50da-4e9d-a42f-ea4e2fbb27f4"
+content_hash = "sha256:db12933e29007f74654d117af4e110fb549201f882052fb1a6fbb6f096b1fa10"
+size = 14909
+mtime_ms = 1792330341607
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/031adcf9-50da-4e9d-a42f-ea4e2fbb27f4/cc43041c-a9c8-45c2-83a6-4ca11fbb31bb"
+storage_version_token = "1792330343276951"
+content_type = "text/plain"

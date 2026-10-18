@@ -178,12 +178,12 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
         {activeCard === 0 && (() => {
           const openCount = stats.open_defects ?? 0;
             const bannerStyle = openCount === 0
-              ? { background: '#f1f5f9' }
+              ? { background: '#F0EEE9' }
               : openCount < 10
-              ? { background: 'linear-gradient(to bottom right, #f59e0b, #d97706)' }
+              ? { background: 'linear-gradient(to bottom right, #E8641B, #D4540F)' }
               : openCount < 50
-              ? { background: 'linear-gradient(to bottom right, #f97316, #ea580c)' }
-              : { background: 'linear-gradient(to bottom right, #ef4444, #dc2626)' };
+              ? { background: 'linear-gradient(to bottom right, #D4540F, #BF4A10)' }
+              : { background: 'linear-gradient(to bottom right, #C7342A, #B3261E)' };
             const isEmpty = openCount === 0;
             const textColorClass = isEmpty ? 'text-slate-700' : 'text-white';
             const labelColorClass = isEmpty ? 'text-slate-500' : 'text-white/90';

@@ -13,7 +13,7 @@ body {
   font-family: 'Heebo', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #F4F3EF;
+  background-color: #F8F7F4;
 }
 
 iframe[src*="emergent"],
@@ -37,25 +37,25 @@ code {
 @layer base {
   :root {
     /* LIGHT THEME - High contrast for readability */
-    --background: 48 18.5% 94.7%;
+    --background: 45 22.2% 96.5%;
     --foreground: 221.4 50.9% 11.2%;
     --card: 0 0% 100%;
     --card-foreground: 221.4 50.9% 11.2%;
     --popover: 0 0% 100%;
     --popover-foreground: 221.4 50.9% 11.2%;
-    --primary: 19.9 84.5% 40.6%;
+    --primary: 21.4 81.7% 50.8%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 46.7 18.4% 90.4%;
+    --secondary: 42.9 18.9% 92.7%;
     --secondary-foreground: 221.4 50.9% 11.2%;
-    --muted: 46.7 18.4% 90.4%;
-    --muted-foreground: 220 8.3% 35.5%;
-    --accent: 46.7 18.4% 90.4%;
+    --muted: 42.9 18.9% 92.7%;
+    --muted-foreground: 222.4 8.6% 38.6%;
+    --accent: 42.9 18.9% 92.7%;
     --accent-foreground: 221.4 50.9% 11.2%;
     --destructive: 3.2 71.3% 41%;
     --destructive-foreground: 0 0% 100%;
-    --border: 45 13.6% 82.7%;
-    --input: 45 13.6% 82.7%;
-    --ring: 19.9 84.5% 40.6%;
+    --border: 43.6 16.4% 86.9%;
+    --input: 43.6 16.4% 86.9%;
+    --ring: 21.4 81.7% 50.8%;
     --radius: 0.5rem;
   }
 }
@@ -75,7 +75,7 @@ code {
   }
   
   input::placeholder, textarea::placeholder {
-    color: #646972 !important; /* text-slate-400 */
+    color: #6F7380 !important; /* text-slate-400 */
   }
   
   select option {
@@ -84,7 +84,7 @@ code {
   }
   
   label {
-    color: #2A3345 !important; /* text-slate-700 */
+    color: #2F3747 !important; /* text-slate-700 */
   }
   
   /* Keep native select appearance on ALL devices for maximum compatibility */
@@ -130,8 +130,8 @@ code {
 }
 
 @keyframes highlightFlash {
-  0% { background-color: rgb(234 123 76 / 0.3); }
-  50% { background-color: rgb(234 123 76 / 0.15); }
+  0% { background-color: rgb(242 135 79 / 0.3); }
+  50% { background-color: rgb(242 135 79 / 0.15); }
   100% { background-color: transparent; }
 }
 
@@ -140,9 +140,9 @@ code {
 }
 
 @keyframes renewPulse {
-  0% { border-color: rgb(234 123 76); box-shadow: 0 0 0 0 rgb(234 123 76 / 0.4); }
-  50% { border-color: rgb(191 74 16); box-shadow: 0 0 0 6px rgb(234 123 76 / 0); }
-  100% { border-color: rgb(239 205 151); box-shadow: 0 0 0 0 rgb(234 123 76 / 0); }
+  0% { border-color: rgb(242 135 79); box-shadow: 0 0 0 0 rgb(242 135 79 / 0.4); }
+  50% { border-color: rgb(232 100 27); box-shadow: 0 0 0 6px rgb(242 135 79 / 0); }
+  100% { border-color: rgb(239 205 151); box-shadow: 0 0 0 0 rgb(242 135 79 / 0); }
 }
 
 .renew-highlight {
@@ -150,8 +150,8 @@ code {
 }
 
 @keyframes billingFlash {
-  0% { background-color: rgb(253 218 197); box-shadow: 0 0 0 2px rgb(191 74 16 / 0.4); }
-  100% { background-color: rgb(244 243 239); box-shadow: none; }
+  0% { background-color: rgb(252 228 211); box-shadow: 0 0 0 2px rgb(232 100 27 / 0.4); }
+  100% { background-color: rgb(248 247 244); box-shadow: none; }
 }
 
 .billing-highlight-flash {
@@ -171,11 +171,11 @@ code {
   height: 100dvh;
 }
 
-/* #615 — tertiary text inside dark (navy) containers: slate-400 is tuned for light backgrounds (5.5:1 on white),
-   so inside navy headers/toolbars it is lifted to slate-300 (8.2:1). Elements that set their own background
+/* #615 — tertiary text inside dark (navy) containers: slate-400 is tuned for light backgrounds (4.7:1 on white),
+   so inside navy headers/toolbars it is lifted to slate-300 (9.5:1). Elements that set their own background
    (chips like bg-slate-100 text-slate-500) are excluded. */
 .bg-slate-800 .text-slate-400:not([class*="bg-"]),
 .bg-slate-900 .text-slate-400:not([class*="bg-"]),
 .bg-navy .text-slate-400:not([class*="bg-"]) {
-  color: #BDB9AE;
+  color: #CBC8BF;
 }
