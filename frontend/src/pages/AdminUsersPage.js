@@ -294,7 +294,7 @@ const AdminUsersPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
-      <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
+      <header className="bg-navy text-white sticky top-0 z-50 shadow-md">
         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-3">
           <button onClick={goBack} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
             <ArrowRight className="w-5 h-5" />
@@ -336,7 +336,7 @@ const AdminUsersPage = () => {
                 onClick={() => setActiveFilter(f.id)}
                 className={`flex items-center gap-1 py-1.5 px-3 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${
                   isActive
-                    ? 'bg-amber-500 text-white shadow-sm shadow-amber-500/25'
+                    ? 'bg-amber-500 text-white shadow-sm'
                     : 'bg-white border border-slate-200 text-slate-500 hover:border-slate-300'
                 }`}
               >
@@ -451,7 +451,7 @@ const AdminUsersPage = () => {
           <DialogPrimitive.Content className="fixed inset-y-0 right-0 z-50 bg-white w-full max-w-lg h-full overflow-y-auto shadow-2xl outline-none" dir="rtl">
             <SheetTitle className="sr-only">פרטי משתמש</SheetTitle>
             <SheetDescription className="sr-only">צפייה ועריכת פרטי משתמש</SheetDescription>
-            <div className="sticky top-0 z-10" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)' }}>
+            <div className="bg-navy sticky top-0 z-10">
               <div className="px-4 py-3 flex items-center justify-between text-white">
                 <h2 className="font-bold text-sm">פרטי משתמש</h2>
                 <SheetClose asChild>

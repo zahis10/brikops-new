@@ -13,7 +13,7 @@ body {
   font-family: 'Heebo', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #F8FAFC;
+  background-color: #F4F3EF;
 }
 
 iframe[src*="emergent"],
@@ -37,25 +37,25 @@ code {
 @layer base {
   :root {
     /* LIGHT THEME - High contrast for readability */
-    --background: 210 40% 98%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 48 18.5% 94.7%;
+    --foreground: 221.4 50.9% 11.2%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 221.4 50.9% 11.2%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 217.2 91.2% 59.8%;
+    --popover-foreground: 221.4 50.9% 11.2%;
+    --primary: 19.9 84.5% 40.6%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
+    --secondary: 46.7 18.4% 90.4%;
+    --secondary-foreground: 221.4 50.9% 11.2%;
+    --muted: 46.7 18.4% 90.4%;
+    --muted-foreground: 220 8.3% 35.5%;
+    --accent: 46.7 18.4% 90.4%;
+    --accent-foreground: 221.4 50.9% 11.2%;
+    --destructive: 3.2 71.3% 41%;
     --destructive-foreground: 0 0% 100%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 217.2 91.2% 59.8%;
+    --border: 45 13.6% 82.7%;
+    --input: 45 13.6% 82.7%;
+    --ring: 19.9 84.5% 40.6%;
     --radius: 0.5rem;
   }
 }
@@ -70,21 +70,21 @@ code {
   
   /* Force light theme colors for form elements */
   input, select, textarea {
-    color: #1e293b !important; /* text-slate-800 */
+    color: #0E172B !important; /* ink */
     background-color: #ffffff !important;
   }
   
   input::placeholder, textarea::placeholder {
-    color: #94a3b8 !important; /* text-slate-400 */
+    color: #646972 !important; /* text-slate-400 */
   }
   
   select option {
-    color: #1e293b !important;
+    color: #0E172B !important;
     background-color: #ffffff !important;
   }
   
   label {
-    color: #334155 !important; /* text-slate-700 */
+    color: #2A3345 !important; /* text-slate-700 */
   }
   
   /* Keep native select appearance on ALL devices for maximum compatibility */
@@ -130,8 +130,8 @@ code {
 }
 
 @keyframes highlightFlash {
-  0% { background-color: rgb(251 191 36 / 0.3); }
-  50% { background-color: rgb(251 191 36 / 0.15); }
+  0% { background-color: rgb(234 123 76 / 0.3); }
+  50% { background-color: rgb(234 123 76 / 0.15); }
   100% { background-color: transparent; }
 }
 
@@ -140,9 +140,9 @@ code {
 }
 
 @keyframes renewPulse {
-  0% { border-color: rgb(251 191 36); box-shadow: 0 0 0 0 rgb(251 191 36 / 0.4); }
-  50% { border-color: rgb(245 158 11); box-shadow: 0 0 0 6px rgb(251 191 36 / 0); }
-  100% { border-color: rgb(254 215 170); box-shadow: 0 0 0 0 rgb(251 191 36 / 0); }
+  0% { border-color: rgb(234 123 76); box-shadow: 0 0 0 0 rgb(234 123 76 / 0.4); }
+  50% { border-color: rgb(191 74 16); box-shadow: 0 0 0 6px rgb(234 123 76 / 0); }
+  100% { border-color: rgb(239 205 151); box-shadow: 0 0 0 0 rgb(234 123 76 / 0); }
 }
 
 .renew-highlight {
@@ -150,8 +150,8 @@ code {
 }
 
 @keyframes billingFlash {
-  0% { background-color: rgb(254 243 199); box-shadow: 0 0 0 2px rgb(245 158 11 / 0.4); }
-  100% { background-color: rgb(248 250 252); box-shadow: none; }
+  0% { background-color: rgb(253 218 197); box-shadow: 0 0 0 2px rgb(191 74 16 / 0.4); }
+  100% { background-color: rgb(244 243 239); box-shadow: none; }
 }
 
 .billing-highlight-flash {
@@ -169,4 +169,13 @@ code {
 .h-dvh-fallback {
   height: 100vh;
   height: 100dvh;
+}
+
+/* #615 — tertiary text inside dark (navy) containers: slate-400 is tuned for light backgrounds (5.5:1 on white),
+   so inside navy headers/toolbars it is lifted to slate-300 (8.2:1). Elements that set their own background
+   (chips like bg-slate-100 text-slate-500) are excluded. */
+.bg-slate-800 .text-slate-400:not([class*="bg-"]),
+.bg-slate-900 .text-slate-400:not([class*="bg-"]),
+.bg-navy .text-slate-400:not([class*="bg-"]) {
+  color: #BDB9AE;
 }

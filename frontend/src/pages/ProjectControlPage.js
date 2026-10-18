@@ -3829,7 +3829,7 @@ const ProjectControlPage = () => {
   return (
     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
       <div className="sticky top-0 z-50">
-        <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-md">
+        <header className="bg-navy text-white shadow-md">
           <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
             <button
               onClick={() => {
@@ -3874,7 +3874,7 @@ const ProjectControlPage = () => {
               const isActive = workMode === wt.id;
               return (
                 <button key={wt.id} onClick={() => handleWorkTab(wt.id)}
-                  className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25' : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}>
+                  className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md' : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}>
                   <Icon className="w-4 h-4" />
                   {wt.label}
                 </button>

@@ -167,7 +167,7 @@ const AdminDashboardPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-10" dir="rtl">
-      <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
+      <header className="bg-navy text-white sticky top-0 z-50 shadow-md">
         <div className="max-w-[1200px] mx-auto px-4 py-3 flex items-center gap-3">
           <button onClick={() => navigate('/admin')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
             <ArrowRight className="w-5 h-5" />

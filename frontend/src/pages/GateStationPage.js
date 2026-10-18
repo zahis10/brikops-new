@@ -278,7 +278,7 @@ const GateStationPage = () => {
   return (
     <div dir="rtl" className="min-h-screen bg-[#10161f] text-white flex flex-col relative overflow-hidden">
       {/* header strip */}
-      <header className="bg-[#1c2735] px-4 py-3 flex items-center justify-between shrink-0 z-10">
+      <header className="bg-navy px-4 py-3 flex items-center justify-between shrink-0 z-10">
         <h1 className="text-base font-bold truncate">
           עמדת שער{meta?.project_name ? ` · ${meta.project_name}` : ''}
         </h1>

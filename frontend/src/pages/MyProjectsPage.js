@@ -232,7 +232,7 @@ const MyProjectsPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #eef2f8 60%, #e9eef6 100%)' }} dir="rtl">
-      <header className="bg-[#1c2735] text-white shadow-lg sticky top-0 z-50">
+      <header className="bg-navy text-white shadow-lg sticky top-0 z-50">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
           {user?.profile_photo_display_url ? (
             <img

@@ -17,3 +17,4 @@
 - [Floor payment rules](floor-payment-domain.md) — per-floor payments average apartment shares, excluding not-relevant apartments; quantities can vary by floor.
 - [Declared apartment count](declared-apartment-count.md) — permit quantity stays the sole cap; trial corrections require explicit confirmation, never auto-extension.
 - [Defect AI rollout](defect-ai-rollout.md) — classic by default; context fallback before each fresh flag response is an explicitly accepted limitation.
+- [Palette policy](palette-policy.md) — semantic family names remain; named tokens for new code, decorative brand orange, and separately scoped legacy-color cleanup.

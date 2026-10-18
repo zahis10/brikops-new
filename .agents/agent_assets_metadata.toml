@@ -1285,3 +1285,17 @@ mtime_ms = 1792067829430
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/90abd2f9-0328-4453-8a9e-aed845c06d44/65df2bf0-75fd-43f0-9908-a1f2a6d3066b"
 storage_version_token = "1792067831096695"
 content_type = "text/plain"
+
+[[outputs]]
+id = "eb7GmyuTTj_4dfMJJh-0a"
+uri = "file://attached_assets/batch615-review-section.txt"
+type = "text"
+title = "סקירה מלאה — BATCH 615"
+description = "סעיף יחיד: diff של 17 הקבצים, ספירות, תוצאות בנייה ו-CSS, תשובות V4 ומגבלות האימות."
+logical_id = "88d1a891-9d41-4ec3-a9b4-80a420e57f8e"
+content_hash = "sha256:04095f05ecdac122e97929f5128b01d4b16f4f7f173f187ef56a44321c7bd931"
+size = 31338
+mtime_ms = 1792326799859
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/88d1a891-9d41-4ec3-a9b4-80a420e57f8e/d768c26e-33dd-44c2-9ab4-5d16ff8ecc3a"
+storage_version_token = "1792326801535003"
+content_type = "text/plain"

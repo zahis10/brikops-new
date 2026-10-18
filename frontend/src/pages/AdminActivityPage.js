@@ -255,7 +255,7 @@ export default function AdminActivityPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
-      <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)' }}>
+      <header className="bg-navy text-white sticky top-0 z-50">
         <div className="max-w-[1200px] mx-auto px-4 py-3 flex items-center gap-3">
           <button onClick={() => navigate('/admin')} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
             <ChevronRight className="w-5 h-5" />

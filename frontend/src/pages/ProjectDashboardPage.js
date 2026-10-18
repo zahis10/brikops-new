@@ -283,7 +283,7 @@ export default function ProjectDashboardPage() {
   return (
     <div className="min-h-screen pb-24" dir="rtl" style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #eef2f8 60%, #e9eef6 100%)' }}>
       <ProjectsLightSkyline />
-      <header className="text-white sticky top-0 z-50" style={{ background: '#1c2735', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
+      <header className="bg-navy text-white sticky top-0 z-50 shadow-md">
         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
           <button onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)} className="p-3 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה">
             <ArrowRight className="w-5 h-5" />
