@@ -13339,3 +13339,254 @@ Limitations: the approved descendant selector is preserved exactly, not broadene
 
 V5
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#615-fix1 (18.10)
+
+STEP 0
+review.txt: 739603 bytes, exactly expected and below 2 MB. Untouched.
+Baseline SHA-256: 0b741ffd519ef1290e2c0263de570e74755e69b0a395e6c6786fcc7d6467589c
+Final hash matches the baseline.
+Scope: 3 existing application files edited, 0 new application files. Values only, plus the explicitly permitted contrast-comment update. No key, class, layout, UI text or logic changes. No Git, deploy, dependencies, backend/data changes or harness repairs.
+F2 followed the full explicit replacement list, not the inaccurate "16 lines" heading. V4(b) uses the approved TWO-place expectation; config-only count remains 1.
+
+V1 — changed regions, 3 context lines
+
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -13,7 +13,7 @@
+   font-family: 'Heebo', sans-serif;
+   -webkit-font-smoothing: antialiased;
+   -moz-osx-font-smoothing: grayscale;
+-  background-color: #F4F3EF;
++  background-color: #F8F7F4;
+ }
+ 
+ iframe[src*="emergent"],
+@@ -37,25 +37,25 @@
+ @layer base {
+   :root {
+     /* LIGHT THEME - High contrast for readability */
+-    --background: 48 18.5% 94.7%;
++    --background: 45 22.2% 96.5%;
+     --foreground: 221.4 50.9% 11.2%;
+     --card: 0 0% 100%;
+     --card-foreground: 221.4 50.9% 11.2%;
+     --popover: 0 0% 100%;
+     --popover-foreground: 221.4 50.9% 11.2%;
+-    --primary: 19.9 84.5% 40.6%;
++    --primary: 21.4 81.7% 50.8%;
+     --primary-foreground: 0 0% 100%;
+-    --secondary: 46.7 18.4% 90.4%;
++    --secondary: 42.9 18.9% 92.7%;
+     --secondary-foreground: 221.4 50.9% 11.2%;
+-    --muted: 46.7 18.4% 90.4%;
+-    --muted-foreground: 220 8.3% 35.5%;
+-    --accent: 46.7 18.4% 90.4%;
++    --muted: 42.9 18.9% 92.7%;
++    --muted-foreground: 222.4 8.6% 38.6%;
++    --accent: 42.9 18.9% 92.7%;
+     --accent-foreground: 221.4 50.9% 11.2%;
+     --destructive: 3.2 71.3% 41%;
+     --destructive-foreground: 0 0% 100%;
+-    --border: 45 13.6% 82.7%;
+-    --input: 45 13.6% 82.7%;
+-    --ring: 19.9 84.5% 40.6%;
++    --border: 43.6 16.4% 86.9%;
++    --input: 43.6 16.4% 86.9%;
++    --ring: 21.4 81.7% 50.8%;
+     --radius: 0.5rem;
+   }
+ }
+@@ -75,7 +75,7 @@
+   }
+   
+   input::placeholder, textarea::placeholder {
+-    color: #646972 !important; /* text-slate-400 */
++    color: #6F7380 !important; /* text-slate-400 */
+   }
+   
+   select option {
+@@ -84,7 +84,7 @@
+   }
+   
+   label {
+-    color: #2A3345 !important; /* text-slate-700 */
++    color: #2F3747 !important; /* text-slate-700 */
+   }
+   
+   /* Keep native select appearance on ALL devices for maximum compatibility */
+@@ -130,8 +130,8 @@
+ }
+ 
+ @keyframes highlightFlash {
+-  0% { background-color: rgb(234 123 76 / 0.3); }
+-  50% { background-color: rgb(234 123 76 / 0.15); }
++  0% { background-color: rgb(242 135 79 / 0.3); }
++  50% { background-color: rgb(242 135 79 / 0.15); }
+   100% { background-color: transparent; }
+ }
+ 
+@@ -140,9 +140,9 @@
+ }
+ 
+ @keyframes renewPulse {
+-  0% { border-color: rgb(234 123 76); box-shadow: 0 0 0 0 rgb(234 123 76 / 0.4); }
+-  50% { border-color: rgb(191 74 16); box-shadow: 0 0 0 6px rgb(234 123 76 / 0); }
+-  100% { border-color: rgb(239 205 151); box-shadow: 0 0 0 0 rgb(234 123 76 / 0); }
++  0% { border-color: rgb(242 135 79); box-shadow: 0 0 0 0 rgb(242 135 79 / 0.4); }
++  50% { border-color: rgb(232 100 27); box-shadow: 0 0 0 6px rgb(242 135 79 / 0); }
++  100% { border-color: rgb(239 205 151); box-shadow: 0 0 0 0 rgb(242 135 79 / 0); }
+ }
+ 
+ .renew-highlight {
+@@ -150,8 +150,8 @@
+ }
+ 
+ @keyframes billingFlash {
+-  0% { background-color: rgb(253 218 197); box-shadow: 0 0 0 2px rgb(191 74 16 / 0.4); }
+-  100% { background-color: rgb(244 243 239); box-shadow: none; }
++  0% { background-color: rgb(252 228 211); box-shadow: 0 0 0 2px rgb(232 100 27 / 0.4); }
++  100% { background-color: rgb(248 247 244); box-shadow: none; }
+ }
+ 
+ .billing-highlight-flash {
+@@ -171,11 +171,11 @@
+   height: 100dvh;
+ }
+ 
+-/* #615 — tertiary text inside dark (navy) containers: slate-400 is tuned for light backgrounds (5.5:1 on white),
+-   so inside navy headers/toolbars it is lifted to slate-300 (8.2:1). Elements that set their own background
++/* #615 — tertiary text inside dark (navy) containers: slate-400 is tuned for light backgrounds (4.7:1 on white),
++   so inside navy headers/toolbars it is lifted to slate-300 (9.5:1). Elements that set their own background
+    (chips like bg-slate-100 text-slate-500) are excluded. */
+ .bg-slate-800 .text-slate-400:not([class*="bg-"]),
+ .bg-slate-900 .text-slate-400:not([class*="bg-"]),
+ .bg-navy .text-slate-400:not([class*="bg-"]) {
+-  color: #BDB9AE;
++  color: #CBC8BF;
+ }
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -178,12 +178,12 @@
+         {activeCard === 0 && (() => {
+           const openCount = stats.open_defects ?? 0;
+             const bannerStyle = openCount === 0
+-              ? { background: '#f1f5f9' }
++              ? { background: '#F0EEE9' }
+               : openCount < 10
+-              ? { background: 'linear-gradient(to bottom right, #f59e0b, #d97706)' }
++              ? { background: 'linear-gradient(to bottom right, #E8641B, #D4540F)' }
+               : openCount < 50
+-              ? { background: 'linear-gradient(to bottom right, #f97316, #ea580c)' }
+-              : { background: 'linear-gradient(to bottom right, #ef4444, #dc2626)' };
++              ? { background: 'linear-gradient(to bottom right, #D4540F, #BF4A10)' }
++              : { background: 'linear-gradient(to bottom right, #C7342A, #B3261E)' };
+             const isEmpty = openCount === 0;
+             const textColorClass = isEmpty ? 'text-slate-700' : 'text-white';
+             const labelColorClass = isEmpty ? 'text-slate-500' : 'text-white/90';
+
+--- a/frontend/tailwind.config.js
++++ b/frontend/tailwind.config.js
+@@ -15,12 +15,12 @@
+                         '2xl': '0.75rem',
+                 },
+                 boxShadow: {
+-                        sm:      '0 1px 2px 0 rgb(20 33 61 / 0.06)',
+-                        DEFAULT: '0 1px 3px 0 rgb(20 33 61 / 0.10), 0 1px 2px -1px rgb(20 33 61 / 0.08)',
+-                        md:      '0 2px 8px 0 rgb(20 33 61 / 0.14)',
+-                        lg:      '0 2px 8px 0 rgb(20 33 61 / 0.18)',
+-                        xl:      '0 8px 24px -4px rgb(20 33 61 / 0.28)',
+-                        '2xl':   '0 8px 24px -4px rgb(20 33 61 / 0.28)',
++                        sm:      '0 1px 2px 0 rgb(20 33 61 / 0.05)',
++                        DEFAULT: '0 1px 3px 0 rgb(20 33 61 / 0.08), 0 1px 2px -1px rgb(20 33 61 / 0.06)',
++                        md:      '0 2px 8px 0 rgb(20 33 61 / 0.12)',
++                        lg:      '0 2px 8px 0 rgb(20 33 61 / 0.14)',
++                        xl:      '0 8px 24px -4px rgb(20 33 61 / 0.22)',
++                        '2xl':   '0 8px 24px -4px rgb(20 33 61 / 0.22)',
+                 },
+                 colors: {
+                         background: 'hsl(var(--background))',
+@@ -64,20 +64,20 @@
+                                 '5': 'hsl(var(--chart-5))'
+                         },
+                         // #615 — BrikOps palette. The Tailwind family names keep their MEANING; only the values change.
+-                        slate:   { 50: '#F4F3EF', 100: '#EBE9E2', 200: '#D9D6CD', 300: '#BDB9AE', 400: '#646972', 500: '#535862', 600: '#3E4553', 700: '#2A3345', 800: '#14213D', 900: '#0E172B', 950: '#080E1C' },
+-                        amber:   { 50: '#FBE9DD', 100: '#FDDAC5', 200: '#FFC1A1', 300: '#FCA67F', 400: '#EA7B4C', 500: '#BF4A10', 600: '#A33D0B', 700: '#8A320E', 800: '#72290E', 900: '#5A210E', 950: '#3F1508' },
+-                        orange:  { 50: '#F9F2E4', 100: '#F4E3C4', 200: '#EFCD97', 300: '#E5B568', 400: '#CF901C', 500: '#A46500', 600: '#8E5400', 700: '#784500', 800: '#643800', 900: '#502B00', 950: '#381C00' },
+-                        red:     { 50: '#F7E1DF', 100: '#FDD5D1', 200: '#FFB9B1', 300: '#FD978C', 400: '#ED695C', 500: '#C7342A', 600: '#B3261E', 700: '#971B17', 800: '#7E1414', 900: '#641212', 950: '#460A0B' },
+-                        green:   { 50: '#E3F1E8', 100: '#CCEAD6', 200: '#A9E0BD', 300: '#7ED09C', 400: '#4AB074', 500: '#2E8151', 600: '#276B43', 700: '#1F5A37', 800: '#194B2D', 900: '#133C22', 950: '#0C2815' },
+-                        emerald: { 50: '#E3F1E8', 100: '#CCEAD6', 200: '#A9E0BD', 300: '#7ED09C', 400: '#4AB074', 500: '#2E8151', 600: '#276B43', 700: '#1F5A37', 800: '#194B2D', 900: '#133C22', 950: '#0C2815' },
+-                        blue:    { 50: '#E2EAF6', 100: '#D0E1FB', 200: '#B2D1FF', 300: '#90BCFF', 400: '#6498EB', 500: '#3D6FC2', 600: '#2F5DA8', 700: '#254D90', 800: '#204079', 900: '#1A3363', 950: '#112245' },
++                        slate:   { 50: '#F8F7F4', 100: '#F0EEE9', 200: '#E3E0D8', 300: '#CBC8BF', 400: '#6F7380', 500: '#5A5F6B', 600: '#434956', 700: '#2F3747', 800: '#14213D', 900: '#0E172B', 950: '#080E1C' },
++                        amber:   { 50: '#FDF3EB', 100: '#FCE4D3', 200: '#FAC8AC', 300: '#F5A77E', 400: '#F2874F', 500: '#E8641B', 600: '#D4540F', 700: '#BF4A10', 800: '#A33D0B', 900: '#8A320E', 950: '#72290E' },
++                        orange:  { 50: '#FBF6EC', 100: '#F6EAD2', 200: '#EFCD97', 300: '#E5B568', 400: '#CF901C', 500: '#A46500', 600: '#8E5400', 700: '#784500', 800: '#643800', 900: '#502B00', 950: '#381C00' },
++                        red:     { 50: '#FCEFED', 100: '#FADCD8', 200: '#FFB9B1', 300: '#FD978C', 400: '#ED695C', 500: '#C7342A', 600: '#B3261E', 700: '#971B17', 800: '#7E1414', 900: '#641212', 950: '#460A0B' },
++                        green:   { 50: '#EBF5EF', 100: '#D6ECDE', 200: '#A9E0BD', 300: '#7ED09C', 400: '#4AB074', 500: '#2E8151', 600: '#276B43', 700: '#1F5A37', 800: '#194B2D', 900: '#133C22', 950: '#0C2815' },
++                        emerald: { 50: '#EBF5EF', 100: '#D6ECDE', 200: '#A9E0BD', 300: '#7ED09C', 400: '#4AB074', 500: '#2E8151', 600: '#276B43', 700: '#1F5A37', 800: '#194B2D', 900: '#133C22', 950: '#0C2815' },
++                        blue:    { 50: '#EBF1FA', 100: '#D9E5F7', 200: '#B2D1FF', 300: '#90BCFF', 400: '#6498EB', 500: '#3D6FC2', 600: '#2F5DA8', 700: '#254D90', 800: '#204079', 900: '#1A3363', 950: '#112245' },
+                         // named tokens — for NEW code only (nothing existing is renamed in this batch)
+-                        surface: '#F4F3EF', 'surface-2': '#EBE9E2', line: '#D9D6CD', 'line-2': '#BDB9AE',
+-                        ink: '#0E172B', 'ink-2': '#535862', 'ink-3': '#646972',
++                        surface: '#F8F7F4', 'surface-2': '#F0EEE9', line: '#E3E0D8', 'line-2': '#CBC8BF',
++                        ink: '#0E172B', 'ink-2': '#5A5F6B', 'ink-3': '#6F7380',
+                         navy: '#14213D', 'navy-2': '#1F3159',
+-                        action: '#BF4A10', 'action-2': '#A33D0B', 'action-soft': '#FBE9DD', brand: '#E8641B',
+-                        ok: '#276B43', 'ok-soft': '#E3F1E8', warn: '#A46500', 'warn-soft': '#F9F2E4',
+-                        danger: '#B3261E', 'danger-soft': '#F7E1DF', info: '#2F5DA8', 'info-soft': '#E2EAF6',
++                        action: '#E8641B', 'action-2': '#D4540F', 'action-soft': '#FDF3EB', brand: '#E8641B',
++                        ok: '#276B43', 'ok-soft': '#EBF5EF', warn: '#A46500', 'warn-soft': '#FBF6EC',
++                        danger: '#B3261E', 'danger-soft': '#FCEFED', info: '#2F5DA8', 'info-soft': '#EBF1FA',
+                 },
+                 fontSize: {
+                         'caption': ['12px', { lineHeight: '16px', letterSpacing: '0.01em' }],
+
+V2 — lines added/removed (difflib, no Git)
+frontend/src/index.css: +22/-22
+frontend/src/pages/ProjectControlPage.js: +4/-4
+frontend/tailwind.config.js: +18/-18
+TOTAL: +44/-44
+F1 exact specified values: PASS (all shadow, ramp and named-token lines).
+
+V3 — checks actually run
+Config probe: PASS
+#E8641B #BF4A10 #F8F7F4 #6F7380 #14213D #E8641B #FCEFED 0 2px 8px 0 rgb(20 33 61 / 0.14)
+
+Config-only grep -cE "#BF4A10": 1, PASS.
+Legacy index.css search (#F4F3EF|#646972|#2A3345|234 123 76|191 74 16|244 243 239|253 218 197|#BDB9AE): 0 matches, PASS.
+ProjectControlPage search (f1f5f9|f59e0b|f97316|ef4444): 0 matches in the whole file; therefore 0 in the hero region and no other hits to report, PASS.
+
+Build: PASS, exit 0, Compiled successfully.
+Command (from frontend): CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL="https://$REPLIT_DEV_DOMAIN" BUILD_PATH=/tmp/batch615fix1/verified-build npm run build
+The only notice was the existing Browserslist data-age notice; no package updates performed. Build output is outside the workspace.
+
+Built CSS checks: PASS
+.bg-amber-500{--tw-bg-opacity:1;background-color:#e8641b;background-color:rgb(232 100 27/var(--tw-bg-opacity,1))}
+.bg-slate-50{--tw-bg-opacity:1;background-color:#f8f7f4;background-color:rgb(248 247 244/var(--tw-bg-opacity,1))}
+.text-slate-400{--tw-text-opacity:1;color:#6f7380;color:rgb(111 115 128/var(--tw-text-opacity,1))}
+191 74 16 appears in 4 built CSS blocks; every block belongs to amber-700, including variants. The specified class-extraction pattern returns only .text-amber-700; no other amber shade contains that RGB.
+
+Jest: blocked — exit 1; 8 suites failed before execution, 0 tests, missing libuuid.so.1 in canvas.
+Browser: not run — local harness. One workflow restart failed: /tmp/batch606/normal-launch.sh missing; screenshot attempt returned ERR_CONNECTION_REFUSED. No harness repair and no visual/accessibility pass claimed.
+
+Scope check: baseline SHA-256 comparison across frontend/src, frontend/public, backend Python files, Tailwind config and review.txt found changes in exactly:
+frontend/tailwind.config.js
+frontend/src/index.css
+frontend/src/pages/ProjectControlPage.js
+review.txt hash unchanged. The three edited files retain their structure and line count. F1 exact full shadow/ramp/named-token lines were also compared with the supplied specification and passed.
+
+V4 — read-only answers
+(a) Other inline linear-gradient with #f59e0b or #f97316 in frontend/src/pages:
+frontend/src/pages/ProjectDashboardPage.js:692:
+                          ? 'linear-gradient(90deg, #f59e0b, #fbbf24)'
+One matching line. Left unchanged, as required.
+
+(b) #BF4A10 search across frontend/src and frontend/tailwind.config.js: exactly TWO places, as approved:
+frontend/tailwind.config.js:68 — amber shade 700: '#BF4A10'.
+frontend/src/pages/ProjectControlPage.js:185 — the openCount < 50 branch:
+              ? { background: 'linear-gradient(to bottom right, #D4540F, #BF4A10)' }
+The config-only line count is 1. The second occurrence is required by F3, not an unexpected leftover.
+
+Limitations: option B is implemented exactly; white text on amber-500/600 does not meet 4.5:1 according to the supplied contrast figures. No broader accessibility claim is made. Structural sunlight-readability changes, other inline gradients, iframe/CDN behavior and unrelated styling remain outside scope.
+
+V5
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
