@@ -13,7 +13,7 @@ body {
   font-family: 'Heebo', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #F8F7F4;
+  background-color: #F8FAFC;
 }
 
 iframe[src*="emergent"],
@@ -37,24 +37,24 @@ code {
 @layer base {
   :root {
     /* LIGHT THEME - High contrast for readability */
-    --background: 45 22.2% 96.5%;
-    --foreground: 221.4 50.9% 11.2%;
+    --background: 210 40% 98%;
+    --foreground: 222.2 47.4% 11.2%;
     --card: 0 0% 100%;
-    --card-foreground: 221.4 50.9% 11.2%;
+    --card-foreground: 222.2 47.4% 11.2%;
     --popover: 0 0% 100%;
-    --popover-foreground: 221.4 50.9% 11.2%;
+    --popover-foreground: 222.2 47.4% 11.2%;
     --primary: 21.4 81.7% 50.8%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 42.9 18.9% 92.7%;
-    --secondary-foreground: 221.4 50.9% 11.2%;
-    --muted: 42.9 18.9% 92.7%;
-    --muted-foreground: 222.4 8.6% 38.6%;
-    --accent: 42.9 18.9% 92.7%;
-    --accent-foreground: 221.4 50.9% 11.2%;
-    --destructive: 3.2 71.3% 41%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 212.9 15.9% 38.2%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 72.2% 50.6%;
     --destructive-foreground: 0 0% 100%;
-    --border: 43.6 16.4% 86.9%;
-    --input: 43.6 16.4% 86.9%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
     --ring: 21.4 81.7% 50.8%;
     --radius: 0.5rem;
   }
@@ -70,21 +70,21 @@ code {
   
   /* Force light theme colors for form elements */
   input, select, textarea {
-    color: #0E172B !important; /* ink */
+    color: #0F172A !important; /* ink */
     background-color: #ffffff !important;
   }
   
   input::placeholder, textarea::placeholder {
-    color: #6F7380 !important; /* text-slate-400 */
+    color: #64748B !important; /* text-slate-400 */
   }
   
   select option {
-    color: #0E172B !important;
+    color: #0F172A !important;
     background-color: #ffffff !important;
   }
   
   label {
-    color: #2F3747 !important; /* text-slate-700 */
+    color: #334155 !important; /* text-slate-700 */
   }
   
   /* Keep native select appearance on ALL devices for maximum compatibility */
@@ -142,7 +142,7 @@ code {
 @keyframes renewPulse {
   0% { border-color: rgb(242 135 79); box-shadow: 0 0 0 0 rgb(242 135 79 / 0.4); }
   50% { border-color: rgb(232 100 27); box-shadow: 0 0 0 6px rgb(242 135 79 / 0); }
-  100% { border-color: rgb(239 205 151); box-shadow: 0 0 0 0 rgb(242 135 79 / 0); }
+  100% { border-color: rgb(253 230 138); box-shadow: 0 0 0 0 rgb(242 135 79 / 0); }
 }
 
 .renew-highlight {
@@ -151,7 +151,7 @@ code {
 
 @keyframes billingFlash {
   0% { background-color: rgb(252 228 211); box-shadow: 0 0 0 2px rgb(232 100 27 / 0.4); }
-  100% { background-color: rgb(248 247 244); box-shadow: none; }
+  100% { background-color: rgb(248 250 252); box-shadow: none; }
 }
 
 .billing-highlight-flash {
@@ -171,11 +171,11 @@ code {
   height: 100dvh;
 }
 
-/* #615 — tertiary text inside dark (navy) containers: slate-400 is tuned for light backgrounds (4.7:1 on white),
-   so inside navy headers/toolbars it is lifted to slate-300 (9.5:1). Elements that set their own background
+/* #615 — tertiary text inside dark (navy) containers: slate-400 is tuned for light backgrounds (4.8:1 on white),
+   so inside navy headers/toolbars it is lifted to slate-300 (9.9:1). Elements that set their own background
    (chips like bg-slate-100 text-slate-500) are excluded. */
 .bg-slate-800 .text-slate-400:not([class*="bg-"]),
 .bg-slate-900 .text-slate-400:not([class*="bg-"]),
 .bg-navy .text-slate-400:not([class*="bg-"]) {
-  color: #CBC8BF;
+  color: #CBD5E1;
 }
