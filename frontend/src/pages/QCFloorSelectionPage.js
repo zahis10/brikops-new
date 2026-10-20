@@ -222,7 +222,7 @@ export default function QCFloorSelectionPage() {
           <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
           <p className="text-slate-500 mb-4">צריך להקים מבנה וקומות כדי להתחיל בקרת ביצוע</p>
           <button
-            onClick={() => navigate(`/projects/${projectId}/control?tab=structure`)}
+            onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)}
             className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-sm shadow-sm transition-colors"
           >
             הוסף בניין

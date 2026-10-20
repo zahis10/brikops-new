@@ -111,7 +111,7 @@ const UnitHomePage = () => {
                   // structure tab.
                   navigate(`/projects/${projectId}/buildings/${building.id}`);
                 } else {
-                  navigate(`/projects/${projectId}/control?tab=structure`);
+                  navigate(`/projects/${projectId}/control?workMode=structure`);
                 }
               }}
               className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"

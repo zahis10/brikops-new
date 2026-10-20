@@ -1341,3 +1341,17 @@ mtime_ms = 1792477893011
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/c0c5a5a2-373b-40de-bfaa-5d72a4f0c4d9/547b9106-caa2-41df-a138-906cf5c7ba8a"
 storage_version_token = "1792477900992903"
 content_type = "text/plain"
+
+[[outputs]]
+id = "8nrqDWAjxtrLwuF3Zd3yU"
+uri = "file://attached_assets/batch617-review-section.txt"
+type = "text"
+title = "BATCH 617 — סקירה מלאה"
+description = "השינויים בששת הקבצים, תוצאות הבדיקות ומיפוי קישורי הניווט; כולל ADDENDUM-1."
+logical_id = "3b984ba0-1d1b-4188-8e4a-8c85e408a974"
+content_hash = "sha256:35b5177b532fd12c138ee6691075401e5d05db8fa91d08e3e25b386cfb8b4a0a"
+size = 17881
+mtime_ms = 1792485042546
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/3b984ba0-1d1b-4188-8e4a-8c85e408a974/93c0aec6-8fc8-4d61-846a-8618bade4c9b"
+storage_version_token = "1792485052266391"
+content_type = "text/plain"

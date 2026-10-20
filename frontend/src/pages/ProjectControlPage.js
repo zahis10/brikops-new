@@ -3821,7 +3821,7 @@ const ProjectControlPage = () => {
     if (id === 'diary') { navigate(`/projects/${projectId}/diary`); return; }
     if (id === 'plans') { navigate(`/projects/${projectId}/plans`); return; }
     setWorkMode(id);
-    if (id !== 'structure') setActiveTab('');
+    setSearchParams(prev => { const next = new URLSearchParams(prev); next.delete('workMode'); if (id !== 'structure') next.delete('tab'); return next; }, { replace: true });
     try { localStorage.setItem(`brikops_workMode_${projectId}`, id); } catch {}
   };
 

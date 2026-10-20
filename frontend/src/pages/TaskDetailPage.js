@@ -300,7 +300,7 @@ const TaskDetailPage = () => {
         ? `/projects/${task.project_id}?src=contractor`
         : (task.building_id
             ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
-            : `/projects/${task.project_id}/control?tab=defects`);
+            : `/projects/${task.project_id}/control?workMode=defects`);
       sessionStorage.setItem(RETURN_TO_KEY, contractorBack);
     }
   }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo, isContractor]);
@@ -787,7 +787,7 @@ const TaskDetailPage = () => {
     const isLoadError = errorState === 'load_error' || (!errorState && !task);
     const errorBackUrl = sessionStorage.getItem(RETURN_TO_KEY)
       || (task?.building_id && task?.project_id ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
-        : task?.project_id ? `/projects/${task.project_id}/control?tab=defects` : '/projects');
+        : task?.project_id ? `/projects/${task.project_id}/control?workMode=defects` : '/projects');
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50" dir="rtl">
         <div className="text-center space-y-4 p-8">
@@ -860,9 +860,6 @@ const TaskDetailPage = () => {
       <input ref={uploadGalleryRef} type="file" accept="image/*" onChange={handleAddPhoto} className="hidden" />
       <div className="bg-white border-b shadow-sm sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between" dir="rtl">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-slate-800">BrikOps</span>
-          </div>
           <button
             onClick={() => {
               const returnTo = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
@@ -888,20 +885,19 @@ const TaskDetailPage = () => {
               } else if (task?.building_id && task?.project_id) {
                 navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
               } else if (task?.project_id) {
-                navigate(`/projects/${task.project_id}/control?tab=defects`);
+                navigate(`/projects/${task.project_id}/control?workMode=defects`);
               } else {
                 navigate('/projects');
               }
             }}
-            className="flex items-center gap-1 text-sm text-slate-500 hover:text-amber-600 transition-colors"
+            className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
+            aria-label={(() => { const rt = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY); if (externalEntry && !location.state?.returnTo) return t('taskDetail', 'back_to_my_defects'); return rt && rt.includes('/dashboard') ? t('taskDetail', 'back_to_dashboard') : t('taskDetail', 'back_to_defects_list'); })()}
           >
-            <ArrowRight className="w-4 h-4" />
-            {(() => {
-              const rt = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
-              if (externalEntry && !location.state?.returnTo) return t('taskDetail', 'back_to_my_defects');
-              return rt && rt.includes('/dashboard') ? t('taskDetail', 'back_to_dashboard') : t('taskDetail', 'back_to_defects_list');
-            })()}
+            <ArrowRight className="w-5 h-5 text-slate-600" />
           </button>
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-slate-800">BrikOps</span>
+          </div>
         </div>
       </div>
 

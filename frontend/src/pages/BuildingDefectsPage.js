@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { buildingService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import ExportModal from '../components/ExportModal';
@@ -59,6 +59,15 @@ import UnitTypeEditModal, { UNIT_TYPE_TAGS, TAG_MAP } from '../components/UnitTy
 const BuildingDefectsPage = () => {
   const { projectId, buildingId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnToParam = searchParams.get('returnTo');
+  const safeReturnTo = (() => {
+    if (!returnToParam) return null;
+    try {
+      const dec = decodeURIComponent(returnToParam);
+      return (dec.startsWith('/') && !dec.startsWith('//') && !dec.startsWith('/\\')) ? dec : null;
+    } catch { return null; }
+  })();
   const { features } = useAuth();
 
   const online = useOnlineStatus();
@@ -76,7 +85,7 @@ const BuildingDefectsPage = () => {
 
   useEffect(() => {
     if (features && !features.defects_v2) {
-      navigate(`/projects/${projectId}/control?tab=defects`, { replace: true });
+      navigate(`/projects/${projectId}/control?workMode=defects`, { replace: true });
     }
   }, [features, projectId, navigate]);
 
@@ -93,7 +102,7 @@ const BuildingDefectsPage = () => {
       console.error('Failed to load building defects summary:', err);
       if (err?.response?.status === 403) {
         toast.error('אין לך הרשאה לצפות בנתוני בניין זה');
-        navigate(`/projects/${projectId}/control?tab=defects`);
+        navigate(`/projects/${projectId}/control?workMode=defects`);
         return;
       }
       toast.error('שגיאה בטעינת סיכום ליקויים');
@@ -381,7 +390,7 @@ const BuildingDefectsPage = () => {
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4" dir="rtl">
         <Building2 className="w-12 h-12 text-slate-300" />
         <p className="text-slate-500">לא נמצאו נתונים לבניין זה</p>
-        <button onClick={() => navigate(`/projects/${projectId}/control?tab=defects`)} className="text-amber-600 hover:text-amber-700 font-medium text-sm">
+        <button onClick={() => navigate(`/projects/${projectId}/control?workMode=defects`)} className="text-amber-600 hover:text-amber-700 font-medium text-sm">
           חזרה לליקויים
         </button>
       </div>
@@ -397,7 +406,7 @@ const BuildingDefectsPage = () => {
         <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => navigate(`/projects/${projectId}/control?tab=structure`)}
+              onClick={() => navigate(safeReturnTo || `/projects/${projectId}/control?workMode=defects`)}
               className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
             >
               <ArrowRight className="w-5 h-5" />
@@ -573,7 +582,7 @@ const BuildingDefectsPage = () => {
                               <div key={unit.id} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-slate-50 transition-colors group relative">
                                 <button
                                   onClick={() => {
-                                    const origin = encodeURIComponent(`/projects/${projectId}/buildings/${buildingId}/defects`);
+                                    const origin = encodeURIComponent(`/projects/${projectId}/buildings/${buildingId}/defects${safeReturnTo ? `?returnTo=${encodeURIComponent(safeReturnTo)}` : ''}`);
                                     navigate(`/projects/${projectId}/units/${unit.id}/defects?returnTo=${origin}`, { state: { from: 'building-defects', buildingId } });
                                   }}
                                   className="flex flex-col items-center gap-1 active:scale-95"

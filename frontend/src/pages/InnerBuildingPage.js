@@ -56,7 +56,7 @@ const InnerBuildingPage = () => {
   const floorRefs = useRef({});
 
   const handleBack = useCallback(() => {
-    navigate(`/projects/${projectId}/control?tab=structure`);
+    navigate(`/projects/${projectId}/control?workMode=structure`);
   }, [navigate, projectId]);
 
   const loadData = useCallback(async () => {
@@ -155,7 +155,7 @@ const InnerBuildingPage = () => {
 
   const handleTabClick = (tabId) => {
     if (tabId === 'defects') {
-      navigate(`/projects/${projectId}/buildings/${buildingId}/defects`);
+      navigate(`/projects/${projectId}/buildings/${buildingId}/defects?returnTo=${encodeURIComponent(`/projects/${projectId}/buildings/${buildingId}`)}`);
       return;
     }
     if (tabId === 'qc') {
