@@ -340,6 +340,10 @@ const ApartmentDashboardPage = () => {
           toast.error('כמות חייבת להיות מספר חיובי');
           return;
         }
+        if (entry.mode === 'cartons' && (entry.cartons === '') !== (entry.perCarton === '')) {
+          toast.error(`${entry.type}: יש למלא גם קרטונים וגם כמות בקרטון`);
+          return;
+        }
         const serialized = {
           type: entry.type,
           count: isNaN(count) ? 0 : count,
@@ -759,6 +763,11 @@ const ApartmentDashboardPage = () => {
             </button>
             {spareTilesOpen && (
               <div className="px-4 pb-4">
+                {spareCanWrite && !spareTilesEditing && (
+                  <button type="button" onClick={startSpareTilesEdit} className="w-full h-11 mb-3 flex items-center justify-center gap-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-sm font-bold">
+                    <Pencil className="w-4 h-4" />עדכון מלאי
+                  </button>
+                )}
                 <div className="text-xs text-slate-500 mb-3 pb-2 border-b border-slate-100">
                   {spareCanAssign ? (
                     <label className="flex items-center gap-2">פרופיל:
@@ -777,7 +786,7 @@ const ApartmentDashboardPage = () => {
                     </>
                   )}
                 </div>
-                {Array.isArray(unitData.spare_status?.categories) && (
+                {!spareTilesEditing && Array.isArray(unitData.spare_status?.categories) && (
                   <div className="space-y-1.5 mb-3">
                     {unitData.spare_status.categories.map((row, idx) => {
                       const isZero = row.entered && row.actual === 0;
@@ -797,9 +806,9 @@ const ApartmentDashboardPage = () => {
                         <div key={`${row.type}-${idx}`}>
                           <div className="flex items-center justify-between gap-3 py-1.5 text-[13px]">
                             <span className="font-medium text-slate-700 min-w-0 flex-1 truncate">{row.name || row.type}</span>
-                            <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold whitespace-nowrap ${chipClasses}`}>{chipText}</span>
+                            <span className="flex items-center gap-2 whitespace-nowrap">{hasInventory && photosFor(row.name || row.type).length === 0 && <span className="text-[11px] text-slate-400">ללא תמונה</span>}<span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${chipClasses}`}>{chipText}</span></span>
                           </div>
-                          {!spareTilesEditing && <SpareCategoryPhotos unitId={unitId} category={row.name || row.type} photos={photosFor(row.name || row.type)} canWrite={spareCanWrite} canDeleteAny={spareCanAssign} currentUserId={user?.id} onChanged={loadUnit} />}
+                          <SpareCategoryPhotos unitId={unitId} category={row.name || row.type} photos={photosFor(row.name || row.type)} canWrite={false} canDeleteAny={spareCanAssign} currentUserId={user?.id} onChanged={loadUnit} />
                         </div>
                       );
                     })}
@@ -807,34 +816,42 @@ const ApartmentDashboardPage = () => {
                 )}
                 {spareTilesEditing ? (
                   <div className="space-y-3">
-                    {spareTilesEntries.map((entry, idx) => (
-                      <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
-                        <div className="flex items-center justify-between"><span className="text-xs font-semibold text-slate-700">{entry.type}</span>{!entry.isConfigured && <button type="button" onClick={() => setSpareTilesEntries(prev => prev.filter((_, i) => i !== idx))} className="p-1 text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>}</div>
-                        <div className="flex gap-2 items-end flex-wrap">
-                          {(() => {
-                            const category = (unitData.spare_settings?.categories || []).find(c => c.name === entry.type);
-                            const measureLabel = category?.measure === 'tiles' ? 'אריחים' : category?.measure === 'sqm' ? 'מ"ר' : '';
-                            return <>
-                              <label className="w-24 text-[10px] text-slate-500">כמות<input type="number" min="0" value={entry.count} onChange={e => { const count = e.target.value; setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count, cartons: '', perCarton: '', entered: Number(count) > 0 ? false : en.entered } : en)); }} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /><span className="block mt-0.5 text-[10px] text-slate-400">{measureLabel}</span></label>
-                              <label className="flex items-center gap-1 pb-5 text-[10px] text-slate-600"><input type="checkbox" checked={String(entry.count) === '0' && entry.entered === true} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, count: '0', cartons: '', perCarton: '', entered: e.target.checked } : en))} />אין</label>
-                              {entry.isConfigured && <div className="flex gap-2 flex-wrap">
-                                <label className="w-24 text-[10px] text-slate-500">קרטונים<input type="number" min="0" step="1" value={entry.cartons} onChange={e => { const cartons = e.target.value; setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, cartons, ...(cartons !== '' && en.perCarton !== '' ? { count: String(Math.round(Number(cartons) * Number(en.perCarton))), entered: false } : {}) } : en)); }} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /></label>
-                                <label className="w-24 text-[10px] text-slate-500">{measureLabel} בקרטון<input type="number" min="0.01" step="0.01" value={entry.perCarton} onChange={e => { const perCarton = e.target.value; setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, perCarton, ...(perCarton !== '' && en.cartons !== '' ? { count: String(Math.round(Number(en.cartons) * Number(perCarton))), entered: false } : {}) } : en)); }} className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /></label>
-                                {entry.cartons !== '' && entry.perCarton !== '' && <span className="w-full text-[10px] text-slate-400">{entry.cartons} קרטונים × {entry.perCarton} = {entry.count} {measureLabel}</span>}
-                              </div>}
-                            </>;
-                          })()}
-                          <label className="flex-1 min-w-[120px] text-[10px] text-slate-500">הערות<input type="text" value={entry.notes} onChange={e => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, notes: e.target.value } : en))} maxLength={500} placeholder="הערה..." className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm" /></label>
+                    {spareTilesEntries.map((entry, idx) => {
+                      const category = (unitData.spare_settings?.categories || []).find(c => c.name === entry.type);
+                      const unitLabel = category?.measure === 'sqm' ? 'מ"ר' : 'אריחים';
+                      const mode = entry.mode || (entry.entered && String(entry.count) === '0' ? 'none' : 'tiles');
+                      const setEntry = (patch) => setSpareTilesEntries(prev => prev.map((en, i) => i === idx ? { ...en, ...patch } : en));
+                      const seg = (m) => `h-10 text-[13px] font-semibold transition-colors ${mode === m ? 'bg-navy text-white' : 'bg-white text-ink-2'}`;
+                      const field = 'mt-1 w-full h-11 px-3 rounded-xl border border-slate-200 bg-white text-base';
+                      return (
+                        <div key={idx} className="p-3 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                          <div className="flex items-center justify-between"><span className="text-[13px] font-bold text-slate-700">{entry.type}</span>{!entry.isConfigured && <button type="button" onClick={() => setSpareTilesEntries(prev => prev.filter((_, i) => i !== idx))} className="p-1 text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>}</div>
+                          <div role="radiogroup" aria-label={`אופן הזנה — ${entry.type}`} className={`grid ${entry.isConfigured ? 'grid-cols-3' : 'grid-cols-2'} rounded-xl border border-slate-300 overflow-hidden divide-x divide-x-reverse divide-slate-300`}>
+                            <button type="button" role="radio" aria-checked={mode === 'none'} onClick={() => setEntry({ mode: 'none', count: '0', cartons: '', perCarton: '', entered: true })} className={seg('none')}>אין</button>
+                            <button type="button" role="radio" aria-checked={mode === 'tiles'} onClick={() => setEntry({ mode: 'tiles', cartons: '', perCarton: '', entered: false })} className={seg('tiles')}>{unitLabel}</button>
+                            {entry.isConfigured && <button type="button" role="radio" aria-checked={mode === 'cartons'} onClick={() => setEntry({ mode: 'cartons', entered: false })} className={seg('cartons')}>קרטונים</button>}
+                          </div>
+                          {mode === 'none' && <div className="h-11 flex items-center px-3 rounded-xl border border-dashed border-slate-300 bg-white text-xs text-slate-500">אין ספייר מסוג זה בדירה</div>}
+                          {mode === 'tiles' && <label className="block text-[11px] text-slate-600">כמות {unitLabel}<input type="number" inputMode="decimal" min="0" placeholder="0" value={entry.count === '0' && !entry.entered ? '' : entry.count} onChange={e => setEntry({ count: e.target.value === '' ? '0' : e.target.value, cartons: '', perCarton: '', entered: false })} className={field} /></label>}
+                          {mode === 'cartons' && <>
+                            <div className="grid grid-cols-2 gap-2">
+                              <label className="block text-[11px] text-slate-600">קרטונים<input type="number" inputMode="numeric" min="0" step="1" placeholder="0" value={entry.cartons} onChange={e => { const cartons = e.target.value; setEntry({ cartons, ...(cartons !== '' && entry.perCarton !== '' ? { count: String(Math.round(Number(cartons) * Number(entry.perCarton))), entered: false } : {}) }); }} className={field} /></label>
+                              <label className="block text-[11px] text-slate-600">{unitLabel} בקרטון<input type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0" value={entry.perCarton} onChange={e => { const perCarton = e.target.value; setEntry({ perCarton, ...(perCarton !== '' && entry.cartons !== '' ? { count: String(Math.round(Number(entry.cartons) * Number(perCarton))), entered: false } : {}) }); }} className={field} /></label>
+                            </div>
+                            {entry.cartons !== '' && entry.perCarton !== '' && <p className="text-xs text-slate-600">{entry.cartons} קרטונים × {entry.perCarton} = <b>{entry.count} {unitLabel}</b></p>}
+                          </>}
+                          {mode !== 'none' && <SpareCategoryPhotos unitId={unitId} category={entry.type} photos={photosFor(entry.type)} canWrite={spareCanWrite} canDeleteAny={spareCanAssign} currentUserId={user?.id} onChanged={() => loadUnit({ silent: true })} />}
+                          <input type="text" value={entry.notes} onChange={e => setEntry({ notes: e.target.value })} maxLength={500} placeholder="הערה..." aria-label={`הערה — ${entry.type}`} className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white text-sm" />
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                     <div className="flex items-center gap-3 flex-wrap">
                       {spareTilesEntries.length < 20 && <button type="button" onClick={() => { const name = window.prompt('שם סוג ריצוף חדש:'); if (!name?.trim()) return; const trimmed = name.trim().slice(0, 50); if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) { toast.error('סוג ריצוף כבר קיים'); return; } setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', entered: false, cartons: '', perCarton: '', isConfigured: false }]); }} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Plus className="w-3.5 h-3.5" />הוסף סוג ריצוף</button>}
-                      <button type="button" onClick={() => setSpareTilesEntries(prev => prev.map(entry => entry.isConfigured ? { ...entry, count: '0', cartons: '', perCarton: '', entered: true } : entry))} className="text-xs text-amber-700 font-medium">אין ספייר בדירה</button>
+                      <button type="button" onClick={() => setSpareTilesEntries(prev => prev.map(entry => entry.isConfigured ? { ...entry, mode: 'none', count: '0', cartons: '', perCarton: '', entered: true } : entry))} className="text-xs text-amber-700 font-medium">אין ספייר בדירה</button>
                     </div>
                     <div className="flex gap-2"><button onClick={saveSpareTiles} disabled={spareTilesSaving} className="flex-1 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium">{spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin inline" /> : 'שמור'}</button><button onClick={() => setSpareTilesEditing(false)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600">ביטול</button></div>
                   </div>
-                ) : <><SpareEscalationStatus unitData={unitData} onOpenSheet={setSheetMode} />{spareCanWrite && <button onClick={startSpareTilesEdit} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Pencil className="w-3.5 h-3.5" />עדכון מלאי</button>}</>}
+                ) : <SpareEscalationStatus unitData={unitData} onOpenSheet={setSheetMode} />}
               </div>
             )}
           </div>

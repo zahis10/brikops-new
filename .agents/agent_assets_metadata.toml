@@ -1355,3 +1355,17 @@ mtime_ms = 1792485042546
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/3b984ba0-1d1b-4188-8e4a-8c85e408a974/93c0aec6-8fc8-4d61-846a-8618bade4c9b"
 storage_version_token = "1792485052266391"
 content_type = "text/plain"
+
+[[outputs]]
+id = "juvA8PnO5x8kcCLK0dV-p"
+uri = "file://attached_assets/batch618-review-section.txt"
+type = "text"
+title = "BATCH 618 — סקירה מלאה"
+description = "דיפ, בדיקות, חריגת ספירה מתועדת וממצאי הבדיקה לקריאה בלבד."
+logical_id = "78b20e4a-88c5-4e81-9cf5-01e58c768688"
+content_hash = "sha256:48e6b2c6849c1a9500bbc88816930f9134e1717b0875566daec5eb4ce31f8ecb"
+size = 17515
+mtime_ms = 1792487804142
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/78b20e4a-88c5-4e81-9cf5-01e58c768688/687cfc03-779a-4a1e-bebd-dbc94ff7804a"
+storage_version_token = "1792487825469878"
+content_type = "text/plain"
