@@ -14306,3 +14306,315 @@ V4: none.
 V5
 Rollback after approval: revert this change's commit. No rollback performed.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#619-A (20.10)
+
+STEP 0
+review.txt: 809469 bytes, below 2 MB, SHA256 verified unchanged.
+All five source MD5 hashes matched the supplied baseline. No Git commands were run; branch/staging/production equality was not independently verified.
+
+V1 — changed regions (three context lines)
+APPROVED DEVIATION — ADDENDUM-1: user explicitly approved returning {**existing, 'duplicate': True} after the existing duplicate log, and checking this flag before the queued branch in tag_project_manager. Existing contractor callers retain the same status and existing behavior; only the manager-tag endpoint consumes the new flag.
+
+--- before/backend/config.py
++++ after/backend/config.py
+@@ -87,6 +87,12 @@
+     'zh': {'name': os.environ.get('WA_DEFECT_TEMPLATE_ZH', 'brikops_defect_new_zh_v2'), 'lang': 'zh_CN'},
+ }
+ WA_DEFECT_DEFAULT_LANG = 'he'
++# Batch #619 — "tag project manager": dedicated Meta template per language. Empty name (default) → the engine falls back
++# to WA_DEFECT_TEMPLATES, so the feature works before the new template is approved. Same named params: ref / location / issue.
++WA_PM_TAG_TEMPLATES = {
++    'he': {'name': os.environ.get('WA_PM_TAG_TEMPLATE_HE', ''), 'lang': 'he'},
++    'en': {'name': os.environ.get('WA_PM_TAG_TEMPLATE_EN', ''), 'lang': 'en'},
++}
+ ALLOWED_LANGUAGES = ['he', 'en', 'ar', 'zh']
+ WA_TEMPLATE_PARAM_MODE = os.environ.get('WA_TEMPLATE_PARAM_MODE', 'named')
+ WA_QC_REJECT_TEMPLATE_HE = os.environ.get('WA_QC_REJECT_TEMPLATE_HE', 'qc_item_rejected_he')
+--- before/backend/contractor_ops/notification_service.py
++++ after/backend/contractor_ops/notification_service.py
+@@ -187,7 +187,8 @@
+         }
+ 
+         lang_key = defect_lang or WA_DEFECT_DEFAULT_LANG
+-        tpl_info = WA_DEFECT_TEMPLATES.get(lang_key)
++        override = payload.get('template_override')
++        tpl_info = override if isinstance(override, dict) and override.get('name') else WA_DEFECT_TEMPLATES.get(lang_key)
+         if not tpl_info and lang_key != 'en':
+             logger.info(f"[WA] Language {lang_key} not found, falling back to en for task_id={task_id}")
+             lang_key = 'en'
+@@ -357,6 +358,18 @@
+ 
+         return None
+ 
++    async def _resolve_user_phone(self, user_id: str) -> Optional[dict]:
++        """Batch #619 — phone of an arbitrary recipient (a project manager), same normalisation as the assignee path."""
++        user = await self.db.users.find_one({'id': user_id}, {'_id': 0}) if user_id else None
++        if not user:
++            return None
++        phone = user.get('phone_e164') or user.get('phone', '')
++        phone = self._normalize_israeli_phone(phone)
++        if phone and validate_e164(phone):
++            return {'phone_e164': phone, 'preferred_language': user.get('preferred_language') or 'he'}
++        logger.warning(f"[NOTIFY] User {user_id} has invalid/missing phone: {mask_phone(phone) if phone else 'NONE'}")
++        return None
++
+     async def _enrich_payload(self, task: dict, custom_message: str = "", task_link: str = "") -> dict:
+         project = await self.db.projects.find_one({'id': task.get('project_id')}, {'_id': 0}) if task.get('project_id') else None
+         building = await self.db.buildings.find_one({'id': task.get('building_id')}, {'_id': 0}) if task.get('building_id') else None
+@@ -389,21 +402,22 @@
+         return payload
+ 
+     async def enqueue(self, task_id: str, event_type: str, created_by: str,
+-                      custom_message: str = "", task_link: str = "") -> Optional[dict]:
++                      custom_message: str = "", task_link: str = "",
++                      target_user_id: str = None, template_override: dict = None, title_override: str = None) -> Optional[dict]:
+         task = await self.db.tasks.find_one({'id': task_id}, {'_id': 0})
+         if not task:
+             logger.warning(f"[NOTIFY] Task {task_id} not found, skipping enqueue")
+             return None
+ 
+-        resolved = await self._resolve_target_phone(task)
++        resolved = await self._resolve_user_phone(target_user_id) if target_user_id else await self._resolve_target_phone(task)
+         if not resolved:
+             logger.warning(f"[NOTIFY] No target phone for task {task_id}, skipping")
+-            return {'status': 'failed', 'id': str(uuid.uuid4()), 'error': 'אין מספר וואטסאפ תקין לקבלן'}
++            return {'status': 'failed', 'id': str(uuid.uuid4()), 'error': 'אין מספר וואטסאפ תקין למנהל הפרויקט' if target_user_id else 'אין מספר וואטסאפ תקין לקבלן'}
+ 
+         target_phone = resolved['phone_e164']
+         preferred_language = resolved['preferred_language']
+ 
+-        assignee_id = task.get('assignee_id', '')
++        assignee_id = target_user_id or task.get('assignee_id', '')
+         if assignee_id:
+             assignee_user = await self.db.users.find_one({'id': assignee_id}, {'_id': 0, 'whatsapp_notifications_enabled': 1})
+             if assignee_user and assignee_user.get('whatsapp_notifications_enabled') is False:
+@@ -417,7 +431,7 @@
+         }, {'_id': 0})
+         if existing:
+             logger.info(f"[NOTIFY] Duplicate detected (idem_key={idem_key[:12]}…), skipping")
+-            return existing
++            return {**existing, 'duplicate': True}
+ 
+         if not task_link:
+             from contractor_ops.router import get_public_base_url
+@@ -426,6 +440,10 @@
+ 
+         payload = await self._enrich_payload(task, custom_message=custom_message, task_link=task_link)
+         payload['defect_lang'] = preferred_language
++        if template_override:
++            payload['template_override'] = template_override
++        if title_override:
++            payload['title'] = title_override
+         ts = _now()
+         job = {
+             'id': str(uuid.uuid4()),
+--- before/backend/contractor_ops/notification_helpers.py
++++ after/backend/contractor_ops/notification_helpers.py
+@@ -22,6 +22,7 @@
+     'field_escalation',
+     'field_escalation_resolved',
+     'monthly_close',
++    'defect_manager_tagged',           # Batch #619 — someone tagged the project manager on an urgent defect
+ }
+ 
+ 
+@@ -113,3 +114,18 @@
+         return base
+     # Defensive: unknown decision
+     return f"סטטוס השתנה: \"{title}\""
++
++async def get_project_manager_ids(db, project_id: str):
++    """Batch #619 — recipients for a manager tag: project members with role project_manager."""
++    memberships = await db.project_memberships.find(
++        {"project_id": project_id, "role": "project_manager"},
++        {"_id": 0, "user_id": 1}
++    ).to_list(100)
++    return [m["user_id"] for m in memberships if m.get("user_id")]
++
++
++def build_manager_tag_body(actor_name: str, task_title: str) -> str:
++    """Body for Batch #619: a manager was tagged on an urgent defect."""
++    actor = actor_name or "משתמש"
++    title = task_title or "ליקוי"
++    return f"{actor} תייג אותך בליקוי דחוף \"{title}\""
+--- before/backend/contractor_ops/schemas.py
++++ after/backend/contractor_ops/schemas.py
+@@ -308,6 +308,9 @@
+     force_closed_at: Optional[str] = None
+     force_closed_type: Optional[str] = None
+     is_safety: Optional[bool] = False
++    manager_tagged_at: Optional[str] = None
++    manager_tagged_by: Optional[str] = None
++    manager_tagged_by_name: Optional[str] = None
+ 
+ 
+ class TaskCreate(BaseModel):
+--- before/backend/contractor_ops/tasks_router.py
++++ after/backend/contractor_ops/tasks_router.py
+@@ -19,6 +19,8 @@
+     get_defect_recipients_for_close_request,
+     build_close_request_body,
+     build_status_change_body,
++    get_project_manager_ids,
++    build_manager_tag_body,
+ )
+ from contractor_ops.schemas import (
+     Task, TaskCreate, TaskUpdate, TaskAssign, TaskStatusChange,
+@@ -903,6 +905,69 @@
+     return Task(**updated)
+ 
+ 
++@router.post("/tasks/{task_id}/tag-manager")
++async def tag_project_manager(task_id: str, user: dict = Depends(get_current_user)):
++    """Batch #619 — tag the project manager(s) on an urgent defect: bell notification + WhatsApp (best-effort per recipient)."""
++    db = get_db()
++    task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
++    if not task:
++        raise HTTPException(status_code=404, detail='Task not found')
++    project_role = await _get_project_role(user, task['project_id'])
++    if project_role not in ('project_manager', 'management_team', 'owner'):
++        raise HTTPException(status_code=403, detail='אין לך הרשאה לתייג מנהל פרויקט')
++    pm_ids = [uid for uid in await get_project_manager_ids(db, task['project_id']) if uid != user['id']]
++    if not pm_ids:
++        return {'tagged': False, 'recipients': [], 'message': 'אין מנהל פרויקט לתיוג בפרויקט זה'}
++    ts = _now()
++    actor_name = user.get('name', '') or ''
++    title = task.get('title', '') or ''
++    try:
++        await create_defect_notification(
++            db, pm_ids,
++            notification_type='defect_manager_tagged', action='manager_tag',
++            task_id=task_id, task_title=title, project_id=task['project_id'],
++            actor_id=user['id'], actor_name=actor_name,
++            body=build_manager_tag_body(actor_name, title),
++        )
++    except Exception as e:
++        logger.error(f"[NOTIF] manager_tag bell notification failed for task {task_id}: {e}")
++    from config import WA_PM_TAG_TEMPLATES
++    engine = get_notification_engine()
++    task_link = _get_task_link(task_id)
++    title_override = f"{title} · תויג ע״י {actor_name}" if actor_name else title
++    recipients = []
++    for uid in pm_ids:
++        pm = await db.users.find_one({'id': uid}, {'_id': 0, 'name': 1, 'preferred_language': 1}) or {}
++        entry = {'user_id': uid, 'name': pm.get('name', ''), 'whatsapp': 'skipped'}
++        if engine:
++            try:
++                tpl = WA_PM_TAG_TEMPLATES.get(pm.get('preferred_language') or 'he')
++                if not (tpl and tpl.get('name')):
++                    tpl = WA_PM_TAG_TEMPLATES.get('he')
++                override = tpl if tpl and tpl.get('name') else None
++                job = await engine.enqueue(task_id, 'manager_tag', user['id'], task_link=task_link,
++                                           target_user_id=uid, template_override=override, title_override=title_override)
++                if job and job.get('duplicate'):
++                    entry['whatsapp'] = 'duplicate'
++                elif job and job.get('status') == 'queued':
++                    result = await engine.process_job(job)
++                    entry['whatsapp'] = result.get('status', 'sent')
++                    entry['channel'] = result.get('channel', '')
++                elif job:
++                    entry['whatsapp'] = job.get('status', 'failed')
++                    if job.get('error'):
++                        entry['error'] = job.get('error')
++            except Exception as e:
++                logger.warning(f"[NOTIFY] manager_tag WhatsApp failed for task {task_id} user {uid}: {e}")
++                entry['whatsapp'] = 'failed'
++                entry['error'] = str(e)[:200]
++        recipients.append(entry)
++    await db.tasks.update_one({'id': task_id}, {'$set': {
++        'manager_tagged_at': ts, 'manager_tagged_by': user['id'], 'manager_tagged_by_name': actor_name, 'updated_at': ts,
++    }})
++    await _audit('task', task_id, 'manager_tag', user['id'], {'recipients': [r['user_id'] for r in recipients]})
++    return {'tagged': True, 'tagged_at': ts, 'tagged_by_name': actor_name, 'recipients': recipients}
++
+ @router.post("/tasks/{task_id}/reopen", response_model=Task)
+ async def reopen_task(task_id: str, user: dict = Depends(require_roles('project_manager', 'management_team'))):
+     db = get_db()
+
+APPROVED DEVIATION — ADDENDUM-2: user approved exactly three additions in qc_router.py: manager_tag action mapping; defect_manager_tagged in the prebuilt-body tuple; the same type in the task-link tuple. This fixes the notification-list omission found during completion review, without frontend changes. Total authorized scope: six existing backend files.
+
+--- before/backend/contractor_ops/qc_router.py
++++ after/backend/contractor_ops/qc_router.py
+@@ -3902,6 +3902,7 @@
+         "escalation_done": "field_escalation_resolved",
+         "escalation_dismissed": "field_escalation_resolved",
+         "month_closed": "monthly_close",
++        "manager_tag": "defect_manager_tagged",
+     }
+ 
+     notifications = []
+@@ -3917,6 +3918,7 @@
+             "field_escalation",
+             "field_escalation_resolved",
+             "monthly_close",
++            "defect_manager_tagged",
+         ) and n.get("body"):
+             body = n["body"]
+         else:
+@@ -3942,7 +3944,7 @@
+         elif ntype == "monthly_close":
+             if n.get("project_id") and n.get("month"):
+                 link = f"/projects/{n['project_id']}/monthly-close?month={n['month']}"
+-        elif ntype in ("defect_close_request", "defect_status_change_by_pm"):
++        elif ntype in ("defect_close_request", "defect_status_change_by_pm", "defect_manager_tagged"):
+             if n.get("task_id"):
+                 link = f"/tasks/{n['task_id']}?src=bell"
+         elif n.get("project_id") and n.get("floor_id") and n.get("run_id") and n.get("stage_id"):
+
+V2 — added/removed per file (Python difflib; no Git)
+backend/config.py: +6 / -0
+backend/contractor_ops/notification_service.py: +24 / -6
+backend/contractor_ops/notification_helpers.py: +16 / -0
+backend/contractor_ops/schemas.py: +3 / -0
+backend/contractor_ops/tasks_router.py: +65 / -0
+backend/contractor_ops/qc_router.py: +3 / -1
+Exactly six existing backend files edited, zero new application files. Whole-file reconstruction against the original baseline and the exact specification plus approved ADDENDUM-1/ADDENDUM-2 passed for every file; all other bytes unchanged. Frontend, contractor call sites, reminders, digests, dependencies and .env files were not edited. review.txt untouched.
+
+V3 — verification
+python3 -m compileall backend/ -q: exit 0.
+Pure Python body check: שלומי תייג אותך בליקוי דחוף "קופינג"
+cd backend && PYTHONPATH=. python3 -m pytest -q tests/test_notifications_defect.py: 10 passed, 2 pre-existing Pydantic deprecation warnings.
+
+Required line counts:
+backend/config.py: WA_PM_TAG_TEMPLATES = 1 PASS
+backend/contractor_ops/tasks_router.py: WA_PM_TAG_TEMPLATES = 3 PASS
+backend/contractor_ops/notification_service.py: template_override = 4 PASS
+backend/contractor_ops/notification_service.py: _resolve_user_phone = 2 PASS
+backend/contractor_ops/notification_service.py: title_override = 3 PASS
+backend/contractor_ops/notification_service.py: 'duplicate': True = 1 PASS
+backend/contractor_ops/notification_helpers.py: defect_manager_tagged = 1 PASS
+backend/contractor_ops/tasks_router.py: defect_manager_tagged = 1 PASS
+backend/contractor_ops/tasks_router.py: tag-manager = 1 PASS
+backend/contractor_ops/schemas.py: manager_tagged_at = 1 PASS
+backend/contractor_ops/tasks_router.py: manager_tagged_at = 1 PASS
+
+Additional isolated checks:
+PASS enqueue: legacy assignee, PM recipient/title/template, duplicate copy, recipient opt-out
+PASS isolated endpoint: duplicate skips processing, queued processes, Hebrew fallback for English PM, caller excluded, metadata, no recipients, 403, 404
+No real DB, HTTP requests, WhatsApp or SMS used. Endpoint extracted via AST; not full middleware/staging verification.
+
+Legacy enqueue defaults: without target_user_id, notification_service.py:412 calls the unchanged _resolve_target_phone(task); :420 uses task.get('assignee_id', ''). These two changes are shown in V1. Without overrides, payload and template selection preserve the old behavior. Duplicate return adds only a flag; it does not change the stored job or its status. Contractor create/assign callers are unchanged and do not consume that flag.
+Jest/browser: n/a (backend only). Existing live notification test script was not run because it performs live HTTP mutations and sends. No external messages or real DB mutations were made by the isolated probes.
+Workflow restart attempted once and failed: /tmp/batch606/normal-launch.sh does not exist. Logs confirm this local harness limitation. No environment repair, full middleware verification, staging verification or deployment performed.
+
+ADDENDUM-2 verification:
+- grep -c "defect_manager_tagged" backend/contractor_ops/qc_router.py: 3 PASS.
+- Exact full-file comparison: only the three approved edits; all remaining bytes unchanged.
+- Actual list_notifications function with mocked DB: action=defect_manager_tagged, original body retained, link=/tasks/t?src=bell. PASS; no real DB/network.
+- python3 -m compileall backend/ -q: exit 0 after ADDENDUM-2.
+- PYTHONPATH=. python3 -m pytest -q tests/test_notifications_defect.py: 10 passed, 2 existing warnings after ADDENDUM-2.
+- Local workflow remains blocked by the previously confirmed missing launch script; no redundant restart or environment repair attempted.
+
+V4 — read-only answers
+(a) YES. backend/contractor_ops/notification_service.py:718 calls _try_sms_fallback after a WhatsApp exception (:644 also handles disabled WhatsApp). At :585 the helper reads job.get('payload', {}); :586 formats it with format_text_message(payload). The formatter at :113-115 reads payload['title']; the title override is assigned at :445-446, so SMS includes the PM-tag title suffix. SMS sending still requires an enabled SMS client (:581), and delivery was not exercised against a real provider.
+(b) Config source only, no runtime secret values inspected. backend/config.py:83-89:
+- WA_DEFECT_TEMPLATE_HE -> brikops_defect_new_he_v2; language he.
+- WA_DEFECT_TEMPLATE_EN -> brikops_defect_new_en_v2; language en.
+- WA_DEFECT_TEMPLATE_AR -> brikops_defect_new_ar_v2; language ar.
+- WA_DEFECT_TEMPLATE_ZH -> brikops_defect_new_zh_v2; language zh_CN.
+Default defect language: he. Legacy WA_TEMPLATE_NEW_DEFECT defaults to empty and WA_TEMPLATE_LANG to he (:78-79); the actual send_message path uses WA_DEFECT_TEMPLATES. New WA_PM_TAG_TEMPLATE_HE/EN default to empty; configured Hebrew PM template is selected when the requested language-specific PM template is empty. No Meta approval or actual configured template values were claimed.
+
+V5
+Rollback after approval: revert the change's commit; no data migration is required because the three task fields are optional. No rollback or deployment performed.
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
