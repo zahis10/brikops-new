@@ -308,6 +308,9 @@ class Task(BaseModel):
     force_closed_at: Optional[str] = None
     force_closed_type: Optional[str] = None
     is_safety: Optional[bool] = False
+    manager_tagged_at: Optional[str] = None
+    manager_tagged_by: Optional[str] = None
+    manager_tagged_by_name: Optional[str] = None
 
 
 class TaskCreate(BaseModel):

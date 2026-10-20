@@ -19,6 +19,8 @@ from contractor_ops.notification_helpers import (
     get_defect_recipients_for_close_request,
     build_close_request_body,
     build_status_change_body,
+    get_project_manager_ids,
+    build_manager_tag_body,
 )
 from contractor_ops.schemas import (
     Task, TaskCreate, TaskUpdate, TaskAssign, TaskStatusChange,
@@ -902,6 +904,69 @@ async def change_task_status(task_id: str, change: TaskStatusChange, user: dict 
     updated = await db.tasks.find_one({'id': task_id}, {'_id': 0})
     return Task(**updated)
 
+
+@router.post("/tasks/{task_id}/tag-manager")
+async def tag_project_manager(task_id: str, user: dict = Depends(get_current_user)):
+    """Batch #619 — tag the project manager(s) on an urgent defect: bell notification + WhatsApp (best-effort per recipient)."""
+    db = get_db()
+    task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+    if not task:
+        raise HTTPException(status_code=404, detail='Task not found')
+    project_role = await _get_project_role(user, task['project_id'])
+    if project_role not in ('project_manager', 'management_team', 'owner'):
+        raise HTTPException(status_code=403, detail='אין לך הרשאה לתייג מנהל פרויקט')
+    pm_ids = [uid for uid in await get_project_manager_ids(db, task['project_id']) if uid != user['id']]
+    if not pm_ids:
+        return {'tagged': False, 'recipients': [], 'message': 'אין מנהל פרויקט לתיוג בפרויקט זה'}
+    ts = _now()
+    actor_name = user.get('name', '') or ''
+    title = task.get('title', '') or ''
+    try:
+        await create_defect_notification(
+            db, pm_ids,
+            notification_type='defect_manager_tagged', action='manager_tag',
+            task_id=task_id, task_title=title, project_id=task['project_id'],
+            actor_id=user['id'], actor_name=actor_name,
+            body=build_manager_tag_body(actor_name, title),
+        )
+    except Exception as e:
+        logger.error(f"[NOTIF] manager_tag bell notification failed for task {task_id}: {e}")
+    from config import WA_PM_TAG_TEMPLATES
+    engine = get_notification_engine()
+    task_link = _get_task_link(task_id)
+    title_override = f"{title} · תויג ע״י {actor_name}" if actor_name else title
+    recipients = []
+    for uid in pm_ids:
+        pm = await db.users.find_one({'id': uid}, {'_id': 0, 'name': 1, 'preferred_language': 1}) or {}
+        entry = {'user_id': uid, 'name': pm.get('name', ''), 'whatsapp': 'skipped'}
+        if engine:
+            try:
+                tpl = WA_PM_TAG_TEMPLATES.get(pm.get('preferred_language') or 'he')
+                if not (tpl and tpl.get('name')):
+                    tpl = WA_PM_TAG_TEMPLATES.get('he')
+                override = tpl if tpl and tpl.get('name') else None
+                job = await engine.enqueue(task_id, 'manager_tag', user['id'], task_link=task_link,
+                                           target_user_id=uid, template_override=override, title_override=title_override)
+                if job and job.get('duplicate'):
+                    entry['whatsapp'] = 'duplicate'
+                elif job and job.get('status') == 'queued':
+                    result = await engine.process_job(job)
+                    entry['whatsapp'] = result.get('status', 'sent')
+                    entry['channel'] = result.get('channel', '')
+                elif job:
+                    entry['whatsapp'] = job.get('status', 'failed')
+                    if job.get('error'):
+                        entry['error'] = job.get('error')
+            except Exception as e:
+                logger.warning(f"[NOTIFY] manager_tag WhatsApp failed for task {task_id} user {uid}: {e}")
+                entry['whatsapp'] = 'failed'
+                entry['error'] = str(e)[:200]
+        recipients.append(entry)
+    await db.tasks.update_one({'id': task_id}, {'$set': {
+        'manager_tagged_at': ts, 'manager_tagged_by': user['id'], 'manager_tagged_by_name': actor_name, 'updated_at': ts,
+    }})
+    await _audit('task', task_id, 'manager_tag', user['id'], {'recipients': [r['user_id'] for r in recipients]})
+    return {'tagged': True, 'tagged_at': ts, 'tagged_by_name': actor_name, 'recipients': recipients}
 
 @router.post("/tasks/{task_id}/reopen", response_model=Task)
 async def reopen_task(task_id: str, user: dict = Depends(require_roles('project_manager', 'management_team'))):

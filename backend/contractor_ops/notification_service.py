@@ -187,7 +187,8 @@ class WhatsAppClient:
         }
 
         lang_key = defect_lang or WA_DEFECT_DEFAULT_LANG
-        tpl_info = WA_DEFECT_TEMPLATES.get(lang_key)
+        override = payload.get('template_override')
+        tpl_info = override if isinstance(override, dict) and override.get('name') else WA_DEFECT_TEMPLATES.get(lang_key)
         if not tpl_info and lang_key != 'en':
             logger.info(f"[WA] Language {lang_key} not found, falling back to en for task_id={task_id}")
             lang_key = 'en'
@@ -357,6 +358,18 @@ class NotificationEngine:
 
         return None
 
+    async def _resolve_user_phone(self, user_id: str) -> Optional[dict]:
+        """Batch #619 — phone of an arbitrary recipient (a project manager), same normalisation as the assignee path."""
+        user = await self.db.users.find_one({'id': user_id}, {'_id': 0}) if user_id else None
+        if not user:
+            return None
+        phone = user.get('phone_e164') or user.get('phone', '')
+        phone = self._normalize_israeli_phone(phone)
+        if phone and validate_e164(phone):
+            return {'phone_e164': phone, 'preferred_language': user.get('preferred_language') or 'he'}
+        logger.warning(f"[NOTIFY] User {user_id} has invalid/missing phone: {mask_phone(phone) if phone else 'NONE'}")
+        return None
+
     async def _enrich_payload(self, task: dict, custom_message: str = "", task_link: str = "") -> dict:
         project = await self.db.projects.find_one({'id': task.get('project_id')}, {'_id': 0}) if task.get('project_id') else None
         building = await self.db.buildings.find_one({'id': task.get('building_id')}, {'_id': 0}) if task.get('building_id') else None
@@ -389,21 +402,22 @@ class NotificationEngine:
         return payload
 
     async def enqueue(self, task_id: str, event_type: str, created_by: str,
-                      custom_message: str = "", task_link: str = "") -> Optional[dict]:
+                      custom_message: str = "", task_link: str = "",
+                      target_user_id: str = None, template_override: dict = None, title_override: str = None) -> Optional[dict]:
         task = await self.db.tasks.find_one({'id': task_id}, {'_id': 0})
         if not task:
             logger.warning(f"[NOTIFY] Task {task_id} not found, skipping enqueue")
             return None
 
-        resolved = await self._resolve_target_phone(task)
+        resolved = await self._resolve_user_phone(target_user_id) if target_user_id else await self._resolve_target_phone(task)
         if not resolved:
             logger.warning(f"[NOTIFY] No target phone for task {task_id}, skipping")
-            return {'status': 'failed', 'id': str(uuid.uuid4()), 'error': 'אין מספר וואטסאפ תקין לקבלן'}
+            return {'status': 'failed', 'id': str(uuid.uuid4()), 'error': 'אין מספר וואטסאפ תקין למנהל הפרויקט' if target_user_id else 'אין מספר וואטסאפ תקין לקבלן'}
 
         target_phone = resolved['phone_e164']
         preferred_language = resolved['preferred_language']
 
-        assignee_id = task.get('assignee_id', '')
+        assignee_id = target_user_id or task.get('assignee_id', '')
         if assignee_id:
             assignee_user = await self.db.users.find_one({'id': assignee_id}, {'_id': 0, 'whatsapp_notifications_enabled': 1})
             if assignee_user and assignee_user.get('whatsapp_notifications_enabled') is False:
@@ -417,7 +431,7 @@ class NotificationEngine:
         }, {'_id': 0})
         if existing:
             logger.info(f"[NOTIFY] Duplicate detected (idem_key={idem_key[:12]}…), skipping")
-            return existing
+            return {**existing, 'duplicate': True}
 
         if not task_link:
             from contractor_ops.router import get_public_base_url
@@ -426,6 +440,10 @@ class NotificationEngine:
 
         payload = await self._enrich_payload(task, custom_message=custom_message, task_link=task_link)
         payload['defect_lang'] = preferred_language
+        if template_override:
+            payload['template_override'] = template_override
+        if title_override:
+            payload['title'] = title_override
         ts = _now()
         job = {
             'id': str(uuid.uuid4()),

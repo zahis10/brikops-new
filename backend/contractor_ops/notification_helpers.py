@@ -22,6 +22,7 @@ NOTIFICATION_TYPES = {
     'field_escalation',
     'field_escalation_resolved',
     'monthly_close',
+    'defect_manager_tagged',           # Batch #619 — someone tagged the project manager on an urgent defect
 }
 
 
@@ -113,3 +114,18 @@ def build_status_change_body(decision: str, task_title: str, reason: str = None)
         return base
     # Defensive: unknown decision
     return f"סטטוס השתנה: \"{title}\""
+
+async def get_project_manager_ids(db, project_id: str):
+    """Batch #619 — recipients for a manager tag: project members with role project_manager."""
+    memberships = await db.project_memberships.find(
+        {"project_id": project_id, "role": "project_manager"},
+        {"_id": 0, "user_id": 1}
+    ).to_list(100)
+    return [m["user_id"] for m in memberships if m.get("user_id")]
+
+
+def build_manager_tag_body(actor_name: str, task_title: str) -> str:
+    """Body for Batch #619: a manager was tagged on an urgent defect."""
+    actor = actor_name or "משתמש"
+    title = task_title or "ליקוי"
+    return f"{actor} תייג אותך בליקוי דחוף \"{title}\""

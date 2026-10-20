@@ -87,6 +87,12 @@ WA_DEFECT_TEMPLATES = {
     'zh': {'name': os.environ.get('WA_DEFECT_TEMPLATE_ZH', 'brikops_defect_new_zh_v2'), 'lang': 'zh_CN'},
 }
 WA_DEFECT_DEFAULT_LANG = 'he'
+# Batch #619 — "tag project manager": dedicated Meta template per language. Empty name (default) → the engine falls back
+# to WA_DEFECT_TEMPLATES, so the feature works before the new template is approved. Same named params: ref / location / issue.
+WA_PM_TAG_TEMPLATES = {
+    'he': {'name': os.environ.get('WA_PM_TAG_TEMPLATE_HE', ''), 'lang': 'he'},
+    'en': {'name': os.environ.get('WA_PM_TAG_TEMPLATE_EN', ''), 'lang': 'en'},
+}
 ALLOWED_LANGUAGES = ['he', 'en', 'ar', 'zh']
 WA_TEMPLATE_PARAM_MODE = os.environ.get('WA_TEMPLATE_PARAM_MODE', 'named')
 WA_QC_REJECT_TEMPLATE_HE = os.environ.get('WA_QC_REJECT_TEMPLATE_HE', 'qc_item_rejected_he')
