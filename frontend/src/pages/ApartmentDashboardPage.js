@@ -816,6 +816,10 @@ const ApartmentDashboardPage = () => {
                 )}
                 {spareTilesEditing ? (
                   <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-slate-700">הזנת מלאי</span>
+                      <button type="button" onClick={() => setSpareTilesEntries(prev => prev.map(entry => entry.isConfigured ? { ...entry, mode: 'none', count: '0', cartons: '', perCarton: '', entered: true } : entry))} className="text-xs text-slate-600 underline underline-offset-2">סמן הכל כ״אין״</button>
+                    </div>
                     {spareTilesEntries.map((entry, idx) => {
                       const category = (unitData.spare_settings?.categories || []).find(c => c.name === entry.type);
                       const unitLabel = category?.measure === 'sqm' ? 'מ"ר' : 'אריחים';
@@ -845,10 +849,7 @@ const ApartmentDashboardPage = () => {
                         </div>
                       );
                     })}
-                    <div className="flex items-center gap-3 flex-wrap">
-                      {spareTilesEntries.length < 20 && <button type="button" onClick={() => { const name = window.prompt('שם סוג ריצוף חדש:'); if (!name?.trim()) return; const trimmed = name.trim().slice(0, 50); if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) { toast.error('סוג ריצוף כבר קיים'); return; } setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', entered: false, cartons: '', perCarton: '', isConfigured: false }]); }} className="flex items-center gap-1.5 text-xs text-amber-600 font-medium"><Plus className="w-3.5 h-3.5" />הוסף סוג ריצוף</button>}
-                      <button type="button" onClick={() => setSpareTilesEntries(prev => prev.map(entry => entry.isConfigured ? { ...entry, mode: 'none', count: '0', cartons: '', perCarton: '', entered: true } : entry))} className="text-xs text-amber-700 font-medium">אין ספייר בדירה</button>
-                    </div>
+                    {spareTilesEntries.length < 20 && <button type="button" onClick={() => { const name = window.prompt('שם סוג הריצוף (למשל: חיפוי מקלחון)'); if (!name?.trim()) return; const trimmed = name.trim().slice(0, 50); if (spareTilesEntries.some(e => e.type.toLowerCase() === trimmed.toLowerCase())) { toast.error('סוג ריצוף כבר קיים'); return; } setSpareTilesEntries(prev => [...prev, { type: trimmed, count: '0', notes: '', entered: false, cartons: '', perCarton: '', isConfigured: false }]); }} className="w-full h-10 flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 bg-white text-sm text-slate-700 font-medium"><Plus className="w-4 h-4" />הוסף סוג ריצוף שלא ברשימה</button>}
                     <div className="flex gap-2"><button onClick={saveSpareTiles} disabled={spareTilesSaving} className="flex-1 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium">{spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin inline" /> : 'שמור'}</button><button onClick={() => setSpareTilesEditing(false)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600">ביטול</button></div>
                   </div>
                 ) : <SpareEscalationStatus unitData={unitData} onOpenSheet={setSheetMode} />}
