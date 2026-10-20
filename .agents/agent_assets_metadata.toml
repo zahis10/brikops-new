@@ -1327,3 +1327,17 @@ mtime_ms = 1792401262564
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/49944a35-6e7f-4358-90a1-033e07d13d12/5c5554ee-6b77-4ba7-96a7-182d8eaef041"
 storage_version_token = "1792401264340975"
 content_type = "text/plain"
+
+[[outputs]]
+id = "qMjcMu414igPyrs9pPVel"
+uri = "file://attached_assets/batch616-review-section.txt"
+type = "text"
+title = "BATCH 616 — סקירה מלאה"
+description = "סעיף #616 (20.10): השינויים ב־16 הקבצים, ספירת שורות, תוצאות הבדיקות וסקר השרידים. review.txt המקורי נשאר ללא שינוי."
+logical_id = "c0c5a5a2-373b-40de-bfaa-5d72a4f0c4d9"
+content_hash = "sha256:ade7cc76e36ce2b2bc425111e6fa1aff96549d402f2ce1886f8d6ec6348dc992"
+size = 25457
+mtime_ms = 1792477893011
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/c0c5a5a2-373b-40de-bfaa-5d72a4f0c4d9/547b9106-caa2-41df-a138-906cf5c7ba8a"
+storage_version_token = "1792477900992903"
+content_type = "text/plain"
