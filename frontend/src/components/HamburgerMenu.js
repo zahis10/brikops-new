@@ -107,7 +107,7 @@ export default function HamburgerMenu({ onSelectTab, showBilling, onNavigate, on
               className="relative overflow-hidden"
               style={{
                 height: 118,
-                background: 'radial-gradient(200px 100px at 50% 18%, rgba(245,158,11,.16), transparent 70%), linear-gradient(178deg, #17202b 0%, #212d3b 100%)',
+                background: 'radial-gradient(200px 100px at 50% 18%, rgba(232,100,27,.16), transparent 70%), linear-gradient(178deg, #1E293B 0%, #334155 100%)',
               }}
               aria-hidden
             >
@@ -158,7 +158,7 @@ export default function HamburgerMenu({ onSelectTab, showBilling, onNavigate, on
                       className="w-full h-full rounded-full object-cover"
                     />
                   ) : (
-                    <div className="w-full h-full rounded-full bg-[#f59e0b] flex items-center justify-center">
+                    <div className="w-full h-full rounded-full bg-amber-500 flex items-center justify-center">
                       <span className="text-white font-bold text-2xl">
                         {(user?.name || '?').charAt(0)}
                       </span>

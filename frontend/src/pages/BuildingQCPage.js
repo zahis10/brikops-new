@@ -297,7 +297,7 @@ export default function BuildingQCPage() {
           if (approvedRatio >= 0.7 && remaining > 0 && remaining <= 3) {
             return (
               <div className="mt-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2 text-center">
-                <span className="text-sm font-bold text-green-700">🎯 עוד {remaining} קומות והבניין מושלם!</span>
+                <span className="text-sm font-bold text-green-700">עוד {remaining} קומות והבניין מושלם!</span>
               </div>
             );
           }

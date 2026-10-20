@@ -305,7 +305,7 @@ const BuildingDefectsPage = () => {
         parts.push(`${section.label}: ${joined}`);
       }
     });
-    if (filters.is_safety) parts.push('🛡️ בטיחות בלבד');
+    if (filters.is_safety) parts.push('בטיחות בלבד');
     if (searchQuery.trim()) parts.push(`חיפוש: "${searchQuery.trim()}"`);
     if (parts.length === 0) return '';
     if (parts.length <= 3) return parts.join(' · ');
@@ -481,7 +481,7 @@ const BuildingDefectsPage = () => {
 
           <label className="flex items-center justify-between gap-2 cursor-pointer py-3 px-3 rounded-xl border border-slate-200 bg-white">
             <span className="text-sm font-medium text-slate-700">
-              🛡️ ליקויי בטיחות בלבד
+              ליקויי בטיחות בלבד
             </span>
             <input
               type="checkbox"

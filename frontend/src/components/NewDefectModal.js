@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import {
-  X, Upload, ChevronDown, Camera, Loader2, Building2, Layers, DoorOpen, AlertTriangle, RefreshCw, Check, ImagePlus, Plus, Pencil
+  X, Upload, ChevronDown, Camera, Loader2, Building2, Layers, DoorOpen, AlertTriangle, RefreshCw, Check, ImagePlus, Plus, Pencil, ShieldAlert
 } from 'lucide-react';
 
 const PhotoAnnotation = React.lazy(() => import('./PhotoAnnotation'));
@@ -1224,7 +1224,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData, onAddAnother 
             {/* Batch #469 — safety tag toggle */}
             <div className="flex items-center justify-between py-3 border-t border-slate-100" dir="rtl">
               <div className="flex items-center gap-2">
-                <span className="text-orange-500" aria-hidden="true">🛡️</span>
+                <ShieldAlert className="w-4 h-4 text-orange-500" aria-hidden="true" />
                 <label htmlFor="is-safety-toggle" className="text-sm font-medium text-slate-700 cursor-pointer">
                   סמן כליקוי בטיחות
                 </label>

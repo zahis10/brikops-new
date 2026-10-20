@@ -409,7 +409,7 @@ export default function FloorDetailPage() {
           if (approvedStages > 0 && activeRemaining > 0 && activeRemaining <= 2) {
             return (
               <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-center">
-                <span className="text-sm font-bold text-amber-700">🎯 עוד {activeRemaining === 1 ? 'שלב אחד' : `${activeRemaining} שלבים`} וקומה מושלמת!</span>
+                <span className="text-sm font-bold text-amber-700">עוד {activeRemaining === 1 ? 'שלב אחד' : `${activeRemaining} שלבים`} וקומה מושלמת!</span>
               </div>
             );
           }

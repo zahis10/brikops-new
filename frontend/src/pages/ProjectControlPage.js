@@ -242,7 +242,7 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
       {hasOverdue && stats.overdue_defects > 0 && (
         <button type="button" onClick={onViewDefects}
           className="w-full flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-3.5 py-2.5 cursor-pointer hover:bg-orange-100 active:bg-orange-200 transition-colors text-right">
-          <span className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm text-base flex-shrink-0">🔥</span>
+          <span className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm text-base flex-shrink-0"><AlertTriangle className="w-4 h-4 text-orange-600" /></span>
           <span className="flex-1 text-sm text-orange-800 font-medium">{stats.overdue_defects} ליקויים באיחור טיפול</span>
           <span className="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">{stats.overdue_defects}</span>
         </button>
@@ -645,7 +645,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, hierarchy = []
         )
       )}
       <Button onClick={handleAddDifferent} disabled={submitting} className="w-full bg-amber-500 hover:bg-amber-600 text-white text-sm py-2">
-        ➕ הוסף בניין שונה
+        הוסף בניין שונה
       </Button>
       {!isPartial && (
         <Button onClick={onClose} variant="ghost" className="w-full text-slate-600 text-sm">סיימתי, סגור</Button>
@@ -2003,7 +2003,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
           <Building2 className="w-12 h-12 mb-3" />
           {isOnboarding ? (
             <>
-              <p className="text-lg font-medium text-slate-600">ברוך הבא לפרויקט! 🎉</p>
+              <p className="text-lg font-medium text-slate-600">ברוך הבא לפרויקט!</p>
               <p className="text-sm mt-1 mb-4 text-slate-500">בוא נתחיל בהקמת מבנה הפרויקט</p>
             </>
           ) : (
@@ -3316,7 +3316,6 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
     <div className="space-y-4">
       <Card className="p-4">
         <div className="flex items-center gap-2 mb-3">
-          <span className="text-lg">🔑</span>
           <h3 className="text-sm font-bold text-slate-800">תבנית מסירה</h3>
         </div>
 
@@ -4022,7 +4021,7 @@ const ProjectControlPage = () => {
               }`}
               aria-pressed={safetyFilter}
             >
-              🛡️ בטיחות בלבד
+              בטיחות בלבד
             </button>
           </div>
 
@@ -4088,7 +4087,7 @@ const ProjectControlPage = () => {
                       <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
                       {task.is_safety && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-full">
-                          🛡️ בטיחות
+                          בטיחות
                         </span>
                       )}
                       {task.due_date && (

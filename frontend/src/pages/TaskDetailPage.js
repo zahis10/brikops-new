@@ -917,7 +917,7 @@ const TaskDetailPage = () => {
               </span>
               {task.is_safety && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-full">
-                  🛡️ בטיחות
+                  בטיחות
                 </span>
               )}
             </div>
@@ -1009,7 +1009,7 @@ const TaskDetailPage = () => {
           return (
             <Card className="p-4 rounded-xl shadow-sm">
               <h3 className="text-sm font-semibold text-slate-600 mb-3 flex items-center gap-2">
-                📸 {t('taskDetail', 'comparison_title')}
+                <Camera className="w-4 h-4 text-slate-500" />{t('taskDetail', 'comparison_title')}
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col items-center">
@@ -1166,13 +1166,13 @@ const TaskDetailPage = () => {
                       { value: '', label: 'לא שויך' },
                       ...projectCompanies
                         .filter(pc => pc.name)
-                        .map(pc => ({ value: pc.id, label: `🏢 ${pc.name}` })),
+                        .map(pc => ({ value: pc.id, label: pc.name })),
                     ]}
                     onChange={handleAssignCompany}
                     disabled={taskIsClosed || savingField !== null}
                     label={savingField === 'company' ? 'שומר...' : (
                       task.company_id
-                        ? `🏢 ${task.company_name || projectCompanies.find(pc => pc.id === task.company_id)?.name || 'חברה משויכת'}`
+                        ? `${task.company_name || projectCompanies.find(pc => pc.id === task.company_id)?.name || 'חברה משויכת'}`
                         : 'לא שויך'
                     )}
                   />

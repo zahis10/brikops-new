@@ -543,7 +543,7 @@ const ProjectTasksPage = () => {
                     <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
                     {task.is_safety && (
                       <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
-                        🛡️ בטיחות
+                        בטיחות
                       </span>
                     )}
                     {task.due_date && (

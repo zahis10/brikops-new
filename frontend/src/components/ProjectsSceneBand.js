@@ -12,7 +12,7 @@ const ProjectsSceneBand = () => (
       height: 118,
       background:
         'radial-gradient(260px 120px at 50% 20%, rgba(232,100,27,.14), transparent 70%), ' +
-        'linear-gradient(178deg, #14213D 0%, #1F3159 100%)',
+        'linear-gradient(178deg, #1E293B 0%, #334155 100%)',
     }}
   >
     <div className="absolute inset-0 mx-auto" style={{ maxWidth: 560, WebkitMaskImage: FADE, maskImage: FADE }}>
@@ -26,7 +26,7 @@ const ProjectsSceneBand = () => (
         viewBox="0 0 340 96"
         preserveAspectRatio="xMidYMax slice"
       >
-        <g fill="#0E172B">
+        <g fill="#0F172A">
           <rect x="0" y="44" width="42" height="52" /><rect x="46" y="58" width="30" height="38" />
           <rect x="80" y="36" width="36" height="60" /><rect x="120" y="64" width="26" height="32" />
           <rect x="196" y="50" width="40" height="46" /><rect x="240" y="62" width="28" height="34" />
