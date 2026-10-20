@@ -1383,3 +1383,17 @@ mtime_ms = 1792494950561
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/61fca829-d7ee-4873-849e-d0f0d2e71ee6/c7301b57-00ce-4794-9fcd-bef48dd914a6"
 storage_version_token = "1792494957224765"
 content_type = "text/plain"
+
+[[outputs]]
+id = "kz42szEvlfi0TVkN-RwrZ"
+uri = "file://attached_assets/619-A-review.txt"
+type = "text"
+title = "619-A — review.txt"
+description = "הסקירה המלאה של ששת קובצי השרת, כולל ADDENDUM-1 ו־ADDENDUM-2, השינויים ותוצאות הבדיקות. ממתין לאישור זכי — ללא פריסה."
+logical_id = "d6028b2e-e8f2-4d10-bb5a-905698d90ac5"
+content_hash = "sha256:e2dbee376dc2ec959d1d165c97308443937e677f1f6f8e7ec74172bfda954125"
+size = 18485
+mtime_ms = 1792504520724
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/d6028b2e-e8f2-4d10-bb5a-905698d90ac5/e45cab18-5acf-401d-8465-e4aa23535d5b"
+storage_version_token = "1792504529574665"
+content_type = "text/plain"
