@@ -3902,6 +3902,7 @@ async def list_notifications(
         "escalation_done": "field_escalation_resolved",
         "escalation_dismissed": "field_escalation_resolved",
         "month_closed": "monthly_close",
+        "manager_tag": "defect_manager_tagged",
     }
 
     notifications = []
@@ -3917,6 +3918,7 @@ async def list_notifications(
             "field_escalation",
             "field_escalation_resolved",
             "monthly_close",
+            "defect_manager_tagged",
         ) and n.get("body"):
             body = n["body"]
         else:
@@ -3942,7 +3944,7 @@ async def list_notifications(
         elif ntype == "monthly_close":
             if n.get("project_id") and n.get("month"):
                 link = f"/projects/{n['project_id']}/monthly-close?month={n['month']}"
-        elif ntype in ("defect_close_request", "defect_status_change_by_pm"):
+        elif ntype in ("defect_close_request", "defect_status_change_by_pm", "defect_manager_tagged"):
             if n.get("task_id"):
                 link = f"/tasks/{n['task_id']}?src=bell"
         elif n.get("project_id") and n.get("floor_id") and n.get("run_id") and n.get("stage_id"):
