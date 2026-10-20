@@ -1369,3 +1369,17 @@ mtime_ms = 1792487804142
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/78b20e4a-88c5-4e81-9cf5-01e58c768688/687cfc03-779a-4a1e-bebd-dbc94ff7804a"
 storage_version_token = "1792487825469878"
 content_type = "text/plain"
+
+[[outputs]]
+id = "ZYFOMDxSJlAbIUQTfIYns"
+uri = "file://attached_assets/618fix1-review.txt"
+type = "text"
+title = "618fix1 — review.txt"
+description = "סעיף הסקירה המלא: השינויים, ספירות השורות, תוצאות הבדיקות ומגבלות האימות. ממתין לאישור זכי — ללא פריסה."
+logical_id = "61fca829-d7ee-4873-849e-d0f0d2e71ee6"
+content_hash = "sha256:eb08e1f8d887d4529001ced2c69ed884c79a8e6bf4eac1f669d05932fcb2a31b"
+size = 5500
+mtime_ms = 1792494950561
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/61fca829-d7ee-4873-849e-d0f0d2e71ee6/c7301b57-00ce-4794-9fcd-bef48dd914a6"
+storage_version_token = "1792494957224765"
+content_type = "text/plain"
