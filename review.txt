@@ -13819,3 +13819,275 @@ Limitations: no claim of universal AA contrast or verified phone appearance. The
 V5
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
+#617 (20.10)
+
+STEP 0
+review.txt: 768571 bytes (below 2 MB); unchanged. Expected previous-batch section is not appended in this workspace; reported, not repaired.
+SHA-256 before and after: 21442dac95f6287fadd050984bcde7708b2414b059dd91bf4fd461d9ad2e6db1
+No Git commands or deployment.
+
+V1 — Changed regions, three context lines
+--- before/frontend/src/pages/BuildingDefectsPage.js
++++ after/frontend/src/pages/BuildingDefectsPage.js
+@@ -1,5 +1,5 @@
+ import React, { useState, useEffect, useCallback, useMemo } from 'react';
+-import { useParams, useNavigate } from 'react-router-dom';
++import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+ import { buildingService } from '../services/api';
+ import { useAuth } from '../contexts/AuthContext';
+ import ExportModal from '../components/ExportModal';
+@@ -59,6 +59,15 @@
+ const BuildingDefectsPage = () => {
+   const { projectId, buildingId } = useParams();
+   const navigate = useNavigate();
++  const [searchParams] = useSearchParams();
++  const returnToParam = searchParams.get('returnTo');
++  const safeReturnTo = (() => {
++    if (!returnToParam) return null;
++    try {
++      const dec = decodeURIComponent(returnToParam);
++      return (dec.startsWith('/') && !dec.startsWith('//') && !dec.startsWith('/\\')) ? dec : null;
++    } catch { return null; }
++  })();
+   const { features } = useAuth();
+ 
+   const online = useOnlineStatus();
+@@ -76,7 +85,7 @@
+ 
+   useEffect(() => {
+     if (features && !features.defects_v2) {
+-      navigate(`/projects/${projectId}/control?tab=defects`, { replace: true });
++      navigate(`/projects/${projectId}/control?workMode=defects`, { replace: true });
+     }
+   }, [features, projectId, navigate]);
+ 
+@@ -93,7 +102,7 @@
+       console.error('Failed to load building defects summary:', err);
+       if (err?.response?.status === 403) {
+         toast.error('אין לך הרשאה לצפות בנתוני בניין זה');
+-        navigate(`/projects/${projectId}/control?tab=defects`);
++        navigate(`/projects/${projectId}/control?workMode=defects`);
+         return;
+       }
+       toast.error('שגיאה בטעינת סיכום ליקויים');
+@@ -381,7 +390,7 @@
+       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4" dir="rtl">
+         <Building2 className="w-12 h-12 text-slate-300" />
+         <p className="text-slate-500">לא נמצאו נתונים לבניין זה</p>
+-        <button onClick={() => navigate(`/projects/${projectId}/control?tab=defects`)} className="text-amber-600 hover:text-amber-700 font-medium text-sm">
++        <button onClick={() => navigate(`/projects/${projectId}/control?workMode=defects`)} className="text-amber-600 hover:text-amber-700 font-medium text-sm">
+           חזרה לליקויים
+         </button>
+       </div>
+@@ -397,7 +406,7 @@
+         <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
+           <div className="flex items-center gap-3">
+             <button
+-              onClick={() => navigate(`/projects/${projectId}/control?tab=structure`)}
++              onClick={() => navigate(safeReturnTo || `/projects/${projectId}/control?workMode=defects`)}
+               className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+             >
+               <ArrowRight className="w-5 h-5" />
+@@ -573,7 +582,7 @@
+                               <div key={unit.id} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-slate-50 transition-colors group relative">
+                                 <button
+                                   onClick={() => {
+-                                    const origin = encodeURIComponent(`/projects/${projectId}/buildings/${buildingId}/defects`);
++                                    const origin = encodeURIComponent(`/projects/${projectId}/buildings/${buildingId}/defects${safeReturnTo ? `?returnTo=${encodeURIComponent(safeReturnTo)}` : ''}`);
+                                     navigate(`/projects/${projectId}/units/${unit.id}/defects?returnTo=${origin}`, { state: { from: 'building-defects', buildingId } });
+                                   }}
+                                   className="flex flex-col items-center gap-1 active:scale-95"
+--- before/frontend/src/pages/InnerBuildingPage.js
++++ after/frontend/src/pages/InnerBuildingPage.js
+@@ -56,7 +56,7 @@
+   const floorRefs = useRef({});
+ 
+   const handleBack = useCallback(() => {
+-    navigate(`/projects/${projectId}/control?tab=structure`);
++    navigate(`/projects/${projectId}/control?workMode=structure`);
+   }, [navigate, projectId]);
+ 
+   const loadData = useCallback(async () => {
+@@ -155,7 +155,7 @@
+ 
+   const handleTabClick = (tabId) => {
+     if (tabId === 'defects') {
+-      navigate(`/projects/${projectId}/buildings/${buildingId}/defects`);
++      navigate(`/projects/${projectId}/buildings/${buildingId}/defects?returnTo=${encodeURIComponent(`/projects/${projectId}/buildings/${buildingId}`)}`);
+       return;
+     }
+     if (tabId === 'qc') {
+--- before/frontend/src/pages/ProjectControlPage.js
++++ after/frontend/src/pages/ProjectControlPage.js
+@@ -3821,7 +3821,7 @@
+     if (id === 'diary') { navigate(`/projects/${projectId}/diary`); return; }
+     if (id === 'plans') { navigate(`/projects/${projectId}/plans`); return; }
+     setWorkMode(id);
+-    if (id !== 'structure') setActiveTab('');
++    setSearchParams(prev => { const next = new URLSearchParams(prev); next.delete('workMode'); if (id !== 'structure') next.delete('tab'); return next; }, { replace: true });
+     try { localStorage.setItem(`brikops_workMode_${projectId}`, id); } catch {}
+   };
+ 
+--- before/frontend/src/pages/TaskDetailPage.js
++++ after/frontend/src/pages/TaskDetailPage.js
+@@ -300,7 +300,7 @@
+         ? `/projects/${task.project_id}?src=contractor`
+         : (task.building_id
+             ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
+-            : `/projects/${task.project_id}/control?tab=defects`);
++            : `/projects/${task.project_id}/control?workMode=defects`);
+       sessionStorage.setItem(RETURN_TO_KEY, contractorBack);
+     }
+   }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo, isContractor]);
+@@ -787,7 +787,7 @@
+     const isLoadError = errorState === 'load_error' || (!errorState && !task);
+     const errorBackUrl = sessionStorage.getItem(RETURN_TO_KEY)
+       || (task?.building_id && task?.project_id ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
+-        : task?.project_id ? `/projects/${task.project_id}/control?tab=defects` : '/projects');
++        : task?.project_id ? `/projects/${task.project_id}/control?workMode=defects` : '/projects');
+     return (
+       <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50" dir="rtl">
+         <div className="text-center space-y-4 p-8">
+@@ -860,9 +860,6 @@
+       <input ref={uploadGalleryRef} type="file" accept="image/*" onChange={handleAddPhoto} className="hidden" />
+       <div className="bg-white border-b shadow-sm sticky top-0 z-10">
+         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between" dir="rtl">
+-          <div className="flex items-center gap-2">
+-            <span className="font-bold text-slate-800">BrikOps</span>
+-          </div>
+           <button
+             onClick={() => {
+               const returnTo = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
+@@ -888,20 +885,19 @@
+               } else if (task?.building_id && task?.project_id) {
+                 navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
+               } else if (task?.project_id) {
+-                navigate(`/projects/${task.project_id}/control?tab=defects`);
++                navigate(`/projects/${task.project_id}/control?workMode=defects`);
+               } else {
+                 navigate('/projects');
+               }
+             }}
+-            className="flex items-center gap-1 text-sm text-slate-500 hover:text-amber-600 transition-colors"
++            className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
++            aria-label={(() => { const rt = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY); if (externalEntry && !location.state?.returnTo) return t('taskDetail', 'back_to_my_defects'); return rt && rt.includes('/dashboard') ? t('taskDetail', 'back_to_dashboard') : t('taskDetail', 'back_to_defects_list'); })()}
+           >
+-            <ArrowRight className="w-4 h-4" />
+-            {(() => {
+-              const rt = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
+-              if (externalEntry && !location.state?.returnTo) return t('taskDetail', 'back_to_my_defects');
+-              return rt && rt.includes('/dashboard') ? t('taskDetail', 'back_to_dashboard') : t('taskDetail', 'back_to_defects_list');
+-            })()}
++            <ArrowRight className="w-5 h-5 text-slate-600" />
+           </button>
++          <div className="flex items-center gap-2">
++            <span className="font-bold text-slate-800">BrikOps</span>
++          </div>
+         </div>
+       </div>
+ 
+--- before/frontend/src/pages/UnitHomePage.js
++++ after/frontend/src/pages/UnitHomePage.js
+@@ -111,7 +111,7 @@
+                   // structure tab.
+                   navigate(`/projects/${projectId}/buildings/${building.id}`);
+                 } else {
+-                  navigate(`/projects/${projectId}/control?tab=structure`);
++                  navigate(`/projects/${projectId}/control?workMode=structure`);
+                 }
+               }}
+               className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+--- before/frontend/src/pages/QCFloorSelectionPage.js
++++ after/frontend/src/pages/QCFloorSelectionPage.js
+@@ -222,7 +222,7 @@
+           <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+           <p className="text-slate-500 mb-4">צריך להקים מבנה וקומות כדי להתחיל בקרת ביצוע</p>
+           <button
+-            onClick={() => navigate(`/projects/${projectId}/control?tab=structure`)}
++            onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)}
+             className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-sm shadow-sm transition-colors"
+           >
+             הוסף בניין
+
+V2 — Added/removed lines (Python difflib; no git)
+frontend/src/pages/BuildingDefectsPage.js: +15/-6
+frontend/src/pages/InnerBuildingPage.js: +2/-2
+frontend/src/pages/ProjectControlPage.js: +1/-1
+frontend/src/pages/TaskDetailPage.js: +9/-13
+frontend/src/pages/UnitHomePage.js: +1/-1
+frontend/src/pages/QCFloorSelectionPage.js: +1/-1
+Total: 6 files, +29/-24. No new application files.
+
+V3 — Verification
+Legacy structure/defects params: 0 PASS
+Remaining control?tab= lines: 4 PASS
+frontend/src/components/NewDefectModal.js:1327: if (projectId) navigate(`/projects/${projectId}/control?tab=companies`);
+frontend/src/pages/StageDetailPage.js:667: onClick={() => navigate(`/projects/${projectId}/control?tab=settings`)}
+frontend/src/pages/StageDetailPage.js:2048: onClick={() => navigate(`/projects/${projectId}/control?tab=settings`)}
+frontend/src/pages/TaskDetailPage.js:1152: onClick={() => navigate(`/projects/${task.project_id}/control?tab=companies`)}
+BuildingDefectsPage: workMode=defects: 4 PASS
+BuildingDefectsPage: safeReturnTo: 3 PASS
+BuildingDefectsPage: useSearchParams: 2 PASS
+InnerBuildingPage: returnTo: 1 PASS
+ProjectControlPage: next.delete('workMode'): 1 PASS
+TaskDetailPage: workMode=defects: 3 PASS
+TaskDetailPage: back_to_my_defects: 2 PASS
+TaskDetailPage: aria-label={(() =>: 1 PASS
+Addendum correction: grep -c back_to_defects_list|back_to_dashboard = 1 matching line, with both keys present once (2 occurrences). Exact requested one-line aria-label retained.
+hover:bg-slate-100 transition-colors matching lines: 1
+Baseline hash comparison: exactly six authorized files changed; review.txt unchanged PASS
+
+PASS: source-extracted safeReturnTo rejects absent/external/protocol-relative/backslash/malformed inputs.
+PASS: nested apartment → building defects → original building URL round-trip; no-origin building URL.
+PASS: source-extracted tab updater removes workMode, preserves tab only for structure, leaves filters untouched.
+Probe correction: initial assertion expected percent-encoded slashes after the existing safeReturnTo decoder; corrected to compare parsed pathname and return target. No application change was needed.
+Pure JS checks only; not browser verification.
+CI build: PASS, exit 0, Compiled successfully.
+Command: cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" BUILD_PATH=/tmp/batch617/verified-build npm run build
+Log: /tmp/batch617/build.log
+Jest: CI=true npm test -- --watchAll=false --runInBand — exit 1; eight suites failed to start, zero tests; canvas cannot load libuuid.so.1. Log: /tmp/batch617/jest.log
+Browser: not run — local harness. Workflow restart failed because /tmp/batch606/normal-launch.sh is missing. Screenshot attempt returned ERR_CONNECTION_REFUSED. No visual or staging-flow verification claimed. No harness repair.
+Header source verified: back button first/right in RTL; brand second/left; exact requested classes; existing three translation keys retained in accessible label; handler unchanged except F4 URL.
+
+V4(a) — Every navigate call with /control? in its target (AST traversal, frontend/src)
+frontend/src/components/NewDefectModal.js:1327: `/projects/${projectId}/control?tab=companies`
+frontend/src/components/NewDefectModal.js:1354: `/projects/${projectId}/control?${params.toString()}`
+frontend/src/pages/BuildingDefectsPage.js:88: `/projects/${projectId}/control?workMode=defects`
+frontend/src/pages/BuildingDefectsPage.js:105: `/projects/${projectId}/control?workMode=defects`
+frontend/src/pages/BuildingDefectsPage.js:393: `/projects/${projectId}/control?workMode=defects`
+frontend/src/pages/BuildingDefectsPage.js:409: safeReturnTo || `/projects/${projectId}/control?workMode=defects`
+frontend/src/pages/HandoverOverviewPage.js:231: `/projects/${projectId}/control?workMode=structure`
+frontend/src/pages/InnerBuildingPage.js:59: `/projects/${projectId}/control?workMode=structure`
+frontend/src/pages/OnboardingPage.js:668: `/projects/${result.project.id}/control?showQuickSetup=true`
+frontend/src/pages/OrgBillingPage.js:168: `/projects/${sourceProjectId}/control?workMode=structure`
+frontend/src/pages/OrgBillingPage.js:930: `/projects/${sourceProjectId}/control?workMode=structure`
+frontend/src/pages/ProjectControlPage.js:3948: `/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval`
+frontend/src/pages/ProjectDashboardPage.js:288: `/projects/${projectId}/control?workMode=structure`
+frontend/src/pages/ProjectDashboardPage.js:334: `/projects/${projectId}/control?workMode=defects&statusChip=open&from=dashboard`
+frontend/src/pages/ProjectDashboardPage.js:344: `/projects/${projectId}/control?workMode=defects&statusChip=closed&from=dashboard`
+frontend/src/pages/ProjectDashboardPage.js:355: `/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval&from=dashboard`
+frontend/src/pages/ProjectDashboardPage.js:365: `/projects/${projectId}/control?workMode=defects&overdue=true&from=dashboard`
+frontend/src/pages/ProjectDashboardPage.js:374: `/projects/${projectId}/control?workMode=structure&tab=team&from=dashboard`
+frontend/src/pages/ProjectDashboardPage.js:583: `/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval&from=dashboard`
+frontend/src/pages/ProjectTasksPage.js:456: `/projects/${projectId}/control?openInvite=1${tradeParam}`
+frontend/src/pages/QCFloorSelectionPage.js:225: `/projects/${projectId}/control?workMode=structure`
+frontend/src/pages/SafetyHomePage.js:452: `/projects/${projectId}/control?workMode=structure`
+frontend/src/pages/SafetyHomePage.js:453: `/projects/${projectId}/control?workMode=structure`
+frontend/src/pages/SafetyHomePage.js:642: `/projects/${projectId}/control?workMode=structure`
+frontend/src/pages/StageDetailPage.js:667: `/projects/${projectId}/control?tab=settings`
+frontend/src/pages/StageDetailPage.js:2048: `/projects/${projectId}/control?tab=settings`
+frontend/src/pages/TaskDetailPage.js:888: `/projects/${task.project_id}/control?workMode=defects`
+frontend/src/pages/TaskDetailPage.js:1152: `/projects/${task.project_id}/control?tab=companies`
+frontend/src/pages/UnitHomePage.js:114: `/projects/${projectId}/control?workMode=structure`
+frontend/src/pages/WorkDiaryPage.js:106: `/projects/${projectId}/control?workMode=structure`
+frontend/src/utils/navigation.js:9: `/projects/${id}/control?workMode=structure`
+Dynamic parameter details: NewDefectModal.js:1354 uses tab=team, openInvite=1, returnToDefect=1, and optional prefillTrade=category; ProjectTasksPage.js:456 uses openInvite=1 and optional prefillTrade=bucketFilter. Other query keys/values are shown inline above.
+
+V4(b) — Filter clear handlers today (read-only)
+frontend/src/pages/ProjectControlPage.js:4000-4005: active-filter chip X / נקה סינון deletes statusChip and overdue; setSearchParams replace:true.
+frontend/src/pages/ProjectControlPage.js:4050-4056: empty-state חזרה לבניינים deletes statusChip, overdue and safetyOnly; setSearchParams replace:true.
+Neither removes from; filter handling remains untouched by this batch.
+
+V5
+Exactly the six authorized application files changed; F1–F5 including ADDENDUM-1 only. review.txt remains byte-identical. No backend/i18n-key/filter logic/persistence changes; no deployment. Browser validation remains unavailable as documented.
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
