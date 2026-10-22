@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Bell, CheckCheck, Clock, ShieldCheck, ShieldX, Send, RotateCcw, X, Megaphone, CheckCircle2 } from 'lucide-react';
+import { Bell, CheckCheck, Clock, ShieldCheck, ShieldX, Send, RotateCcw, X, Megaphone, CheckCircle2, Siren } from 'lucide-react';
 import { CalendarCheck } from 'lucide-react';
 import { qcNotificationService } from '../services/api';
 import { useNavigate } from 'react-router-dom';
@@ -18,6 +18,7 @@ const ACTION_ICONS = {
   field_escalation: { icon: Megaphone, color: 'text-amber-500' },
   field_escalation_resolved: { icon: CheckCircle2, color: 'text-emerald-500' },
   monthly_close: { icon: CalendarCheck, color: 'text-amber-500' },
+  defect_manager_tagged: { icon: Siren, color: 'text-red-500' },
 };
 
 const formatTimeAgo = (dateStr) => {

@@ -1327,6 +1327,10 @@ export const taskService = {
     const response = await axios.post(`${API}/tasks/${id}/reopen`, {}, { headers: getAuthHeader() });
     return response.data;
   },
+  async tagManager(id) {
+    const response = await axios.post(`${API}/tasks/${id}/tag-manager`, {}, { headers: getAuthHeader() });
+    return response.data;
+  },
   async getUpdates(id) {
     const response = await axios.get(`${API}/tasks/${id}/updates`, { headers: getAuthHeader() });
     return response.data;

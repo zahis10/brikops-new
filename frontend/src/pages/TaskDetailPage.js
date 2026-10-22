@@ -11,7 +11,7 @@ import {
   Phone, RefreshCw, CheckCircle, XCircle, AlertTriangle, Bell,
   Upload, ShieldCheck, ShieldX, Camera, X, Download, Eye,
   Settings, ChevronDown, Lock, Edit3, CircleDot, ArrowDownCircle, ArrowUpCircle,
-  Copy, Smartphone, Loader2, RotateCcw
+  Copy, Smartphone, Loader2, RotateCcw, Megaphone
 } from 'lucide-react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Button } from '../components/ui/button';
@@ -201,6 +201,7 @@ const TaskDetailPage = () => {
   const [externalEntry, setExternalEntry] = useState(false);
 
   const [showForceCloseModal, setShowForceCloseModal] = useState(false);
+  const [taggingManager, setTaggingManager] = useState(false);
   const [forceCloseReason, setForceCloseReason] = useState('');
   const [forceCloseCustomReason, setForceCloseCustomReason] = useState('');
   const [reopening, setReopening] = useState(false);
@@ -285,6 +286,27 @@ const TaskDetailPage = () => {
   }, [id]);
 
   useEffect(() => { loadTask(); }, [loadTask]);
+
+  // Batch #619 — tag the project manager(s) on this defect
+  const handleTagManager = async () => {
+    if (taggingManager) return;
+    setTaggingManager(true);
+    try {
+      const r = await taskService.tagManager(id);
+      if (r?.tagged) {
+        const names = (r.recipients || []).map(x => x.name).filter(Boolean).join(', ');
+        const waOk = (r.recipients || []).some(x => ['sent', 'queued'].includes(x.whatsapp));
+        toast.success(waOk ? `מנהל הפרויקט תויג — נשלח WhatsApp ל-${names}` : `מנהל הפרויקט תויג (${names}) — התראה באפליקציה`);
+        await loadTask();
+      } else {
+        toast.warning(r?.message || 'לא נמצא מנהל פרויקט לתיוג');
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'תיוג מנהל הפרויקט נכשל');
+    } finally {
+      setTaggingManager(false);
+    }
+  };
 
   useEffect(() => {
     if (externalEntry && task?.project_id && !location.state?.returnTo) {
@@ -1220,6 +1242,25 @@ const TaskDetailPage = () => {
                 })()}
               </div>
             </div>
+
+            {!taskIsClosed && (
+              <div className="mt-4 pt-3 border-t border-amber-200 space-y-2">
+                <Button
+                  onClick={handleTagManager}
+                  disabled={taggingManager}
+                  variant="outline"
+                  className="w-full border-amber-400 text-amber-800 hover:bg-amber-100 gap-2"
+                >
+                  {taggingManager ? <Loader2 className="w-4 h-4 animate-spin" /> : <Megaphone className="w-4 h-4" />}
+                  {task?.manager_tagged_at ? 'תייג מנהל פרויקט שוב' : 'תייג מנהל פרויקט — דחוף'}
+                </Button>
+                <p className="text-[11px] text-slate-500 text-center">
+                  {task?.manager_tagged_at
+                    ? `תויג ע״י ${task.manager_tagged_by_name || ''} · ${new Date(task.manager_tagged_at).toLocaleString('he-IL')}`
+                    : 'ישלח WhatsApp + התראה באפליקציה למנהל הפרויקט'}
+                </p>
+              </div>
+            )}
 
             {!taskIsClosed && (
               <div className="mt-4 pt-3 border-t border-amber-200">

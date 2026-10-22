@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import {
-  X, Upload, ChevronDown, Camera, Loader2, Building2, Layers, DoorOpen, AlertTriangle, RefreshCw, Check, ImagePlus, Plus, Pencil, ShieldAlert
+  X, Upload, ChevronDown, Camera, Loader2, Building2, Layers, DoorOpen, AlertTriangle, RefreshCw, Check, ImagePlus, Plus, Pencil, ShieldAlert, Megaphone
 } from 'lucide-react';
 
 const PhotoAnnotation = React.lazy(() => import('./PhotoAnnotation'));
@@ -96,6 +96,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData, onAddAnother 
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('medium');
   const [isSafety, setIsSafety] = useState(false);
+  const [tagManager, setTagManager] = useState(false);
   const [companyId, setCompanyId] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
 
@@ -588,6 +589,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData, onAddAnother 
     setDescription('');
     setPriority('medium');
     setIsSafety(false);
+    setTagManager(false);
     setCompanyId('');
     setAssigneeId('');
     setAutoSelectedCompany(false);
@@ -698,6 +700,23 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData, onAddAnother 
       if (failedResults.length > 0) {
         console.warn(`Upload: ${failedResults.length}/${imagesToUpload.length} failed, ${succeeded} succeeded — proceeding to assign`);
         toast.warning(`${failedResults.length} תמונות לא הועלו, אך ממשיך בשיוך הקבלן.`);
+      }
+    }
+
+    // Batch #619 — tag the project manager (after the photos, so the WhatsApp carries the image; before the contractor)
+    if (tagManager) {
+      setSubmitStep('tagging');
+      try {
+        const tagResult = await taskService.tagManager(taskId);
+        if (tagResult?.tagged) {
+          const names = (tagResult.recipients || []).map(r => r.name).filter(Boolean).join(', ');
+          const waOk = (tagResult.recipients || []).some(r => ['sent', 'queued'].includes(r.whatsapp));
+          toast.success(waOk ? `מנהל הפרויקט תויג — נשלח WhatsApp ל-${names}` : `מנהל הפרויקט תויג (${names}) — התראה באפליקציה`);
+        } else {
+          toast.warning(tagResult?.message || 'לא נמצא מנהל פרויקט לתיוג');
+        }
+      } catch (err) {
+        toast.warning(err.response?.data?.detail || 'תיוג מנהל הפרויקט נכשל — הליקוי נשמר');
       }
     }
 
@@ -1237,6 +1256,23 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData, onAddAnother 
                 className="w-5 h-5 rounded text-orange-500 focus:ring-orange-500 cursor-pointer"
               />
             </div>
+            {/* Batch #619 — tag the project manager */}
+            <div className="flex items-center justify-between py-3 border-t border-slate-100" dir="rtl">
+              <div className="flex items-center gap-2">
+                <Megaphone className="w-4 h-4 text-red-500" aria-hidden="true" />
+                <div>
+                  <label htmlFor="tag-manager-toggle" className="text-sm font-medium text-slate-700 cursor-pointer">תייג את מנהל הפרויקט</label>
+                  <p className="text-[11px] text-slate-500">יקבל WhatsApp מיד + התראה באפליקציה</p>
+                </div>
+              </div>
+              <input
+                id="tag-manager-toggle"
+                type="checkbox"
+                checked={tagManager}
+                onChange={(e) => setTagManager(e.target.checked)}
+                className="w-5 h-5 rounded text-red-500 focus:ring-red-500 cursor-pointer"
+              />
+            </div>
           </div>
 
           <div className="bg-slate-50 rounded-lg p-4 space-y-3">
@@ -1391,7 +1427,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData, onAddAnother 
             {submitting ? (
               <span className="flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                {submitStep === 'uploading' ? 'מעלה תמונות...' : submitStep === 'assigning' ? 'משייך קבלן...' : 'יוצר ליקוי...'}
+                {submitStep === 'uploading' ? 'מעלה תמונות...' : submitStep === 'tagging' ? 'מתייג מנהל פרויקט...' : submitStep === 'assigning' ? 'משייך קבלן...' : 'יוצר ליקוי...'}
               </span>
             ) : uploadError ? (
               <span className="flex items-center justify-center gap-2">

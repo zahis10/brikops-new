@@ -88,6 +88,7 @@ const NOTIF_EVENT_LABELS = {
   'manager_rejected': 'דחייה',
   'media_followup': 'המשך מדיה',
   'invite_created': 'הזמנה נוצרה',
+  'manager_tag': 'תיוג מנהל פרויקט',
 };
 
 export const getActionLabel = (action) => ACTION_LABELS[action] || '—';

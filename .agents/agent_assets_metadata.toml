@@ -1397,3 +1397,17 @@ mtime_ms = 1792504520724
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/d6028b2e-e8f2-4d10-bb5a-905698d90ac5/e45cab18-5acf-401d-8465-e4aa23535d5b"
 storage_version_token = "1792504529574665"
 content_type = "text/plain"
+
+[[outputs]]
+id = "Nx1nKeB_ui9nGLM5ch8dr"
+uri = "file://attached_assets/619-B-review.txt"
+type = "text"
+title = "619-B — מקטע ביקורת"
+description = "השינויים המדויקים, בדיקות הספירה וחסימות הבנייה וההרצה. ללא פריסה."
+logical_id = "be8b3c37-bf98-488e-976f-f38b8ccfebfd"
+content_hash = "sha256:fddf1d2e7fd67e34622023dcd22446fa5c79c0c29c81b631944d5cb6f3b77b7c"
+size = 12310
+mtime_ms = 1792653586802
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/be8b3c37-bf98-488e-976f-f38b8ccfebfd/648521c3-ebf7-4cb9-a3a9-9fc89957ef8c"
+storage_version_token = "1792653594072274"
+content_type = "text/plain"
