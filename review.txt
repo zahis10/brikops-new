@@ -14618,3 +14618,249 @@ Default defect language: he. Legacy WA_TEMPLATE_NEW_DEFECT defaults to empty and
 V5
 Rollback after approval: revert the change's commit; no data migration is required because the three task fields are optional. No rollback or deployment performed.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#619-B (21.10)
+
+STEP 0
+review.txt: 827955 bytes, below 2 MB; SHA256 unchanged. All five source MD5s matched the supplied baseline. No Git commands; branch/staging/production equality not independently verified.
+
+V1 — changed regions (three context lines)
+--- before/frontend/src/services/api.js
++++ after/frontend/src/services/api.js
+@@ -1327,6 +1327,10 @@
+     const response = await axios.post(`${API}/tasks/${id}/reopen`, {}, { headers: getAuthHeader() });
+     return response.data;
+   },
++  async tagManager(id) {
++    const response = await axios.post(`${API}/tasks/${id}/tag-manager`, {}, { headers: getAuthHeader() });
++    return response.data;
++  },
+   async getUpdates(id) {
+     const response = await axios.get(`${API}/tasks/${id}/updates`, { headers: getAuthHeader() });
+     return response.data;
+--- before/frontend/src/utils/actionLabels.js
++++ after/frontend/src/utils/actionLabels.js
+@@ -88,6 +88,7 @@
+   'manager_rejected': 'דחייה',
+   'media_followup': 'המשך מדיה',
+   'invite_created': 'הזמנה נוצרה',
++  'manager_tag': 'תיוג מנהל פרויקט',
+ };
+ 
+ export const getActionLabel = (action) => ACTION_LABELS[action] || '—';
+--- before/frontend/src/components/NotificationBell.js
++++ after/frontend/src/components/NotificationBell.js
+@@ -1,5 +1,5 @@
+ import React, { useState, useEffect, useCallback } from 'react';
+-import { Bell, CheckCheck, Clock, ShieldCheck, ShieldX, Send, RotateCcw, X, Megaphone, CheckCircle2 } from 'lucide-react';
++import { Bell, CheckCheck, Clock, ShieldCheck, ShieldX, Send, RotateCcw, X, Megaphone, CheckCircle2, Siren } from 'lucide-react';
+ import { CalendarCheck } from 'lucide-react';
+ import { qcNotificationService } from '../services/api';
+ import { useNavigate } from 'react-router-dom';
+@@ -18,6 +18,7 @@
+   field_escalation: { icon: Megaphone, color: 'text-amber-500' },
+   field_escalation_resolved: { icon: CheckCircle2, color: 'text-emerald-500' },
+   monthly_close: { icon: CalendarCheck, color: 'text-amber-500' },
++  defect_manager_tagged: { icon: Siren, color: 'text-red-500' },
+ };
+ 
+ const formatTimeAgo = (dateStr) => {
+--- before/frontend/src/components/NewDefectModal.js
++++ after/frontend/src/components/NewDefectModal.js
+@@ -5,7 +5,7 @@
+ import { toast } from 'sonner';
+ import { formatUnitLabel } from '../utils/formatters';
+ import {
+-  X, Upload, ChevronDown, Camera, Loader2, Building2, Layers, DoorOpen, AlertTriangle, RefreshCw, Check, ImagePlus, Plus, Pencil, ShieldAlert
++  X, Upload, ChevronDown, Camera, Loader2, Building2, Layers, DoorOpen, AlertTriangle, RefreshCw, Check, ImagePlus, Plus, Pencil, ShieldAlert, Megaphone
+ } from 'lucide-react';
+ 
+ const PhotoAnnotation = React.lazy(() => import('./PhotoAnnotation'));
+@@ -96,6 +96,7 @@
+   const [description, setDescription] = useState('');
+   const [priority, setPriority] = useState('medium');
+   const [isSafety, setIsSafety] = useState(false);
++  const [tagManager, setTagManager] = useState(false);
+   const [companyId, setCompanyId] = useState('');
+   const [assigneeId, setAssigneeId] = useState('');
+ 
+@@ -588,6 +589,7 @@
+     setDescription('');
+     setPriority('medium');
+     setIsSafety(false);
++    setTagManager(false);
+     setCompanyId('');
+     setAssigneeId('');
+     setAutoSelectedCompany(false);
+@@ -698,6 +700,23 @@
+       if (failedResults.length > 0) {
+         console.warn(`Upload: ${failedResults.length}/${imagesToUpload.length} failed, ${succeeded} succeeded — proceeding to assign`);
+         toast.warning(`${failedResults.length} תמונות לא הועלו, אך ממשיך בשיוך הקבלן.`);
++      }
++    }
++
++    // Batch #619 — tag the project manager (after the photos, so the WhatsApp carries the image; before the contractor)
++    if (tagManager) {
++      setSubmitStep('tagging');
++      try {
++        const tagResult = await taskService.tagManager(taskId);
++        if (tagResult?.tagged) {
++          const names = (tagResult.recipients || []).map(r => r.name).filter(Boolean).join(', ');
++          const waOk = (tagResult.recipients || []).some(r => ['sent', 'queued'].includes(r.whatsapp));
++          toast.success(waOk ? `מנהל הפרויקט תויג — נשלח WhatsApp ל-${names}` : `מנהל הפרויקט תויג (${names}) — התראה באפליקציה`);
++        } else {
++          toast.warning(tagResult?.message || 'לא נמצא מנהל פרויקט לתיוג');
++        }
++      } catch (err) {
++        toast.warning(err.response?.data?.detail || 'תיוג מנהל הפרויקט נכשל — הליקוי נשמר');
+       }
+     }
+ 
+@@ -1235,6 +1254,23 @@
+                 checked={isSafety}
+                 onChange={(e) => setIsSafety(e.target.checked)}
+                 className="w-5 h-5 rounded text-orange-500 focus:ring-orange-500 cursor-pointer"
++              />
++            </div>
++            {/* Batch #619 — tag the project manager */}
++            <div className="flex items-center justify-between py-3 border-t border-slate-100" dir="rtl">
++              <div className="flex items-center gap-2">
++                <Megaphone className="w-4 h-4 text-red-500" aria-hidden="true" />
++                <div>
++                  <label htmlFor="tag-manager-toggle" className="text-sm font-medium text-slate-700 cursor-pointer">תייג את מנהל הפרויקט</label>
++                  <p className="text-[11px] text-slate-500">יקבל WhatsApp מיד + התראה באפליקציה</p>
++                </div>
++              </div>
++              <input
++                id="tag-manager-toggle"
++                type="checkbox"
++                checked={tagManager}
++                onChange={(e) => setTagManager(e.target.checked)}
++                className="w-5 h-5 rounded text-red-500 focus:ring-red-500 cursor-pointer"
+               />
+             </div>
+           </div>
+@@ -1391,7 +1427,7 @@
+             {submitting ? (
+               <span className="flex items-center justify-center gap-2">
+                 <Loader2 className="w-4 h-4 animate-spin" />
+-                {submitStep === 'uploading' ? 'מעלה תמונות...' : submitStep === 'assigning' ? 'משייך קבלן...' : 'יוצר ליקוי...'}
++                {submitStep === 'uploading' ? 'מעלה תמונות...' : submitStep === 'tagging' ? 'מתייג מנהל פרויקט...' : submitStep === 'assigning' ? 'משייך קבלן...' : 'יוצר ליקוי...'}
+               </span>
+             ) : uploadError ? (
+               <span className="flex items-center justify-center gap-2">
+--- before/frontend/src/pages/TaskDetailPage.js
++++ after/frontend/src/pages/TaskDetailPage.js
+@@ -11,7 +11,7 @@
+   Phone, RefreshCw, CheckCircle, XCircle, AlertTriangle, Bell,
+   Upload, ShieldCheck, ShieldX, Camera, X, Download, Eye,
+   Settings, ChevronDown, Lock, Edit3, CircleDot, ArrowDownCircle, ArrowUpCircle,
+-  Copy, Smartphone, Loader2, RotateCcw
++  Copy, Smartphone, Loader2, RotateCcw, Megaphone
+ } from 'lucide-react';
+ import * as DialogPrimitive from '@radix-ui/react-dialog';
+ import { Button } from '../components/ui/button';
+@@ -201,6 +201,7 @@
+   const [externalEntry, setExternalEntry] = useState(false);
+ 
+   const [showForceCloseModal, setShowForceCloseModal] = useState(false);
++  const [taggingManager, setTaggingManager] = useState(false);
+   const [forceCloseReason, setForceCloseReason] = useState('');
+   const [forceCloseCustomReason, setForceCloseCustomReason] = useState('');
+   const [reopening, setReopening] = useState(false);
+@@ -285,6 +286,27 @@
+   }, [id]);
+ 
+   useEffect(() => { loadTask(); }, [loadTask]);
++
++  // Batch #619 — tag the project manager(s) on this defect
++  const handleTagManager = async () => {
++    if (taggingManager) return;
++    setTaggingManager(true);
++    try {
++      const r = await taskService.tagManager(id);
++      if (r?.tagged) {
++        const names = (r.recipients || []).map(x => x.name).filter(Boolean).join(', ');
++        const waOk = (r.recipients || []).some(x => ['sent', 'queued'].includes(x.whatsapp));
++        toast.success(waOk ? `מנהל הפרויקט תויג — נשלח WhatsApp ל-${names}` : `מנהל הפרויקט תויג (${names}) — התראה באפליקציה`);
++        await loadTask();
++      } else {
++        toast.warning(r?.message || 'לא נמצא מנהל פרויקט לתיוג');
++      }
++    } catch (err) {
++      toast.error(err.response?.data?.detail || 'תיוג מנהל הפרויקט נכשל');
++    } finally {
++      setTaggingManager(false);
++    }
++  };
+ 
+   useEffect(() => {
+     if (externalEntry && task?.project_id && !location.state?.returnTo) {
+@@ -1220,6 +1242,25 @@
+                 })()}
+               </div>
+             </div>
++
++            {!taskIsClosed && (
++              <div className="mt-4 pt-3 border-t border-amber-200 space-y-2">
++                <Button
++                  onClick={handleTagManager}
++                  disabled={taggingManager}
++                  variant="outline"
++                  className="w-full border-amber-400 text-amber-800 hover:bg-amber-100 gap-2"
++                >
++                  {taggingManager ? <Loader2 className="w-4 h-4 animate-spin" /> : <Megaphone className="w-4 h-4" />}
++                  {task?.manager_tagged_at ? 'תייג מנהל פרויקט שוב' : 'תייג מנהל פרויקט — דחוף'}
++                </Button>
++                <p className="text-[11px] text-slate-500 text-center">
++                  {task?.manager_tagged_at
++                    ? `תויג ע״י ${task.manager_tagged_by_name || ''} · ${new Date(task.manager_tagged_at).toLocaleString('he-IL')}`
++                    : 'ישלח WhatsApp + התראה באפליקציה למנהל הפרויקט'}
++                </p>
++              </div>
++            )}
+ 
+             {!taskIsClosed && (
+               <div className="mt-4 pt-3 border-t border-amber-200">
+
+V2 — lines added/removed (Python difflib, no Git)
+frontend/src/services/api.js: +4 / -0
+frontend/src/utils/actionLabels.js: +1 / -0
+frontend/src/components/NotificationBell.js: +2 / -1
+frontend/src/components/NewDefectModal.js: +38 / -2
+frontend/src/pages/TaskDetailPage.js: +42 / -1
+Exactly five existing application files changed; zero new application files. Reversing the exact supplied F1–F5 additions and replacements reproduces all five original files byte for byte.
+
+V3 — verification
+frontend/src/services/api.js: tag-manager = 1 PASS
+frontend/src/utils/actionLabels.js: manager_tag = 1 PASS
+frontend/src/components/NotificationBell.js: defect_manager_tagged|Siren = 2 PASS
+frontend/src/components/NewDefectModal.js: tagManager = 4 PASS
+frontend/src/components/NewDefectModal.js: tag-manager-toggle = 2 PASS
+frontend/src/components/NewDefectModal.js: 'tagging' = 2 PASS
+frontend/src/components/NewDefectModal.js: Megaphone = 2 PASS
+frontend/src/pages/TaskDetailPage.js: handleTagManager = 2 PASS
+frontend/src/pages/TaskDetailPage.js: taggingManager = 4 PASS
+frontend/src/pages/TaskDetailPage.js: manager_tagged_at = 3 PASS
+frontend/src/pages/TaskDetailPage.js: Megaphone = 2 PASS
+All requested counts PASS. Exact specification reconstruction PASS for all five files.
+CI=true BUILD_PATH=/tmp/batch619b/build ./node_modules/.bin/craco build: BLOCKED, exit 1 before compilation because REACT_APP_BACKEND_URL is not set. No environment/config changes to bypass the guard.
+CI=true ./node_modules/.bin/craco test --watchAll=false --runInBand: BLOCKED, exit 1; all 8 suites failed to initialize, 0 tests ran, because canvas.node cannot load libuuid.so.1.
+Application workflow restart FAILED: /tmp/batch606/normal-launch.sh does not exist; workflow log confirmed. No infrastructure repair attempted.
+Browser: not run — local harness. No staging verification, live API calls, DB writes, WhatsApp or SMS sends.
+Build/runtime validation remains blocked: NOT a fully verified completion.
+Reference ux/619-proposal.png is absent; exact supplied code used, no replacement design.
+Backend, i18n, draft save/restore, safety toggle behavior and contractor assignment flow unchanged. No .env edits or Git commands. review.txt untouched.
+
+V3 — approved build retry
+Command: cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" BUILD_PATH=/tmp/batch619b/verified-build npm run build
+Result: Compiled successfully. Exit code 0.
+Browserslist reported outdated caniuse-lite data; the build completed successfully.
+This supersedes the earlier build-blocked result. Jest and browser limitations above remain unchanged.
+No source code or .env files changed; command-scoped values only. No deployment performed.
+
+V4: none.
+
+V5
+Rollback after approval: revert the change's commit. No rollback or deployment performed.
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
