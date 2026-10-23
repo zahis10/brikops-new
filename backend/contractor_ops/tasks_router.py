@@ -563,6 +563,22 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     if membership['role'] == 'none' and not is_assignee:
         logger.info(f"[GET_TASK] 403 no_membership_not_assignee task_id={task_id} user_id={user['id']}")
         raise HTTPException(status_code=403, detail='אין לך הרשאה לצפות בליקוי הזה')
+    # Batch #619-C — first view by a project manager after the latest manager tag (not the tagger; stale after a re-tag)
+    if (task.get('manager_tagged_at') and membership.get('role') == 'project_manager'
+            and user['id'] != task.get('manager_tagged_by')
+            and (not task.get('manager_viewed_at') or task['manager_viewed_at'] < task['manager_tagged_at'])):
+        view_ts = _now()
+        viewer_name = user.get('name', '') or ''
+        res = await db.tasks.update_one({'id': task_id, '$or': [{'manager_viewed_at': None}, {'manager_viewed_at': {'$lt': task['manager_tagged_at']}}]}, {'$set': {
+            'manager_viewed_at': view_ts, 'manager_viewed_by': user['id'], 'manager_viewed_by_name': viewer_name,
+        }})
+        if res.matched_count:
+            task['manager_viewed_at'] = view_ts
+            task['manager_viewed_by'] = user['id']
+            task['manager_viewed_by_name'] = viewer_name
+            await _audit('task', task_id, 'manager_view', user['id'], {'manager_tagged_at': task.get('manager_tagged_at')})
+        else:
+            task = await db.tasks.find_one({'id': task_id}, {'_id': 0}) or task
     task_data = Task(**task).dict()
     from services.object_storage import resolve_urls_in_doc
     resolve_urls_in_doc(task_data)

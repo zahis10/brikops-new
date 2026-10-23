@@ -1255,9 +1255,14 @@ const TaskDetailPage = () => {
                   {task?.manager_tagged_at ? 'תייג מנהל פרויקט שוב' : 'תייג מנהל פרויקט — דחוף'}
                 </Button>
                 <p className="text-[11px] text-slate-500 text-center">
-                  {task?.manager_tagged_at
-                    ? `תויג ע״י ${task.manager_tagged_by_name || ''} · ${new Date(task.manager_tagged_at).toLocaleString('he-IL')}`
-                    : 'ישלח WhatsApp + התראה באפליקציה למנהל הפרויקט'}
+                  {task?.manager_tagged_at ? (
+                    <>
+                      {`תויג ע״י ${task.manager_tagged_by_name || ''} · ${new Date(task.manager_tagged_at).toLocaleString('he-IL')}`}
+                      {task.manager_viewed_at && task.manager_viewed_at >= task.manager_tagged_at
+                        ? <span className="text-green-700"> · נצפה ע״י {task.manager_viewed_by_name || 'מנהל הפרויקט'} · {new Date(task.manager_viewed_at).toLocaleString('he-IL')}</span>
+                        : <span className="text-amber-700"> · טרם נצפה</span>}
+                    </>
+                  ) : 'ישלח WhatsApp + התראה באפליקציה למנהל הפרויקט'}
                 </p>
               </div>
             )}

@@ -1411,3 +1411,17 @@ mtime_ms = 1792653586802
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/be8b3c37-bf98-488e-976f-f38b8ccfebfd/648521c3-ebf7-4cb9-a3a9-9fc89957ef8c"
 storage_version_token = "1792653594072274"
 content_type = "text/plain"
+
+[[outputs]]
+id = "QJuSZeiGdJAmURa2ELEpA"
+uri = "file://attached_assets/619-C-review.txt"
+type = "text"
+title = "619-C — ביקורת כולל ADDENDUM-1"
+description = "שלושת השינויים, הסטייה המאושרת, תוצאות הבנייה והבדיקות המבודדות ומגבלות ההרצה."
+logical_id = "8ba43d0b-8756-4ef6-829f-f1a3fdfa80bf"
+content_hash = "sha256:ffcafbfb879b3618901debe3f393c7ff919ab03b935631f92234271edb9702b3"
+size = 7358
+mtime_ms = 1792771482598
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/8ba43d0b-8756-4ef6-829f-f1a3fdfa80bf/30998b9a-1ac1-49bf-a4a0-81ea0200e953"
+storage_version_token = "1792771490258738"
+content_type = "text/plain"

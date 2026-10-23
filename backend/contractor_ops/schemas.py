@@ -311,6 +311,9 @@ class Task(BaseModel):
     manager_tagged_at: Optional[str] = None
     manager_tagged_by: Optional[str] = None
     manager_tagged_by_name: Optional[str] = None
+    manager_viewed_at: Optional[str] = None
+    manager_viewed_by: Optional[str] = None
+    manager_viewed_by_name: Optional[str] = None
 
 
 class TaskCreate(BaseModel):
