@@ -14864,3 +14864,111 @@ V4: none.
 V5
 Rollback after approval: revert the change's commit. No rollback or deployment performed.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#619-C (22.10)
+
+STEP 0
+review.txt: 840782 bytes, below 2 MB. SHA256 verified unchanged: d2c40a471a2f908ad6866247aa79a5b2debe49af4a48cb68954f3ba281c3dc55.
+All three source MD5 hashes matched the supplied baseline. No Git commands; branch/staging/production equality not independently verified.
+
+V1 — changed regions (three context lines)
+APPROVED DEVIATION — ADDENDUM-1: F1 update_one uses the exact approved atomic $or filter (missing/null manager_viewed_at, or older than the read manager_tagged_at). Only matched_count performs the three local assignments and audit. No match reloads the actual task with the approved fallback. No other specification changes.
+
+--- before/backend/contractor_ops/tasks_router.py
++++ after/backend/contractor_ops/tasks_router.py
+@@ -563,6 +563,22 @@
+     if membership['role'] == 'none' and not is_assignee:
+         logger.info(f"[GET_TASK] 403 no_membership_not_assignee task_id={task_id} user_id={user['id']}")
+         raise HTTPException(status_code=403, detail='אין לך הרשאה לצפות בליקוי הזה')
++    # Batch #619-C — first view by a project manager after the latest manager tag (not the tagger; stale after a re-tag)
++    if (task.get('manager_tagged_at') and membership.get('role') == 'project_manager'
++            and user['id'] != task.get('manager_tagged_by')
++            and (not task.get('manager_viewed_at') or task['manager_viewed_at'] < task['manager_tagged_at'])):
++        view_ts = _now()
++        viewer_name = user.get('name', '') or ''
++        res = await db.tasks.update_one({'id': task_id, '$or': [{'manager_viewed_at': None}, {'manager_viewed_at': {'$lt': task['manager_tagged_at']}}]}, {'$set': {
++            'manager_viewed_at': view_ts, 'manager_viewed_by': user['id'], 'manager_viewed_by_name': viewer_name,
++        }})
++        if res.matched_count:
++            task['manager_viewed_at'] = view_ts
++            task['manager_viewed_by'] = user['id']
++            task['manager_viewed_by_name'] = viewer_name
++            await _audit('task', task_id, 'manager_view', user['id'], {'manager_tagged_at': task.get('manager_tagged_at')})
++        else:
++            task = await db.tasks.find_one({'id': task_id}, {'_id': 0}) or task
+     task_data = Task(**task).dict()
+     from services.object_storage import resolve_urls_in_doc
+     resolve_urls_in_doc(task_data)
+--- before/backend/contractor_ops/schemas.py
++++ after/backend/contractor_ops/schemas.py
+@@ -311,6 +311,9 @@
+     manager_tagged_at: Optional[str] = None
+     manager_tagged_by: Optional[str] = None
+     manager_tagged_by_name: Optional[str] = None
++    manager_viewed_at: Optional[str] = None
++    manager_viewed_by: Optional[str] = None
++    manager_viewed_by_name: Optional[str] = None
+ 
+ 
+ class TaskCreate(BaseModel):
+--- before/frontend/src/pages/TaskDetailPage.js
++++ after/frontend/src/pages/TaskDetailPage.js
+@@ -1255,9 +1255,14 @@
+                   {task?.manager_tagged_at ? 'תייג מנהל פרויקט שוב' : 'תייג מנהל פרויקט — דחוף'}
+                 </Button>
+                 <p className="text-[11px] text-slate-500 text-center">
+-                  {task?.manager_tagged_at
+-                    ? `תויג ע״י ${task.manager_tagged_by_name || ''} · ${new Date(task.manager_tagged_at).toLocaleString('he-IL')}`
+-                    : 'ישלח WhatsApp + התראה באפליקציה למנהל הפרויקט'}
++                  {task?.manager_tagged_at ? (
++                    <>
++                      {`תויג ע״י ${task.manager_tagged_by_name || ''} · ${new Date(task.manager_tagged_at).toLocaleString('he-IL')}`}
++                      {task.manager_viewed_at && task.manager_viewed_at >= task.manager_tagged_at
++                        ? <span className="text-green-700"> · נצפה ע״י {task.manager_viewed_by_name || 'מנהל הפרויקט'} · {new Date(task.manager_viewed_at).toLocaleString('he-IL')}</span>
++                        : <span className="text-amber-700"> · טרם נצפה</span>}
++                    </>
++                  ) : 'ישלח WhatsApp + התראה באפליקציה למנהל הפרויקט'}
+                 </p>
+               </div>
+             )}
+
+V2 — lines added/removed per file (Python difflib, no Git)
+backend/contractor_ops/tasks_router.py: +16 / -0
+backend/contractor_ops/schemas.py: +3 / -0
+frontend/src/pages/TaskDetailPage.js: +8 / -3
+Exactly three existing application files changed, zero new application files. Exact whole-file reconstruction against F1–F3 plus approved ADDENDUM-1 PASS for all three; all other bytes unchanged. Permission checks, remaining response, tagging endpoint and i18n untouched.
+
+V3 — verification
+backend/contractor_ops/tasks_router.py: manager_viewed_at = 4 PASS
+backend/contractor_ops/schemas.py: manager_viewed_at = 1 PASS
+frontend/src/pages/TaskDetailPage.js: manager_viewed_at = 2 PASS
+backend/contractor_ops/tasks_router.py: manager_view' = 1 PASS
+frontend/src/pages/TaskDetailPage.js: טרם נצפה = 1 PASS
+backend/contractor_ops/tasks_router.py: matched_count = 1 PASS
+tasks_router manager_viewed_at count is 4 instead of the original 3 because ADDENDUM-1 adds the atomic filter line. matched_count = 1 satisfies the approved >=1 check.
+python3 -m compileall backend/ -q: exit 0.
+cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" BUILD_PATH=/tmp/batch619c/verified-build npm run build: exit 0, Compiled successfully. Browserslist reports old caniuse-lite data; no dependency changes made.
+cd frontend && CI=true npm test -- --watchAll=false --runInBand: exit 1; 8 suites failed to initialize, 0 tests ran, missing libuuid.so.1 for canvas.node. No Jest pass claimed; no infrastructure workaround attempted.
+python3 /tmp/batch619c/probe.py: PASS (actual source AST extracted; fake in-memory collection, no real DB).
+PASS a no tag: condition=False
+PASS b viewer is tagger: condition=False
+PASS c management_team: condition=False
+PASS c contractor: condition=False
+PASS d equal timestamp: condition=False
+PASS d newer timestamp: condition=False
+PASS two stale readers: first writes; second reloads actual winner; one audit
+PASS repeat current view: no write or audit
+PASS view older than re-tag: records a fresh view
+PASS excluded cases: no DB access or audit
+Extracted actual source AST with in-memory fake DB; no real DB, HTTP, messages or middleware verification.
+
+Concurrency probe scope: two stale readers of the same tag; not a real Mongo concurrency/load test. The approved filter compares against the tag timestamp read by each request; it does not add an equality guard on the current stored manager_tagged_at, so concurrent re-tagging is not claimed as verified.
+Application workflow restart failed once; logs: /tmp/batch606/normal-launch.sh: No such file or directory. No infrastructure repair.
+Browser: not run — local harness. No staging/prod verification, real DB writes, WhatsApp/SMS, or live API calls. Build and isolated checks do not constitute end-to-end verification.
+review.txt unchanged. No source changes beyond the three authorized files; no .env edits, no Git commands, no deployment.
+
+V4: none.
+
+V5
+Rollback after approval: revert this change's commit; optional fields require no migration. No rollback performed.
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
