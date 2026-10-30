@@ -1425,3 +1425,17 @@ mtime_ms = 1792771482598
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/8ba43d0b-8756-4ef6-829f-f1a3fdfa80bf/30998b9a-1ac1-49bf-a4a0-81ea0200e953"
 storage_version_token = "1792771490258738"
 content_type = "text/plain"
+
+[[outputs]]
+id = "DouVZ6_hfG_rKS2W1jhfG"
+uri = "file://attached_assets/batch620-review-section.txt"
+type = "text"
+title = "620 — מקטע ביקורת"
+description = "שני השינויים, בדיקות שעברו, חיפוש ביטולי TLS וממצא זמינות Docker; ללא התקנה או פריסה."
+logical_id = "1f87f539-a334-466c-b4ec-edda23d6748b"
+content_hash = "sha256:cd607a52e06fbd3804e71317c1112d76eea8f8789534cdd3dd52115b9ed8affb"
+size = 3343
+mtime_ms = 1793387522880
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/1f87f539-a334-466c-b4ec-edda23d6748b/627ca548-f54d-4587-ab54-127af92803c5"
+storage_version_token = "1793387534351112"
+content_type = "text/plain"
