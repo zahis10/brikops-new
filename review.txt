@@ -14972,3 +14972,56 @@ V4: none.
 V5
 Rollback after approval: revert this change's commit; optional fields require no migration. No rollback performed.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#620 (23.10)
+
+STEP 0
+review.txt: 848141 bytes (expected 848141), below 2 MB. SHA256 unchanged: be1dfb082234617d994c3cad09bb8fd0102fa738eb6ed241052c5b1248ba5ecc.
+No Git commands. Branch/staging/production equality not independently verified.
+
+V1 — changed regions (three context lines)
+--- before/backend/requirements.txt
++++ after/backend/requirements.txt
+@@ -11,7 +11,7 @@
+ boto3==1.42.42
+ botocore==1.42.42
+ brotli==1.2.0
+-certifi==2026.1.4
++certifi==2026.10.19
+ cffi==2.0.0
+ charset-normalizer==3.4.4
+ click==8.3.1
+--- before/backend/Dockerfile
++++ after/backend/Dockerfile
+@@ -5,6 +5,7 @@
+ RUN apt-get update && \
+     apt-get install -y --no-install-recommends \
+     build-essential \
++    ca-certificates \
+     libpango-1.0-0 \
+     libpangocairo-1.0-0 \
+     libgdk-pixbuf-2.0-0 \
+
+V2 — lines added/removed (Python difflib, no Git)
+requirements.txt: +1 / -1
+Dockerfile: +1 / -0
+Exactly two existing files edited; zero new application files. Whole-file comparison against the two exact authorized replacements PASS. Other pins, base image, apt order/cleanup and workflow unchanged.
+
+V3 — verification
+grep -n "certifi" backend/requirements.txt: 14:certifi==2026.10.19 (one matching line), PASS.
+grep -c "ca-certificates" backend/Dockerfile: 1, PASS.
+cd backend && pip download certifi==2026.10.19 --no-deps -d /tmp/batch620/dl: exit 0; Successfully downloaded certifi. Wheel obtained via the configured Replit package index proxy, not a direct independent PyPI request. No installation performed.
+pip install --dry-run -r backend/requirements.txt: exit 0; resolver reports Would install including certifi-2026.10.19, with no certifi conflict reported. No packages installed and no pins other than certifi changed. This checks the current environment, not a fresh container build.
+python3 -m compileall backend/ -q: exit 0.
+Docker availability correction: the specification expected Docker to be unavailable, but docker --version reports 27.5.1 and docker version --format reports Server: 27.5.1, exit 0. No image build or container run performed, per the task's no-Docker-build scope. No container build success claimed.
+No frontend change, browser test, live external service smoke test, staging/prod check or deployment. The existing application workflow was not changed or restarted: the dependency was only downloaded/dry-run, not installed, and runtime source was not changed.
+No claim that this proves removal of particular compromised CA chains. Package availability and dependency resolution do not verify trust-bundle contents, provider chain compatibility or production protection. The incident/background assertions in the supplied specification were not independently verified.
+
+V4 — TLS verification disable search (read-only)
+Searched all backend files with ripgrep --hidden --no-ignore for verify\s*=\s*False, ssl\s*=\s*False, CERT_NONE, tlsAllowInvalidCertificates; no matches (rg exit 1, empty output).
+There are therefore no file:line matches for the four requested expressions. This literal-pattern search is not a general proof that every TLS call is securely configured.
+
+V5
+Rollback after approval: revert the two-file change. No rollback performed.
+review.txt untouched; no .env edits, dependency installations, workflow changes, base-image change or deployment.
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
