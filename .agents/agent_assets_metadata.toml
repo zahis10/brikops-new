@@ -1439,3 +1439,17 @@ mtime_ms = 1793387522880
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/1f87f539-a334-466c-b4ec-edda23d6748b/627ca548-f54d-4587-ab54-127af92803c5"
 storage_version_token = "1793387534351112"
 content_type = "text/plain"
+
+[[outputs]]
+id = "tGAx30OhaRMVqRHBVQfzu"
+uri = "file://attached_assets/batch621-review-section.txt"
+type = "text"
+title = "דוח Batch 621"
+description = "דיפים מלאים, ספירות שורות, חתימות ותוצאות הבדיקות; ללא פריסה."
+logical_id = "09b1f272-9214-48eb-8271-98b4095899f3"
+content_hash = "sha256:9f0bded2bae483c917be24209205706d29bb4dc70d74afed0ec77b573cd7f154"
+size = 32212
+mtime_ms = 1794748728778
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/09b1f272-9214-48eb-8271-98b4095899f3/2e6cdbe7-ced7-4bf3-8793-688bd450a301"
+storage_version_token = "1794748731074199"
+content_type = "text/plain"

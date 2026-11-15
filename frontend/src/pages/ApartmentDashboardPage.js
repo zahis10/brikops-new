@@ -12,7 +12,7 @@ import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
 import StatCard from '../components/StatCard';
 import StatusPill from '../components/StatusPill';
 import CategoryPill from '../components/CategoryPill';
-import Breadcrumbs from '../components/Breadcrumbs';
+import PageHeader, { PAGE_HEADER_ACTION_CLASS } from '../components/PageHeader';
 import TaskCardSkeleton from '../components/TaskCardSkeleton';
 import { spareSummaryText } from '../components/matrix/SparePill';
 import EscalationSheet from '../components/spare/EscalationSheet';
@@ -23,8 +23,8 @@ import { arraysEqualAsSets } from '../utils/filterHelpers';
 import { FEATURES } from '../config/features';
 import { getDefectCreatesForUnit } from '../services/offlineOutbox';
 import {
-  ArrowRight, Loader2, AlertTriangle, CheckCircle2,
-  ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
+  Loader2, AlertTriangle, CheckCircle2,
+  ChevronDown, ChevronUp, ChevronLeft, ShieldAlert, Image as ImageIcon, Plus,
   SlidersHorizontal, Search, X, Download, Pencil, Save, Info, Trash2,
   ClipboardCheck
 } from 'lucide-react';
@@ -614,69 +614,67 @@ const ApartmentDashboardPage = () => {
 
   return (
     <div className={`min-h-screen bg-slate-50 ${canCreateDefect ? 'pb-24' : 'pb-6'}`} dir="rtl">
-      <div className="bg-slate-50">
-        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => {
-                if (safeReturnTo) { navigate(safeReturnTo); return; }
-                const navState = location.state;
-                if (navState?.from === 'unit-home') {
-                  navigate(`/projects/${projectId}/units/${unitId}`);
-                } else if (navState?.buildingId) {
-                  navigate(`/projects/${projectId}/buildings/${navState.buildingId}/defects`);
-                } else {
-                  navigate(`/projects/${projectId}/units/${unitId}`);
-                }
-              }}
-              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
-            >
-              <ArrowRight className="w-5 h-5" />
-            </button>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg font-bold truncate">{formatUnitLabel(effectiveLabel)}</h1>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${severity.color}`}>
-                  {severity.label}
-                </span>
-                {TAG_MAP[unit.unit_type_tag] && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-white/20 text-white">
-                    {TAG_MAP[unit.unit_type_tag].label}
-                  </span>
-                )}
-                <button
-                  onClick={() => setEditingUnit(unit)}
-                  className="p-1 hover:bg-white/20 rounded-lg transition-colors"
-                >
-                  <Pencil className="w-3.5 h-3.5 text-white" />
-                </button>
-                {floorIdForQc && (
-                  <button
-                    onClick={() => {
-                      const returnTo = encodeURIComponent(location.pathname + location.search);
-                      navigate(`/projects/${projectId}/floors/${floorIdForQc}?returnTo=${returnTo}`);
-                    }}
-                    className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-white text-amber-700 hover:bg-amber-50 transition-colors font-semibold shadow-sm"
-                    title="מעבר לבקרת ביצוע של הקומה"
-                  >
-                    <ClipboardCheck className="w-3.5 h-3.5" />
-                    מעבר לבקרת ביצוע של הקומה
-                  </button>
-                )}
-              </div>
-              <Breadcrumbs
-                items={[project?.name, building?.name, floor?.name]}
-                className="text-amber-100"
-              />
-              {unit.unit_note && (
-                <p className="text-[11px] text-amber-100/80 mt-0.5 truncate">{unit.unit_note}</p>
-              )}
-            </div>
-          </div>
+      <PageHeader
+        title={formatUnitLabel(effectiveLabel)}
+        titleExtra={
+          <>
+            <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-bold ${severity.color}`}>
+              {severity.label}
+            </span>
+            {TAG_MAP[unit.unit_type_tag] && (
+              <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium bg-white/20 text-white">
+                {TAG_MAP[unit.unit_type_tag].label}
+              </span>
+            )}
+          </>
+        }
+        crumbs={[project?.name, building?.name, floor?.name]}
+        below={unit.unit_note ? (
+          <p className="text-xs text-white/60 mt-0.5 truncate">{unit.unit_note}</p>
+        ) : null}
+        maxWidth="max-w-lg"
+        onBack={() => {
+          if (safeReturnTo) { navigate(safeReturnTo); return; }
+          const navState = location.state;
+          if (navState?.from === 'unit-home') {
+            navigate(`/projects/${projectId}/units/${unitId}`);
+          } else if (navState?.buildingId) {
+            navigate(`/projects/${projectId}/buildings/${navState.buildingId}/defects`);
+          } else {
+            navigate(`/projects/${projectId}/units/${unitId}`);
+          }
+        }}
+        actions={
+          <button
+            type="button"
+            onClick={() => setEditingUnit(unit)}
+            aria-label="עריכת פרטי הדירה"
+            title="עריכת פרטי הדירה"
+            className={PAGE_HEADER_ACTION_CLASS}
+          >
+            <Pencil className="w-5 h-5" />
+          </button>
+        }
+      />
+      {floorIdForQc && (
+        <div className="bg-white border-b border-slate-200">
+          <button
+            type="button"
+            onClick={() => {
+              const returnTo = encodeURIComponent(location.pathname + location.search);
+              navigate(`/projects/${projectId}/floors/${floorIdForQc}?returnTo=${returnTo}`);
+            }}
+            className="max-w-lg mx-auto w-full min-h-[44px] px-4 flex items-center gap-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 transition-colors"
+            title="מעבר לבקרת ביצוע של הקומה"
+          >
+            <ClipboardCheck className="w-[18px] h-[18px] text-amber-500 flex-shrink-0" />
+            <span className="flex-1 text-right">בקרת ביצוע של הקומה</span>
+            <ChevronLeft className="w-[18px] h-[18px] text-slate-500 flex-shrink-0" />
+          </button>
         </div>
-      </div>
+      )}
 
-      <div className="max-w-lg mx-auto px-4 -mt-2">
+      <div className="max-w-lg mx-auto px-4 mt-3">
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <button
             onClick={() => setSummaryOpen(!summaryOpen)}

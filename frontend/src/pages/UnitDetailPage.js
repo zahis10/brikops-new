@@ -8,10 +8,10 @@ import NewDefectModal from '../components/NewDefectModal';
 import StatCard from '../components/StatCard';
 import StatusPill from '../components/StatusPill';
 import CategoryPill from '../components/CategoryPill';
-import Breadcrumbs from '../components/Breadcrumbs';
+import PageHeader from '../components/PageHeader';
 import TaskCardSkeleton from '../components/TaskCardSkeleton';
 import {
-  ArrowRight, Loader2, Plus, Filter, Building2, Layers, DoorOpen,
+  Loader2, Plus, Filter, Building2, Layers, DoorOpen,
   CheckCircle2, ChevronDown, X
 } from 'lucide-react';
 import { tCategory } from '../i18n';
@@ -180,27 +180,14 @@ const UnitDetailPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-24" dir="rtl">
-      <div className="bg-slate-50">
-        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate(`/projects/${projectId}/units/${unitId}`)}
-              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
-            >
-              <ArrowRight className="w-5 h-5" />
-            </button>
-            <div className="flex-1 min-w-0">
-              <h1 className="text-lg font-bold truncate">{formatUnitLabel(effectiveLabel)}</h1>
-              <Breadcrumbs
-                items={[project?.name, building?.name, floor?.name]}
-                className="text-amber-100"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title={formatUnitLabel(effectiveLabel)}
+        crumbs={[project?.name, building?.name, floor?.name]}
+        onBack={() => navigate(`/projects/${projectId}/units/${unitId}`)}
+        maxWidth="max-w-lg"
+      />
 
-      <div className="max-w-lg mx-auto px-4 -mt-2">
+      <div className="max-w-lg mx-auto px-4 mt-3">
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
           <div className="grid grid-cols-3 divide-x divide-slate-100" dir="ltr">
             <StatCard label="פתוחות" value={kpi.open} />

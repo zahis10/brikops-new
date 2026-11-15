@@ -3838,8 +3838,9 @@ const ProjectControlPage = () => {
                   navigate('/projects');
                 }
               }}
-              className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
+              className="h-11 w-11 flex-shrink-0 flex items-center justify-center bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
               title={searchParams.get('from') === 'dashboard' ? 'חזרה לדשבורד' : 'חזרה לפרויקטים'}
+              aria-label={searchParams.get('from') === 'dashboard' ? 'חזרה לדשבורד' : 'חזרה לפרויקטים'}
             >
               <ArrowRight className="w-5 h-5" />
             </button>

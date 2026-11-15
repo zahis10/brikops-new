@@ -7,11 +7,12 @@ import { formatUnitLabel } from '../utils/formatters';
 import { tCategory } from '../i18n';
 import { toast } from 'sonner';
 import FilterDrawer from '../components/FilterDrawer';
+import PageHeader from '../components/PageHeader';
 import OfflineState from '../components/OfflineState';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { arraysEqualAsSets } from '../utils/filterHelpers';
 import {
-  ArrowRight, Loader2, Building2, ChevronDown, ChevronUp,
+  Loader2, Building2, ChevronDown, ChevronUp,
   Home, AlertTriangle, Clock, CheckCircle2, SlidersHorizontal, Search, X, Download, Pencil
 } from 'lucide-react';
 
@@ -402,29 +403,14 @@ const BuildingDefectsPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
-      <div className="bg-slate-50">
-        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate(safeReturnTo || `/projects/${projectId}/control?workMode=defects`)}
-              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
-            >
-              <ArrowRight className="w-5 h-5" />
-            </button>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <Building2 className="w-5 h-5 text-amber-200" />
-                <h1 className="text-lg font-bold truncate">{data.building?.name || 'בניין'}</h1>
-              </div>
-              <p className="text-xs text-amber-100 mt-0.5">
-                {data.project?.name || ''} • סיכום ליקויים
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title={data.building?.name || 'בניין'}
+        crumbs={[data.project?.name, 'ליקויים']}
+        onBack={() => navigate(safeReturnTo || `/projects/${projectId}/control?workMode=defects`)}
+        maxWidth="max-w-lg"
+      />
 
-      <div className="max-w-lg mx-auto px-4 -mt-2 space-y-3">
+      <div className="max-w-lg mx-auto px-4 mt-3 space-y-3">
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <button
             onClick={() => setSummaryOpen(!summaryOpen)}

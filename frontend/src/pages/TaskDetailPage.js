@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { compressImage } from '../utils/imageCompress';
 import {
   ChevronRight, Building2, Layers, DoorOpen, Clock, User, Briefcase,
-  MessageSquare, Paperclip, ArrowRight, Send, Image as ImageIcon,
+  MessageSquare, Paperclip, Send, Image as ImageIcon,
   Phone, RefreshCw, CheckCircle, XCircle, AlertTriangle, Bell,
   Upload, ShieldCheck, ShieldX, Camera, X, Download, Eye,
   Settings, ChevronDown, Lock, Edit3, CircleDot, ArrowDownCircle, ArrowUpCircle,
@@ -16,6 +16,7 @@ import {
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
+import PageHeader from '../components/PageHeader';
 
 const PhotoAnnotation = React.lazy(() => import('../components/PhotoAnnotation'));
 
@@ -880,48 +881,43 @@ const TaskDetailPage = () => {
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50">
       <input ref={uploadCameraRef} type="file" accept="image/*" capture="environment" onChange={handleAddPhoto} className="hidden" />
       <input ref={uploadGalleryRef} type="file" accept="image/*" onChange={handleAddPhoto} className="hidden" />
-      <div className="bg-white border-b shadow-sm sticky top-0 z-10">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between" dir="rtl">
-          <button
-            onClick={() => {
-              const returnTo = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
-              if (returnTo) {
-                sessionStorage.removeItem(RETURN_TO_KEY);
-                navigate(returnTo);
-              } else if (isContractor) {
-                // BATCH I (2026-05-11) — P0 SECURITY: contractors never
-                // land on the building-defects page (cross-contractor
-                // data leak). Defense in depth: backend also returns
-                // 403 if URL is hand-crafted. Order: explicit returnTo
-                // > isContractor > building default > project default.
-                // BATCH I.1 (2026-05-11) — fixed landing from `/` (project
-                // list) to project-scoped URL so contractor sees their own
-                // defects in the right project, not an unhelpful project
-                // list. Defensive ternary for the impossible case where
-                // task.project_id is missing (Task schema requires it).
-                navigate(
-                  task?.project_id
-                    ? `/projects/${task.project_id}?src=contractor`
-                    : '/projects'
-                );
-              } else if (task?.building_id && task?.project_id) {
-                navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
-              } else if (task?.project_id) {
-                navigate(`/projects/${task.project_id}/control?workMode=defects`);
-              } else {
-                navigate('/projects');
-              }
-            }}
-            className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
-            aria-label={(() => { const rt = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY); if (externalEntry && !location.state?.returnTo) return t('taskDetail', 'back_to_my_defects'); return rt && rt.includes('/dashboard') ? t('taskDetail', 'back_to_dashboard') : t('taskDetail', 'back_to_defects_list'); })()}
-          >
-            <ArrowRight className="w-5 h-5 text-slate-600" />
-          </button>
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-slate-800">BrikOps</span>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title="ליקוי"
+        titleTag="p"
+        crumbs={[task.building_name, task.floor_name, task.unit_name ? `${t('taskDetail', 'unit')} ${task.unit_name}` : null]}
+        maxWidth="max-w-2xl"
+        zClass="z-10"
+        backLabel={(() => { const rt = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY); if (externalEntry && !location.state?.returnTo) return t('taskDetail', 'back_to_my_defects'); return rt && rt.includes('/dashboard') ? t('taskDetail', 'back_to_dashboard') : t('taskDetail', 'back_to_defects_list'); })()}
+        onBack={() => {
+          const returnTo = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
+          if (returnTo) {
+            sessionStorage.removeItem(RETURN_TO_KEY);
+            navigate(returnTo);
+          } else if (isContractor) {
+            // BATCH I (2026-05-11) — P0 SECURITY: contractors never
+            // land on the building-defects page (cross-contractor
+            // data leak). Defense in depth: backend also returns
+            // 403 if URL is hand-crafted. Order: explicit returnTo
+            // > isContractor > building default > project default.
+            // BATCH I.1 (2026-05-11) — fixed landing from `/` (project
+            // list) to project-scoped URL so contractor sees their own
+            // defects in the right project, not an unhelpful project
+            // list. Defensive ternary for the impossible case where
+            // task.project_id is missing (Task schema requires it).
+            navigate(
+              task?.project_id
+                ? `/projects/${task.project_id}?src=contractor`
+                : '/projects'
+            );
+          } else if (task?.building_id && task?.project_id) {
+            navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
+          } else if (task?.project_id) {
+            navigate(`/projects/${task.project_id}/control?workMode=defects`);
+          } else {
+            navigate('/projects');
+          }
+        }}
+      />
 
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-4" dir="rtl">
         <Card className="p-5">

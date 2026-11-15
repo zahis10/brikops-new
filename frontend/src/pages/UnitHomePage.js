@@ -7,7 +7,7 @@ import { formatUnitLabel } from '../utils/formatters';
 import { t } from '../i18n';
 import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
 import StatCard from '../components/StatCard';
-import Breadcrumbs from '../components/Breadcrumbs';
+import PageHeader, { PAGE_HEADER_ACTION_CLASS } from '../components/PageHeader';
 import {
   ArrowRight, Loader2, Building2, Layers, DoorOpen,
   ClipboardList, FileText, Home, Pencil
@@ -94,58 +94,48 @@ const UnitHomePage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
-      <div className="bg-slate-50">
-        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => {
-                const role = user?.role;
-                if (role === 'contractor') {
-                  navigate('/projects');
-                } else if (role === 'viewer') {
-                  navigate(`/projects/${projectId}/tasks`);
-                } else if (building?.id) {
-                  // BATCH unit-back-nav-fix (2026-05-25) — Bug 4: a unit
-                  // lives inside a building, so the back arrow returns
-                  // to that building's page rather than the project
-                  // structure tab.
-                  navigate(`/projects/${projectId}/buildings/${building.id}`);
-                } else {
-                  navigate(`/projects/${projectId}/control?workMode=structure`);
-                }
-              }}
-              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
-            >
-              <ArrowRight className="w-5 h-5" />
-            </button>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg font-bold truncate">{formatUnitLabel(effectiveLabel)}</h1>
-                {TAG_MAP[unit.unit_type_tag] && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-white/20 text-white">
-                    {TAG_MAP[unit.unit_type_tag].label}
-                  </span>
-                )}
-                <button
-                  onClick={() => setEditingUnit(unit)}
-                  className="p-1 hover:bg-white/20 rounded-lg transition-colors"
-                >
-                  <Pencil className="w-3.5 h-3.5 text-white" />
-                </button>
-              </div>
-              <Breadcrumbs
-                items={[project?.name, building?.name, floor?.name]}
-                className="text-amber-100"
-              />
-              {unit.unit_note && (
-                <p className="text-[11px] text-amber-100/80 mt-0.5 truncate">{unit.unit_note}</p>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title={formatUnitLabel(effectiveLabel)}
+        titleExtra={TAG_MAP[unit.unit_type_tag] ? (
+          <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium bg-white/20 text-white">
+            {TAG_MAP[unit.unit_type_tag].label}
+          </span>
+        ) : null}
+        crumbs={[project?.name, building?.name, floor?.name]}
+        below={unit.unit_note ? (
+          <p className="text-xs text-white/60 mt-0.5 truncate">{unit.unit_note}</p>
+        ) : null}
+        maxWidth="max-w-lg"
+        onBack={() => {
+          const role = user?.role;
+          if (role === 'contractor') {
+            navigate('/projects');
+          } else if (role === 'viewer') {
+            navigate(`/projects/${projectId}/tasks`);
+          } else if (building?.id) {
+            // BATCH unit-back-nav-fix (2026-05-25) — Bug 4: a unit
+            // lives inside a building, so the back arrow returns
+            // to that building's page rather than the project
+            // structure tab.
+            navigate(`/projects/${projectId}/buildings/${building.id}`);
+          } else {
+            navigate(`/projects/${projectId}/control?workMode=structure`);
+          }
+        }}
+        actions={
+          <button
+            type="button"
+            onClick={() => setEditingUnit(unit)}
+            aria-label="עריכת פרטי הדירה"
+            title="עריכת פרטי הדירה"
+            className={PAGE_HEADER_ACTION_CLASS}
+          >
+            <Pencil className="w-5 h-5" />
+          </button>
+        }
+      />
 
-      <div className="max-w-lg mx-auto px-4 -mt-2">
+      <div className="max-w-lg mx-auto px-4 mt-3">
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
           <div className="grid grid-cols-3 divide-x divide-slate-100" dir="ltr">
             <StatCard label={t('unitHome', 'kpiOpen')} value={kpi?.open ?? 0} />

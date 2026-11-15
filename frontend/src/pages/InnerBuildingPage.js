@@ -3,9 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { projectService, buildingService, floorService } from '../services/api';
 import { formatUnitLabel } from '../utils/formatters';
 import { Card } from '../components/ui/card';
+import PageHeader from '../components/PageHeader';
 import { toast } from 'sonner';
 import {
-  ArrowRight, Loader2, Building2, Layers, Home,
+  Loader2, Building2, Layers, Home,
   ChevronDown, ChevronRight, AlertTriangle, WifiOff, Plus, X,
   Tag, Pencil
 } from 'lucide-react';
@@ -319,22 +320,13 @@ const InnerBuildingPage = () => {
 
   return (
     <div dir="rtl" className="min-h-screen bg-slate-50" style={{ paddingBottom: 'calc(6rem + env(safe-area-inset-bottom, 0px))' }}>
-      <div className="sticky top-0 z-30 bg-slate-800 px-4 py-3 flex items-center gap-3">
-        <button onClick={handleBack} className="text-white hover:text-amber-300 transition-colors" aria-label="חזרה">
-          <ArrowRight className="w-5 h-5" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-white font-bold text-lg truncate leading-tight">
-            {building.name}
-            {building.code && <span className="text-slate-400 font-normal text-sm mr-2">({building.code})</span>}
-          </h1>
-          {projectName && (
-            <p className="text-slate-300 text-xs truncate">{projectName}</p>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        title={<>{building.name}{building.code && <span className="text-white/60 font-normal text-sm mr-2">({building.code})</span>}</>}
+        crumbs={[projectName]}
+        onBack={handleBack}
+      />
 
-      <div className="sticky top-[52px] z-20 bg-white border-b border-slate-200 flex">
+      <div className="sticky top-[60px] z-20 bg-white border-b border-slate-200 flex">
         {TABS.map(tab => (
           <button
             key={tab.id}
