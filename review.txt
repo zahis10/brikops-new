@@ -15025,3 +15025,682 @@ V5
 Rollback after approval: revert the two-file change. No rollback performed.
 review.txt untouched; no .env edits, dependency installations, workflow changes, base-image change or deployment.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#621 (15.11)
+
+STEP 0: wc -c review.txt = 851485 bytes (below 2 MB).
+review.txt untouched; SHA256 unchanged: f9f7ac670c5ce26e3c3e4bc62013d18aee6cba5222bd5b8a67f862587d0183fa
+
+V1 — changed regions (3 context lines); full new file
+
+--- a/frontend/src/components/Breadcrumbs.jsx
++++ b/frontend/src/components/Breadcrumbs.jsx
+@@ -3,12 +3,18 @@
+ const Breadcrumbs = ({ items = [], separator = '›', className = '' }) => {
+   const parts = items.filter(Boolean);
+   if (parts.length === 0) return null;
++  const last = parts.length - 1;
+   return (
+-    <div className={`flex items-center gap-1.5 text-xs ${className}`}>
++    <div className={`flex items-center gap-1.5 text-xs min-w-0 overflow-hidden ${className}`}>
+       {parts.map((item, i) => (
+         <React.Fragment key={i}>
+-          {i > 0 && <span aria-hidden="true">{separator}</span>}
+-          <span className="truncate">{item}</span>
++          {i > 0 && <span aria-hidden="true" className="flex-shrink-0">{separator}</span>}
++          <span
++            className={i === last && last > 0 ? 'flex-shrink-0 whitespace-nowrap' : 'truncate'}
++            style={i === 0 && last > 0 ? { flexShrink: 100000, minWidth: '3ch' } : undefined}
++          >
++            {item}
++          </span>
+         </React.Fragment>
+       ))}
+     </div>
+
+--- a/frontend/src/pages/InnerBuildingPage.js
++++ b/frontend/src/pages/InnerBuildingPage.js
+@@ -3,9 +3,10 @@
+ import { projectService, buildingService, floorService } from '../services/api';
+ import { formatUnitLabel } from '../utils/formatters';
+ import { Card } from '../components/ui/card';
++import PageHeader from '../components/PageHeader';
+ import { toast } from 'sonner';
+ import {
+-  ArrowRight, Loader2, Building2, Layers, Home,
++  Loader2, Building2, Layers, Home,
+   ChevronDown, ChevronRight, AlertTriangle, WifiOff, Plus, X,
+   Tag, Pencil
+ } from 'lucide-react';
+@@ -319,22 +320,13 @@
+ 
+   return (
+     <div dir="rtl" className="min-h-screen bg-slate-50" style={{ paddingBottom: 'calc(6rem + env(safe-area-inset-bottom, 0px))' }}>
+-      <div className="sticky top-0 z-30 bg-slate-800 px-4 py-3 flex items-center gap-3">
+-        <button onClick={handleBack} className="text-white hover:text-amber-300 transition-colors" aria-label="חזרה">
+-          <ArrowRight className="w-5 h-5" />
+-        </button>
+-        <div className="flex-1 min-w-0">
+-          <h1 className="text-white font-bold text-lg truncate leading-tight">
+-            {building.name}
+-            {building.code && <span className="text-slate-400 font-normal text-sm mr-2">({building.code})</span>}
+-          </h1>
+-          {projectName && (
+-            <p className="text-slate-300 text-xs truncate">{projectName}</p>
+-          )}
+-        </div>
+-      </div>
+-
+-      <div className="sticky top-[52px] z-20 bg-white border-b border-slate-200 flex">
++      <PageHeader
++        title={<>{building.name}{building.code && <span className="text-white/60 font-normal text-sm mr-2">({building.code})</span>}</>}
++        crumbs={[projectName]}
++        onBack={handleBack}
++      />
++
++      <div className="sticky top-[60px] z-20 bg-white border-b border-slate-200 flex">
+         {TABS.map(tab => (
+           <button
+             key={tab.id}
+
+--- a/frontend/src/pages/BuildingDefectsPage.js
++++ b/frontend/src/pages/BuildingDefectsPage.js
+@@ -7,11 +7,12 @@
+ import { tCategory } from '../i18n';
+ import { toast } from 'sonner';
+ import FilterDrawer from '../components/FilterDrawer';
++import PageHeader from '../components/PageHeader';
+ import OfflineState from '../components/OfflineState';
+ import { useOnlineStatus } from '../hooks/useOnlineStatus';
+ import { arraysEqualAsSets } from '../utils/filterHelpers';
+ import {
+-  ArrowRight, Loader2, Building2, ChevronDown, ChevronUp,
++  Loader2, Building2, ChevronDown, ChevronUp,
+   Home, AlertTriangle, Clock, CheckCircle2, SlidersHorizontal, Search, X, Download, Pencil
+ } from 'lucide-react';
+ 
+@@ -402,29 +403,14 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50" dir="rtl">
+-      <div className="bg-slate-50">
+-        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
+-          <div className="flex items-center gap-3">
+-            <button
+-              onClick={() => navigate(safeReturnTo || `/projects/${projectId}/control?workMode=defects`)}
+-              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+-            >
+-              <ArrowRight className="w-5 h-5" />
+-            </button>
+-            <div className="flex-1 min-w-0">
+-              <div className="flex items-center gap-2">
+-                <Building2 className="w-5 h-5 text-amber-200" />
+-                <h1 className="text-lg font-bold truncate">{data.building?.name || 'בניין'}</h1>
+-              </div>
+-              <p className="text-xs text-amber-100 mt-0.5">
+-                {data.project?.name || ''} • סיכום ליקויים
+-              </p>
+-            </div>
+-          </div>
+-        </div>
+-      </div>
+-
+-      <div className="max-w-lg mx-auto px-4 -mt-2 space-y-3">
++      <PageHeader
++        title={data.building?.name || 'בניין'}
++        crumbs={[data.project?.name, 'ליקויים']}
++        onBack={() => navigate(safeReturnTo || `/projects/${projectId}/control?workMode=defects`)}
++        maxWidth="max-w-lg"
++      />
++
++      <div className="max-w-lg mx-auto px-4 mt-3 space-y-3">
+         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+           <button
+             onClick={() => setSummaryOpen(!summaryOpen)}
+
+--- a/frontend/src/pages/ApartmentDashboardPage.js
++++ b/frontend/src/pages/ApartmentDashboardPage.js
+@@ -12,7 +12,7 @@
+ import StatCard from '../components/StatCard';
+ import StatusPill from '../components/StatusPill';
+ import CategoryPill from '../components/CategoryPill';
+-import Breadcrumbs from '../components/Breadcrumbs';
++import PageHeader, { PAGE_HEADER_ACTION_CLASS } from '../components/PageHeader';
+ import TaskCardSkeleton from '../components/TaskCardSkeleton';
+ import { spareSummaryText } from '../components/matrix/SparePill';
+ import EscalationSheet from '../components/spare/EscalationSheet';
+@@ -23,8 +23,8 @@
+ import { FEATURES } from '../config/features';
+ import { getDefectCreatesForUnit } from '../services/offlineOutbox';
+ import {
+-  ArrowRight, Loader2, AlertTriangle, CheckCircle2,
+-  ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
++  Loader2, AlertTriangle, CheckCircle2,
++  ChevronDown, ChevronUp, ChevronLeft, ShieldAlert, Image as ImageIcon, Plus,
+   SlidersHorizontal, Search, X, Download, Pencil, Save, Info, Trash2,
+   ClipboardCheck
+ } from 'lucide-react';
+@@ -614,69 +614,67 @@
+ 
+   return (
+     <div className={`min-h-screen bg-slate-50 ${canCreateDefect ? 'pb-24' : 'pb-6'}`} dir="rtl">
+-      <div className="bg-slate-50">
+-        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
+-          <div className="flex items-center gap-3">
+-            <button
+-              onClick={() => {
+-                if (safeReturnTo) { navigate(safeReturnTo); return; }
+-                const navState = location.state;
+-                if (navState?.from === 'unit-home') {
+-                  navigate(`/projects/${projectId}/units/${unitId}`);
+-                } else if (navState?.buildingId) {
+-                  navigate(`/projects/${projectId}/buildings/${navState.buildingId}/defects`);
+-                } else {
+-                  navigate(`/projects/${projectId}/units/${unitId}`);
+-                }
+-              }}
+-              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+-            >
+-              <ArrowRight className="w-5 h-5" />
+-            </button>
+-            <div className="flex-1 min-w-0">
+-              <div className="flex items-center gap-2">
+-                <h1 className="text-lg font-bold truncate">{formatUnitLabel(effectiveLabel)}</h1>
+-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${severity.color}`}>
+-                  {severity.label}
+-                </span>
+-                {TAG_MAP[unit.unit_type_tag] && (
+-                  <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-white/20 text-white">
+-                    {TAG_MAP[unit.unit_type_tag].label}
+-                  </span>
+-                )}
+-                <button
+-                  onClick={() => setEditingUnit(unit)}
+-                  className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+-                >
+-                  <Pencil className="w-3.5 h-3.5 text-white" />
+-                </button>
+-                {floorIdForQc && (
+-                  <button
+-                    onClick={() => {
+-                      const returnTo = encodeURIComponent(location.pathname + location.search);
+-                      navigate(`/projects/${projectId}/floors/${floorIdForQc}?returnTo=${returnTo}`);
+-                    }}
+-                    className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-white text-amber-700 hover:bg-amber-50 transition-colors font-semibold shadow-sm"
+-                    title="מעבר לבקרת ביצוע של הקומה"
+-                  >
+-                    <ClipboardCheck className="w-3.5 h-3.5" />
+-                    מעבר לבקרת ביצוע של הקומה
+-                  </button>
+-                )}
+-              </div>
+-              <Breadcrumbs
+-                items={[project?.name, building?.name, floor?.name]}
+-                className="text-amber-100"
+-              />
+-              {unit.unit_note && (
+-                <p className="text-[11px] text-amber-100/80 mt-0.5 truncate">{unit.unit_note}</p>
+-              )}
+-            </div>
+-          </div>
++      <PageHeader
++        title={formatUnitLabel(effectiveLabel)}
++        titleExtra={
++          <>
++            <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-bold ${severity.color}`}>
++              {severity.label}
++            </span>
++            {TAG_MAP[unit.unit_type_tag] && (
++              <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium bg-white/20 text-white">
++                {TAG_MAP[unit.unit_type_tag].label}
++              </span>
++            )}
++          </>
++        }
++        crumbs={[project?.name, building?.name, floor?.name]}
++        below={unit.unit_note ? (
++          <p className="text-xs text-white/60 mt-0.5 truncate">{unit.unit_note}</p>
++        ) : null}
++        maxWidth="max-w-lg"
++        onBack={() => {
++          if (safeReturnTo) { navigate(safeReturnTo); return; }
++          const navState = location.state;
++          if (navState?.from === 'unit-home') {
++            navigate(`/projects/${projectId}/units/${unitId}`);
++          } else if (navState?.buildingId) {
++            navigate(`/projects/${projectId}/buildings/${navState.buildingId}/defects`);
++          } else {
++            navigate(`/projects/${projectId}/units/${unitId}`);
++          }
++        }}
++        actions={
++          <button
++            type="button"
++            onClick={() => setEditingUnit(unit)}
++            aria-label="עריכת פרטי הדירה"
++            title="עריכת פרטי הדירה"
++            className={PAGE_HEADER_ACTION_CLASS}
++          >
++            <Pencil className="w-5 h-5" />
++          </button>
++        }
++      />
++      {floorIdForQc && (
++        <div className="bg-white border-b border-slate-200">
++          <button
++            type="button"
++            onClick={() => {
++              const returnTo = encodeURIComponent(location.pathname + location.search);
++              navigate(`/projects/${projectId}/floors/${floorIdForQc}?returnTo=${returnTo}`);
++            }}
++            className="max-w-lg mx-auto w-full min-h-[44px] px-4 flex items-center gap-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 transition-colors"
++            title="מעבר לבקרת ביצוע של הקומה"
++          >
++            <ClipboardCheck className="w-[18px] h-[18px] text-amber-500 flex-shrink-0" />
++            <span className="flex-1 text-right">בקרת ביצוע של הקומה</span>
++            <ChevronLeft className="w-[18px] h-[18px] text-slate-500 flex-shrink-0" />
++          </button>
+         </div>
+-      </div>
+-
+-      <div className="max-w-lg mx-auto px-4 -mt-2">
++      )}
++
++      <div className="max-w-lg mx-auto px-4 mt-3">
+         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+           <button
+             onClick={() => setSummaryOpen(!summaryOpen)}
+
+--- a/frontend/src/pages/UnitHomePage.js
++++ b/frontend/src/pages/UnitHomePage.js
+@@ -7,7 +7,7 @@
+ import { t } from '../i18n';
+ import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
+ import StatCard from '../components/StatCard';
+-import Breadcrumbs from '../components/Breadcrumbs';
++import PageHeader, { PAGE_HEADER_ACTION_CLASS } from '../components/PageHeader';
+ import {
+   ArrowRight, Loader2, Building2, Layers, DoorOpen,
+   ClipboardList, FileText, Home, Pencil
+@@ -94,58 +94,48 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50" dir="rtl">
+-      <div className="bg-slate-50">
+-        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
+-          <div className="flex items-center gap-3">
+-            <button
+-              onClick={() => {
+-                const role = user?.role;
+-                if (role === 'contractor') {
+-                  navigate('/projects');
+-                } else if (role === 'viewer') {
+-                  navigate(`/projects/${projectId}/tasks`);
+-                } else if (building?.id) {
+-                  // BATCH unit-back-nav-fix (2026-05-25) — Bug 4: a unit
+-                  // lives inside a building, so the back arrow returns
+-                  // to that building's page rather than the project
+-                  // structure tab.
+-                  navigate(`/projects/${projectId}/buildings/${building.id}`);
+-                } else {
+-                  navigate(`/projects/${projectId}/control?workMode=structure`);
+-                }
+-              }}
+-              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+-            >
+-              <ArrowRight className="w-5 h-5" />
+-            </button>
+-            <div className="flex-1 min-w-0">
+-              <div className="flex items-center gap-2">
+-                <h1 className="text-lg font-bold truncate">{formatUnitLabel(effectiveLabel)}</h1>
+-                {TAG_MAP[unit.unit_type_tag] && (
+-                  <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-white/20 text-white">
+-                    {TAG_MAP[unit.unit_type_tag].label}
+-                  </span>
+-                )}
+-                <button
+-                  onClick={() => setEditingUnit(unit)}
+-                  className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+-                >
+-                  <Pencil className="w-3.5 h-3.5 text-white" />
+-                </button>
+-              </div>
+-              <Breadcrumbs
+-                items={[project?.name, building?.name, floor?.name]}
+-                className="text-amber-100"
+-              />
+-              {unit.unit_note && (
+-                <p className="text-[11px] text-amber-100/80 mt-0.5 truncate">{unit.unit_note}</p>
+-              )}
+-            </div>
+-          </div>
+-        </div>
+-      </div>
++      <PageHeader
++        title={formatUnitLabel(effectiveLabel)}
++        titleExtra={TAG_MAP[unit.unit_type_tag] ? (
++          <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium bg-white/20 text-white">
++            {TAG_MAP[unit.unit_type_tag].label}
++          </span>
++        ) : null}
++        crumbs={[project?.name, building?.name, floor?.name]}
++        below={unit.unit_note ? (
++          <p className="text-xs text-white/60 mt-0.5 truncate">{unit.unit_note}</p>
++        ) : null}
++        maxWidth="max-w-lg"
++        onBack={() => {
++          const role = user?.role;
++          if (role === 'contractor') {
++            navigate('/projects');
++          } else if (role === 'viewer') {
++            navigate(`/projects/${projectId}/tasks`);
++          } else if (building?.id) {
++            // BATCH unit-back-nav-fix (2026-05-25) — Bug 4: a unit
++            // lives inside a building, so the back arrow returns
++            // to that building's page rather than the project
++            // structure tab.
++            navigate(`/projects/${projectId}/buildings/${building.id}`);
++          } else {
++            navigate(`/projects/${projectId}/control?workMode=structure`);
++          }
++        }}
++        actions={
++          <button
++            type="button"
++            onClick={() => setEditingUnit(unit)}
++            aria-label="עריכת פרטי הדירה"
++            title="עריכת פרטי הדירה"
++            className={PAGE_HEADER_ACTION_CLASS}
++          >
++            <Pencil className="w-5 h-5" />
++          </button>
++        }
++      />
+ 
+-      <div className="max-w-lg mx-auto px-4 -mt-2">
++      <div className="max-w-lg mx-auto px-4 mt-3">
+         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+           <div className="grid grid-cols-3 divide-x divide-slate-100" dir="ltr">
+             <StatCard label={t('unitHome', 'kpiOpen')} value={kpi?.open ?? 0} />
+
+--- a/frontend/src/pages/UnitDetailPage.js
++++ b/frontend/src/pages/UnitDetailPage.js
+@@ -8,10 +8,10 @@
+ import StatCard from '../components/StatCard';
+ import StatusPill from '../components/StatusPill';
+ import CategoryPill from '../components/CategoryPill';
+-import Breadcrumbs from '../components/Breadcrumbs';
++import PageHeader from '../components/PageHeader';
+ import TaskCardSkeleton from '../components/TaskCardSkeleton';
+ import {
+-  ArrowRight, Loader2, Plus, Filter, Building2, Layers, DoorOpen,
++  Loader2, Plus, Filter, Building2, Layers, DoorOpen,
+   CheckCircle2, ChevronDown, X
+ } from 'lucide-react';
+ import { tCategory } from '../i18n';
+@@ -180,27 +180,14 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50 pb-24" dir="rtl">
+-      <div className="bg-slate-50">
+-        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
+-          <div className="flex items-center gap-3">
+-            <button
+-              onClick={() => navigate(`/projects/${projectId}/units/${unitId}`)}
+-              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+-            >
+-              <ArrowRight className="w-5 h-5" />
+-            </button>
+-            <div className="flex-1 min-w-0">
+-              <h1 className="text-lg font-bold truncate">{formatUnitLabel(effectiveLabel)}</h1>
+-              <Breadcrumbs
+-                items={[project?.name, building?.name, floor?.name]}
+-                className="text-amber-100"
+-              />
+-            </div>
+-          </div>
+-        </div>
+-      </div>
+-
+-      <div className="max-w-lg mx-auto px-4 -mt-2">
++      <PageHeader
++        title={formatUnitLabel(effectiveLabel)}
++        crumbs={[project?.name, building?.name, floor?.name]}
++        onBack={() => navigate(`/projects/${projectId}/units/${unitId}`)}
++        maxWidth="max-w-lg"
++      />
++
++      <div className="max-w-lg mx-auto px-4 mt-3">
+         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+           <div className="grid grid-cols-3 divide-x divide-slate-100" dir="ltr">
+             <StatCard label="פתוחות" value={kpi.open} />
+
+--- a/frontend/src/pages/TaskDetailPage.js
++++ b/frontend/src/pages/TaskDetailPage.js
+@@ -7,7 +7,7 @@
+ import { compressImage } from '../utils/imageCompress';
+ import {
+   ChevronRight, Building2, Layers, DoorOpen, Clock, User, Briefcase,
+-  MessageSquare, Paperclip, ArrowRight, Send, Image as ImageIcon,
++  MessageSquare, Paperclip, Send, Image as ImageIcon,
+   Phone, RefreshCw, CheckCircle, XCircle, AlertTriangle, Bell,
+   Upload, ShieldCheck, ShieldX, Camera, X, Download, Eye,
+   Settings, ChevronDown, Lock, Edit3, CircleDot, ArrowDownCircle, ArrowUpCircle,
+@@ -16,6 +16,7 @@
+ import * as DialogPrimitive from '@radix-ui/react-dialog';
+ import { Button } from '../components/ui/button';
+ import { Card } from '../components/ui/card';
++import PageHeader from '../components/PageHeader';
+ 
+ const PhotoAnnotation = React.lazy(() => import('../components/PhotoAnnotation'));
+ 
+@@ -880,48 +881,43 @@
+     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50">
+       <input ref={uploadCameraRef} type="file" accept="image/*" capture="environment" onChange={handleAddPhoto} className="hidden" />
+       <input ref={uploadGalleryRef} type="file" accept="image/*" onChange={handleAddPhoto} className="hidden" />
+-      <div className="bg-white border-b shadow-sm sticky top-0 z-10">
+-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between" dir="rtl">
+-          <button
+-            onClick={() => {
+-              const returnTo = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
+-              if (returnTo) {
+-                sessionStorage.removeItem(RETURN_TO_KEY);
+-                navigate(returnTo);
+-              } else if (isContractor) {
+-                // BATCH I (2026-05-11) — P0 SECURITY: contractors never
+-                // land on the building-defects page (cross-contractor
+-                // data leak). Defense in depth: backend also returns
+-                // 403 if URL is hand-crafted. Order: explicit returnTo
+-                // > isContractor > building default > project default.
+-                // BATCH I.1 (2026-05-11) — fixed landing from `/` (project
+-                // list) to project-scoped URL so contractor sees their own
+-                // defects in the right project, not an unhelpful project
+-                // list. Defensive ternary for the impossible case where
+-                // task.project_id is missing (Task schema requires it).
+-                navigate(
+-                  task?.project_id
+-                    ? `/projects/${task.project_id}?src=contractor`
+-                    : '/projects'
+-                );
+-              } else if (task?.building_id && task?.project_id) {
+-                navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
+-              } else if (task?.project_id) {
+-                navigate(`/projects/${task.project_id}/control?workMode=defects`);
+-              } else {
+-                navigate('/projects');
+-              }
+-            }}
+-            className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
+-            aria-label={(() => { const rt = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY); if (externalEntry && !location.state?.returnTo) return t('taskDetail', 'back_to_my_defects'); return rt && rt.includes('/dashboard') ? t('taskDetail', 'back_to_dashboard') : t('taskDetail', 'back_to_defects_list'); })()}
+-          >
+-            <ArrowRight className="w-5 h-5 text-slate-600" />
+-          </button>
+-          <div className="flex items-center gap-2">
+-            <span className="font-bold text-slate-800">BrikOps</span>
+-          </div>
+-        </div>
+-      </div>
++      <PageHeader
++        title="ליקוי"
++        titleTag="p"
++        crumbs={[task.building_name, task.floor_name, task.unit_name ? `${t('taskDetail', 'unit')} ${task.unit_name}` : null]}
++        maxWidth="max-w-2xl"
++        zClass="z-10"
++        backLabel={(() => { const rt = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY); if (externalEntry && !location.state?.returnTo) return t('taskDetail', 'back_to_my_defects'); return rt && rt.includes('/dashboard') ? t('taskDetail', 'back_to_dashboard') : t('taskDetail', 'back_to_defects_list'); })()}
++        onBack={() => {
++          const returnTo = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
++          if (returnTo) {
++            sessionStorage.removeItem(RETURN_TO_KEY);
++            navigate(returnTo);
++          } else if (isContractor) {
++            // BATCH I (2026-05-11) — P0 SECURITY: contractors never
++            // land on the building-defects page (cross-contractor
++            // data leak). Defense in depth: backend also returns
++            // 403 if URL is hand-crafted. Order: explicit returnTo
++            // > isContractor > building default > project default.
++            // BATCH I.1 (2026-05-11) — fixed landing from `/` (project
++            // list) to project-scoped URL so contractor sees their own
++            // defects in the right project, not an unhelpful project
++            // list. Defensive ternary for the impossible case where
++            // task.project_id is missing (Task schema requires it).
++            navigate(
++              task?.project_id
++                ? `/projects/${task.project_id}?src=contractor`
++                : '/projects'
++            );
++          } else if (task?.building_id && task?.project_id) {
++            navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
++          } else if (task?.project_id) {
++            navigate(`/projects/${task.project_id}/control?workMode=defects`);
++          } else {
++            navigate('/projects');
++          }
++        }}
++      />
+ 
+       <div className="max-w-2xl mx-auto px-4 py-6 space-y-4" dir="rtl">
+         <Card className="p-5">
+
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -3838,8 +3838,9 @@
+                   navigate('/projects');
+                 }
+               }}
+-              className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
++              className="h-11 w-11 flex-shrink-0 flex items-center justify-center bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
+               title={searchParams.get('from') === 'dashboard' ? 'חזרה לדשבורד' : 'חזרה לפרויקטים'}
++              aria-label={searchParams.get('from') === 'dashboard' ? 'חזרה לדשבורד' : 'חזרה לפרויקטים'}
+             >
+               <ArrowRight className="w-5 h-5" />
+             </button>
+
+frontend/src/components/PageHeader.jsx (NEW, full file)
+import React from 'react';
+import { ArrowRight } from 'lucide-react';
+import Breadcrumbs from './Breadcrumbs';
+
+// #621 — one page header for the drill-down screens (building → building defects → unit → defect):
+// navy bar, 44px back button, title + location line, optional 44px actions on the far side.
+export const PAGE_HEADER_ACTION_CLASS =
+  'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-[10px] bg-white/[0.07] border border-white/10 hover:bg-white/[0.14] active:bg-white/20 transition-colors';
+
+const PageHeader = ({
+  title,
+  titleTag: TitleTag = 'h1',
+  titleExtra = null,
+  crumbs = [],
+  below = null,
+  actions = null,
+  onBack,
+  backLabel = 'חזרה',
+  maxWidth = '',
+  zClass = 'z-30',
+}) => (
+  <header className={`sticky top-0 ${zClass} bg-navy text-white`} dir="rtl">
+    <div className={`mx-auto ${maxWidth} px-3 py-2 min-h-[60px] flex items-center gap-2`}>
+      {onBack && (
+        <button type="button" onClick={onBack} aria-label={backLabel} title={backLabel} className={PAGE_HEADER_ACTION_CLASS}>
+          <ArrowRight className="w-5 h-5" />
+        </button>
+      )}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <TitleTag className="text-lg font-bold leading-6 truncate" style={{ fontFamily: "'Rubik', sans-serif" }}>{title}</TitleTag>
+          {titleExtra}
+        </div>
+        <Breadcrumbs items={crumbs} className="text-white/70 mt-0.5" />
+        {below}
+      </div>
+      {actions}
+    </div>
+  </header>
+);
+
+export default PageHeader;
+
+V2 — line counts
+frontend/src/components/Breadcrumbs.jsx: +9/-3; 18 -> 24 lines
+frontend/src/pages/InnerBuildingPage.js: +9/-17; 629 -> 621 lines
+frontend/src/pages/BuildingDefectsPage.js: +10/-24; 673 -> 659 lines
+frontend/src/pages/ApartmentDashboardPage.js: +63/-65; 1246 -> 1244 lines
+frontend/src/pages/UnitHomePage.js: +42/-52; 203 -> 193 lines
+frontend/src/pages/UnitDetailPage.js: +10/-23; 382 -> 369 lines
+frontend/src/pages/TaskDetailPage.js: +39/-43; 2102 -> 2098 lines
+frontend/src/pages/ProjectControlPage.js: +2/-1; 4330 -> 4331 lines
+PageHeader.jsx: NEW +42/-0; 42 lines
+
+V3 — verification
+T1 — MD5 actual (all match specification)
+5f3e74fac965fda18afb234460f0950e  frontend/src/components/PageHeader.jsx
+f585f518faba355548c286abee3e96d5  frontend/src/components/Breadcrumbs.jsx
+618eb5ca3d9c75e5d32af0eb192ba6a9  frontend/src/pages/InnerBuildingPage.js
+d576dba57eb34d16390cfe9015b49f42  frontend/src/pages/BuildingDefectsPage.js
+91f66afa9f98b87304d06f59a183e73f  frontend/src/pages/ApartmentDashboardPage.js
+adb2c35fe616c0341944b4f8be0d0f67  frontend/src/pages/UnitHomePage.js
+8525a59a191434d971a038f792403aea  frontend/src/pages/UnitDetailPage.js
+f88889bd4b723041db3ba4dfb3b3306d  frontend/src/pages/TaskDetailPage.js
+392d035f6766903f44e470222cc5385d  frontend/src/pages/ProjectControlPage.js
+
+T2
+frontend/src/components/PageHeader.jsx:3:import Breadcrumbs from './Breadcrumbs';
+T3
+frontend/src/pages/InnerBuildingPage.js:2
+frontend/src/pages/BuildingDefectsPage.js:2
+frontend/src/pages/ApartmentDashboardPage.js:2
+frontend/src/pages/UnitHomePage.js:2
+frontend/src/pages/UnitDetailPage.js:2
+frontend/src/pages/TaskDetailPage.js:2
+frontend/src/pages/ProjectControlPage.js:0
+T4
+frontend/src/pages/BuildingDefectsPage.js:0
+frontend/src/pages/ApartmentDashboardPage.js:0
+frontend/src/pages/UnitHomePage.js:0
+frontend/src/pages/UnitDetailPage.js:0
+0
+T5
+329:      <div className="sticky top-[60px] z-20 bg-white border-b border-slate-200 flex">
+T6
+frontend/src/pages/InnerBuildingPage.js:0
+frontend/src/pages/BuildingDefectsPage.js:0
+frontend/src/pages/ApartmentDashboardPage.js:0
+frontend/src/pages/UnitHomePage.js:2
+frontend/src/pages/UnitDetailPage.js:0
+frontend/src/pages/TaskDetailPage.js:0
+
+T7 command: cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" BUILD_PATH=/tmp/batch621/verified-build npm run build
+Exit 0 — Compiled successfully.
+Jest: not run — canvas prerequisite probe confirmed libuuid.so.1 missing (ERR_DLOPEN_FAILED); no infrastructure changes.
+Browser: not run — local harness. Preview capture attempted, connection refused; configured launcher /tmp/batch606/normal-launch.sh missing. No rendered UI claims.
+Staging seven-screen verification remains user-owned as specified in T8.
+
+V4 — remaining amber gradients (read-only)
+frontend/src/pages/ProjectPlansPage.js:526:        <div className="bg-gradient-to-l from-amber-600 to-amber-500 text-white sticky top-0 z-30">
+frontend/src/pages/ProjectPlansPage.js:558:      <div className="bg-gradient-to-l from-amber-600 to-amber-500 text-white sticky top-0 z-30">
+frontend/src/pages/UnitPlansPage.js:382:        <div className="bg-gradient-to-l from-amber-600 to-amber-500 text-white sticky top-0 z-30">
+frontend/src/pages/UnitPlansPage.js:414:      <div className="bg-gradient-to-l from-amber-600 to-amber-500 text-white sticky top-0 z-30">
+frontend/src/pages/MonthlyClosePage.js:94:          <div className="flex-1 rounded-2xl bg-gradient-to-l from-amber-500 to-orange-400 p-4 text-white shadow-sm">
+
+V5 — scope
+Exactly 1 new + 8 edited application files; 0 deleted. All nine MD5s match F0–F8/T1. Back handlers, role branches, comments and QC navigation preserved by exact-file verification. No other source changes in the captured frontend/src and backend scope. No Git commands, deployment, dependencies, config or environment edits. review.txt unchanged.
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
