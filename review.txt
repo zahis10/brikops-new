@@ -15704,3 +15704,318 @@ frontend/src/pages/MonthlyClosePage.js:94:          <div className="flex-1 round
 V5 — scope
 Exactly 1 new + 8 edited application files; 0 deleted. All nine MD5s match F0–F8/T1. Back handlers, role branches, comments and QC navigation preserved by exact-file verification. No other source changes in the captured frontend/src and backend scope. No Git commands, deployment, dependencies, config or environment edits. review.txt unchanged.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#622 (17.11)
+
+STEP 0: wc -c review.txt = 883698 bytes; below 2 MB.
+review.txt untouched; SHA256 verified unchanged: 910d3f77816acdb27517f7f96e6b71c77d835d06f1140a12b6dd28e21a97d096
+
+V1 — changed regions with 3 context lines; full new file
+
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -23,9 +23,9 @@
+ import {
+   X, ChevronDown, ChevronRight, ChevronUp, Loader2, Building2, Layers, DoorOpen,
+   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
+-  RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
+-  Zap, Check, CheckCircle, Archive, Undo2, ClipboardCheck, FileSignature, Clock, ListTodo,
+-  Package, ShieldAlert, NotebookPen
++  RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, Search,
++  Zap, Check, CheckCircle, Archive, Undo2, ClipboardCheck, Clock, ListTodo,
++  Package
+ } from 'lucide-react';
+ import { Button } from '../components/ui/button';
+ import { Card } from '../components/ui/card';
+@@ -34,6 +34,7 @@
+ import NotificationBell from '../components/NotificationBell';
+ import UserDrawer from '../components/UserDrawer';
+ import ContactPickerButton from '../components/ContactPickerButton';
++import TabBar from '../components/TabBar';
+ import { MoreVertical } from 'lucide-react';
+ import HamburgerMenu from '../components/HamburgerMenu';
+ import OfflineState from '../components/OfflineState';
+@@ -85,9 +86,9 @@
+ };
+ 
+ const SECONDARY_TABS = [
+-  { id: 'team', label: 'צוות', icon: Users, color: 'text-blue-600', bg: 'bg-blue-100 border border-blue-200' },
+-  { id: 'companies', label: 'קבלנים וחברות', icon: Building2, color: 'text-violet-600', bg: 'bg-violet-100 border border-violet-200' },
+-  { id: 'data-export', label: 'ייצוא נתונים', icon: Package, color: 'text-emerald-600', bg: 'bg-emerald-100 border border-emerald-200' },
++  { id: 'team', label: 'צוות', icon: Users },
++  { id: 'companies', label: 'קבלנים וחברות', icon: Building2 },
++  { id: 'data-export', label: 'ייצוא נתונים', icon: Package },
+ ];
+ 
+ const BottomSheetModal = ({ open, onClose, title, children }) => {
+@@ -3803,14 +3804,14 @@
+   const isOnboarding = !project.onboarding_complete && !onboardingDismissed && !allOnboardingDone;
+ 
+   const workTabs = [
+-    { id: 'dashboard', label: 'דשבורד', icon: BarChart3, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+-    { id: 'structure', label: 'מבנה', icon: Building2 },
+-    { id: 'qc', label: 'בקרת ביצוע', icon: ClipboardCheck, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+-    { id: 'defects', label: 'ליקויים', icon: AlertTriangle },
+-    { id: 'handover', label: 'מסירות', icon: FileSignature, hidden: !['owner', 'admin', 'project_manager', 'management_team', 'contractor'].includes(myRole) },
+-    { id: 'safety', label: 'בטיחות', icon: ShieldAlert, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+-    { id: 'diary', label: 'יומן עבודה', icon: NotebookPen, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+-    { id: 'plans', label: 'תוכניות', icon: FileText },
++    { id: 'dashboard', label: 'דשבורד', hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
++    { id: 'structure', label: 'מבנה' },
++    { id: 'qc', label: 'בקרת ביצוע', hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
++    { id: 'defects', label: 'ליקויים' },
++    { id: 'handover', label: 'מסירות', hidden: !['owner', 'admin', 'project_manager', 'management_team', 'contractor'].includes(myRole) },
++    { id: 'safety', label: 'בטיחות', hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
++    { id: 'diary', label: 'יומן עבודה', hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
++    { id: 'plans', label: 'תוכניות' },
+   ].filter(t => !t.hidden);
+ 
+   const handleWorkTab = (id) => {
+@@ -3867,43 +3868,37 @@
+           </div>
+         </header>
+ 
+-        <div className="bg-white border-b border-slate-200">
+-          <div className="max-w-[1100px] mx-auto flex gap-1 px-3 py-2 overflow-x-auto" dir="rtl">
+-            {workTabs.map(wt => {
+-              const Icon = wt.icon;
+-              const isActive = workMode === wt.id;
+-              return (
+-                <button key={wt.id} onClick={() => handleWorkTab(wt.id)}
+-                  className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md' : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}>
+-                  <Icon className="w-4 h-4" />
+-                  {wt.label}
+-                </button>
+-              );
+-            })}
+-          </div>
+-        </div>
++        <TabBar
++          tabs={workTabs}
++          activeId={workMode}
++          onSelect={handleWorkTab}
++          maxWidth="max-w-[1100px]"
++          ariaLabel="ניווט בפרויקט"
++        />
+       </div>
+ 
+       <div className="bg-white border-b border-slate-100">
+-        <div className="relative max-w-[1100px] mx-auto">
+-          <div className="px-4 py-2 flex gap-2 overflow-x-auto scrollbar-hide">
+-            {MGMT_TABS.map(tab => {
+-              const Icon = tab.icon;
+-              const isActive = activeTab === tab.id;
+-              return (
+-              <button key={tab.id} onClick={() => setActiveTab(isActive ? '' : tab.id)}
+-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${
++        <div className="max-w-[1100px] mx-auto px-4 py-1.5 flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
++          {MGMT_TABS.map(tab => {
++            const Icon = tab.icon;
++            const isActive = activeTab === tab.id;
++            return (
++              <button
++                key={tab.id}
++                type="button"
++                aria-pressed={isActive}
++                onClick={() => setActiveTab(isActive ? '' : tab.id)}
++                className={`flex-shrink-0 min-h-[44px] flex items-center gap-1.5 px-3.5 rounded-full border text-sm font-medium whitespace-nowrap transition-colors ${
+                   isActive
+-                    ? 'bg-amber-500 text-white shadow-sm'
+-                    : `${tab.bg} text-slate-600 hover:shadow-sm`
+-                }`}>
+-                <Icon className={`w-4 h-4 ${isActive ? 'text-white' : tab.color}`} />
++                    ? 'bg-amber-500 border-amber-500 text-white'
++                    : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
++                }`}
++              >
++                <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-500'}`} />
+                 {tab.label}
+               </button>
+-              );
+-            })}
+-          </div>
+-          <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-white to-transparent pointer-events-none md:hidden" />
++            );
++          })}
+         </div>
+       </div>
+ 
+
+--- a/frontend/src/pages/InnerBuildingPage.js
++++ b/frontend/src/pages/InnerBuildingPage.js
+@@ -4,6 +4,7 @@
+ import { formatUnitLabel } from '../utils/formatters';
+ import { Card } from '../components/ui/card';
+ import PageHeader from '../components/PageHeader';
++import TabBar from '../components/TabBar';
+ import { toast } from 'sonner';
+ import {
+   Loader2, Building2, Layers, Home,
+@@ -326,21 +327,13 @@
+         onBack={handleBack}
+       />
+ 
+-      <div className="sticky top-[60px] z-20 bg-white border-b border-slate-200 flex">
+-        {TABS.map(tab => (
+-          <button
+-            key={tab.id}
+-            onClick={() => handleTabClick(tab.id)}
+-            className={`flex-1 py-3 text-sm font-medium text-center transition-colors border-b-2 ${
+-              activeTab === tab.id
+-                ? 'text-amber-600 border-amber-500'
+-                : 'text-slate-500 border-transparent hover:text-slate-700'
+-            }`}
+-          >
+-            {tab.label}
+-          </button>
+-        ))}
+-      </div>
++      <TabBar
++        tabs={TABS}
++        activeId={activeTab}
++        onSelect={handleTabClick}
++        className="sticky top-[60px] z-20"
++        ariaLabel="ניווט בבניין"
++      />
+ 
+       {activeTab === 'units' && (
+         <div className="p-4 space-y-4">
+
+frontend/src/components/TabBar.jsx (NEW, full file)
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+
+// #622 — one tab bar for page-level tabs: text tabs, the active one in navy with an orange underline.
+// fit: true = equal widths, false = natural widths with horizontal scroll, 'auto' = equal widths for up to 4 tabs.
+// When the tabs scroll, a 44px arrow appears on the side that has more tabs (so hidden tabs are never a surprise).
+const ARROW_CLASS = 'absolute top-0 bottom-0 w-11 flex items-center justify-center bg-white text-slate-500 hover:text-slate-700 border-slate-200';
+
+const TabBar = ({ tabs = [], activeId, onSelect, fit = 'auto', maxWidth = '', className = '', ariaLabel }) => {
+  const equal = fit === 'auto' ? tabs.length <= 4 : !!fit;
+  const listRef = useRef(null);
+  const [more, setMore] = useState({ start: false, end: false });
+
+  const update = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    const pos = Math.abs(el.scrollLeft); // RTL: 0 at the start (right side), grows towards the end (left side)
+    setMore({ start: pos > 4, end: pos < max - 4 });
+  }, []);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || equal) return undefined;
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    return () => {
+      el.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+    };
+  }, [equal, update, tabs.length]);
+
+  const scrollByTabs = (dir) => {
+    const el = listRef.current;
+    if (el) el.scrollBy({ left: dir * Math.round(el.clientWidth * 0.8), behavior: 'smooth' });
+  };
+
+  return (
+    <div className={`bg-white border-b border-slate-200 ${className}`} dir="rtl">
+      <div className={`relative mx-auto ${maxWidth}`}>
+        <div
+          ref={listRef}
+          role="tablist"
+          aria-label={ariaLabel}
+          className={`flex ${equal ? '' : 'overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}`}
+        >
+          {tabs.map((tab) => {
+            const active = tab.id === activeId;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => onSelect(tab.id)}
+                className={`${equal ? 'flex-1 min-w-0 px-1' : 'flex-shrink-0 px-4'} min-h-[48px] text-sm font-semibold whitespace-nowrap border-b-[3px] transition-colors touch-manipulation ${
+                  active ? 'text-navy border-amber-500' : 'text-slate-500 border-transparent hover:text-slate-700'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+        {!equal && more.start && (
+          <button type="button" aria-label="לטאבים הקודמים" onClick={() => scrollByTabs(1)} className={`${ARROW_CLASS} right-0 border-l`}>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+        )}
+        {!equal && more.end && (
+          <button type="button" aria-label="לטאבים נוספים" onClick={() => scrollByTabs(-1)} className={`${ARROW_CLASS} left-0 border-r`}>
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default TabBar;
+
+V2 — counts
+frontend/src/pages/ProjectControlPage.js: +40/-45; 4331 -> 4326 lines
+frontend/src/pages/InnerBuildingPage.js: +8/-15; 621 -> 614 lines
+TabBar.jsx: NEW +81/-0; 81 lines; 3454 bytes; LF; single terminal newline.
+
+V3 — checks run
+T1 MD5 actual (all match specification)
+dbbbd987edf55b768561f951d8f85538  frontend/src/components/TabBar.jsx
+78744adc894ae22da796bf67f2e1fd0b  frontend/src/pages/ProjectControlPage.js
+cba31bc1bd67866a4a6ecb90f92bafa1  frontend/src/pages/InnerBuildingPage.js
+
+T2
+frontend/src/pages/ProjectControlPage.js:37:import TabBar from '../components/TabBar';
+frontend/src/pages/InnerBuildingPage.js:7:import TabBar from '../components/TabBar';
+frontend/src/pages/ProjectControlPage.js:3871:        <TabBar
+frontend/src/pages/InnerBuildingPage.js:330:      <TabBar
+T3
+bg-blue-100 border border-blue-200\|bg-violet-100 border border-violet-200\|bg-emerald-100 border border-emerald-200
+0
+bg-gradient-to-r from-white to-transparent
+0
+scrollbar-hide
+0
+bg-amber-500 text-white shadow-md
+0
+BarChart3\|FileText\|FileSignature\|ShieldAlert\|NotebookPen
+0
+T4
+0
+334:        className="sticky top-[60px] z-20"
+T5
+    81 frontend/src/components/TabBar.jsx
+  4326 frontend/src/pages/ProjectControlPage.js
+   614 frontend/src/pages/InnerBuildingPage.js
+  5021 total
+
+T6 command: cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" BUILD_PATH=/tmp/batch622/verified-build npm run build
+Exit 0: Compiled successfully.
+Jest: not run — canvas prerequisite probe confirmed missing libuuid.so.1; no dependency or infrastructure changes.
+Browser: not run — local harness. Preview screenshot attempt failed with connection refused; no visual or interaction verification claimed.
+T7 staging verification remains user-owned. Reference ux/622-before-after.png absent; no substitute created.
+
+V4 — read-only findings
+V4a
+frontend/src/pages/AdminPage.js:291:                  isActive ? 'bg-amber-500 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'
+V4b
+frontend/src/pages/AdminUsersPage.js:330:        <div className="flex gap-2 overflow-x-auto pb-2 mb-1 scrollbar-hide">
+frontend/src/pages/StageDetailPage.js:2274:        <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
+CSS/Tailwind definition search
+
+No scrollbar-hide definition found in searched frontend CSS files or tailwind.config.js (dependencies and generated build excluded).
+
+V5 — scope
+1 new + 2 edited application files; 0 deleted. Exact F0–F2/T1 MD5 match confirms approved handlers, hidden rules and chip expression retained. review.txt untouched. No Git commands, deploy, environment, config, dependency or other page edits.
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
