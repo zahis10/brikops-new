@@ -5,10 +5,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { t } from '../i18n';
 import {
-  ArrowRight, Loader2, Upload, FileText, Download, Eye,
-  Calendar, User, X, Plus, Search, AlertCircle, FolderOpen, Archive, RefreshCw, Clock, Users, CheckCircle,
+  Loader2, Upload, FileText, Download, Eye,
+  Calendar, User, X, Plus, Search, AlertCircle, Archive, RefreshCw, Clock, Users, CheckCircle,
   Edit3, Image, Ruler, FileType, ChevronDown, Filter, Maximize2, Settings
 } from 'lucide-react';
+import PageHeader, { PAGE_HEADER_ACTION_CLASS } from '../components/PageHeader';
 import PlanViewer from '../components/PlanViewer';
 import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
 import DisciplineManagerModal from '../components/DisciplineManagerModal';
@@ -226,10 +227,6 @@ const ProjectPlansPage = () => {
       counts[key] = (counts[key] || 0) + 1;
     });
     return counts;
-  }, [plans]);
-
-  const uniqueDisciplinesCount = useMemo(() => {
-    return new Set(plans.map(p => p.discipline).filter(Boolean)).size;
   }, [plans]);
 
   const filteredPlans = useMemo(() => {
@@ -523,16 +520,7 @@ const ProjectPlansPage = () => {
   if (loadError) {
     return (
       <div className="min-h-screen bg-slate-50" dir="rtl">
-        <div className="bg-gradient-to-l from-amber-600 to-amber-500 text-white sticky top-0 z-30">
-          <div className="max-w-4xl mx-auto px-4 py-3">
-            <div className="flex items-center gap-3">
-              <button onClick={handleBack} className="p-1.5 hover:bg-amber-700/30 rounded-lg transition-colors">
-                <ArrowRight className="w-5 h-5" />
-              </button>
-              <h1 className="text-base font-bold">תוכניות</h1>
-            </div>
-          </div>
-        </div>
+        <PageHeader title="תוכניות" onBack={handleBack} maxWidth="max-w-4xl" />
         <div className="max-w-4xl mx-auto px-4 py-12 text-center">
           <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
           {loadError === 'forbidden' ? (
@@ -555,35 +543,24 @@ const ProjectPlansPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 overflow-x-hidden" dir="rtl">
-      <div className="bg-gradient-to-l from-amber-600 to-amber-500 text-white sticky top-0 z-30">
-        <div className="max-w-2xl mx-auto px-4 py-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              <button onClick={handleBack} className="p-1.5 hover:bg-amber-700/30 rounded-lg transition-colors shrink-0">
-                <ArrowRight className="w-5 h-5" />
-              </button>
-              <div className="min-w-0">
-                <h1 className="text-base font-bold flex items-center gap-2 truncate">
-                  <FolderOpen className="w-4 h-4 shrink-0" />
-                  <span className="truncate">תוכניות {project?.name ? `— ${project.name}` : ''}</span>
-                </h1>
-                <div className="flex items-center gap-3 mt-0.5">
-                  <span className="text-[11px] text-amber-100">{plans.length} תוכניות</span>
-                  <span className="text-[11px] text-amber-200">·</span>
-                  <span className="text-[11px] text-amber-100">{uniqueDisciplinesCount} תחומים</span>
-                </div>
-              </div>
-            </div>
-            <button
-              onClick={() => navigate(`/projects/${projectId}/plans/archive`)}
-              className="flex items-center gap-1 text-[11px] text-amber-100 hover:text-white transition-colors shrink-0"
-            >
-              <Archive className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">ארכיון</span>
-            </button>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title={<>תוכניות <span className="text-white/60 font-normal text-sm mr-1">({plans.length})</span></>}
+        crumbs={[project?.name]}
+        onBack={handleBack}
+        maxWidth="max-w-2xl"
+        actions={
+          <button
+            type="button"
+            onClick={() => navigate(`/projects/${projectId}/plans/archive`)}
+            aria-label="ארכיון"
+            title="ארכיון"
+            className={`${PAGE_HEADER_ACTION_CLASS} sm:w-auto sm:px-3 sm:gap-1.5`}
+          >
+            <Archive className="w-5 h-5" />
+            <span className="hidden sm:inline text-sm font-medium">ארכיון</span>
+          </button>
+        }
+      />
 
       <div className="max-w-2xl mx-auto px-4 py-3 space-y-3">
         <div className="relative">

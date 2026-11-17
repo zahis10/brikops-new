@@ -6,10 +6,11 @@ import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import { t } from '../i18n';
 import {
-  ArrowRight, Loader2, Upload, FileText, Download, Eye,
+  Loader2, Upload, FileText, Download, Eye,
   Calendar, User, X, Plus, Search, AlertCircle, FolderOpen,
   Image, Ruler, FileType, Maximize2, Settings, Archive
 } from 'lucide-react';
+import PageHeader, { PAGE_HEADER_ACTION_CLASS } from '../components/PageHeader';
 import PlanViewer from '../components/PlanViewer';
 import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
 import DisciplineManagerModal from '../components/DisciplineManagerModal';
@@ -288,11 +289,6 @@ const UnitPlansPage = () => {
   const { unit, floor, building, project } = unitData || {};
   const effectiveLabel = unit?.effective_label || unit?.unit_no || '';
 
-  const subtitleParts = [];
-  if (project?.name) subtitleParts.push(project.name);
-  if (building?.name) subtitleParts.push(building.name);
-  if (floor?.name) subtitleParts.push(floor.name);
-
   const hasActiveFilters = activeDiscipline !== 'all' || search.trim();
   const clearFilters = () => { setActiveDiscipline('all'); setSearch(''); };
 
@@ -379,16 +375,7 @@ const UnitPlansPage = () => {
   if (loadError) {
     return (
       <div className="min-h-screen bg-slate-50" dir="rtl">
-        <div className="bg-gradient-to-l from-amber-600 to-amber-500 text-white sticky top-0 z-30">
-          <div className="max-w-2xl mx-auto px-4 py-3">
-            <div className="flex items-center gap-3">
-              <button onClick={handleBack} className="p-1.5 hover:bg-amber-700/30 rounded-lg transition-colors">
-                <ArrowRight className="w-5 h-5" />
-              </button>
-              <h1 className="text-base font-bold">תוכניות</h1>
-            </div>
-          </div>
-        </div>
+        <PageHeader title="תוכניות" onBack={handleBack} maxWidth="max-w-2xl" />
         <div className="max-w-2xl mx-auto px-4 py-12 text-center">
           <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
           {loadError === 'forbidden' ? (
@@ -411,34 +398,25 @@ const UnitPlansPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 overflow-x-hidden" dir="rtl">
-      <div className="bg-gradient-to-l from-amber-600 to-amber-500 text-white sticky top-0 z-30">
-        <div className="max-w-2xl mx-auto px-4 py-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              <button onClick={handleBack} className="p-1.5 hover:bg-amber-700/30 rounded-lg transition-colors shrink-0">
-                <ArrowRight className="w-5 h-5" />
-              </button>
-              <div className="min-w-0">
-                <h1 className="text-base font-bold flex items-center gap-2 truncate">
-                  <FolderOpen className="w-4 h-4 shrink-0" />
-                  <span className="truncate">תוכניות — {formatUnitLabel(effectiveLabel)}</span>
-                </h1>
-                {subtitleParts.length > 0 && (
-                  <p className="text-[11px] text-amber-100 truncate">{subtitleParts.join(' › ')}</p>
-                )}
-              </div>
-            </div>
-            {/* BATCH unit-plans-archive-mirror-general (2026-05-26) — header link to archive page */}
-            <button
-              onClick={() => navigate(`/projects/${projectId}/units/${unitId}/plans/archive`)}
-              className="flex items-center gap-1 text-[11px] text-amber-100 hover:text-white transition-colors shrink-0"
-            >
-              <Archive className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">ארכיון</span>
-            </button>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title={`תוכניות — ${formatUnitLabel(effectiveLabel)}`}
+        crumbs={[project?.name, building?.name, floor?.name]}
+        onBack={handleBack}
+        maxWidth="max-w-2xl"
+        actions={
+          // BATCH unit-plans-archive-mirror-general (2026-05-26) — header link to archive page
+          <button
+            type="button"
+            onClick={() => navigate(`/projects/${projectId}/units/${unitId}/plans/archive`)}
+            aria-label="ארכיון"
+            title="ארכיון"
+            className={`${PAGE_HEADER_ACTION_CLASS} sm:w-auto sm:px-3 sm:gap-1.5`}
+          >
+            <Archive className="w-5 h-5" />
+            <span className="hidden sm:inline text-sm font-medium">ארכיון</span>
+          </button>
+        }
+      />
 
       <div className="max-w-2xl mx-auto px-4 py-3 space-y-3">
         <div className="relative">

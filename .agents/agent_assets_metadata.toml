@@ -1467,3 +1467,17 @@ mtime_ms = 1794898189280
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/92c6003b-fb30-4947-ba62-923d23f78c5f/0e91a53e-8c0c-448d-8dc8-f2959de94205"
 storage_version_token = "1794898191625596"
 content_type = "text/plain"
+
+[[outputs]]
+id = "WnWSQ_Fgyndsr317lmAvB"
+uri = "file://attached_assets/batch623-review-section.txt"
+type = "text"
+title = "דוח מסירה — Batch 623"
+description = "F1–F2, חתימות, הבדלים ותוצאות בדיקות ובנייה. ללא פריסה."
+logical_id = "b6e89d07-bbb4-4386-94ea-d79828ac1610"
+content_hash = "sha256:a423ab25029fbabc2a4f8bd3a2f80cb91b417f1b681a8f7a02164c835b5a223e"
+size = 13472
+mtime_ms = 1794943602364
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/b6e89d07-bbb4-4386-94ea-d79828ac1610/9fccd431-cad1-4816-a4cc-f6281376451c"
+storage_version_token = "1794943624026130"
+content_type = "text/plain"
