@@ -4,6 +4,7 @@ import { projectService, buildingService, floorService } from '../services/api';
 import { formatUnitLabel } from '../utils/formatters';
 import { Card } from '../components/ui/card';
 import PageHeader from '../components/PageHeader';
+import TabBar from '../components/TabBar';
 import { toast } from 'sonner';
 import {
   Loader2, Building2, Layers, Home,
@@ -326,21 +327,13 @@ const InnerBuildingPage = () => {
         onBack={handleBack}
       />
 
-      <div className="sticky top-[60px] z-20 bg-white border-b border-slate-200 flex">
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => handleTabClick(tab.id)}
-            className={`flex-1 py-3 text-sm font-medium text-center transition-colors border-b-2 ${
-              activeTab === tab.id
-                ? 'text-amber-600 border-amber-500'
-                : 'text-slate-500 border-transparent hover:text-slate-700'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <TabBar
+        tabs={TABS}
+        activeId={activeTab}
+        onSelect={handleTabClick}
+        className="sticky top-[60px] z-20"
+        ariaLabel="ניווט בבניין"
+      />
 
       {activeTab === 'units' && (
         <div className="p-4 space-y-4">

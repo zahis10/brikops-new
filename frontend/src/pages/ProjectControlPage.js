@@ -23,9 +23,9 @@ import ProjectDataExportTab from '../components/ProjectDataExportTab';
 import {
   X, ChevronDown, ChevronRight, ChevronUp, Loader2, Building2, Layers, DoorOpen,
   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
-  RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
-  Zap, Check, CheckCircle, Archive, Undo2, ClipboardCheck, FileSignature, Clock, ListTodo,
-  Package, ShieldAlert, NotebookPen
+  RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, Search,
+  Zap, Check, CheckCircle, Archive, Undo2, ClipboardCheck, Clock, ListTodo,
+  Package
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -34,6 +34,7 @@ import ProjectSwitcher from '../components/ProjectSwitcher';
 import NotificationBell from '../components/NotificationBell';
 import UserDrawer from '../components/UserDrawer';
 import ContactPickerButton from '../components/ContactPickerButton';
+import TabBar from '../components/TabBar';
 import { MoreVertical } from 'lucide-react';
 import HamburgerMenu from '../components/HamburgerMenu';
 import OfflineState from '../components/OfflineState';
@@ -85,9 +86,9 @@ const KIND_COLORS = {
 };
 
 const SECONDARY_TABS = [
-  { id: 'team', label: 'צוות', icon: Users, color: 'text-blue-600', bg: 'bg-blue-100 border border-blue-200' },
-  { id: 'companies', label: 'קבלנים וחברות', icon: Building2, color: 'text-violet-600', bg: 'bg-violet-100 border border-violet-200' },
-  { id: 'data-export', label: 'ייצוא נתונים', icon: Package, color: 'text-emerald-600', bg: 'bg-emerald-100 border border-emerald-200' },
+  { id: 'team', label: 'צוות', icon: Users },
+  { id: 'companies', label: 'קבלנים וחברות', icon: Building2 },
+  { id: 'data-export', label: 'ייצוא נתונים', icon: Package },
 ];
 
 const BottomSheetModal = ({ open, onClose, title, children }) => {
@@ -3803,14 +3804,14 @@ const ProjectControlPage = () => {
   const isOnboarding = !project.onboarding_complete && !onboardingDismissed && !allOnboardingDone;
 
   const workTabs = [
-    { id: 'dashboard', label: 'דשבורד', icon: BarChart3, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
-    { id: 'structure', label: 'מבנה', icon: Building2 },
-    { id: 'qc', label: 'בקרת ביצוע', icon: ClipboardCheck, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
-    { id: 'defects', label: 'ליקויים', icon: AlertTriangle },
-    { id: 'handover', label: 'מסירות', icon: FileSignature, hidden: !['owner', 'admin', 'project_manager', 'management_team', 'contractor'].includes(myRole) },
-    { id: 'safety', label: 'בטיחות', icon: ShieldAlert, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
-    { id: 'diary', label: 'יומן עבודה', icon: NotebookPen, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
-    { id: 'plans', label: 'תוכניות', icon: FileText },
+    { id: 'dashboard', label: 'דשבורד', hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+    { id: 'structure', label: 'מבנה' },
+    { id: 'qc', label: 'בקרת ביצוע', hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+    { id: 'defects', label: 'ליקויים' },
+    { id: 'handover', label: 'מסירות', hidden: !['owner', 'admin', 'project_manager', 'management_team', 'contractor'].includes(myRole) },
+    { id: 'safety', label: 'בטיחות', hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+    { id: 'diary', label: 'יומן עבודה', hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+    { id: 'plans', label: 'תוכניות' },
   ].filter(t => !t.hidden);
 
   const handleWorkTab = (id) => {
@@ -3867,43 +3868,37 @@ const ProjectControlPage = () => {
           </div>
         </header>
 
-        <div className="bg-white border-b border-slate-200">
-          <div className="max-w-[1100px] mx-auto flex gap-1 px-3 py-2 overflow-x-auto" dir="rtl">
-            {workTabs.map(wt => {
-              const Icon = wt.icon;
-              const isActive = workMode === wt.id;
-              return (
-                <button key={wt.id} onClick={() => handleWorkTab(wt.id)}
-                  className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md' : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}>
-                  <Icon className="w-4 h-4" />
-                  {wt.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <TabBar
+          tabs={workTabs}
+          activeId={workMode}
+          onSelect={handleWorkTab}
+          maxWidth="max-w-[1100px]"
+          ariaLabel="ניווט בפרויקט"
+        />
       </div>
 
       <div className="bg-white border-b border-slate-100">
-        <div className="relative max-w-[1100px] mx-auto">
-          <div className="px-4 py-2 flex gap-2 overflow-x-auto scrollbar-hide">
-            {MGMT_TABS.map(tab => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-              <button key={tab.id} onClick={() => setActiveTab(isActive ? '' : tab.id)}
-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${
+        <div className="max-w-[1100px] mx-auto px-4 py-1.5 flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {MGMT_TABS.map(tab => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                aria-pressed={isActive}
+                onClick={() => setActiveTab(isActive ? '' : tab.id)}
+                className={`flex-shrink-0 min-h-[44px] flex items-center gap-1.5 px-3.5 rounded-full border text-sm font-medium whitespace-nowrap transition-colors ${
                   isActive
-                    ? 'bg-amber-500 text-white shadow-sm'
-                    : `${tab.bg} text-slate-600 hover:shadow-sm`
-                }`}>
-                <Icon className={`w-4 h-4 ${isActive ? 'text-white' : tab.color}`} />
+                    ? 'bg-amber-500 border-amber-500 text-white'
+                    : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-500'}`} />
                 {tab.label}
               </button>
-              );
-            })}
-          </div>
-          <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-white to-transparent pointer-events-none md:hidden" />
+            );
+          })}
         </div>
       </div>
 

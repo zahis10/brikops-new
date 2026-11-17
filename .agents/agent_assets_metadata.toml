@@ -1453,3 +1453,17 @@ mtime_ms = 1794748728778
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/09b1f272-9214-48eb-8271-98b4095899f3/2e6cdbe7-ced7-4bf3-8793-688bd450a301"
 storage_version_token = "1794748731074199"
 content_type = "text/plain"
+
+[[outputs]]
+id = "O6_RDBYR3kc3-X6BhQlK-"
+uri = "file://attached_assets/batch622-review-section.txt"
+type = "text"
+title = "דוח Batch 622"
+description = "דיפים, ספירות, חתימות ותוצאות בדיקות; ממתין לאישור, ללא פריסה."
+logical_id = "92c6003b-fb30-4947-ba62-923d23f78c5f"
+content_hash = "sha256:50d36a8ae26df4d843cd027553675bbd39727b539c9d31a445ef73e79a7b1cda"
+size = 14937
+mtime_ms = 1794898189280
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/92c6003b-fb30-4947-ba62-923d23f78c5f/0e91a53e-8c0c-448d-8dc8-f2959de94205"
+storage_version_token = "1794898191625596"
+content_type = "text/plain"
