@@ -16019,3 +16019,270 @@ No scrollbar-hide definition found in searched frontend CSS files or tailwind.co
 V5 — scope
 1 new + 2 edited application files; 0 deleted. Exact F0–F2/T1 MD5 match confirms approved handlers, hidden rules and chip expression retained. review.txt untouched. No Git commands, deploy, environment, config, dependency or other page edits.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#623 (17.11)
+
+STEP 0: wc -c review.txt = 898636 bytes; below 2 MB.
+review.txt untouched; SHA256 unchanged: 0a25718cef8dd1e1e0de3ccc5a66a74ad38cb0b90cde6a7ed73eac588c51aa43
+
+V1 — changed regions with 3 lines of context
+
+--- a/frontend/src/pages/ProjectPlansPage.js
++++ b/frontend/src/pages/ProjectPlansPage.js
+@@ -5,10 +5,11 @@
+ import { toast } from 'sonner';
+ import { t } from '../i18n';
+ import {
+-  ArrowRight, Loader2, Upload, FileText, Download, Eye,
+-  Calendar, User, X, Plus, Search, AlertCircle, FolderOpen, Archive, RefreshCw, Clock, Users, CheckCircle,
++  Loader2, Upload, FileText, Download, Eye,
++  Calendar, User, X, Plus, Search, AlertCircle, Archive, RefreshCw, Clock, Users, CheckCircle,
+   Edit3, Image, Ruler, FileType, ChevronDown, Filter, Maximize2, Settings
+ } from 'lucide-react';
++import PageHeader, { PAGE_HEADER_ACTION_CLASS } from '../components/PageHeader';
+ import PlanViewer from '../components/PlanViewer';
+ import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
+ import DisciplineManagerModal from '../components/DisciplineManagerModal';
+@@ -226,10 +227,6 @@
+       counts[key] = (counts[key] || 0) + 1;
+     });
+     return counts;
+-  }, [plans]);
+-
+-  const uniqueDisciplinesCount = useMemo(() => {
+-    return new Set(plans.map(p => p.discipline).filter(Boolean)).size;
+   }, [plans]);
+ 
+   const filteredPlans = useMemo(() => {
+@@ -523,16 +520,7 @@
+   if (loadError) {
+     return (
+       <div className="min-h-screen bg-slate-50" dir="rtl">
+-        <div className="bg-gradient-to-l from-amber-600 to-amber-500 text-white sticky top-0 z-30">
+-          <div className="max-w-4xl mx-auto px-4 py-3">
+-            <div className="flex items-center gap-3">
+-              <button onClick={handleBack} className="p-1.5 hover:bg-amber-700/30 rounded-lg transition-colors">
+-                <ArrowRight className="w-5 h-5" />
+-              </button>
+-              <h1 className="text-base font-bold">תוכניות</h1>
+-            </div>
+-          </div>
+-        </div>
++        <PageHeader title="תוכניות" onBack={handleBack} maxWidth="max-w-4xl" />
+         <div className="max-w-4xl mx-auto px-4 py-12 text-center">
+           <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
+           {loadError === 'forbidden' ? (
+@@ -555,35 +543,24 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50 overflow-x-hidden" dir="rtl">
+-      <div className="bg-gradient-to-l from-amber-600 to-amber-500 text-white sticky top-0 z-30">
+-        <div className="max-w-2xl mx-auto px-4 py-3">
+-          <div className="flex items-center justify-between gap-2">
+-            <div className="flex items-center gap-3 min-w-0 flex-1">
+-              <button onClick={handleBack} className="p-1.5 hover:bg-amber-700/30 rounded-lg transition-colors shrink-0">
+-                <ArrowRight className="w-5 h-5" />
+-              </button>
+-              <div className="min-w-0">
+-                <h1 className="text-base font-bold flex items-center gap-2 truncate">
+-                  <FolderOpen className="w-4 h-4 shrink-0" />
+-                  <span className="truncate">תוכניות {project?.name ? `— ${project.name}` : ''}</span>
+-                </h1>
+-                <div className="flex items-center gap-3 mt-0.5">
+-                  <span className="text-[11px] text-amber-100">{plans.length} תוכניות</span>
+-                  <span className="text-[11px] text-amber-200">·</span>
+-                  <span className="text-[11px] text-amber-100">{uniqueDisciplinesCount} תחומים</span>
+-                </div>
+-              </div>
+-            </div>
+-            <button
+-              onClick={() => navigate(`/projects/${projectId}/plans/archive`)}
+-              className="flex items-center gap-1 text-[11px] text-amber-100 hover:text-white transition-colors shrink-0"
+-            >
+-              <Archive className="w-3.5 h-3.5" />
+-              <span className="hidden sm:inline">ארכיון</span>
+-            </button>
+-          </div>
+-        </div>
+-      </div>
++      <PageHeader
++        title={<>תוכניות <span className="text-white/60 font-normal text-sm mr-1">({plans.length})</span></>}
++        crumbs={[project?.name]}
++        onBack={handleBack}
++        maxWidth="max-w-2xl"
++        actions={
++          <button
++            type="button"
++            onClick={() => navigate(`/projects/${projectId}/plans/archive`)}
++            aria-label="ארכיון"
++            title="ארכיון"
++            className={`${PAGE_HEADER_ACTION_CLASS} sm:w-auto sm:px-3 sm:gap-1.5`}
++          >
++            <Archive className="w-5 h-5" />
++            <span className="hidden sm:inline text-sm font-medium">ארכיון</span>
++          </button>
++        }
++      />
+ 
+       <div className="max-w-2xl mx-auto px-4 py-3 space-y-3">
+         <div className="relative">
+
+COUNTS ProjectPlansPage.js +22 -45
+--- a/frontend/src/pages/UnitPlansPage.js
++++ b/frontend/src/pages/UnitPlansPage.js
+@@ -6,10 +6,11 @@
+ import { formatUnitLabel } from '../utils/formatters';
+ import { t } from '../i18n';
+ import {
+-  ArrowRight, Loader2, Upload, FileText, Download, Eye,
++  Loader2, Upload, FileText, Download, Eye,
+   Calendar, User, X, Plus, Search, AlertCircle, FolderOpen,
+   Image, Ruler, FileType, Maximize2, Settings, Archive
+ } from 'lucide-react';
++import PageHeader, { PAGE_HEADER_ACTION_CLASS } from '../components/PageHeader';
+ import PlanViewer from '../components/PlanViewer';
+ import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
+ import DisciplineManagerModal from '../components/DisciplineManagerModal';
+@@ -288,11 +289,6 @@
+   const { unit, floor, building, project } = unitData || {};
+   const effectiveLabel = unit?.effective_label || unit?.unit_no || '';
+ 
+-  const subtitleParts = [];
+-  if (project?.name) subtitleParts.push(project.name);
+-  if (building?.name) subtitleParts.push(building.name);
+-  if (floor?.name) subtitleParts.push(floor.name);
+-
+   const hasActiveFilters = activeDiscipline !== 'all' || search.trim();
+   const clearFilters = () => { setActiveDiscipline('all'); setSearch(''); };
+ 
+@@ -379,16 +375,7 @@
+   if (loadError) {
+     return (
+       <div className="min-h-screen bg-slate-50" dir="rtl">
+-        <div className="bg-gradient-to-l from-amber-600 to-amber-500 text-white sticky top-0 z-30">
+-          <div className="max-w-2xl mx-auto px-4 py-3">
+-            <div className="flex items-center gap-3">
+-              <button onClick={handleBack} className="p-1.5 hover:bg-amber-700/30 rounded-lg transition-colors">
+-                <ArrowRight className="w-5 h-5" />
+-              </button>
+-              <h1 className="text-base font-bold">תוכניות</h1>
+-            </div>
+-          </div>
+-        </div>
++        <PageHeader title="תוכניות" onBack={handleBack} maxWidth="max-w-2xl" />
+         <div className="max-w-2xl mx-auto px-4 py-12 text-center">
+           <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
+           {loadError === 'forbidden' ? (
+@@ -411,34 +398,25 @@
+ 
+   return (
+     <div className="min-h-screen bg-slate-50 overflow-x-hidden" dir="rtl">
+-      <div className="bg-gradient-to-l from-amber-600 to-amber-500 text-white sticky top-0 z-30">
+-        <div className="max-w-2xl mx-auto px-4 py-3">
+-          <div className="flex items-center justify-between gap-2">
+-            <div className="flex items-center gap-3 min-w-0 flex-1">
+-              <button onClick={handleBack} className="p-1.5 hover:bg-amber-700/30 rounded-lg transition-colors shrink-0">
+-                <ArrowRight className="w-5 h-5" />
+-              </button>
+-              <div className="min-w-0">
+-                <h1 className="text-base font-bold flex items-center gap-2 truncate">
+-                  <FolderOpen className="w-4 h-4 shrink-0" />
+-                  <span className="truncate">תוכניות — {formatUnitLabel(effectiveLabel)}</span>
+-                </h1>
+-                {subtitleParts.length > 0 && (
+-                  <p className="text-[11px] text-amber-100 truncate">{subtitleParts.join(' › ')}</p>
+-                )}
+-              </div>
+-            </div>
+-            {/* BATCH unit-plans-archive-mirror-general (2026-05-26) — header link to archive page */}
+-            <button
+-              onClick={() => navigate(`/projects/${projectId}/units/${unitId}/plans/archive`)}
+-              className="flex items-center gap-1 text-[11px] text-amber-100 hover:text-white transition-colors shrink-0"
+-            >
+-              <Archive className="w-3.5 h-3.5" />
+-              <span className="hidden sm:inline">ארכיון</span>
+-            </button>
+-          </div>
+-        </div>
+-      </div>
++      <PageHeader
++        title={`תוכניות — ${formatUnitLabel(effectiveLabel)}`}
++        crumbs={[project?.name, building?.name, floor?.name]}
++        onBack={handleBack}
++        maxWidth="max-w-2xl"
++        actions={
++          // BATCH unit-plans-archive-mirror-general (2026-05-26) — header link to archive page
++          <button
++            type="button"
++            onClick={() => navigate(`/projects/${projectId}/units/${unitId}/plans/archive`)}
++            aria-label="ארכיון"
++            title="ארכיון"
++            className={`${PAGE_HEADER_ACTION_CLASS} sm:w-auto sm:px-3 sm:gap-1.5`}
++          >
++            <Archive className="w-5 h-5" />
++            <span className="hidden sm:inline text-sm font-medium">ארכיון</span>
++          </button>
++        }
++      />
+ 
+       <div className="max-w-2xl mx-auto px-4 py-3 space-y-3">
+         <div className="relative">
+
+COUNTS UnitPlansPage.js +22 -44
+
+V2 — counts
+ProjectPlansPage.js: +22/-45; 1372 -> 1349 lines.
+UnitPlansPage.js: +22/-44; 876 -> 854 lines.
+0 new application files; 2 edited; 0 deleted.
+
+V3 — checks run (T1–T5), with V4 read-only findings below
+d1f8a1558fcde1947a0729491b28f051  frontend/src/pages/ProjectPlansPage.js
+e2b44d962d64c734d650daf0730034a7  frontend/src/pages/UnitPlansPage.js
+5f3e74fac965fda18afb234460f0950e  frontend/src/components/PageHeader.jsx
+frontend/src/pages/ProjectPlansPage.js:523:        <PageHeader title="תוכניות" onBack={handleBack} maxWidth="max-w-4xl" />
+frontend/src/pages/ProjectPlansPage.js:546:      <PageHeader
+frontend/src/pages/UnitPlansPage.js:378:        <PageHeader title="תוכניות" onBack={handleBack} maxWidth="max-w-2xl" />
+frontend/src/pages/UnitPlansPage.js:401:      <PageHeader
+PATTERN: PageHeader
+frontend/src/pages/ProjectPlansPage.js:3
+frontend/src/pages/UnitPlansPage.js:3
+PATTERN: from-amber-600 to-amber-500
+frontend/src/pages/ProjectPlansPage.js:0
+frontend/src/pages/UnitPlansPage.js:0
+PATTERN: ArrowRight
+frontend/src/pages/ProjectPlansPage.js:0
+frontend/src/pages/UnitPlansPage.js:0
+PATTERN: FolderOpen
+frontend/src/pages/ProjectPlansPage.js:0
+frontend/src/pages/UnitPlansPage.js:2
+PATTERN: uniqueDisciplinesCount
+frontend/src/pages/ProjectPlansPage.js:0
+frontend/src/pages/UnitPlansPage.js:0
+PATTERN: subtitleParts
+frontend/src/pages/ProjectPlansPage.js:0
+frontend/src/pages/UnitPlansPage.js:0
+frontend/src/pages/MonthlyClosePage.js:94:          <div className="flex-1 rounded-2xl bg-gradient-to-l from-amber-500 to-orange-400 p-4 text-white shadow-sm">
+  1349 frontend/src/pages/ProjectPlansPage.js
+   854 frontend/src/pages/UnitPlansPage.js
+  2203 total
+V4
+frontend/src/pages/ProjectPlansArchivePage.js:143:    <div className="bg-slate-800 text-white sticky top-0 z-30">
+frontend/src/pages/ProjectPlanHistoryPage.js:81:    <div className="bg-slate-800 text-white sticky top-0 z-30">
+frontend/src/pages/UnitPlansArchivePage.js:152:    <div className="bg-slate-800 text-white sticky top-0 z-30">
+frontend/src/pages/UnitQCSelectionPage.js:189:      <div className="bg-slate-800 text-white sticky top-0 z-30">
+frontend/src/pages/FloorDetailPage.js:320:      <div className="bg-slate-800 text-white sticky top-0 z-30">
+frontend/src/pages/StageDetailPage.js:1948:      <div className="bg-slate-800 text-white sticky top-0 z-30">
+frontend/src/pages/QCFloorSelectionPage.js:174:    <div className="bg-slate-800 text-white sticky top-0 z-30">
+0a25718cef8dd1e1e0de3ccc5a66a74ad38cb0b90cde6a7ed73eac588c51aa43  review.txt
+
+T6 command: cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" BUILD_PATH=/tmp/batch623/verified-build npm run build
+Exit 0. Build log line 12: Compiled successfully.
+Jest: not run — canvas prerequisite probe failed: libuuid.so.1: cannot open shared object file: No such file or directory. No infrastructure changes.
+Browser: not run — local harness.
+T7: user-owned verification after a separately approved staging deploy; both screens and error states at 390px, 320px and 768px remain unverified here. No rendered dimensions or navigation interactions claimed. ux/623-before-after.png is absent; no replacement created.
+
+V4 — the seven file:line matches are listed under V4 above; all match the specification and were left untouched.
+
+V5 — scope
+Only F1–F2 application changes. All three final MD5s match exactly. PageHeader.jsx unchanged. handleBack and both archive navigate targets retained verbatim. Nothing below the headers changed except the explicitly removed derived variables/imports. No Git commands, deploy, environment, dependency, config or other page edits. review.txt untouched.
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
