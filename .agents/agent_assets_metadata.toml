@@ -1481,3 +1481,17 @@ mtime_ms = 1794943602364
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/b6e89d07-bbb4-4386-94ea-d79828ac1610/9fccd431-cad1-4816-a4cc-f6281376451c"
 storage_version_token = "1794943624026130"
 content_type = "text/plain"
+
+[[outputs]]
+id = "FJGQr1Pk_ij3IFtpyZ9ZV"
+uri = "file://attached_assets/batch624-review-section.txt"
+type = "text"
+title = "דוח מסירה — Batch 624"
+description = "השינוי המדויק, בדיקות T1–T7, ממצאי V4 ומגבלות האימות. ללא פריסה."
+logical_id = "2cc9f0e3-a547-4d58-90e4-1aaf6a3d557c"
+content_hash = "sha256:df3168fd459b2ea1bb9ead96f92d590d5715e915f7b65f5902093115bf386b74"
+size = 31152
+mtime_ms = 1795010623654
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/2cc9f0e3-a547-4d58-90e4-1aaf6a3d557c/a6a0c44a-a0c0-42cd-857b-42deb1116c8a"
+storage_version_token = "1795010655367891"
+content_type = "text/plain"
