@@ -16286,3 +16286,608 @@ V4 — the seven file:line matches are listed under V4 above; all match the spec
 V5 — scope
 Only F1–F2 application changes. All three final MD5s match exactly. PageHeader.jsx unchanged. handleBack and both archive navigate targets retained verbatim. Nothing below the headers changed except the explicitly removed derived variables/imports. No Git commands, deploy, environment, dependency, config or other page edits. review.txt untouched.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#624 (18.11)
+
+STEP 0: wc -c review.txt = 912109 bytes; below 2 MB.
+review.txt untouched. SHA256 verified unchanged: 0fefa45a35c8908ea2e674f36ca0b506078930af326d256fa52766a18c35bb3f
+Baseline ProjectPlansPage.js: d1f8a1558fcde1947a0729491b28f051; 1349 lines.
+
+V1 — changed regions, 3 context lines
+--- a/frontend/src/pages/ProjectPlansPage.js
++++ b/frontend/src/pages/ProjectPlansPage.js
+@@ -1,11 +1,11 @@
+ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+-import { useParams, useNavigate } from 'react-router-dom';
++import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
+ import { projectService, projectPlanService, disciplineService, buildingService, floorService } from '../services/api';
+ import { useAuth } from '../contexts/AuthContext';
+ import { toast } from 'sonner';
+ import { t } from '../i18n';
+ import {
+-  Loader2, Upload, FileText, Download, Eye,
++  Loader2, Upload, FileText, Download, Eye, Folder, Files, ChevronLeft, LayoutGrid, List,
+   Calendar, User, X, Plus, Search, AlertCircle, Archive, RefreshCw, Clock, Users, CheckCircle,
+   Edit3, Image, Ruler, FileType, ChevronDown, Filter, Maximize2, Settings
+ } from 'lucide-react';
+@@ -68,6 +68,18 @@
+   } catch { return dateStr; }
+ }
+ 
++// #624 — the date a plan's file last changed: its newest version, or the first upload
++function planUpdatedAt(plan) {
++  return (Array.isArray(plan.versions) ? plan.versions : [])
++    .reduce((latest, v) => (v && v.uploaded_at && v.uploaded_at > latest ? v.uploaded_at : latest), plan.created_at || '');
++}
++
++function plansCountLabel(n) {
++  return n === 1 ? 'תוכנית אחת' : `${n} תוכניות`;
++}
++
++const FOLDER_ROW_CLASS = 'w-full flex items-center gap-3 px-3 py-2.5 min-h-[64px] text-right hover:bg-slate-50 active:bg-slate-100 transition-colors';
++
+ const ProjectPlansPage = () => {
+   const { projectId } = useParams();
+   const navigate = useNavigate();
+@@ -84,7 +96,14 @@
+   const [plansLoading, setPlansLoading] = useState(false);
+   const [uploading, setUploading] = useState(false);
+ 
+-  const [activeDiscipline, setActiveDiscipline] = useState('all');
++  // #624 — the screen opens on discipline "folders"; ?folder=<discipline key | all> shows that folder's plans
++  const [searchParams, setSearchParams] = useSearchParams();
++  const location = useLocation();
++  const folder = searchParams.get('folder');
++  const [sortBy, setSortBy] = useState(null);   // null = the folder's own default (see sortMode)
++  const [viewMode, setViewMode] = useState(() => {
++    try { return localStorage.getItem('brikops_plans_view') === 'grid' ? 'grid' : 'list'; } catch { return 'list'; }
++  });
+   const [activeFloor, setActiveFloor] = useState('all');
+   const [search, setSearch] = useState('');
+   const [loadError, setLoadError] = useState(null);
+@@ -211,6 +230,13 @@
+     return floor ? (floor.name || `קומה ${floor.number || ''}`) : '';
+   };
+ 
++  const getFloorLabel = (floorId) => {
++    const floor = allFloors.find(f => f.id === floorId);
++    if (!floor) return '';
++    const name = floor.display_label || floor.name || `קומה ${floor.floor_number || ''}`;
++    return floor.building_name ? `${floor.building_name} · ${name}` : name;
++  };
++
+   const getUnitName = (unitId) => {
+     if (!unitId) return '';
+     return unitId;
+@@ -220,20 +246,31 @@
+     ? disciplines
+     : DEFAULT_DISCIPLINES.map(d => ({ key: d, label: d, source: 'default' }));
+ 
+-  const disciplineCounts = useMemo(() => {
+-    const counts = {};
++  // #624 — one "folder" per discipline: how many plans it holds and when one of them last changed
++  const folders = useMemo(() => {
++    const byKey = {};
+     plans.forEach(p => {
+       const key = p.discipline || 'other';
+-      counts[key] = (counts[key] || 0) + 1;
++      const f = byKey[key] || (byKey[key] = { key, count: 0, updatedAt: '' });
++      f.count += 1;
++      const u = planUpdatedAt(p);
++      if (u > f.updatedAt) f.updatedAt = u;
+     });
+-    return counts;
+-  }, [plans]);
++    (disciplines.length > 0 ? disciplines.map(d => d.key) : DEFAULT_DISCIPLINES).forEach(key => {
++      if (!byKey[key]) byKey[key] = { key, count: 0, updatedAt: '' };
++    });
++    return Object.values(byKey);
++  }, [plans, disciplines]);
++
++  const folderPlans = useMemo(() => (
++    folder && folder !== 'all' ? plans.filter(p => (p.discipline || 'other') === folder) : plans
++  ), [plans, folder]);
++
++  // inside a discipline the natural order is by name (sheet numbers); across all plans it is newest first
++  const sortMode = sortBy || (folder && folder !== 'all' ? 'name' : 'date');
+ 
+   const filteredPlans = useMemo(() => {
+-    let result = plans;
+-    if (activeDiscipline !== 'all') {
+-      result = result.filter(p => p.discipline === activeDiscipline);
+-    }
++    let result = folderPlans;
+     if (activeFloor !== 'all') {
+       result = result.filter(p => p.floor_id === activeFloor);
+     }
+@@ -245,15 +282,45 @@
+         (p.note || '').toLowerCase().includes(q)
+       );
+     }
+-    return result;
+-  }, [plans, activeDiscipline, activeFloor, search]);
+-
+-  const hasActiveFilters = activeDiscipline !== 'all' || activeFloor !== 'all' || search.trim();
++    const sorted = [...result];
++    if (sortMode === 'name') {
++      sorted.sort((a, b) => (a.name || a.original_filename || '').localeCompare(b.name || b.original_filename || '', 'he', { numeric: true, sensitivity: 'base' }));
++    } else {
++      sorted.sort((a, b) => planUpdatedAt(b).localeCompare(planUpdatedAt(a)));
++    }
++    return sorted;
++  }, [folderPlans, activeFloor, search, sortMode]);
+ 
+   const clearFilters = () => {
+-    setActiveDiscipline('all');
+     setActiveFloor('all');
+     setSearch('');
++  };
++
++  useEffect(() => {
++    setSearch('');
++    setActiveFloor('all');
++    window.scrollTo(0, 0);
++  }, [folder]);
++
++  const openFolder = (key) => setSearchParams({ folder: key }, { state: { fromPlansRoot: true } });
++  const closeFolder = () => {
++    if (location.state?.fromPlansRoot) navigate(-1);
++    else setSearchParams({}, { replace: true });
++  };
++  const toggleViewMode = () => {
++    const next = viewMode === 'list' ? 'grid' : 'list';
++    setViewMode(next);
++    try { localStorage.setItem('brikops_plans_view', next); } catch {}
++  };
++  // uploading from inside a folder starts with that discipline selected (only when it is a real discipline)
++  const folderIsDiscipline = !!folder && allDisciplinesList.some(d => d.key === folder);
++  const openUpload = () => {
++    if (folderIsDiscipline) setUploadDiscipline(folder);
++    setShowUploadModal(true);
++  };
++  const openBulkUpload = () => {
++    if (folderIsDiscipline) setBulkDefaultDiscipline(folder);
++    setShowBulkModal(true);
+   };
+ 
+   const handleFileSelect = (e) => {
+@@ -541,12 +608,24 @@
+     );
+   }
+ 
++  const isRoot = !folder;
++  const searching = !!search.trim();
++  const folderName = (key) => (key === 'all' ? 'כל התוכניות' : key === 'other' ? 'אחר' : getDisciplineLabel(key));
++  const folderLabel = folder ? folderName(folder) : '';
++  const folderRows = folders
++    .map(f => ({ ...f, label: folderName(f.key) }))
++    .filter(f => f.count > 0 || canManage)
++    .sort((a, b) => a.label.localeCompare(b.label, 'he'));
++  const lastUpdateAll = plans.reduce((m, p) => { const u = planUpdatedAt(p); return u > m ? u : m; }, '');
++  const folderFloorIds = new Set(folderPlans.map(p => p.floor_id).filter(Boolean));
++  const folderFloors = allFloors.filter(f => folderFloorIds.has(f.id));
++
+   return (
+     <div className="min-h-screen bg-slate-50 overflow-x-hidden" dir="rtl">
+       <PageHeader
+-        title={<>תוכניות <span className="text-white/60 font-normal text-sm mr-1">({plans.length})</span></>}
+-        crumbs={[project?.name]}
+-        onBack={handleBack}
++        title={<>{isRoot ? 'תוכניות' : folderLabel} <span className="text-white/60 font-normal text-sm mr-1">({folderPlans.length})</span></>}
++        crumbs={isRoot ? [project?.name] : [project?.name, 'תוכניות']}
++        onBack={isRoot ? handleBack : closeFolder}
+         maxWidth="max-w-2xl"
+         actions={
+           <button
+@@ -562,108 +641,68 @@
+         }
+       />
+ 
+-      <div className="max-w-2xl mx-auto px-4 py-3 space-y-3">
++      <div className="max-w-2xl mx-auto px-4 pt-3 pb-24 space-y-3">
+         <div className="relative">
+           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+           <input
+             type="text"
+             value={search}
+             onChange={e => setSearch(e.target.value)}
+-            placeholder="חיפוש תוכנית..."
+-            className="w-full pr-9 pl-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-amber-300"
++            placeholder={isRoot ? 'חיפוש בכל התוכניות...' : `חיפוש ב${folderLabel}...`}
++            className="w-full h-11 pr-9 pl-3 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-amber-300"
+             dir="rtl"
+           />
+         </div>
+ 
+-        <div className="flex items-center gap-2 flex-wrap">
+-          <select
+-            value={activeDiscipline}
+-            onChange={e => setActiveDiscipline(e.target.value)}
+-            className="h-9 px-3 bg-white border border-slate-200 rounded-xl text-xs text-slate-600 focus:outline-none focus:ring-1 focus:ring-amber-300 cursor-pointer min-w-0"
+-          >
+-            <option value="all">כל התחומים</option>
+-            {allDisciplinesList.map(d => (
+-              <option key={d.key} value={d.key}>
+-                {getDisciplineLabel(d.key)} {disciplineCounts[d.key] ? `(${disciplineCounts[d.key]})` : ''}
+-              </option>
+-            ))}
+-          </select>
+-
+-          {allFloors.length > 0 && (
++        {!isRoot && (
++          <div className="flex items-center gap-2">
+             <select
+-              value={activeFloor}
+-              onChange={e => setActiveFloor(e.target.value)}
+-              className="h-9 px-3 bg-white border border-slate-200 rounded-xl text-xs text-slate-600 focus:outline-none focus:ring-1 focus:ring-amber-300 cursor-pointer min-w-0"
++              value={sortMode}
++              onChange={e => setSortBy(e.target.value)}
++              aria-label="מיון"
++              className="h-11 flex-1 min-w-0 px-3 bg-white border border-slate-300 rounded-xl text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-300 cursor-pointer"
+             >
+-              <option value="all">כל הקומות</option>
+-              {allFloors.map(f => (
+-                <option key={f.id} value={f.id}>
+-                  {f.building_name ? `${f.building_name} - ` : ''}{f.display_label || f.name || `קומה ${f.floor_number || ''}`}
+-                </option>
+-              ))}
++              <option value="date">חדש קודם</option>
++              <option value="name">לפי שם</option>
+             </select>
+-          )}
+-
+-          {hasActiveFilters && (
++            {folderFloors.length > 0 && (
++              <select
++                value={activeFloor}
++                onChange={e => setActiveFloor(e.target.value)}
++                aria-label="סינון לפי קומה"
++                className="h-11 flex-1 min-w-0 px-3 bg-white border border-slate-300 rounded-xl text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-300 cursor-pointer"
++              >
++                <option value="all">כל הקומות</option>
++                {folderFloors.map(f => (
++                  <option key={f.id} value={f.id}>
++                    {f.building_name ? `${f.building_name} - ` : ''}{f.display_label || f.name || `קומה ${f.floor_number || ''}`}
++                  </option>
++                ))}
++              </select>
++            )}
+             <button
+-              onClick={clearFilters}
+-              className="text-xs text-amber-600 hover:text-amber-700 whitespace-nowrap"
++              type="button"
++              onClick={toggleViewMode}
++              aria-label={viewMode === 'list' ? 'מעבר לתצוגת כרטיסים' : 'מעבר לתצוגת רשימה'}
++              title={viewMode === 'list' ? 'תצוגת כרטיסים' : 'תצוגת רשימה'}
++              className="h-11 w-11 flex-shrink-0 flex items-center justify-center bg-white border border-slate-300 rounded-xl text-slate-600 hover:bg-slate-50 transition-colors"
+             >
+-              נקה סינון
++              {viewMode === 'list' ? <LayoutGrid className="w-5 h-5" /> : <List className="w-5 h-5" />}
+             </button>
+-          )}
+-
+-          <div className="mr-auto flex items-center gap-1.5">
+-            {canManage && (
+-              showAddDiscipline ? (
+-                <div className="flex items-center gap-1 shrink-0">
+-                  <input
+-                    type="text"
+-                    value={newDisciplineLabel}
+-                    onChange={e => setNewDisciplineLabel(e.target.value)}
+-                    placeholder="שם תחום"
+-                    className="w-20 h-8 px-2 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-300"
+-                    autoFocus
+-                    onKeyDown={e => { if (e.key === 'Enter') handleAddDiscipline(); if (e.key === 'Escape') { setShowAddDiscipline(false); setNewDisciplineLabel(''); } }}
+-                  />
+-                  <button onClick={handleAddDiscipline} disabled={addingDiscipline || !newDisciplineLabel.trim()} className="h-8 px-2 text-xs font-medium bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 transition-colors">
+-                    {addingDiscipline ? '...' : 'הוסף'}
+-                  </button>
+-                  <button onClick={() => { setShowAddDiscipline(false); setNewDisciplineLabel(''); }} className="h-8 px-1 text-slate-400 hover:text-slate-600">
+-                    <X className="w-3.5 h-3.5" />
+-                  </button>
+-                </div>
+-              ) : (
+-                <button onClick={() => setShowAddDiscipline(true)} className="whitespace-nowrap px-2 py-1.5 rounded-lg text-[11px] font-medium bg-white border border-dashed border-slate-300 text-slate-400 hover:border-amber-400 hover:text-amber-600 transition-all flex items-center gap-1">
+-                  <Plus className="w-3 h-3" />
+-                  תחום
+-                </button>
+-              )
+-            )}
+-            {canManage && disciplines.some(d => d.source === 'custom') && (
+-              <button
+-                onClick={() => setShowDisciplineManager(true)}
+-                title="ניהול תחומים"
+-                className="whitespace-nowrap px-2 py-1.5 rounded-lg text-[11px] font-medium bg-white border border-slate-200 text-slate-500 hover:border-amber-400 hover:text-amber-600 transition-all flex items-center gap-1"
+-              >
+-                <Settings className="w-3 h-3" />
+-                ניהול
+-              </button>
+-            )}
+           </div>
+-        </div>
++        )}
+ 
+         {canManage && (
+           <div className="flex gap-2">
+             <button
+-              onClick={() => setShowUploadModal(true)}
++              onClick={openUpload}
+               className="flex-1 flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
+             >
+               <Upload className="w-4 h-4" />
+               העלאת תוכנית
+             </button>
+             <button
+-              onClick={() => setShowBulkModal(true)}
++              onClick={openBulkUpload}
+               className="flex items-center justify-center gap-2 px-4 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
+             >
+               <Plus className="w-4 h-4" />
+@@ -672,25 +711,111 @@
+           </div>
+         )}
+ 
+-        {plansLoading ? (
++        {isRoot && !searching ? (
++          <>
++            <div className="flex items-center justify-between gap-2">
++              {!(canManage && showAddDiscipline) && <h2 className="text-sm font-bold text-slate-700 py-1">תחומים</h2>}
++              {canManage && (
++                showAddDiscipline ? (
++                  <div className="flex-1 flex items-center gap-1.5">
++                    <input
++                      type="text"
++                      value={newDisciplineLabel}
++                      onChange={e => setNewDisciplineLabel(e.target.value)}
++                      placeholder="שם תחום"
++                      className="flex-1 min-w-0 h-11 px-3 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
++                      autoFocus
++                      onKeyDown={e => { if (e.key === 'Enter') handleAddDiscipline(); if (e.key === 'Escape') { setShowAddDiscipline(false); setNewDisciplineLabel(''); } }}
++                    />
++                    <button onClick={handleAddDiscipline} disabled={addingDiscipline || !newDisciplineLabel.trim()} className="h-11 px-4 text-sm font-medium bg-amber-500 text-white rounded-xl hover:bg-amber-600 disabled:opacity-50 transition-colors">
++                      {addingDiscipline ? '...' : 'הוסף'}
++                    </button>
++                    <button onClick={() => { setShowAddDiscipline(false); setNewDisciplineLabel(''); }} aria-label="ביטול" className="h-11 w-11 flex-shrink-0 flex items-center justify-center text-slate-400 hover:text-slate-600">
++                      <X className="w-4 h-4" />
++                    </button>
++                  </div>
++                ) : (
++                  <div className="flex items-center gap-1">
++                    <button onClick={() => setShowAddDiscipline(true)} className="min-h-[44px] px-2 flex items-center gap-1 text-sm font-medium text-amber-700 hover:text-amber-800 transition-colors">
++                      <Plus className="w-4 h-4" />
++                      תחום חדש
++                    </button>
++                    {disciplines.some(d => d.source === 'custom') && (
++                      <button onClick={() => setShowDisciplineManager(true)} className="min-h-[44px] px-2 flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-800 transition-colors">
++                        <Settings className="w-4 h-4" />
++                        ניהול
++                      </button>
++                    )}
++                  </div>
++                )
++              )}
++            </div>
++
++            {plansLoading ? (
++              <div className="flex justify-center py-8">
++                <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
++              </div>
++            ) : plans.length === 0 ? (
++              <div className="py-10 text-center">
++                <FileText className="w-10 h-10 text-slate-300 mx-auto mb-2" />
++                <p className="text-sm text-slate-500">אין תוכניות פעילות</p>
++                <p className="text-xs text-slate-400 mt-1">
++                  {canManage ? 'לחץ על כפתור ההעלאה כדי להוסיף תוכנית' : 'תוכניות יתווספו על ידי צוות הניהול'}
++                </p>
++              </div>
++            ) : (
++              <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
++                <button type="button" onClick={() => openFolder('all')} className={FOLDER_ROW_CLASS}>
++                  <span className="w-10 h-10 flex-shrink-0 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
++                    <Files className="w-5 h-5" />
++                  </span>
++                  <span className="flex-1 min-w-0">
++                    <span className="block text-[15px] font-semibold text-slate-800 truncate">כל התוכניות</span>
++                    <span className="block text-xs text-slate-500 truncate">{plansCountLabel(plans.length)} · עודכן {formatDate(lastUpdateAll)}</span>
++                  </span>
++                  <ChevronLeft className="w-5 h-5 flex-shrink-0 text-slate-400" />
++                </button>
++                {folderRows.map(f => (
++                  <button key={f.key} type="button" onClick={() => openFolder(f.key)} className={FOLDER_ROW_CLASS}>
++                    <span className={`w-10 h-10 flex-shrink-0 rounded-lg flex items-center justify-center ${f.count ? 'bg-amber-50 text-amber-600' : 'bg-slate-50 text-slate-300'}`}>
++                      <Folder className="w-5 h-5" />
++                    </span>
++                    <span className="flex-1 min-w-0">
++                      <span className={`block text-[15px] font-semibold truncate ${f.count ? 'text-slate-800' : 'text-slate-400'}`}>{f.label}</span>
++                      <span className="block text-xs text-slate-500 truncate">
++                        {f.count ? `${plansCountLabel(f.count)} · עודכן ${formatDate(f.updatedAt)}` : 'אין תוכניות עדיין'}
++                      </span>
++                    </span>
++                    <ChevronLeft className="w-5 h-5 flex-shrink-0 text-slate-400" />
++                  </button>
++                ))}
++              </div>
++            )}
++          </>
++        ) : plansLoading ? (
+           <div className="flex justify-center py-8">
+             <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
+           </div>
+         ) : filteredPlans.length === 0 ? (
+           <div className="py-10 text-center">
+             <FileText className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+-            {plans.length === 0 ? (
++            {searching || activeFloor !== 'all' ? (
+               <>
+-                <p className="text-sm text-slate-500">אין תוכניות פעילות</p>
++                <p className="text-sm text-slate-500">לא נמצאו תוכניות תואמות</p>
++                <button type="button" onClick={clearFilters} className="mt-1 min-h-[44px] px-3 text-sm font-medium text-amber-700 hover:text-amber-800 transition-colors">
++                  נקה סינון
++                </button>
++              </>
++            ) : (
++              <>
++                <p className="text-sm text-slate-500">{folder === 'all' ? 'אין תוכניות פעילות' : 'אין תוכניות בתחום הזה'}</p>
+                 <p className="text-xs text-slate-400 mt-1">
+                   {canManage ? 'לחץ על כפתור ההעלאה כדי להוסיף תוכנית' : 'תוכניות יתווספו על ידי צוות הניהול'}
+                 </p>
+               </>
+-            ) : (
+-              <p className="text-sm text-slate-400">לא נמצאו תוכניות תואמות</p>
+             )}
+           </div>
+-        ) : (
++        ) : viewMode === 'grid' && !isRoot ? (
+           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+             {filteredPlans.map(plan => {
+               const fi = getFileIcon(plan);
+@@ -725,7 +850,7 @@
+                       )}
+                     </div>
+                     <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-400">
+-                      <span>{formatDate(plan.created_at)}</span>
++                      <span>{formatDate(planUpdatedAt(plan))}</span>
+                       {plan.current_version > 1 && (
+                         <span className="px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[9px]">v{plan.current_version}</span>
+                       )}
+@@ -761,12 +886,67 @@
+               );
+             })}
+           </div>
++        ) : (
++          <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
++            {filteredPlans.map(plan => {
++              const fi = getFileIcon(plan);
++              const IconComp = fi.icon;
++              const meta = [
++                formatDate(planUpdatedAt(plan)),
++                isRoot || folder === 'all' ? folderName(plan.discipline || 'other') : null,
++                plan.floor_id ? getFloorLabel(plan.floor_id) : null,
++              ].filter(Boolean).join(' · ');
++              return (
++                <div key={plan.id} className="flex items-stretch">
++                  <button
++                    type="button"
++                    onClick={() => openDetail(plan)}
++                    className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2.5 min-h-[64px] text-right hover:bg-slate-50 active:bg-slate-100 transition-colors"
++                  >
++                    {plan.thumbnail_url ? (
++                      <img src={plan.thumbnail_url} alt="" className="w-12 h-12 flex-shrink-0 rounded-lg object-cover border border-slate-200 bg-slate-50" />
++                    ) : (
++                      <span className={`w-12 h-12 flex-shrink-0 rounded-lg ${fi.bg} flex items-center justify-center`}>
++                        <IconComp className={`w-6 h-6 ${fi.color}`} />
++                      </span>
++                    )}
++                    <span className="flex-1 min-w-0">
++                      <span className="block text-sm font-semibold text-slate-800 leading-snug line-clamp-2 break-words">
++                        {plan.name || plan.original_filename || ''}
++                      </span>
++                      <span className="flex items-center gap-1.5 mt-0.5 min-w-0">
++                        <span className="text-xs text-slate-500 truncate">{meta}</span>
++                        {plan.current_version > 1 && (
++                          <span className="flex-shrink-0 text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">גרסה {plan.current_version}</span>
++                        )}
++                        {plan.plan_type === 'tenant_changes' && (
++                          <span className="flex-shrink-0 text-xs px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-medium">שינויי דיירים</span>
++                        )}
++                      </span>
++                    </span>
++                  </button>
++                  {isManager && plan.total_members != null && (
++                    <button
++                      type="button"
++                      onClick={() => openSeenModal(plan)}
++                      aria-label={`מי ראה: ${plan.seen_count || 0} מתוך ${plan.total_members}`}
++                      title="מי ראה"
++                      className="flex-shrink-0 min-w-[56px] px-2 flex flex-col items-center justify-center gap-0.5 border-r border-slate-100 text-xs text-slate-500 hover:text-amber-700 hover:bg-slate-50 transition-colors"
++                    >
++                      <Users className="w-4 h-4" />
++                      {plan.seen_count || 0}/{plan.total_members}
++                    </button>
++                  )}
++                </div>
++              );
++            })}
++          </div>
+         )}
+       </div>
+ 
+       {canManage && (
+         <button
+-          onClick={() => setShowUploadModal(true)}
++          onClick={openUpload}
+           className="fixed bottom-6 left-6 z-40 w-14 h-14 bg-amber-500 hover:bg-amber-600 text-white rounded-full shadow-xl flex items-center justify-center transition-colors"
+         >
+           <Plus className="w-6 h-6" />
+
+V2 — added/removed: 283 103
+openDetail: byte-identical
+openSeenModal: byte-identical
+handleBack: byte-identical
+All dialogs and remaining file tail: byte-identical
+Card markup: byte-identical except approved date line
+
+V4 — all actual BulkPlanUploadModal renders and full props
+frontend/src/pages/UnitPlansPage.js:552
+<BulkPlanUploadModal
+          open={showBulkModal}
+          onClose={() => setShowBulkModal(false)}
+          allDisciplines={allDisciplinesList}
+          getDisciplineLabel={getDisciplineLabel}
+          defaultDiscipline={bulkDefaultDiscipline}
+          onDefaultDisciplineChange={setBulkDefaultDiscipline}
+          showFloorField={false}
+          uploadFn={(file, discipline, opts) =>
+            unitPlanService.upload(projectId, unitId, file, discipline, opts)
+          }
+          onUploadComplete={loadPlans}
+        />
+frontend/src/pages/ProjectPlansPage.js:1447
+<BulkPlanUploadModal
+          open={showBulkModal}
+          onClose={() => setShowBulkModal(false)}
+          allDisciplines={allDisciplinesList}
+          getDisciplineLabel={getDisciplineLabel}
+          defaultDiscipline={bulkDefaultDiscipline}
+          onDefaultDisciplineChange={setBulkDefaultDiscipline}
+          showFloorField={true}
+          floorsList={allFloors}
+          uploadFn={(file, discipline, opts) =>
+            projectPlanService.upload(projectId, file, discipline, opts)
+          }
+          onUploadComplete={loadPlans}
+        />
+
+V3 — checks run
+T1 final MD5: ff348f9f437191eb412dd3c28fbf5efa  frontend/src/pages/ProjectPlansPage.js
+T2–T5 actual grep output:
+activeDiscipline: 0
+disciplineCounts: 0
+hasActiveFilters: 0
+formatDate(plan.created_at): 0
+useSearchParams: 2
+useLocation: 2
+FOLDER_ROW_CLASS: 3
+planUpdatedAt: 6
+plansCountLabel: 3
+brikops_plans_view: 2
+folderIsDiscipline: 3
+319:    setShowUploadModal(true);
+323:    setShowBulkModal(true);
+698:              onClick={openUpload}
+705:              onClick={openBulkUpload}
+949:          onClick={openUpload}
+frontend/src/pages/ProjectPlansPage.js:105:    try { return localStorage.getItem('brikops_plans_view') === 'grid' ? 'grid' : 'list'; } catch { return 'list'; }
+frontend/src/pages/ProjectPlansPage.js:313:    try { localStorage.setItem('brikops_plans_view', next); } catch {}
+
+T6: wc -l frontend/src/pages/ProjectPlansPage.js = 1529
+T7 command: cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" BUILD_PATH=/tmp/batch624/verified-build npm run build
+Exit 0. Build log line 12: Compiled successfully.
+Non-failing notice: Browserslist data is 9 months old; no dependency updates performed.
+Jest: not run — canvas prerequisite probe failed with libuuid.so.1: cannot open shared object file: No such file or directory. No infrastructure repair.
+Browser: not run — local harness.
+T8 remains user-owned after a separately approved staging deploy: folders, list/cards, all plans, search, empty folder, manager/contractor, 390px/320px, navigation, sorting, floor filter and upload checks. No rendered or interaction results claimed. Reference ux/624-before-after.png absent; no substitute created.
+
+V5 — scope
+Exactly 1 edited application file, 0 new, 0 deleted. All 11 F1 hunks applied; final MD5 exactly matches. +283/-103 lines, 1349 -> 1529. Protected handlers, dialogs and card markup verified as above. UnitPlansPage.js, PageHeader.jsx and review.txt SHA256 checks passed unchanged. No Git commands, deployment, environment edits, dependency/config changes, backend changes or other page changes.
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
