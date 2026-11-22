@@ -16891,3 +16891,536 @@ T8 remains user-owned after a separately approved staging deploy: folders, list/
 V5 — scope
 Exactly 1 edited application file, 0 new, 0 deleted. All 11 F1 hunks applied; final MD5 exactly matches. +283/-103 lines, 1349 -> 1529. Protected handlers, dialogs and card markup verified as above. UnitPlansPage.js, PageHeader.jsx and review.txt SHA256 checks passed unchanged. No Git commands, deployment, environment edits, dependency/config changes, backend changes or other page changes.
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#625 (22.11)
+
+STEP 0
+wc -c review.txt: 943262 bytes (< 2 MB). review.txt untouched; SHA256 check PASS.
+Baseline MD5: BulkPlanUploadModal ab696f8e4b57d33897e8c86482c92a5b; ProjectPlansPage ff348f9f437191eb412dd3c28fbf5efa; UnitPlansPage e2b44d962d64c734d650daf0730034a7.
+SheetPicker absent before implementation. BottomSheetSelect d84edbf242b6e3b7eeed5285ed2fb791 unchanged.
+
+V1 — Changed regions, three context lines; full-file summaries only
+
+frontend/src/components/SheetPicker.jsx
+Lines: 34; MD5: 504937f522beaddf50eedf1e89b7f7c8
+First 3 lines:
+import React, { useState } from 'react';
+import { ChevronDown } from 'lucide-react';
+import { OptionsOverlay } from './BottomSheetSelect';
+Last 3 lines:
+    </>
+  );
+}
+
+frontend/src/components/BulkPlanUploadModal.jsx
+Lines: 381; MD5: c7fe5f7d143196e1a93953c65b725701
+First 3 lines:
+import React, { useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
+import { Loader2, Upload, FileText, X, CheckCircle, Plus } from 'lucide-react';
+Last 3 lines:
+};
+
+export default BulkPlanUploadModal;
+
+--- a/frontend/src/pages/ProjectPlansPage.js
++++ b/frontend/src/pages/ProjectPlansPage.js
+@@ -11,10 +11,12 @@
+ } from 'lucide-react';
+ import PageHeader, { PAGE_HEADER_ACTION_CLASS } from '../components/PageHeader';
+ import PlanViewer from '../components/PlanViewer';
+-import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
++import BulkPlanUploadModal, { floorPickerOptions } from '../components/BulkPlanUploadModal';
++import SheetPicker from '../components/SheetPicker';
+ import DisciplineManagerModal from '../components/DisciplineManagerModal';
+ import DocumentScannerButton from '../components/DocumentScannerButton';
+ import { scannedImagesToPdf } from '../utils/scannedImagesToPdf';
++import { formatUnitLabel } from '../utils/formatters';
+ 
+ const DEFAULT_DISCIPLINES = [
+   'electrical', 'plumbing', 'architecture', 'construction', 'hvac', 'fire_protection'
+@@ -156,6 +158,8 @@
+   // <BulkPlanUploadModal> via useState there.
+   const [showBulkModal, setShowBulkModal] = useState(false);
+   const [bulkDefaultDiscipline, setBulkDefaultDiscipline] = useState('');
++  // #625 — when several files are chosen in the upload dialog, the list dialog opens with them
++  const [bulkInitialFiles, setBulkInitialFiles] = useState(null);
+ 
+   const myRole = project?.my_role || user?.role;
+   const canManage = user && UPLOAD_ROLES.includes(myRole);
+@@ -318,14 +322,19 @@
+     if (folderIsDiscipline) setUploadDiscipline(folder);
+     setShowUploadModal(true);
+   };
+-  const openBulkUpload = () => {
+-    if (folderIsDiscipline) setBulkDefaultDiscipline(folder);
+-    setShowBulkModal(true);
+-  };
+ 
++  // #625 — one upload button: one chosen file continues in the form, several continue in the list dialog
+   const handleFileSelect = (e) => {
+-    const file = e.target.files?.[0];
+-    if (!file) return;
++    const files = Array.from(e.target.files || []);
++    if (files.length === 0) return;
++    if (files.length > 1) {
++      setBulkDefaultDiscipline(uploadDiscipline);
++      setBulkInitialFiles(files);
++      closeUploadModal();
++      setShowBulkModal(true);
++      return;
++    }
++    const file = files[0];
+     setUploadFile(file);
+     if (!uploadName) {
+       const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+@@ -693,22 +702,13 @@
+         )}
+ 
+         {canManage && (
+-          <div className="flex gap-2">
+-            <button
+-              onClick={openUpload}
+-              className="flex-1 flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
+-            >
+-              <Upload className="w-4 h-4" />
+-              העלאת תוכנית
+-            </button>
+-            <button
+-              onClick={openBulkUpload}
+-              className="flex items-center justify-center gap-2 px-4 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
+-            >
+-              <Plus className="w-4 h-4" />
+-              העלאה מרובה
+-            </button>
+-          </div>
++          <button
++            onClick={openUpload}
++            className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
++          >
++            <Upload className="w-4 h-4" />
++            העלאת תוכניות
++          </button>
+         )}
+ 
+         {isRoot && !searching ? (
+@@ -944,28 +944,19 @@
+         )}
+       </div>
+ 
+-      {canManage && (
+-        <button
+-          onClick={openUpload}
+-          className="fixed bottom-6 left-6 z-40 w-14 h-14 bg-amber-500 hover:bg-amber-600 text-white rounded-full shadow-xl flex items-center justify-center transition-colors"
+-        >
+-          <Plus className="w-6 h-6" />
+-        </button>
+-      )}
+-
+       {showUploadModal && canManage && (
+         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={closeUploadModal} />
+           <div className="relative z-10 w-full sm:max-w-md sm:mx-4 p-5 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl max-h-[92vh] overflow-y-auto" dir="rtl">
+             <div className="flex items-center justify-between mb-4">
+-              <h3 className="text-base font-bold text-slate-800">העלאת תוכנית</h3>
++              <h3 className="text-base font-bold text-slate-800">העלאת תוכניות</h3>
+               <button onClick={closeUploadModal} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors">
+                 <X className="w-5 h-5 text-slate-400" />
+               </button>
+             </div>
+             <div className="space-y-4">
+               <div>
+-                <input ref={fileInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf" onChange={handleFileSelect} className="hidden" id="plan-file-pick" />
++                <input ref={fileInputRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf" onChange={handleFileSelect} className="hidden" id="plan-file-pick" />
+                 {uploadFile ? (
+                   <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                     <FileText className="w-5 h-5 text-amber-600 shrink-0" />
+@@ -978,7 +969,8 @@
+                   <div className="flex gap-2">
+                     <label htmlFor="plan-file-pick" className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
+                       <Upload className="w-5 h-5" />
+-                      בחר קובץ
++                      בחירת קבצים
++                      <span className="text-xs text-slate-500">קובץ אחד או כמה יחד</span>
+                     </label>
+                     {/* BATCH doc-scanner-in-plans-tabs — native only; renders null on web */}
+                     <DocumentScannerButton
+@@ -996,18 +988,18 @@
+                   value={uploadName}
+                   onChange={e => setUploadName(e.target.value)}
+                   placeholder="שם התוכנית"
+-                  className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
++                  className="w-full h-11 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
+                 />
+               </div>
+ 
+               <div>
+                 <label className="text-xs font-medium text-slate-600 mb-2 block">תחום *</label>
+-                <div className="flex flex-wrap gap-1.5">
++                <div className="flex flex-wrap gap-2">
+                   {allDisciplinesList.map(d => (
+                     <button
+                       key={d.key}
+                       onClick={() => setUploadDiscipline(d.key)}
+-                      className={`text-xs px-2.5 py-1.5 rounded-full border transition-colors ${
++                      className={`min-h-[44px] px-4 text-sm rounded-full border transition-colors ${
+                         uploadDiscipline === d.key
+                           ? 'bg-amber-500 text-white border-amber-500'
+                           : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+@@ -1022,34 +1014,26 @@
+               {allFloors.length > 0 && (
+                 <div>
+                   <label className="text-xs font-medium text-slate-600 mb-1.5 block">קומה</label>
+-                  <select
++                  <SheetPicker
++                    title="קומה"
+                     value={uploadFloorId}
+-                    onChange={e => { setUploadFloorId(e.target.value); setUploadUnitId(''); }}
+-                    className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
+-                  >
+-                    <option value="">לא נבחרה</option>
+-                    {allFloors.map(f => (
+-                      <option key={f.id} value={f.id}>
+-                        {f.building_name ? `${f.building_name} - ` : ''}{f.display_label || f.name || `קומה ${f.floor_number || ''}`}
+-                      </option>
+-                    ))}
+-                  </select>
++                    options={floorPickerOptions(allFloors)}
++                    onChange={v => { setUploadFloorId(v); setUploadUnitId(''); }}
++                    placeholder="בחירת קומה (לא חובה)"
++                  />
+                 </div>
+               )}
+ 
+               {uploadFloorId && uploadPlanType === 'tenant_changes' && uploadFloorUnits.length > 0 && (
+                 <div>
+                   <label className="text-xs font-medium text-slate-600 mb-1.5 block">דירה</label>
+-                  <select
++                  <SheetPicker
++                    title="דירה"
+                     value={uploadUnitId}
+-                    onChange={e => setUploadUnitId(e.target.value)}
+-                    className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
+-                  >
+-                    <option value="">לא נבחרה</option>
+-                    {uploadFloorUnits.map(u => (
+-                      <option key={u.id} value={u.id}>{u.name || u.number || u.id}</option>
+-                    ))}
+-                  </select>
++                    options={[{ value: '', label: 'ללא דירה' }, ...uploadFloorUnits.map(u => ({ value: u.id, label: formatUnitLabel(u.display_label || u.unit_no || '') || u.id }))]}
++                    onChange={setUploadUnitId}
++                    placeholder="בחירת דירה (לא חובה)"
++                  />
+                 </div>
+               )}
+ 
+@@ -1058,7 +1042,7 @@
+                 <div className="flex gap-2">
+                   <button
+                     onClick={() => setUploadPlanType('standard')}
+-                    className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${
++                    className={`flex-1 min-h-[44px] rounded-xl text-sm font-medium border transition-colors ${
+                       uploadPlanType === 'standard'
+                         ? 'bg-amber-500 text-white border-amber-500'
+                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+@@ -1068,7 +1052,7 @@
+                   </button>
+                   <button
+                     onClick={() => setUploadPlanType('tenant_changes')}
+-                    className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${
++                    className={`flex-1 min-h-[44px] rounded-xl text-sm font-medium border transition-colors ${
+                       uploadPlanType === 'tenant_changes'
+                         ? 'bg-violet-500 text-white border-violet-500'
+                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+@@ -1087,7 +1071,7 @@
+                   onChange={e => setUploadNote(e.target.value.slice(0, 200))}
+                   placeholder="הערה (אופציונלי, עד 200 תווים)"
+                   maxLength={200}
+-                  className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
++                  className="w-full h-11 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
+                 />
+               </div>
+ 
+@@ -1446,7 +1430,8 @@
+       {canManage && (
+         <BulkPlanUploadModal
+           open={showBulkModal}
+-          onClose={() => setShowBulkModal(false)}
++          onClose={() => { setShowBulkModal(false); setBulkInitialFiles(null); }}
++          initialFiles={bulkInitialFiles}
+           allDisciplines={allDisciplinesList}
+           getDisciplineLabel={getDisciplineLabel}
+           defaultDiscipline={bulkDefaultDiscipline}
+--- a/frontend/src/pages/UnitPlansPage.js
++++ b/frontend/src/pages/UnitPlansPage.js
+@@ -95,6 +95,8 @@
+   // Internal file list / progress / results live in <BulkPlanUploadModal>.
+   const [showBulkModal, setShowBulkModal] = useState(false);
+   const [bulkDefaultDiscipline, setBulkDefaultDiscipline] = useState('');
++  // #625 — when several files are chosen in the upload dialog, the list dialog opens with them
++  const [bulkInitialFiles, setBulkInitialFiles] = useState(null);
+ 
+   const myRole = unitData?.project?.my_role || user?.role;
+   const canUpload = user && UPLOAD_ROLES.includes(myRole);
+@@ -201,9 +203,18 @@
+   const tenantPlans = useMemo(() => filteredPlans.filter(p => p.plan_type === 'tenant_changes'), [filteredPlans]);
+   const standardPlans = useMemo(() => filteredPlans.filter(p => p.plan_type !== 'tenant_changes'), [filteredPlans]);
+ 
++  // #625 — one upload button: one chosen file continues in the form, several continue in the list dialog
+   const handleFileSelect = (e) => {
+-    const file = e.target.files?.[0];
+-    if (!file) return;
++    const files = Array.from(e.target.files || []);
++    if (files.length === 0) return;
++    if (files.length > 1) {
++      setBulkDefaultDiscipline(uploadDiscipline);
++      setBulkInitialFiles(files);
++      closeUploadModal();
++      setShowBulkModal(true);
++      return;
++    }
++    const file = files[0];
+     setUploadFile(file);
+     if (!uploadName) {
+       const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+@@ -492,23 +503,13 @@
+         </div>
+ 
+         {canUpload && (
+-          <div className="flex gap-2">
+-            <button
+-              onClick={() => setShowUploadModal(true)}
+-              className="flex-1 flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
+-            >
+-              <Upload className="w-4 h-4" />
+-              העלאת תוכנית
+-            </button>
+-            {/* BATCH H.1 (2026-05-13) — bulk upload entry for unit plans. */}
+-            <button
+-              onClick={() => setShowBulkModal(true)}
+-              className="flex items-center justify-center gap-2 px-4 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
+-            >
+-              <Plus className="w-4 h-4" />
+-              העלאה מרובה
+-            </button>
+-          </div>
++          <button
++            onClick={() => setShowUploadModal(true)}
++            className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
++          >
++            <Upload className="w-4 h-4" />
++            העלאת תוכניות
++          </button>
+         )}
+ 
+         {plansLoading ? (
+@@ -537,21 +538,13 @@
+         )}
+       </div>
+ 
+-      {canUpload && (
+-        <button
+-          onClick={() => setShowUploadModal(true)}
+-          className="fixed bottom-6 left-6 z-40 w-14 h-14 bg-amber-500 hover:bg-amber-600 text-white rounded-full shadow-xl flex items-center justify-center transition-colors"
+-        >
+-          <Plus className="w-6 h-6" />
+-        </button>
+-      )}
+-
+       {/* BATCH H.1 — bulk upload modal for unit plans. Unit context
+           implies floor → showFloorField=false. */}
+       {canUpload && (
+         <BulkPlanUploadModal
+           open={showBulkModal}
+-          onClose={() => setShowBulkModal(false)}
++          onClose={() => { setShowBulkModal(false); setBulkInitialFiles(null); }}
++          initialFiles={bulkInitialFiles}
+           allDisciplines={allDisciplinesList}
+           getDisciplineLabel={getDisciplineLabel}
+           defaultDiscipline={bulkDefaultDiscipline}
+@@ -569,14 +562,14 @@
+           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={closeUploadModal} />
+           <div className="relative z-10 w-full sm:max-w-md sm:mx-4 p-5 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl max-h-[92vh] overflow-y-auto" dir="rtl">
+             <div className="flex items-center justify-between mb-4">
+-              <h3 className="text-base font-bold text-slate-800">העלאת תוכנית</h3>
++              <h3 className="text-base font-bold text-slate-800">העלאת תוכניות</h3>
+               <button onClick={closeUploadModal} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors">
+                 <X className="w-5 h-5 text-slate-400" />
+               </button>
+             </div>
+             <div className="space-y-4">
+               <div>
+-                <input ref={fileInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf" onChange={handleFileSelect} className="hidden" id="unit-plan-file-pick" />
++                <input ref={fileInputRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf" onChange={handleFileSelect} className="hidden" id="unit-plan-file-pick" />
+                 {uploadFile ? (
+                   <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                     <FileText className="w-5 h-5 text-amber-600 shrink-0" />
+@@ -589,7 +582,8 @@
+                   <div className="flex gap-2">
+                     <label htmlFor="unit-plan-file-pick" className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
+                       <Upload className="w-5 h-5" />
+-                      בחר קובץ
++                      בחירת קבצים
++                      <span className="text-xs text-slate-500">קובץ אחד או כמה יחד</span>
+                     </label>
+                     {/* BATCH doc-scanner-in-plans-tabs — native only; renders null on web */}
+                     <DocumentScannerButton
+@@ -607,18 +601,18 @@
+                   value={uploadName}
+                   onChange={e => setUploadName(e.target.value)}
+                   placeholder="שם התוכנית"
+-                  className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
++                  className="w-full h-11 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
+                 />
+               </div>
+ 
+               <div>
+                 <label className="text-xs font-medium text-slate-600 mb-2 block">תחום *</label>
+-                <div className="flex flex-wrap gap-1.5">
++                <div className="flex flex-wrap gap-2">
+                   {allDisciplinesList.map(d => (
+                     <button
+                       key={d.key}
+                       onClick={() => setUploadDiscipline(d.key)}
+-                      className={`text-xs px-2.5 py-1.5 rounded-full border transition-colors ${
++                      className={`min-h-[44px] px-4 text-sm rounded-full border transition-colors ${
+                         uploadDiscipline === d.key
+                           ? 'bg-amber-500 text-white border-amber-500'
+                           : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+@@ -635,7 +629,7 @@
+                 <div className="flex gap-2">
+                   <button
+                     onClick={() => setUploadPlanType('standard')}
+-                    className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${
++                    className={`flex-1 min-h-[44px] rounded-xl text-sm font-medium border transition-colors ${
+                       uploadPlanType === 'standard'
+                         ? 'bg-amber-500 text-white border-amber-500'
+                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+@@ -645,7 +639,7 @@
+                   </button>
+                   <button
+                     onClick={() => setUploadPlanType('tenant_changes')}
+-                    className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${
++                    className={`flex-1 min-h-[44px] rounded-xl text-sm font-medium border transition-colors ${
+                       uploadPlanType === 'tenant_changes'
+                         ? 'bg-violet-500 text-white border-violet-500'
+                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+@@ -664,7 +658,7 @@
+                   onChange={e => setUploadNote(e.target.value.slice(0, 200))}
+                   placeholder="הערה (אופציונלי, עד 200 תווים)"
+                   maxLength={200}
+-                  className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
++                  className="w-full h-11 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
+                 />
+               </div>
+ 
+
+V2 — Line changes (GNU diff -u; no Git)
+ProjectPlansPage.js +47/-62
+UnitPlansPage.js +32/-38
+BulkPlanUploadModal.jsx whole replacement 302 -> 381; +179/-100
+SheetPicker.jsx new: +34/-0, 1467 bytes
+
+V3 — T1–T7 verification
+frontend/src/components/BulkPlanUploadModal.jsx:4:import SheetPicker from './SheetPicker';
+frontend/src/pages/ProjectPlansPage.js:15:import SheetPicker from '../components/SheetPicker';
+frontend/src/pages/ProjectPlansPage.js:1434:          initialFiles={bulkInitialFiles}
+frontend/src/pages/UnitPlansPage.js:547:          initialFiles={bulkInitialFiles}
+    34 frontend/src/components/SheetPicker.jsx
+   381 frontend/src/components/BulkPlanUploadModal.jsx
+  1514 frontend/src/pages/ProjectPlansPage.js
+   848 frontend/src/pages/UnitPlansPage.js
+  2777 total
+504937f522beaddf50eedf1e89b7f7c8  frontend/src/components/SheetPicker.jsx
+c7fe5f7d143196e1a93953c65b725701  frontend/src/components/BulkPlanUploadModal.jsx
+7a6363090f868f5ab865c3a7b672f2e4  frontend/src/pages/ProjectPlansPage.js
+753dac290b3b56e01f1d8a74d0e6482e  frontend/src/pages/UnitPlansPage.js
+review.txt: OK
+d84edbf242b6e3b7eeed5285ed2fb791  frontend/src/components/BottomSheetSelect.js
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "indigo" = 0; lines: none — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "<select" = 0; lines: none — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "text-[1" = 0; lines: none — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "max-h-60" = 0; lines: none — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "תחום ברירת מחדל" = 0; lines: none — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "bf.plan_type" = 0; lines: none — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "toBulkEntries" = 3; lines: 22, 91, 104 — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "planNameOf" = 2; lines: 19, 117 — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "floorPickerOptions" = 2; lines: 38, 190 — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "aria-pressed" = 2; lines: 243, 264 — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "<SheetPicker" = 2; lines: 328, 339 — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "initialFiles" = 4; lines: 52, 86, 87, 91 — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "eslint-disable-next-line react-hooks/exhaustive-deps" = 1; lines: 93 — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "openBulkUpload" = 0; lines: none — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "fixed bottom-6 left-6" = 0; lines: none — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "העלאה מרובה" = 0; lines: none — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-sm" = 0; lines: none — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "text-xs px-2.5 py-1.5 rounded-full border" = 0; lines: none — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "flex-1 py-2 rounded-xl text-xs font-medium border" = 0; lines: none — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "העלאת תוכניות" = 2; lines: 710, 952 — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "bulkInitialFiles" = 2; lines: 162, 1434 — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "<SheetPicker" = 2; lines: 1017, 1030 — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "floorPickerOptions" = 2; lines: 14, 1020 — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "formatUnitLabel" = 2; lines: 19, 1033 — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "min-h-[44px] px-4 text-sm rounded-full border" = 1; lines: 1002 — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "flex-1 min-h-[44px] rounded-xl text-sm font-medium border" = 2; lines: 1045, 1055 — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "w-full h-11 px-3 text-sm" = 2; lines: 991, 1074 — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "<select" = 5; lines: 668, 678, 1133, 1142, 1153 — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "onClick={openUpload}" = 1; lines: 706 — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "fixed bottom-6 left-6" = 0; lines: none — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "העלאה מרובה" = 0; lines: none — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "indigo" = 0; lines: none — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "text-xs px-2.5 py-1.5 rounded-full border" = 0; lines: none — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "flex-1 py-2 rounded-xl text-xs font-medium border" = 0; lines: none — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "העלאת תוכניות" = 2; lines: 511, 565 — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "bulkInitialFiles" = 2; lines: 99, 547 — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "min-h-[44px] px-4 text-sm rounded-full border" = 1; lines: 615 — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "flex-1 min-h-[44px] rounded-xl text-sm font-medium border" = 2; lines: 632, 642 — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "w-full h-11 px-3 text-sm" = 2; lines: 604, 661 — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "setShowUploadModal(true)" = 1; lines: 507 — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "setShowBulkModal(true)" = 1; lines: 214 — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "type=\"file\" multiple" = 1; lines: 959 — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "type=\"file\" multiple" = 1; lines: 572 — PASS
+frontend/src/pages/ProjectPlansPage.js: grep -c -F "העלאת תוכניות" = 2; lines: 710, 952 — PASS
+frontend/src/pages/UnitPlansPage.js: grep -c -F "העלאת תוכניות" = 2; lines: 511, 565 — PASS
+frontend/src/components/BulkPlanUploadModal.jsx: grep -c -F "העלאת תוכניות" = 1; lines: 200 — PASS
+frontend/src/pages/ProjectPlansPage.js: handleUploadSubmit unchanged — PASS
+frontend/src/pages/ProjectPlansPage.js: handleScannedPlan unchanged — PASS
+frontend/src/pages/ProjectPlansPage.js: closeUploadModal unchanged — PASS
+frontend/src/pages/ProjectPlansPage.js: openUpload unchanged — PASS
+frontend/src/pages/UnitPlansPage.js: handleUploadSubmit unchanged — PASS
+frontend/src/pages/UnitPlansPage.js: handleScannedPlan unchanged — PASS
+frontend/src/pages/UnitPlansPage.js: closeUploadModal unchanged — PASS
+
+T8
+Command: cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" BUILD_PATH=/tmp/batch625/verified-build npm run build
+Exit code: 0
+Compiled successfully.
+Jest: not run — canvas runtime probe blocked by libuuid.so.1: cannot open shared object file: No such file or directory.
+Browser: not run — local harness.
+T9: user-owned verification after separately approved staging deployment; not performed or claimed here.
+Reference pictures ux/625-before-after.png and ux/625-fields-before-after.png unavailable; no visual comparison claimed.
+
+V4 — Read-only findings
+ProjectPlansPage.js:668 sort; :678 floor filter; :1133 edit discipline; :1142 edit floor; :1153 edit unit.
+UnitPlansPage.js:446 discipline filter.
+ProjectPlansPage.js:1156 unit option expression: u.name || u.number || u.id
+getUnitName definition :244–247 returns empty string for missing id, otherwise the id itself. Only use :1201.
+Raw evidence:
+frontend/src/pages/ProjectPlansPage.js:668:            <select
+frontend/src/pages/ProjectPlansPage.js:678:              <select
+frontend/src/pages/ProjectPlansPage.js:1133:                    <select value={editFields.discipline} onChange={e => setEditFields(p => ({ ...p, discipline: e.target.value }))} className="w-full h-9 px-3 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-300">
+frontend/src/pages/ProjectPlansPage.js:1142:                      <select value={editFields.floor_id} onChange={e => setEditFields(p => ({ ...p, floor_id: e.target.value, unit_id: '' }))} className="w-full h-9 px-3 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-300">
+frontend/src/pages/ProjectPlansPage.js:1153:                      <select value={editFields.unit_id} onChange={e => setEditFields(p => ({ ...p, unit_id: e.target.value }))} className="w-full h-9 px-3 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-300">
+frontend/src/pages/UnitPlansPage.js:446:          <select
+244:  const getUnitName = (unitId) => {
+1156:                          <option key={u.id} value={u.id}>{u.name || u.number || u.id}</option>
+1201:                          <p className="font-medium text-slate-700 mt-0.5">{getUnitName(detailPlan.unit_id)}</p>
+  const getUnitName = (unitId) => {
+    if (!unitId) return '';
+    return unitId;
+  };
+
+V5 — Scope
+One new application file and three edited application files; only F0–F3. All four final MD5 signatures match the supplied reference byte-for-byte. Protected functions unchanged. No other dialogs, plans list/folders, backend, i18n, dependency, CSS or config edits. No Git commands, environment edits, infrastructure fixes or deployment. review.txt remains untouched.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
