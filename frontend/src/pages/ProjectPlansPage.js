@@ -11,10 +11,12 @@ import {
 } from 'lucide-react';
 import PageHeader, { PAGE_HEADER_ACTION_CLASS } from '../components/PageHeader';
 import PlanViewer from '../components/PlanViewer';
-import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
+import BulkPlanUploadModal, { floorPickerOptions } from '../components/BulkPlanUploadModal';
+import SheetPicker from '../components/SheetPicker';
 import DisciplineManagerModal from '../components/DisciplineManagerModal';
 import DocumentScannerButton from '../components/DocumentScannerButton';
 import { scannedImagesToPdf } from '../utils/scannedImagesToPdf';
+import { formatUnitLabel } from '../utils/formatters';
 
 const DEFAULT_DISCIPLINES = [
   'electrical', 'plumbing', 'architecture', 'construction', 'hvac', 'fire_protection'
@@ -156,6 +158,8 @@ const ProjectPlansPage = () => {
   // <BulkPlanUploadModal> via useState there.
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkDefaultDiscipline, setBulkDefaultDiscipline] = useState('');
+  // #625 — when several files are chosen in the upload dialog, the list dialog opens with them
+  const [bulkInitialFiles, setBulkInitialFiles] = useState(null);
 
   const myRole = project?.my_role || user?.role;
   const canManage = user && UPLOAD_ROLES.includes(myRole);
@@ -318,14 +322,19 @@ const ProjectPlansPage = () => {
     if (folderIsDiscipline) setUploadDiscipline(folder);
     setShowUploadModal(true);
   };
-  const openBulkUpload = () => {
-    if (folderIsDiscipline) setBulkDefaultDiscipline(folder);
-    setShowBulkModal(true);
-  };
 
+  // #625 — one upload button: one chosen file continues in the form, several continue in the list dialog
   const handleFileSelect = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    if (files.length > 1) {
+      setBulkDefaultDiscipline(uploadDiscipline);
+      setBulkInitialFiles(files);
+      closeUploadModal();
+      setShowBulkModal(true);
+      return;
+    }
+    const file = files[0];
     setUploadFile(file);
     if (!uploadName) {
       const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
@@ -693,22 +702,13 @@ const ProjectPlansPage = () => {
         )}
 
         {canManage && (
-          <div className="flex gap-2">
-            <button
-              onClick={openUpload}
-              className="flex-1 flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
-            >
-              <Upload className="w-4 h-4" />
-              העלאת תוכנית
-            </button>
-            <button
-              onClick={openBulkUpload}
-              className="flex items-center justify-center gap-2 px-4 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              העלאה מרובה
-            </button>
-          </div>
+          <button
+            onClick={openUpload}
+            className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
+          >
+            <Upload className="w-4 h-4" />
+            העלאת תוכניות
+          </button>
         )}
 
         {isRoot && !searching ? (
@@ -944,28 +944,19 @@ const ProjectPlansPage = () => {
         )}
       </div>
 
-      {canManage && (
-        <button
-          onClick={openUpload}
-          className="fixed bottom-6 left-6 z-40 w-14 h-14 bg-amber-500 hover:bg-amber-600 text-white rounded-full shadow-xl flex items-center justify-center transition-colors"
-        >
-          <Plus className="w-6 h-6" />
-        </button>
-      )}
-
       {showUploadModal && canManage && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={closeUploadModal} />
           <div className="relative z-10 w-full sm:max-w-md sm:mx-4 p-5 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl max-h-[92vh] overflow-y-auto" dir="rtl">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-bold text-slate-800">העלאת תוכנית</h3>
+              <h3 className="text-base font-bold text-slate-800">העלאת תוכניות</h3>
               <button onClick={closeUploadModal} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors">
                 <X className="w-5 h-5 text-slate-400" />
               </button>
             </div>
             <div className="space-y-4">
               <div>
-                <input ref={fileInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf" onChange={handleFileSelect} className="hidden" id="plan-file-pick" />
+                <input ref={fileInputRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf" onChange={handleFileSelect} className="hidden" id="plan-file-pick" />
                 {uploadFile ? (
                   <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
                     <FileText className="w-5 h-5 text-amber-600 shrink-0" />
@@ -978,7 +969,8 @@ const ProjectPlansPage = () => {
                   <div className="flex gap-2">
                     <label htmlFor="plan-file-pick" className="flex-1 flex flex-col items-center justify-center gap-1 py-4 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 cursor-pointer hover:border-amber-400 hover:text-amber-600 transition-colors">
                       <Upload className="w-5 h-5" />
-                      בחר קובץ
+                      בחירת קבצים
+                      <span className="text-xs text-slate-500">קובץ אחד או כמה יחד</span>
                     </label>
                     {/* BATCH doc-scanner-in-plans-tabs — native only; renders null on web */}
                     <DocumentScannerButton
@@ -996,18 +988,18 @@ const ProjectPlansPage = () => {
                   value={uploadName}
                   onChange={e => setUploadName(e.target.value)}
                   placeholder="שם התוכנית"
-                  className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
+                  className="w-full h-11 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
                 />
               </div>
 
               <div>
                 <label className="text-xs font-medium text-slate-600 mb-2 block">תחום *</label>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-2">
                   {allDisciplinesList.map(d => (
                     <button
                       key={d.key}
                       onClick={() => setUploadDiscipline(d.key)}
-                      className={`text-xs px-2.5 py-1.5 rounded-full border transition-colors ${
+                      className={`min-h-[44px] px-4 text-sm rounded-full border transition-colors ${
                         uploadDiscipline === d.key
                           ? 'bg-amber-500 text-white border-amber-500'
                           : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -1022,34 +1014,26 @@ const ProjectPlansPage = () => {
               {allFloors.length > 0 && (
                 <div>
                   <label className="text-xs font-medium text-slate-600 mb-1.5 block">קומה</label>
-                  <select
+                  <SheetPicker
+                    title="קומה"
                     value={uploadFloorId}
-                    onChange={e => { setUploadFloorId(e.target.value); setUploadUnitId(''); }}
-                    className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
-                  >
-                    <option value="">לא נבחרה</option>
-                    {allFloors.map(f => (
-                      <option key={f.id} value={f.id}>
-                        {f.building_name ? `${f.building_name} - ` : ''}{f.display_label || f.name || `קומה ${f.floor_number || ''}`}
-                      </option>
-                    ))}
-                  </select>
+                    options={floorPickerOptions(allFloors)}
+                    onChange={v => { setUploadFloorId(v); setUploadUnitId(''); }}
+                    placeholder="בחירת קומה (לא חובה)"
+                  />
                 </div>
               )}
 
               {uploadFloorId && uploadPlanType === 'tenant_changes' && uploadFloorUnits.length > 0 && (
                 <div>
                   <label className="text-xs font-medium text-slate-600 mb-1.5 block">דירה</label>
-                  <select
+                  <SheetPicker
+                    title="דירה"
                     value={uploadUnitId}
-                    onChange={e => setUploadUnitId(e.target.value)}
-                    className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
-                  >
-                    <option value="">לא נבחרה</option>
-                    {uploadFloorUnits.map(u => (
-                      <option key={u.id} value={u.id}>{u.name || u.number || u.id}</option>
-                    ))}
-                  </select>
+                    options={[{ value: '', label: 'ללא דירה' }, ...uploadFloorUnits.map(u => ({ value: u.id, label: formatUnitLabel(u.display_label || u.unit_no || '') || u.id }))]}
+                    onChange={setUploadUnitId}
+                    placeholder="בחירת דירה (לא חובה)"
+                  />
                 </div>
               )}
 
@@ -1058,7 +1042,7 @@ const ProjectPlansPage = () => {
                 <div className="flex gap-2">
                   <button
                     onClick={() => setUploadPlanType('standard')}
-                    className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${
+                    className={`flex-1 min-h-[44px] rounded-xl text-sm font-medium border transition-colors ${
                       uploadPlanType === 'standard'
                         ? 'bg-amber-500 text-white border-amber-500'
                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -1068,7 +1052,7 @@ const ProjectPlansPage = () => {
                   </button>
                   <button
                     onClick={() => setUploadPlanType('tenant_changes')}
-                    className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${
+                    className={`flex-1 min-h-[44px] rounded-xl text-sm font-medium border transition-colors ${
                       uploadPlanType === 'tenant_changes'
                         ? 'bg-violet-500 text-white border-violet-500'
                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -1087,7 +1071,7 @@ const ProjectPlansPage = () => {
                   onChange={e => setUploadNote(e.target.value.slice(0, 200))}
                   placeholder="הערה (אופציונלי, עד 200 תווים)"
                   maxLength={200}
-                  className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
+                  className="w-full h-11 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
                 />
               </div>
 
@@ -1446,7 +1430,8 @@ const ProjectPlansPage = () => {
       {canManage && (
         <BulkPlanUploadModal
           open={showBulkModal}
-          onClose={() => setShowBulkModal(false)}
+          onClose={() => { setShowBulkModal(false); setBulkInitialFiles(null); }}
+          initialFiles={bulkInitialFiles}
           allDisciplines={allDisciplinesList}
           getDisciplineLabel={getDisciplineLabel}
           defaultDiscipline={bulkDefaultDiscipline}

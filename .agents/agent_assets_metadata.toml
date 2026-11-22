@@ -1495,3 +1495,17 @@ mtime_ms = 1795010623654
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/2cc9f0e3-a547-4d58-90e4-1aaf6a3d557c/a6a0c44a-a0c0-42cd-857b-42deb1116c8a"
 storage_version_token = "1795010655367891"
 content_type = "text/plain"
+
+[[outputs]]
+id = "W0UyGckn1YTXn7K_OzfGG"
+uri = "file://attached_assets/batch625-review-section.txt"
+type = "text"
+title = "דוח #625 (22.11)"
+description = "שינויים מדויקים, חתימות, בדיקות וממצאים לקריאה בלבד — ללא פריסה."
+logical_id = "34bad258-de67-4929-ab95-2d69c14909f9"
+content_hash = "sha256:80179d139cea813ce5c6865bf6900a08c7dab18de0dff98f2e3fc259c1368b01"
+size = 31883
+mtime_ms = 1795358281200
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/34bad258-de67-4929-ab95-2d69c14909f9/58c5df49-c6a1-4371-87a0-f5b7f3e43d29"
+storage_version_token = "1795358283056080"
+content_type = "text/plain"
