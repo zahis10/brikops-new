@@ -198,6 +198,82 @@ if [[ $has_uncommitted -eq 1 ]]; then
   fi
 fi
 
+# --- GitHub login --------------------------------------------------------------
+# This Shell gets its GitHub credential from Replit's GitHub connection (GIT_ASKPASS).
+# The first request after a pause is sometimes turned down ("Invalid username or
+# token"), or waits for an approval window in Replit, and the very same request
+# passes a few seconds later. So: ask GitHub now, before the build (a --dry-run
+# push logs in and sends nothing), and repeat a few times; the real push at the
+# end is repeated the same way. GIT_TERMINAL_PROMPT=0: git never stops to ask for
+# a user name or a password in the terminal — nobody should type a token here.
+# (Emergency switch for the early check only: SKIP_GITHUB_CHECK=1 ./deploy.sh ...)
+GITHUB_TRIES="${GITHUB_TRIES:-4}"
+GITHUB_WAIT="${GITHUB_WAIT:-8}"
+github_out=""
+
+# github_push <name for the messages> <git push arguments...>
+#   0 = went through
+#   1 = still failing after $GITHUB_TRIES attempts
+#   2 = GitHub rejected the push itself (repeating cannot help)
+# git's output of the last attempt is left in $github_out.
+github_push() {
+  local what="$1"
+  shift
+  local n=1
+  while true; do
+    if github_out="$(GIT_TERMINAL_PROMPT=0 git push "$@" 2>&1)"; then
+      return 0
+    fi
+    if grep -qE '\[(remote )?rejected\]|non-fast-forward|protected branch|does not match any' <<<"$github_out"; then
+      return 2
+    fi
+    if (( n >= GITHUB_TRIES )); then
+      return 1
+    fi
+    echo "[github] $what did not go through (attempt $n of $GITHUB_TRIES) - trying again in ${GITHUB_WAIT}s..."
+    if (( n == 1 )); then
+      echo "         If Replit shows a window asking to use your GitHub account, approve it."
+    fi
+    sleep "$GITHUB_WAIT"
+    n=$((n + 1))
+  done
+}
+
+github_rc=0
+if [[ "${SKIP_GITHUB_CHECK:-0}" == "1" ]]; then
+  echo "GitHub login check skipped."
+  echo
+else
+  echo "Checking the GitHub login..."
+  github_push "The GitHub login" --dry-run origin "$branch" || github_rc=$?
+  if [[ $github_rc -eq 0 ]]; then
+    echo "[github] OK"
+    echo
+  fi
+fi
+if [[ $github_rc -ne 0 ]]; then
+  echo
+  if [[ $github_rc -eq 2 ]]; then
+    echo "[github] ERROR: GitHub would reject this push. Nothing was built and nothing was pushed."
+  else
+    echo "[github] ERROR: GitHub did not let us in. Nothing was built and nothing was pushed."
+  fi
+  echo "GitHub said:"
+  sed 's/^/    /' <<<"$github_out"
+  echo
+  if [[ $github_rc -eq 2 ]]; then
+    echo "This is not a login problem: GitHub refuses the push itself (see above)."
+    echo "Do not force the push. Stop here and ask."
+  else
+    echo "What to do:"
+    echo "  1. Run the same deploy command again, from a computer (not the phone)."
+    echo "  2. Still failing? In your Replit account settings disconnect GitHub, connect it"
+    echo "     again, and run the same command again."
+    echo "  Do not type or paste a token or a password here."
+  fi
+  exit 1
+fi
+
 if [[ $SKIP_CHECKS -eq 0 ]]; then
   echo "Preflight checks..."
   if [[ $backend_changed -eq 1 ]]; then
@@ -249,7 +325,32 @@ if [[ $has_uncommitted -eq 1 ]]; then
   git commit -m "${MSG:-deploy: $(date '+%Y-%m-%d %H:%M')}" || true
 fi
 
-git push origin "$branch"
+github_rc=0
+github_push "The push to GitHub" origin "$branch" || github_rc=$?
+if [[ $github_rc -eq 0 ]]; then
+  if [[ -n "$github_out" ]]; then
+    echo "$github_out"
+  fi
+else
+  echo
+  echo "[github] ERROR: the push to GitHub did not go through. Everything else is done - only the push is missing."
+  echo "GitHub said:"
+  sed 's/^/    /' <<<"$github_out"
+  echo
+  if [[ $github_rc -eq 2 ]]; then
+    echo "This is not a login problem: GitHub refuses the push itself (see above)."
+    echo "Do not force the push. Stop here and ask."
+  else
+    echo "To finish, run this from a computer (not the phone):"
+    if [[ "$MODE" == "prod" ]]; then
+      echo "  git push origin main && git checkout staging"
+    else
+      echo "  git push origin staging"
+    fi
+    echo "Do not type or paste a token or a password here."
+  fi
+  exit 1
+fi
 
 SHA="$(git rev-parse --short HEAD)"
 

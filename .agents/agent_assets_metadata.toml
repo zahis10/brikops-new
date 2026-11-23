@@ -1523,3 +1523,17 @@ mtime_ms = 1795440180407
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/99ee9b7c-2aaa-4515-9f97-24884f4eb83d/34bf8e67-7c21-416a-a9ea-5facae68b710"
 storage_version_token = "1795440187213040"
 content_type = "text/plain"
+
+[[outputs]]
+id = "SHC8JEH2WBH0jsPXxnaul"
+uri = "file://attached_assets/batch628-review-section.txt"
+type = "text"
+title = "#628 (23.11) — דוח בדיקות"
+description = "F1 תואם ל־MD5 הנדרש; בדיקות סטטיות בלבד, ללא Git וללא deploy."
+logical_id = "8f5f9690-fae7-43c5-a816-f646f081b2aa"
+content_hash = "sha256:c33b68957e6dd227da6eccc3d712ce75bc9d3ad6b662bb6d4eaf68ef2849b2b1"
+size = 3705
+mtime_ms = 1795466745262
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/8f5f9690-fae7-43c5-a816-f646f081b2aa/3dc84b82-a285-4994-bb19-42f9b5dee34e"
+storage_version_token = "1795466754450029"
+content_type = "text/plain"
