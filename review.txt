@@ -17543,3 +17543,103 @@ No Git commands, deployment, environment changes, dependency changes, CSS/config
 No other component, page, dialog, backend or i18n changes.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#628 (23.11)
+
+STEP 0 — before any edit
+wc -c review.txt: 981416
+md5sum deploy.sh: cbd1aed264be8d8548af955dc4872bac
+stat -c '%a' deploy.sh: 755
+Baseline: 331 lines, 11504 bytes.
+Baseline copy: /tmp/batch628/deploy.sh.before
+No Git commands; deploy.sh was neither run nor sourced.
+
+V1 — exact F1 file
+Path: deploy.sh
+Lines: 432
+Bytes: 15193
+MD5: e402c32f5051e38a7c34b04d11dbc337
+First 3 lines:
+#!/usr/bin/env bash
+set -euo pipefail
+
+Last 3 lines:
+  echo "     cd ~/brikops-new && ./ship.sh"
+  echo "   ═══════════════════════════════════════════════════"
+fi
+Extracted original F1 bytes by script; one final LF; overwritten in place; inode and mode 755 preserved.
+
+V2 — GNU diff (no Git)
+diff /tmp/batch628/deploy.sh.before deploy.sh | grep -c '^>'
+102
+diff /tmp/batch628/deploy.sh.before deploy.sh | grep -c '^<'
+1
+331 -> 432 lines (+102 / -1). All bytes outside the two specified change regions are unchanged.
+
+V3 — checks actually run
+T1: md5sum deploy.sh
+e402c32f5051e38a7c34b04d11dbc337  deploy.sh
+T2: wc -l deploy.sh
+432 deploy.sh
+wc -c deploy.sh
+15193 deploy.sh
+T3: bash -n deploy.sh
+exit=0 (no other output)
+T4: test -x deploy.sh && echo executable
+executable
+stat -c '%a' deploy.sh
+755
+chmod was not needed.
+T5: grep -c -F -- <text> deploy.sh
+GIT_TERMINAL_PROMPT=0 git push "$@" 2>&1 -> 1 (expected 1)
+github_push "The GitHub login" --dry-run origin "$branch" -> 1 (expected 1)
+github_push "The push to GitHub" origin "$branch" -> 1 (expected 1)
+github_push() { -> 1 (expected 1)
+Checking the GitHub login... -> 1 (expected 1)
+GITHUB_TRIES="${GITHUB_TRIES:-4}" -> 1 (expected 1)
+GITHUB_WAIT="${GITHUB_WAIT:-8}" -> 1 (expected 1)
+SKIP_GITHUB_CHECK -> 2 (expected 2)
+git push origin main && git checkout staging -> 1 (expected 1)
+Do not type or paste a token or a password here. -> 2 (expected 2)
+Nothing was built and nothing was pushed. -> 2 (expected 2)
+only the push is missing -> 1 (expected 1)
+set -euo pipefail -> 1 (expected 1)
+read -rp "Deploy to production? (y/N): " confirm -> 1 (expected 1)
+read -rp "Deploy to STAGING? (y/N): " confirm -> 1 (expected 1)
+git add -A -> 1 (expected 1)
+DEPLOY SUMMARY -> 1 (expected 1)
+Restoring local dev build -> 1 (expected 1)
+check_frontend_staleness -> 2 (expected 2)
+Nothing to deploy (no changes, nothing to push). -> 1 (expected 1)
+Dry-run only. To deploy: -> 1 (expected 1)
+python3 -m compileall backend/ -q -> 2 (expected 2)
+./ship.sh -> 3 (expected 3)
+Whole-line grep -c -x -F:
+git push origin "$branch" -> 0 (expected 0)
+
+T6 — complete list of files created or edited by this run:
+Edited: deploy.sh
+Created: attached_assets/batch628-review-section.txt
+Scratch copy only: /tmp/batch628/deploy.sh.before
+No other files were written by this run.
+
+T7: not applicable — deploy script only
+No build, Jest or browser run. The spec author's 54 simulated checks were not rerun here.
+T8: Live staging verification and GitHub file hash/executable verification remain for Zahi after approval.
+
+V4 — read-only answers
+(a) ls -A .git/hooks | grep -v '\.sample$'
+post-checkout
+post-commit
+post-merge
+pre-push
+(b) md5sum frontend/src/pages/ProjectPlansPage.js frontend/src/pages/UnitPlansPage.js
+7a6363090f868f5ab865c3a7b672f2e4  frontend/src/pages/ProjectPlansPage.js
+753dac290b3b56e01f1d8a74d0e6482e  frontend/src/pages/UnitPlansPage.js
+
+review.txt untouched: byte-identical, same modification time.
+review.txt SHA256 before/after: ce30bb21d6bd64e5a3144b9d9728e70cd1aaf464d52a66abcb09a358ce8de019
+No Git commands, deploy, script execution/source, app changes, configuration edits, or secret access.
+
+V5
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
