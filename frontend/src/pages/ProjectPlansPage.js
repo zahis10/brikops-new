@@ -152,6 +152,11 @@ const ProjectPlansPage = () => {
   const [versionHistory, setVersionHistory] = useState([]);
   const [versionHistoryLoading, setVersionHistoryLoading] = useState(false);
   const versionFileRef = useRef(null);
+  const versionPanelRef = useRef(null);
+  // the upload panel opens under the last button, often below the fold: bring all of it into view
+  useEffect(() => {
+    if (showVersionUpload && versionPanelRef.current) versionPanelRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [showVersionUpload]);
 
   // BATCH H.1 — bulk upload state at page level (open + default
   // discipline). Internal file list / progress / results live in
@@ -1094,27 +1099,36 @@ const ProjectPlansPage = () => {
           <div className="relative z-10 w-full sm:max-w-lg sm:mx-4 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl max-h-[92vh] flex flex-col" dir="rtl">
             <div className="flex items-center justify-between p-4 border-b border-slate-100">
               <h3 className="text-sm font-bold text-slate-800 truncate">{detailPlan.name || detailPlan.original_filename}</h3>
-              <button onClick={() => { setDetailPlan(null); setEditingDetail(false); }} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors flex-shrink-0">
+              <button onClick={() => { setDetailPlan(null); setEditingDetail(false); }} aria-label="סגור" className="w-11 h-11 -my-1.5 -ml-1.5 flex items-center justify-center hover:bg-slate-100 rounded-lg transition-colors flex-shrink-0">
                 <X className="w-5 h-5 text-slate-400" />
               </button>
             </div>
             <div className="overflow-y-auto p-4 space-y-4">
-              {/* 2026-05-10 hotfix-2 — prefer thumbnail_url (PNG, no CSP
-                   frame-src restriction) over iframe (blocked by app CSP).
-                   Mirrors the pattern in UnitPlansPage.js:601-604. iframe
-                   stays as ultimate fallback for plans whose async
-                   thumbnail hasn't generated yet. */}
-              {detailPlan.thumbnail_url ? (
+              {/* The preview. For a PDF or an image, tapping it opens the full-screen viewer — the
+                   "צפייה במסך מלא" button now sits on the picture. thumbnail_url comes first (a PNG); a
+                   plan whose thumbnail is not ready yet shows its file icon (the old iframe fallback
+                   was blocked by the app's CSP anyway). Same block in UnitPlansPage.js. */}
+              {(detailPlan.file_type === 'application/pdf' || (detailPlan.file_type || '').startsWith('image/')) ? (
+                <button
+                  type="button"
+                  onClick={() => setFullscreenPlan(detailPlan)}
+                  className="relative block w-full rounded-xl overflow-hidden border border-slate-200 bg-slate-50"
+                >
+                  {(detailPlan.thumbnail_url || (detailPlan.file_type || '').startsWith('image/')) ? (
+                    <img src={detailPlan.thumbnail_url || detailPlan.file_url} alt={detailPlan.name || ''} className="w-full max-h-64 object-contain" />
+                  ) : (
+                    <span className={`h-32 ${getFileIcon(detailPlan).bg} flex items-center justify-center`}>
+                      {React.createElement(getFileIcon(detailPlan).icon, { className: `w-12 h-12 ${getFileIcon(detailPlan).color} opacity-50` })}
+                    </span>
+                  )}
+                  <span className="absolute bottom-2 left-2 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 text-white text-xs font-medium">
+                    <Maximize2 className="w-3.5 h-3.5" />
+                    צפייה במסך מלא
+                  </span>
+                </button>
+              ) : detailPlan.thumbnail_url ? (
                 <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
                   <img src={detailPlan.thumbnail_url} alt={detailPlan.name || ''} className="w-full max-h-64 object-contain" />
-                </div>
-              ) : (detailPlan.file_type || '').startsWith('image/') ? (
-                <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
-                  <img src={detailPlan.file_url} alt={detailPlan.name || ''} className="w-full max-h-64 object-contain" />
-                </div>
-              ) : (detailPlan.file_type === 'application/pdf') ? (
-                <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50 h-64">
-                  <iframe src={detailPlan.file_url} title={detailPlan.name || ''} className="w-full h-full" />
                 </div>
               ) : (
                 <div className={`h-32 ${getFileIcon(detailPlan).bg} rounded-xl flex items-center justify-center`}>
@@ -1183,9 +1197,9 @@ const ProjectPlansPage = () => {
                 <>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{getDisciplineLabel(detailPlan.discipline)}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{getDisciplineLabel(detailPlan.discipline)}</span>
                       {detailPlan.plan_type === 'tenant_changes' && (
-                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">שינויי דיירים</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">שינויי דיירים</span>
                       )}
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs">
@@ -1223,58 +1237,57 @@ const ProjectPlansPage = () => {
                       </div>
                     )}
                   </div>
-                  <div className="flex gap-2 pt-1 flex-wrap">
-                    <button
-                      onClick={() => setFullscreenPlan(detailPlan)}
-                      className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2"
-                    >
-                      <Maximize2 className="w-4 h-4" />
-                      צפייה במסך מלא
-                    </button>
+                  {/* Actions: one filled button; the rest are quiet. Viewing is on the picture above.
+                       The upload button comes last: its panel opens right under it, above the version history. */}
+                  <div className="grid grid-cols-2 gap-2 pt-1">
                     <a
                       href={detailPlan.file_url}
                       download
                       onClick={() => handleViewPlan(detailPlan)}
-                      className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2"
+                      className="col-span-2 min-h-[44px] px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2"
                     >
                       <Download className="w-4 h-4" />
                       הורד
                     </a>
                     {canManage && (
                       <>
-                        <button onClick={() => setShowVersionUpload(v => !v)} className="px-3 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5">
-                          <Upload className="w-3.5 h-3.5" />
-                          גרסה חדשה
-                        </button>
-                        <button onClick={startEdit} className="px-3 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-1.5">
-                          <Edit3 className="w-3.5 h-3.5" />
+                        <button onClick={startEdit} className="min-h-[44px] px-3 bg-white border border-slate-200 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 transition-colors flex items-center justify-center gap-2">
+                          <Edit3 className="w-4 h-4" />
                           ערוך
                         </button>
-                        <button onClick={() => { setDetailPlan(null); openArchiveModal(detailPlan); }} className="px-3 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-1.5">
-                          <Archive className="w-3.5 h-3.5" />
-                          ארכיון
+                        <button onClick={() => { setDetailPlan(null); openArchiveModal(detailPlan); }} className="min-h-[44px] px-3 bg-white border border-slate-200 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 transition-colors flex items-center justify-center gap-2">
+                          <Archive className="w-4 h-4" />
+                          העבר לארכיון
+                        </button>
+                        <button
+                          onClick={() => setShowVersionUpload(v => !v)}
+                          aria-expanded={showVersionUpload}
+                          className={`col-span-2 min-h-[44px] px-3 border rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2 ${showVersionUpload ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+                        >
+                          <Upload className="w-4 h-4" />
+                          העלאת תוכנית מעודכנת
                         </button>
                       </>
                     )}
                   </div>
 
                   {showVersionUpload && canManage && (
-                    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-2">
-                      <p className="text-xs font-bold text-indigo-800">העלה גרסה חדשה</p>
+                    <div ref={versionPanelRef} className="scroll-mb-4 bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                      <p className="text-xs text-slate-600">התוכנית תוחלף, והקודמת תישמר בהיסטוריה.</p>
                       <input ref={versionFileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf" onChange={e => { if (e.target.files?.[0]) setVersionFile(e.target.files[0]); }} className="hidden" id="version-file-pick" />
                       {versionFile ? (
-                        <div className="flex items-center gap-2 p-2 bg-white rounded-lg border border-indigo-100">
-                          <FileText className="w-4 h-4 text-indigo-500 shrink-0" />
-                          <span className="text-xs text-indigo-800 truncate flex-1">{versionFile.name}</span>
-                          <span className="text-[10px] text-slate-400">{formatFileSize(versionFile.size)}</span>
-                          <button onClick={() => { setVersionFile(null); if (versionFileRef.current) versionFileRef.current.value = ''; }} className="text-slate-400 hover:text-slate-600">
-                            <X className="w-3.5 h-3.5" />
+                        <div className="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-200">
+                          <FileText className="w-4 h-4 text-amber-600 shrink-0" />
+                          <span className="text-xs text-slate-800 truncate flex-1">{versionFile.name}</span>
+                          <span className="text-xs text-slate-500">{formatFileSize(versionFile.size)}</span>
+                          <button onClick={() => { setVersionFile(null); if (versionFileRef.current) versionFileRef.current.value = ''; }} aria-label="הסר קובץ" className="w-11 h-11 -my-2 -ml-2 flex items-center justify-center text-slate-400 hover:text-slate-600">
+                            <X className="w-4 h-4" />
                           </button>
                         </div>
                       ) : (
-                        <label htmlFor="version-file-pick" className="flex items-center justify-center gap-2 w-full py-3 border-2 border-dashed border-indigo-300 rounded-lg text-xs text-indigo-500 cursor-pointer hover:border-indigo-400 transition-colors">
-                          <Upload className="w-4 h-4" />
-                          בחר קובץ
+                        <label htmlFor="version-file-pick" className="flex items-center justify-center gap-2 w-full min-h-[44px] border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-amber-400 transition-colors">
+                          <Upload className="w-4 h-4 text-slate-500" />
+                          <span className="text-sm text-slate-600">בחר קובץ</span>
                         </label>
                       )}
                       <input
@@ -1283,14 +1296,14 @@ const ProjectPlansPage = () => {
                         onChange={e => setVersionNote(e.target.value.slice(0, 200))}
                         placeholder="מה השתנה? (אופציונלי)"
                         maxLength={200}
-                        className="w-full h-8 px-3 text-xs bg-white border border-indigo-100 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                        className="w-full h-11 px-3 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-300"
                       />
                       <button
                         onClick={handleVersionUpload}
                         disabled={uploadingVersion || !versionFile}
-                        className="w-full py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-xs font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                        className="w-full min-h-[44px] bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                       >
-                        {uploadingVersion ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                        {uploadingVersion ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                         {uploadingVersion ? 'מעלה...' : 'העלה גרסה'}
                       </button>
                     </div>
@@ -1303,29 +1316,29 @@ const ProjectPlansPage = () => {
                     </p>
                     {versionHistoryLoading ? (
                       <div className="flex justify-center py-3">
-                        <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                        <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
                       </div>
                     ) : versionHistory.length === 0 ? (
-                      <p className="text-[11px] text-slate-400 text-center py-2">אין היסטוריית גרסאות</p>
+                      <p className="text-xs text-slate-500 text-center py-2">אין היסטוריית גרסאות</p>
                     ) : (
                       <div className="space-y-1.5">
                         {versionHistory.map((v, idx) => {
                           const isCurrent = idx === 0;
                           return (
-                            <div key={v.version} className={`flex items-center gap-2 rounded-lg px-3 py-2 ${isCurrent ? 'bg-indigo-50 border border-indigo-200' : 'bg-slate-50'}`}>
-                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${isCurrent ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-600'}`}>v{v.version}</span>
+                            <div key={v.version} className={`flex items-center gap-2 rounded-lg px-3 py-2 ${isCurrent ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50'}`}>
+                              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isCurrent ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-600'}`}>v{v.version}</span>
                               <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                                <div className="flex items-center gap-1.5 text-xs text-slate-500">
                                   <span>{formatDate(v.uploaded_at)}</span>
                                   <span>—</span>
                                   <span className="truncate">{v.uploaded_by_name || ''}</span>
-                                  {isCurrent && <span className="text-indigo-600 font-bold">(נוכחי)</span>}
+                                  {isCurrent && <span className="text-amber-700 font-bold">(נוכחי)</span>}
                                 </div>
-                                {v.note && <p className="text-[10px] text-slate-400 mt-0.5 truncate">{v.note}</p>}
+                                {v.note && <p className="text-xs text-slate-500 mt-0.5 truncate">{v.note}</p>}
                               </div>
                               {!isCurrent && v.file_url && (
-                                <a href={v.file_url} download className="p-1.5 hover:bg-slate-200 rounded-lg transition-colors shrink-0" title="הורד גרסה זו">
-                                  <Download className="w-3.5 h-3.5 text-slate-500" />
+                                <a href={v.file_url} download className="w-11 h-11 -my-1.5 -ml-2 flex items-center justify-center hover:bg-slate-200 rounded-lg transition-colors shrink-0" title="הורד גרסה זו" aria-label="הורד גרסה זו">
+                                  <Download className="w-4 h-4 text-slate-500" />
                                 </a>
                               )}
                             </div>

@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import { t } from '../i18n';
 import {
-  Loader2, Upload, FileText, Download, Eye,
+  Loader2, Upload, FileText, Download,
   Calendar, User, X, Plus, Search, AlertCircle, FolderOpen,
   Image, Ruler, FileType, Maximize2, Settings, Archive
 } from 'lucide-react';
@@ -681,22 +681,34 @@ const UnitPlansPage = () => {
           <div className="relative z-10 w-full sm:max-w-lg sm:mx-4 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl max-h-[92vh] flex flex-col" dir="rtl">
             <div className="flex items-center justify-between p-4 border-b border-slate-100">
               <h3 className="text-sm font-bold text-slate-800 truncate">{detailPlan.name || detailPlan.original_filename}</h3>
-              <button onClick={() => setDetailPlan(null)} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors flex-shrink-0">
+              <button onClick={() => setDetailPlan(null)} aria-label="סגור" className="w-11 h-11 -my-1.5 -ml-1.5 flex items-center justify-center hover:bg-slate-100 rounded-lg transition-colors flex-shrink-0">
                 <X className="w-5 h-5 text-slate-400" />
               </button>
             </div>
             <div className="overflow-y-auto p-4 space-y-4">
-              {detailPlan.thumbnail_url ? (
+              {/* The preview. For a PDF or an image, tapping it opens the full-screen viewer — the
+                   "צפייה במסך מלא" button now sits on the picture. Same block in ProjectPlansPage.js. */}
+              {(detailPlan.file_type === 'application/pdf' || (detailPlan.file_type || '').startsWith('image/')) ? (
+                <button
+                  type="button"
+                  onClick={() => setFullscreenPlan(detailPlan)}
+                  className="relative block w-full rounded-xl overflow-hidden border border-slate-200 bg-slate-50"
+                >
+                  {(detailPlan.thumbnail_url || (detailPlan.file_type || '').startsWith('image/')) ? (
+                    <img src={detailPlan.thumbnail_url || detailPlan.file_url} alt={detailPlan.name || ''} className="w-full max-h-64 object-contain" />
+                  ) : (
+                    <span className={`h-32 ${getFileIcon(detailPlan).bg} flex items-center justify-center`}>
+                      {React.createElement(getFileIcon(detailPlan).icon, { className: `w-12 h-12 ${getFileIcon(detailPlan).color} opacity-50` })}
+                    </span>
+                  )}
+                  <span className="absolute bottom-2 left-2 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 text-white text-xs font-medium">
+                    <Maximize2 className="w-3.5 h-3.5" />
+                    צפייה במסך מלא
+                  </span>
+                </button>
+              ) : detailPlan.thumbnail_url ? (
                 <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
                   <img src={detailPlan.thumbnail_url} alt={detailPlan.name || ''} className="w-full max-h-64 object-contain" />
-                </div>
-              ) : (detailPlan.file_type || '').startsWith('image/') ? (
-                <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
-                  <img src={detailPlan.file_url} alt={detailPlan.name || ''} className="w-full max-h-64 object-contain" />
-                </div>
-              ) : (detailPlan.file_type === 'application/pdf') ? (
-                <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50 h-64">
-                  <iframe src={detailPlan.file_url} title={detailPlan.name || ''} className="w-full h-full" />
                 </div>
               ) : (
                 <div className={`h-32 ${getFileIcon(detailPlan).bg} rounded-xl flex items-center justify-center`}>
@@ -706,9 +718,9 @@ const UnitPlansPage = () => {
 
               <div className="space-y-2">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{getDisciplineLabel(detailPlan.discipline)}</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{getDisciplineLabel(detailPlan.discipline)}</span>
                   {detailPlan.plan_type === 'tenant_changes' && (
-                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">שינויי דיירים</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">שינויי דיירים</span>
                   )}
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
@@ -735,38 +747,23 @@ const UnitPlansPage = () => {
                 )}
               </div>
 
-              <div className="flex gap-2 pt-1 flex-wrap">
-                <button
-                  onClick={() => setFullscreenPlan(detailPlan)}
-                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2"
-                >
-                  <Maximize2 className="w-4 h-4" />
-                  צפייה במסך מלא
-                </button>
+              {/* Actions: one filled button. Viewing is on the picture above (the viewer has its own "open in a new tab"). */}
+              <div className="grid grid-cols-2 gap-2 pt-1">
                 <a
                   href={detailPlan.file_url}
                   download
-                  className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2"
+                  className={`min-h-[44px] px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2 ${canUpload ? '' : 'col-span-2'}`}
                 >
                   <Download className="w-4 h-4" />
                   הורד
                 </a>
-                <a
-                  href={detailPlan.file_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 transition-colors flex items-center gap-1.5"
-                >
-                  <Eye className="w-4 h-4" />
-                  צפה
-                </a>
                 {canUpload && (
                   <button
                     onClick={() => { setDetailPlan(null); openArchiveModal(detailPlan); }}
-                    className="px-3 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-1.5"
+                    className="min-h-[44px] px-3 bg-white border border-slate-200 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 transition-colors flex items-center justify-center gap-2"
                   >
                     <Archive className="w-4 h-4" />
-                    ארכיון
+                    העבר לארכיון
                   </button>
                 )}
               </div>

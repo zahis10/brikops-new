@@ -1537,3 +1537,17 @@ mtime_ms = 1795466745262
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/8f5f9690-fae7-43c5-a816-f646f081b2aa/3dc84b82-a285-4994-bb19-42f9b5dee34e"
 storage_version_token = "1795466754450029"
 content_type = "text/plain"
+
+[[outputs]]
+id = "Gzjgod0qgRtz8dUMVbA5r"
+uri = "file://attached_assets/batch627-review-section.txt"
+type = "text"
+title = "#627 (24.11) — דוח בדיקות"
+description = "שני קבצים תואמים למפרט בית־לבית; הבנייה וכל בדיקות הספירה עברו. ללא Git או deploy."
+logical_id = "2dd8610d-04a9-4fa7-9fde-be124d5f7a99"
+content_hash = "sha256:d20f1cf17fd26e194d8ddbbb406348ad412994cf073b822b07a64afe6e6541b8"
+size = 35117
+mtime_ms = 1795469724950
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/2dd8610d-04a9-4fa7-9fde-be124d5f7a99/35fb04d1-73f5-4caa-b8c3-57e0f27ff88c"
+storage_version_token = "1795469738455184"
+content_type = "text/plain"
