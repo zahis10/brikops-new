@@ -1509,3 +1509,17 @@ mtime_ms = 1795358281200
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/34bad258-de67-4929-ab95-2d69c14909f9/58c5df49-c6a1-4371-87a0-f5b7f3e43d29"
 storage_version_token = "1795358283056080"
 content_type = "text/plain"
+
+[[outputs]]
+id = "1HgW6aDjJdPYISRYv9E-7"
+uri = "file://attached_assets/batch626-review-section.txt"
+type = "text"
+title = "Batch 626 review — 23.11"
+description = "Exact MD5, GNU diff counts, CI build and CSS checks, and read-only action-row findings. No deployment."
+logical_id = "99ee9b7c-2aaa-4515-9f97-24884f4eb83d"
+content_hash = "sha256:354c1fe8d8325569e31c730da54001377eff4558804a1f3cf251bdbc8723fb80"
+size = 6269
+mtime_ms = 1795440180407
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/99ee9b7c-2aaa-4515-9f97-24884f4eb83d/34bf8e67-7c21-416a-a9ea-5facae68b710"
+storage_version_token = "1795440187213040"
+content_type = "text/plain"
