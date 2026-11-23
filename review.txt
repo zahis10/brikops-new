@@ -17424,3 +17424,122 @@ V5 — Scope
 One new application file and three edited application files; only F0–F3. All four final MD5 signatures match the supplied reference byte-for-byte. Protected functions unchanged. No other dialogs, plans list/folders, backend, i18n, dependency, CSS or config edits. No Git commands, environment edits, infrastructure fixes or deployment. review.txt remains untouched.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#626 (23.11)
+
+STEP 0
+wc -c review.txt: 975146 bytes (< 2 MB).
+Baseline: PlanViewer.js MD5 a303b45b0a136dee3da1dadced11c71f; 368 lines, 16476 bytes.
+Baseline copy: /tmp/batch626/PlanViewer.before.js only.
+F1 extracted by script from the supplied spec bytes between its header separator and the blank line before the next separator. No retyping or manual repair.
+
+V1 — Whole-file summary
+frontend/src/components/PlanViewer.js
+Lines: 726; bytes: 34792; MD5: d48743a8389ae9f894bdfade8046420f
+First 3 lines:
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { Document, pdfjs } from 'react-pdf';
+import { ZoomIn, ZoomOut, Maximize, ChevronLeft, ChevronRight, Loader2, X, Download, Eye } from 'lucide-react';
+Last 3 lines:
+};
+
+export default PlanViewer;
+
+V2 — GNU diff (informational only)
+diff /tmp/batch626/PlanViewer.before.js frontend/src/components/PlanViewer.js
+grep -c '^>': 605
+grep -c '^<': 247
+Net +358 lines (368 -> 726). User correction supersedes spec +607/-249. MD5 is the binding check; no edits made for a diff count.
+
+V3 — Checks T1–T6
+T1 MD5 PASS: d48743a8389ae9f894bdfade8046420f
+T2 wc -l: 726; wc -c: 34792
+T3 grep -c -F "import { Document, Page, pdfjs } from 'react-pdf';": 0 — PASS
+T3 grep -c -F '<Page': 0 — PASS
+T3 grep -c -F 'setScale': 0 — PASS
+T3 grep -c -F 'hotfix': 0 — PASS
+T3 grep -c -F 'זום אין': 0 — PASS
+T3 grep -c -F 'זום אאוט': 0 — PASS
+T3 grep -c -F 'min-w-[3rem]': 0 — PASS
+T3 grep -c -F 'min-w-[4rem]': 0 — PASS
+T3 grep -c -F 'error?.message': 0 — PASS
+T3 grep -c -F 'eslint-disable': 0 — PASS
+T3 grep -c -F "import { Document, pdfjs } from 'react-pdf';": 1 — PASS
+T3 grep -c -F 'function createPlanView(': 1 — PASS
+T3 grep -c -F 'will-change-transform': 1 — PASS
+T3 grep -c -F 'origin-top-left': 1 — PASS
+T3 grep -c -F 'overscroll-contain': 1 — PASS
+T3 grep -c -F 'pointer-events-none': 4 — PASS
+T3 grep -c -F 'onContinue': 1 — PASS
+T3 grep -c -F 'w-11 h-11': 1 — PASS
+T3 grep -c -F 'כל התוכנית': 1 — PASS
+T3 grep -c -F 'מחדד…': 1 — PASS
+T3 grep -c -F 'הגדלה': 1 — PASS
+T3 grep -c -F 'הקטנה': 1 — PASS
+T3 grep -c -F 'LOAD_ERROR': 5 — PASS
+T3 grep -c -F 'PDF_OPTIONS': 2 — PASS
+T3 grep -c -F 'pdf.worker.min.mjs': 2 — PASS
+T3 grep -c -F 'disableFontFace: true': 1 — PASS
+T3 grep -c -F 'const PlanViewer = ({ plan, onClose }) => {': 1 — PASS
+T3 grep -c -F 'export default PlanViewer;': 1 — PASS
+T3 grep -c -F 'טוען תוכנית…': 1 — PASS
+T3 grep -c -F 'סוג קובץ לא נתמך לתצוגה מקדימה.': 1 — PASS
+T3 grep -c -F 'פתח בכרטיסייה חדשה': 4 — PASS
+
+T4 references:
+frontend/src/pages/ProjectPlansPage.js:13:import PlanViewer from '../components/PlanViewer';
+frontend/src/pages/ProjectPlansPage.js:1505:        <PlanViewer
+frontend/src/pages/UnitPlansPage.js:14:import PlanViewer from '../components/PlanViewer';
+frontend/src/pages/UnitPlansPage.js:779:        <PlanViewer
+
+T4 react-pdf files:
+frontend/src/components/PlanViewer.js
+
+T5 frontend/src/pages/ProjectPlansPage.js: 7a6363090f868f5ab865c3a7b672f2e4 — unchanged PASS
+T5 frontend/src/pages/UnitPlansPage.js: 753dac290b3b56e01f1d8a74d0e6482e — unchanged PASS
+
+T6 command:
+cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" BUILD_PATH=/tmp/batch626/verified-build npm run build
+Exit code: 0
+Compiled successfully.
+grep -c -F 'will-change-transform{will-change:transform}' /tmp/batch626/verified-build/static/css/main.d057e8e8.css: 1 — PASS
+grep -c -F 'origin-top-left{transform-origin:top left}' /tmp/batch626/verified-build/static/css/main.d057e8e8.css: 1 — PASS
+pdf.worker.min.mjs exists in verified-build: True
+Worker was not manually created or copied.
+Jest: not run — canvas runtime probe confirmed libuuid.so.1: cannot open shared object file: No such file or directory.
+Browser: not run — local harness.
+T7: supplied 91 browser checks not reproduced here; staging and real iPhone/Android verification remains user-owned after separate deployment approval.
+Reference image ux/626-before-after.png absent; no visual comparison claimed.
+
+V4 — Read-only findings: action labels and full className
+frontend/src/pages/ProjectPlansPage.js:1232 label: צפייה במסך מלא
+className (frontend/src/pages/ProjectPlansPage.js:1231): w-4 h-4
+frontend/src/pages/ProjectPlansPage.js:1241 label: הורד
+className (frontend/src/pages/ProjectPlansPage.js:1240): w-4 h-4
+frontend/src/pages/ProjectPlansPage.js:1247 label: גרסה חדשה
+className (frontend/src/pages/ProjectPlansPage.js:1246): w-3.5 h-3.5
+frontend/src/pages/ProjectPlansPage.js:1251 label: ערוך
+className (frontend/src/pages/ProjectPlansPage.js:1250): w-3.5 h-3.5
+frontend/src/pages/ProjectPlansPage.js:1255 label: ארכיון
+className (frontend/src/pages/ProjectPlansPage.js:1254): w-3.5 h-3.5
+frontend/src/pages/ProjectPlansPage.js:1091: {detailPlan && (
+frontend/src/pages/ProjectPlansPage.js:1228: onClick={() => setFullscreenPlan(detailPlan)}
+frontend/src/pages/UnitPlansPage.js:744 label: צפייה במסך מלא
+className (frontend/src/pages/UnitPlansPage.js:743): w-4 h-4
+frontend/src/pages/UnitPlansPage.js:752 label: הורד
+className (frontend/src/pages/UnitPlansPage.js:751): w-4 h-4
+frontend/src/pages/UnitPlansPage.js:761 label: צפה
+className (frontend/src/pages/UnitPlansPage.js:760): w-4 h-4
+frontend/src/pages/UnitPlansPage.js:769 label: ארכיון
+className (frontend/src/pages/UnitPlansPage.js:768): w-4 h-4
+frontend/src/pages/UnitPlansPage.js:678: {detailPlan && (
+frontend/src/pages/UnitPlansPage.js:740: onClick={() => setFullscreenPlan(detailPlan)}
+Note: UnitPlansPage also contains the existing external-open link labeled צפה at line 761; included for completeness. No action-row edits.
+
+V5 — Scope and preservation
+review.txt remains byte-identical (SHA256 verified); 975146 bytes.
+Only PlanViewer.js modified. Only new repository deliverable: attached_assets/batch626-review-section.txt.
+No Git commands, deployment, environment changes, dependency changes, CSS/config changes, public asset changes, or infrastructure fixes.
+No other component, page, dialog, backend or i18n changes.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
