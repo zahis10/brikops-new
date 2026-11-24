@@ -157,6 +157,11 @@ const ProjectPlansPage = () => {
   useEffect(() => {
     if (showVersionUpload && versionPanelRef.current) versionPanelRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [showVersionUpload]);
+  const sheetBodyRef = useRef(null);
+  // after an update the sheet is shown from its top: the new picture, name and date are the answer to "did it work?"
+  useEffect(() => {
+    if (sheetBodyRef.current) sheetBodyRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [detailPlan?.id, detailPlan?.current_version]);
 
   // BATCH H.1 — bulk upload state at page level (open + default
   // discipline). Internal file list / progress / results live in
@@ -494,6 +499,10 @@ const ProjectPlansPage = () => {
     loadVersionHistory(plan.id);
   };
 
+  // The server answers an edit and a new version with the bare plan document; the uploader's name is added only
+  // by the list. Keep the one this sheet already shows, so the "הועלה על ידי" tile does not vanish after saving.
+  const withUploader = (updated) => ({ ...updated, uploaded_by_name: updated.uploaded_by_name || detailPlan?.uploaded_by_name });
+
   const startEdit = () => {
     setEditFields({
       name: detailPlan.name || detailPlan.original_filename || '',
@@ -510,7 +519,7 @@ const ProjectPlansPage = () => {
     setSaving(true);
     try {
       const updated = await projectPlanService.update(projectId, detailPlan.id, editFields);
-      setDetailPlan(updated);
+      setDetailPlan(withUploader(updated));
       setEditingDetail(false);
       toast.success('התוכנית עודכנה');
       loadPlans();
@@ -542,7 +551,7 @@ const ProjectPlansPage = () => {
     setUploadingVersion(true);
     try {
       const updated = await projectPlanService.uploadVersion(projectId, detailPlan.id, versionFile, versionNote);
-      setDetailPlan(updated);
+      setDetailPlan(withUploader(updated));
       setVersionFile(null);
       setVersionNote('');
       setShowVersionUpload(false);
@@ -1103,7 +1112,7 @@ const ProjectPlansPage = () => {
                 <X className="w-5 h-5 text-slate-400" />
               </button>
             </div>
-            <div className="overflow-y-auto p-4 space-y-4">
+            <div ref={sheetBodyRef} className="overflow-y-auto p-4 space-y-4">
               {/* The preview. For a PDF or an image, tapping it opens the full-screen viewer — the
                    "צפייה במסך מלא" button now sits on the picture. thumbnail_url comes first (a PNG); a
                    plan whose thumbnail is not ready yet shows its file icon (the old iframe fallback
@@ -1216,8 +1225,8 @@ const ProjectPlansPage = () => {
                         </div>
                       )}
                       <div className="bg-slate-50 rounded-lg px-3 py-2">
-                        <span className="text-slate-400">תאריך</span>
-                        <p className="font-medium text-slate-700 mt-0.5">{formatDate(detailPlan.created_at)}</p>
+                        <span className="text-slate-400">{detailPlan.current_version > 1 ? 'עודכן' : 'תאריך'}</span>
+                        <p className="font-medium text-slate-700 mt-0.5">{formatDate(planUpdatedAt(detailPlan))}</p>
                       </div>
                       <div className="bg-slate-50 rounded-lg px-3 py-2">
                         <span className="text-slate-400">גודל</span>

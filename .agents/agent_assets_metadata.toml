@@ -1551,3 +1551,17 @@ mtime_ms = 1795469724950
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/2dd8610d-04a9-4fa7-9fde-be124d5f7a99/35fb04d1-73f5-4caa-b8c3-57e0f27ff88c"
 storage_version_token = "1795469738455184"
 content_type = "text/plain"
+
+[[outputs]]
+id = "tdbxOrb7qUXUeNAPQ1Eeb"
+uri = "file://attached_assets/batch629-review-section.txt"
+type = "text"
+title = "#629 (24.11) — דוח בדיקות"
+description = "ארבע חתימות היעד תואמות; 20 בדיקות, 43 ספירות ובניית CI עברו. ללא Git או deploy."
+logical_id = "82392c1f-c07f-4c57-aade-0bb95e78b04f"
+content_hash = "sha256:3f5d8662f4652981f099038beba949c60d5ebb99caa28b964a1327b3b3e34ab2"
+size = 20652
+mtime_ms = 1795506883212
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/82392c1f-c07f-4c57-aade-0bb95e78b04f/cfdfd5f7-ce13-4e00-913b-a8e326898994"
+storage_version_token = "1795506891548900"
+content_type = "text/plain"

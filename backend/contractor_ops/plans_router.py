@@ -16,6 +16,7 @@ from contractor_ops.upload_rate_limit import (
 )
 from contractor_ops.upload_quota import check_storage_quota, record_upload
 from contractor_ops.upload_safety import validate_upload, ALLOWED_PLAN_EXTENSIONS, ALLOWED_PLAN_TYPES
+from contractor_ops.plan_naming import name_after_new_file
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -42,6 +43,9 @@ async def _generate_and_save_thumbnail(plan_id: str, file_bytes: bytes, file_typ
     except Exception as e:
         logger.warning(f"[THUMB] Failed for plan {plan_id}: {e}")
 
+
+# #629 — how long upload_plan_version waits for the picture of the new file before it answers
+PLAN_THUMB_WAIT_SECONDS = 8
 
 MANAGEMENT_ROLES = ('super_admin', 'project_manager', 'management_team')
 TRACKABLE_ROLES = ('project_manager', 'management_team', 'contractor', 'viewer')
@@ -420,16 +424,40 @@ async def upload_plan_version(
         'note': (note or '').strip(),
     }
 
+    # #629 — a plan from before versions existed has no list. Record the file it has now as version 1 first:
+    # pushing the new version alone would leave it as the only entry and drop the previous file from the history.
+    versions_to_add = [new_version_entry]
+    if not existing_versions:
+        versions_to_add.insert(0, {
+            'version': 1,
+            'file_url': plan.get('file_url', ''),
+            'file_size': plan.get('file_size', 0),
+            'file_type': plan.get('file_type', ''),
+            'original_filename': plan.get('original_filename', ''),
+            'uploaded_by': plan.get('uploaded_by', ''),
+            'uploaded_at': plan.get('created_at', ''),
+            'note': plan.get('note', ''),
+        })
+
+    set_fields = {
+        'file_url': result.file_url,
+        'file_size': result.file_size,
+        'file_type': file.content_type or '',
+        'original_filename': file.filename,
+        'current_version': new_version_num,
+        'updated_at': ts,
+    }
+    # #629 — a name that was only ever the file's name follows the new file; a name somebody typed stays
+    new_name = name_after_new_file(plan, file.filename)
+    if new_name:
+        set_fields['name'] = new_name
+
+    # #629 — the picture and the page count belong to the file that was just replaced: they are removed in the
+    # same write, so the old picture can never stand for the new file. The new ones are made right below.
     await db.project_plans.update_one({'id': plan_id}, {
-        '$push': {'versions': new_version_entry},
-        '$set': {
-            'file_url': result.file_url,
-            'file_size': result.file_size,
-            'file_type': file.content_type or '',
-            'original_filename': file.filename,
-            'current_version': new_version_num,
-            'updated_at': ts,
-        },
+        '$push': {'versions': {'$each': versions_to_add}},
+        '$set': set_fields,
+        '$unset': {'thumbnail_url': '', 'page_count': ''},
     })
 
     await _audit('project_plan', plan_id, 'version_upload', user['id'], {
@@ -438,7 +466,13 @@ async def upload_plan_version(
         'filename': file.filename,
     })
 
-    asyncio.create_task(_generate_and_save_thumbnail(plan_id, file_bytes, file.content_type or '', result.stored_filename, 'project_plans'))
+    # #629 — wait a few seconds for the new picture, so that this answer and the list the screen loads right
+    # after it already carry it. A file that takes longer keeps being rendered in the background, as before.
+    thumb_task = asyncio.create_task(_generate_and_save_thumbnail(plan_id, file_bytes, file.content_type or '', result.stored_filename, 'project_plans'))
+    try:
+        await asyncio.wait_for(asyncio.shield(thumb_task), timeout=PLAN_THUMB_WAIT_SECONDS)
+    except asyncio.TimeoutError:
+        pass
 
     updated = await db.project_plans.find_one({'id': plan_id}, {'_id': 0})
     from services.object_storage import resolve_urls_in_doc
