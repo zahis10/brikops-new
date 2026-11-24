@@ -18565,3 +18565,223 @@ review.txt SHA256 before/after: a669e7322923aa3d6c82172c4643a096a10a854bdf933fb9
 
 V5
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+#630 (24.11)
+
+STEP 0 — before edits
+wc -c review.txt: 1040893 (expected 1040893; below 2 MB)
+Pasted spec: attached_assets/Pasted--630-deploy-sh-wait-until-the-site-is-live-and-say-so-t_1795544859984.txt
+wc -c spec: 42435
+md5sum spec: a7e0711c8dda217092909ad2fbe4e319 (informational; matches supplied value)
+BEFORE deploy.sh: e402c32f5051e38a7c34b04d11dbc337; 432 lines; 15193 bytes; mode 755.
+BEFORE frontend/craco.config.js: 728cb42bf392526dbc162e185f6bffc7; 131 lines; 4143 bytes.
+BEFORE frontend/.gitignore: 3c744e34eaa28f6db706c582bb25fd58; 38 lines; 792 bytes.
+All three baseline copies are under /tmp/batch630. The temporary source marker was absent before testing.
+
+F1 pre-write safety checks
+Extracted F1 directly from the spec to /tmp/batch630/deploy.sh.new. No hand transcription or repairs.
+Before touching deploy.sh: MD5 54a38d3e7212162190afd4b98299ea7d; 570 lines; 21526 bytes.
+bash -n /tmp/batch630/deploy.sh.new: exit=0, no output.
+Only after these checks, copied the complete bytes over the existing deploy.sh inode. Mode 755 preserved; chmod not needed.
+deploy.sh was never run or sourced; only Bash syntax checks were performed.
+
+V1 — deploy.sh summary (first 3 + last 3 lines only)
+deploy.sh: 570 lines; 21526 bytes; MD5 54a38d3e7212162190afd4b98299ea7d
+First 3 lines:
+#!/usr/bin/env bash
+set -euo pipefail
+
+Last 3 lines:
+  echo "     cd ~/brikops-new && ./ship.sh"
+  echo "   ═══════════════════════════════════════════════════"
+fi
+
+Other files: added lines with 3 context lines
+```diff
+--- a/frontend/craco.config.js
++++ b/frontend/craco.config.js
+@@ -31,6 +31,25 @@
+   }
+ }
+ 
++// Cloudflare Pages build only: leave the commit that is being built inside the site
++// (public/build-commit.txt -> https://<site>/build-commit.txt). deploy.sh reads it to
++// know that a deploy is really live. CF_PAGES_COMMIT_SHA is set by Cloudflare Pages
++// only, so a build in the workspace or on a laptop never creates the file. Nothing in
++// the app reads it, and a failure here must never fail the build.
++if (!isDevServer) {
++  const cfCommit = (process.env.CF_PAGES_COMMIT_SHA || "").trim();
++  if (/^[0-9a-f]{7,40}$/.test(cfCommit)) {
++    try {
++      require("fs").writeFileSync(
++        path.resolve(__dirname, "public", "build-commit.txt"),
++        cfCommit + "\n"
++      );
++    } catch (err) {
++      console.warn("[build] could not write public/build-commit.txt: " + err.message);
++    }
++  }
++}
++
+ // Environment variable overrides
+ const config = {
+   enableHealthCheck: process.env.ENABLE_HEALTH_CHECK === "true",
+```
+```diff
+--- a/frontend/.gitignore
++++ b/frontend/.gitignore
+@@ -30,6 +30,9 @@
+ # the installed pdfjs-dist version automatically
+ public/cmaps/
+ public/standard_fonts/
++# the commit a Cloudflare Pages build was made from — written by craco.config.js
++# during that build only (deploy.sh reads it from the live site)
++public/build-commit.txt
+ 
+ # Capacitor Android build artifacts
+ android/app/build/
+```
+F2/F3 applied using the editing tool. Their resulting GNU diff -u outputs are byte-identical to the extracted F blocks.
+
+V2 — GNU diff, no Git
+deploy.sh: +164/-26
+frontend/craco.config.js: +19/-0
+frontend/.gitignore: +3/-0
+
+V3 — checks actually run
+T1–T2
+deploy.sh: md5=54a38d3e7212162190afd4b98299ea7d; wc -l=570; wc -c=21526
+frontend/craco.config.js: md5=9cabdbd0406bd6885bd4974f050248e9; wc -l=150; wc -c=4945
+frontend/.gitignore: md5=74221a8b6872551d3499104d19d36a44; wc -l=41; wc -c=964
+T3: bash -n deploy.sh -> exit=0 (no other output)
+T3: node --check frontend/craco.config.js -> exit=0 (no other output)
+T4: test -x deploy.sh && echo executable -> executable
+T4: stat -c '%a' deploy.sh -> 755
+No chmod needed; same inode.
+F2/F3 dry-run checks:
+Hmm...  Looks like a unified diff to me...
+The text leading up to this was:
+--------------------------
+|--- a/frontend/craco.config.js
+|+++ b/frontend/craco.config.js
+--------------------------
+checking file frontend/craco.config.js
+Using Plan A...
+Hunk #1 succeeded at 31.
+done
+Hmm...  Looks like a unified diff to me...
+The text leading up to this was:
+--------------------------
+|--- a/frontend/.gitignore
+|+++ b/frontend/.gitignore
+--------------------------
+checking file frontend/.gitignore
+Using Plan A...
+Hunk #1 succeeded at 30.
+done
+T5–T6: grep -c -F -- <text> <file> (matching-line counts)
+deploy.sh | frontend_in_push=$frontend_changed | actual=1 expected=1
+deploy.sh | SITE_URL="${SITE_URL:-https://staging.brikops-new.pages.dev}" | actual=1 expected=1
+deploy.sh | SITE_URL="${SITE_URL:-https://app.brikops.com}" | actual=1 expected=1
+deploy.sh | SITE_WAIT="${SITE_WAIT:-480}" | actual=1 expected=1
+deploy.sh | SITE_POLL="${SITE_POLL:-10}" | actual=1 expected=1
+deploy.sh | build-commit.txt | actual=2 expected=2
+deploy.sh | FULL_SHA | actual=2 expected=2
+deploy.sh | site_state | actual=10 expected=10
+deploy.sh | github_via | actual=6 expected=6
+deploy.sh | github_key_problem | actual=4 expected=4
+deploy.sh | [dev] Rebuilding the local preview (not part of the deploy)... | actual=1 expected=1
+deploy.sh | [dev] Local preview rebuilt. | actual=1 expected=1
+deploy.sh | REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" yarn build 2>&1 | actual=1 expected=1
+deploy.sh | [site] The push is done. Cloudflare is building the site now (usually 3-5 minutes). | actual=1 expected=1
+deploy.sh | LIVE - the site shows this version ($SHA) | actual=1 expected=1
+deploy.sh | NOT LIVE - the site still shows the previous version | actual=1 expected=1
+deploy.sh | NOT CONFIRMED - the site does not show this version yet | actual=1 expected=1
+deploy.sh | https://dash.cloudflare.com/?to=/:account/workers-and-pages | actual=1 expected=1
+deploy.sh | Manage deployment → Retry deployment. | actual=1 expected=1
+deploy.sh | Frontend → NOT LIVE YET (see above) | actual=1 expected=1
+deploy.sh | EXPECTED (~4 min) | actual=3 expected=3
+deploy.sh | This looks like a network problem, not a login problem. | actual=1 expected=1
+deploy.sh | To finish, run this in a minute: | actual=1 expected=1
+deploy.sh | Restoring local dev build | actual=0 expected=0
+deploy.sh | npx craco build | actual=0 expected=0
+deploy.sh | Dev preview restored | actual=0 expected=0
+deploy.sh | EXPECTED (~1 min) | actual=0 expected=0
+deploy.sh | EXPECTED (~2 min) | actual=0 expected=0
+deploy.sh | REACT_APP_BACKEND_URL="" | actual=0 expected=0
+deploy.sh | set -euo pipefail | actual=1 expected=1
+deploy.sh | read -rp "Deploy to production? (y/N): " confirm | actual=1 expected=1
+deploy.sh | read -rp "Deploy to STAGING? (y/N): " confirm | actual=1 expected=1
+deploy.sh | git add -A | actual=1 expected=1
+deploy.sh | DEPLOY SUMMARY | actual=1 expected=1
+deploy.sh | check_frontend_staleness | actual=2 expected=2
+deploy.sh | Nothing to deploy (no changes, nothing to push). | actual=1 expected=1
+deploy.sh | Dry-run only. To deploy: | actual=1 expected=1
+deploy.sh | python3 -m compileall backend/ -q | actual=2 expected=2
+deploy.sh | ./ship.sh | actual=3 expected=3
+deploy.sh | GIT_TERMINAL_PROMPT=0 git push "$@" 2>&1 | actual=1 expected=1
+deploy.sh | github_push "The GitHub login" --dry-run origin "$branch" | actual=1 expected=1
+deploy.sh | github_push "The push to GitHub" origin "$branch" | actual=1 expected=1
+deploy.sh | SKIP_GITHUB_CHECK | actual=2 expected=2
+deploy.sh | Checking the GitHub login... | actual=1 expected=1
+deploy.sh | If Replit shows a window asking to use your GitHub account, approve it. | actual=1 expected=1
+deploy.sh | Replit account settings | actual=1 expected=1
+deploy.sh | To finish, run this from a computer (not the phone): | actual=1 expected=1
+deploy.sh | git push origin main && git checkout staging | actual=1 expected=1
+deploy.sh | Frontend → Cloudflare Pages | actual=1 expected=1
+deploy.sh | Frontend → no deploy needed | actual=1 expected=1
+frontend/craco.config.js | CF_PAGES_COMMIT_SHA | actual=2 expected=2
+frontend/craco.config.js | build-commit.txt | actual=3 expected=3
+frontend/craco.config.js | const cfCommit = (process.env.CF_PAGES_COMMIT_SHA || "").trim(); | actual=1 expected=1
+frontend/craco.config.js | [build] could not write public/build-commit.txt:  | actual=1 expected=1
+frontend/craco.config.js | [build] REACT_APP_BACKEND_URL is not set.  | actual=1 expected=1
+frontend/craco.config.js | override: false, | actual=1 expected=1
+frontend/craco.config.js | const isDevServer = process.env.NODE_ENV !== "production"; | actual=1 expected=1
+frontend/craco.config.js | module.exports = webpackConfig; | actual=1 expected=1
+frontend/.gitignore | public/build-commit.txt | actual=1 expected=1
+All 59 grep checks passed.
+
+T7 — actual marker test
+cd frontend && CF_PAGES_COMMIT_SHA=0123456789abcdef0123456789abcdef01234567 REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" node -e "process.env.NODE_ENV='production'; require('./craco.config.js')" && cat public/build-commit.txt
+0123456789abcdef0123456789abcdef01234567
+Marker content compared byte-for-byte with the expected value plus one LF: equal.
+Removed public/build-commit.txt, loaded the config without the command-scoped Cloudflare variable, then ran ls public/build-commit.txt:
+ls: cannot access 'public/build-commit.txt': No such file or directory
+Source marker remains absent. No persistent environment variables were changed.
+
+T8 — CI build
+cd frontend && CI=true GENERATE_SOURCEMAP=false REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" BUILD_PATH=/tmp/batch630/verified-build npm run build
+exit=0
+Compiled successfully.
+ls /tmp/batch630/verified-build/static/css/
+main.c1d0cf34.css
+ls /tmp/batch630/verified-build/build-commit.txt
+ls: cannot access '/tmp/batch630/verified-build/build-commit.txt': No such file or directory
+Jest: not run — blocked by libuuid; direct canvas probe: libuuid.so.1: cannot open shared object file: No such file or directory
+Browser: not run — local harness
+The 70 simulated checks described by the spec author were not rerun here. Live staging deployment verification is reserved for Zahi.
+
+T9 — files created or edited
+Edited: deploy.sh; frontend/craco.config.js; frontend/.gitignore.
+Created report: attached_assets/batch630-review-section.txt.
+Temporary test file: frontend/public/build-commit.txt — created only for T7, then deleted; absent at the end.
+Scratch baselines, extracted blocks, evidence, logs and verification build output: /tmp/batch630 only.
+
+V4 — read-only answers
+(a) command -v curl && curl --version | head -1
+/nix/store/n7x81mjymf0v21a1yg3r7y4z594cdljs-replit-runtime-path/bin/curl
+curl 8.22.0 (x86_64-pc-linux-gnu) libcurl/8.22.0 OpenSSL/3.5.8 zlib/1.3.2 brotli/1.2.0 zstd/1.5.7 libidn2/2.3.8 libpsl/0.21.5 libssh2/1.11.1 nghttp2/1.70.0 ngtcp2/1.23.0 nghttp3/1.17.0 mit-krb5/1.22.2
+(b) echo "REPLIT_DEV_DOMAIN is ${REPLIT_DEV_DOMAIN:+set}"
+REPLIT_DEV_DOMAIN is set
+(c) curl -fsS -m 15 "https://staging.brikops-new.pages.dev/build-commit.txt" | head -c 15; echo
+<!doctype html>
+The expected 15-byte HTML prefix was returned. curl also printed "Failed writing body" because head closed the pipe after those 15 bytes; no retry or modification was performed.
+
+Preservation
+review.txt untouched: identical SHA256, byte count and modification time before/after.
+review.txt SHA256 before/after: aafce1c22821e928a64fe5cfc74f582b0ade91809b0b68760051def096575430
+No Git commands, deploy, execution/source of deploy.sh, app source edits, connection changes, secret access or .env edits.
+Final source marker absent; final verification-build marker absent.
+
+V5
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
