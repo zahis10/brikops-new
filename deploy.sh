@@ -21,8 +21,10 @@ done
 
 if [[ "$MODE" == "stag" ]]; then
   FRONTEND_BACKEND_URL="${FRONTEND_BACKEND_URL:-https://api-staging.brikops.com}"
+  SITE_URL="${SITE_URL:-https://staging.brikops-new.pages.dev}"
 else
   FRONTEND_BACKEND_URL="${FRONTEND_BACKEND_URL:-https://api.brikops.com}"
+  SITE_URL="${SITE_URL:-https://app.brikops.com}"
 fi
 
 branch="$(git rev-parse --abbrev-ref HEAD)"
@@ -76,6 +78,10 @@ fi
 if [[ "$ahead" -gt 0 ]]; then
   check_files < <(git diff --name-only "origin/$branch..HEAD")
 fi
+
+# Are screen files (frontend/**) part of what is about to be pushed? Asked here, because
+# frontend_changed is also switched on below when only the local build is old.
+frontend_in_push=$frontend_changed
 
 check_frontend_staleness() {
   local bundle
@@ -199,17 +205,23 @@ if [[ $has_uncommitted -eq 1 ]]; then
 fi
 
 # --- GitHub login --------------------------------------------------------------
-# This Shell gets its GitHub credential from Replit's GitHub connection (GIT_ASKPASS).
-# The first request after a pause is sometimes turned down ("Invalid username or
-# token"), or waits for an approval window in Replit, and the very same request
-# passes a few seconds later. So: ask GitHub now, before the build (a --dry-run
-# push logs in and sends nothing), and repeat a few times; the real push at the
-# end is repeated the same way. GIT_TERMINAL_PROMPT=0: git never stops to ask for
-# a user name or a password in the terminal — nobody should type a token here.
+# Since 24.11.2026 the push from this Shell goes over SSH with a permanent deploy key
+# (.git/deploy-key, added in GitHub as "Replit deploy"; only origin's push URL is SSH).
+# Without that setup the push uses Replit's GitHub connection (GIT_ASKPASS), whose
+# first request after a pause is sometimes turned down ("Invalid username or token")
+# or waits for an approval window in Replit, and passes a few seconds later.
+# Either way: ask GitHub now, before the build (a --dry-run push logs in and sends
+# nothing), and repeat a few times; the real push at the end is repeated the same
+# way. GIT_TERMINAL_PROMPT=0: git never stops to ask for a user name or a password
+# in the terminal — nobody should type a token here.
 # (Emergency switch for the early check only: SKIP_GITHUB_CHECK=1 ./deploy.sh ...)
 GITHUB_TRIES="${GITHUB_TRIES:-4}"
 GITHUB_WAIT="${GITHUB_WAIT:-8}"
 github_out=""
+github_via="replit"
+case "$(git remote get-url --push origin 2>/dev/null || true)" in
+  git@*|ssh://*) github_via="key" ;;
+esac
 
 # github_push <name for the messages> <git push arguments...>
 #   0 = went through
@@ -231,12 +243,31 @@ github_push() {
       return 1
     fi
     echo "[github] $what did not go through (attempt $n of $GITHUB_TRIES) - trying again in ${GITHUB_WAIT}s..."
-    if (( n == 1 )); then
+    if (( n == 1 )) && [[ "$github_via" == "replit" ]]; then
       echo "         If Replit shows a window asking to use your GitHub account, approve it."
     fi
     sleep "$GITHUB_WAIT"
     n=$((n + 1))
   done
+}
+
+# github_key_problem: with the deploy key, is the refusal about the key itself?
+#   0 = yes, and the explanation was printed (repeating cannot help)
+#   1 = no (a network problem, or this Shell does not use the key)
+github_key_problem() {
+  [[ "$github_via" == "key" ]] || return 1
+  if grep -qE 'Permission denied \(publickey\)|marked as read only' <<<"$github_out"; then
+    echo "GitHub does not accept the deploy key of this workspace (.git/deploy-key)."
+    echo "The key was removed or changed - in GitHub (Settings > Deploy keys > \"Replit deploy\")"
+    echo "or in this workspace. Stop here and ask: the key has to be set up again."
+    return 0
+  fi
+  if grep -q 'Host key verification failed' <<<"$github_out"; then
+    echo "The server that answered is not the GitHub server that was saved with the deploy key."
+    echo "Stop here and ask. Do not switch this check off."
+    return 0
+  fi
+  return 1
 }
 
 github_rc=0
@@ -264,6 +295,13 @@ if [[ $github_rc -ne 0 ]]; then
   if [[ $github_rc -eq 2 ]]; then
     echo "This is not a login problem: GitHub refuses the push itself (see above)."
     echo "Do not force the push. Stop here and ask."
+  elif github_key_problem; then
+    :
+  elif [[ "$github_via" == "key" ]]; then
+    echo "What to do:"
+    echo "  This looks like a network problem, not a login problem."
+    echo "  Run the same deploy command again in a minute."
+    echo "  Do not type or paste a token or a password here."
   else
     echo "What to do:"
     echo "  1. Run the same deploy command again, from a computer (not the phone)."
@@ -340,8 +378,14 @@ else
   if [[ $github_rc -eq 2 ]]; then
     echo "This is not a login problem: GitHub refuses the push itself (see above)."
     echo "Do not force the push. Stop here and ask."
+  elif github_key_problem; then
+    :
   else
-    echo "To finish, run this from a computer (not the phone):"
+    if [[ "$github_via" == "key" ]]; then
+      echo "To finish, run this in a minute:"
+    else
+      echo "To finish, run this from a computer (not the phone):"
+    fi
     if [[ "$MODE" == "prod" ]]; then
       echo "  git push origin main && git checkout staging"
     else
@@ -353,12 +397,83 @@ else
 fi
 
 SHA="$(git rev-parse --short HEAD)"
+FULL_SHA="$(git rev-parse HEAD)"
 
+# --- the local preview of this workspace ----------------------------------------
+# The check before the push built the screens for the real server. Build them once
+# more for this workspace, so that the preview here does not talk to the real server.
+# This is not part of the deploy: whatever happens here, the script goes on to the
+# summary. (Before #630 this step ran "craco build" with an empty
+# REACT_APP_BACKEND_URL, which craco.config.js refuses since 18.04.2026 - so the
+# script died here, after a good push, without the summary.)
 if [[ $frontend_changed -eq 1 ]]; then
   echo
-  echo "[dev] Restoring local dev build (REACT_APP_BACKEND_URL=\"\")..."
-  (cd frontend && REACT_APP_BACKEND_URL="" npx craco build 2>&1 | tail -3)
-  echo "[dev] Dev preview restored — local build now uses relative URLs"
+  if [[ -z "${REPLIT_DEV_DOMAIN:-}" ]]; then
+    echo "[dev] Local preview not rebuilt (REPLIT_DEV_DOMAIN is not set). The deploy is not affected."
+  else
+    echo "[dev] Rebuilding the local preview (not part of the deploy)..."
+    if dev_out="$(cd frontend && REACT_APP_BACKEND_URL="https://${REPLIT_DEV_DOMAIN}" yarn build 2>&1)"; then
+      echo "[dev] Local preview rebuilt."
+    else
+      echo "[dev] Local preview not rebuilt. The deploy is not affected. Last lines:"
+      tail -n 3 <<<"$dev_out" | sed 's/^/      /'
+    fi
+  fi
+fi
+
+# --- is the site live? -----------------------------------------------------------
+# The push only starts the work: Cloudflare Pages builds the screens from the pushed
+# commit, and when that build fails the site silently stays on the previous version
+# (24.11.2026: one failed download from the package registry). So wait here until
+# the site itself says which commit it was built from - frontend/craco.config.js
+# writes it to /build-commit.txt during the Cloudflare build - and report it in the
+# summary. The deploy is already done when the wait starts; Ctrl-C only stops the
+# waiting.   SITE_WAIT=0 ./deploy.sh ...   skips the wait.
+SITE_WAIT="${SITE_WAIT:-480}"
+SITE_POLL="${SITE_POLL:-10}"
+[[ "$SITE_WAIT" =~ ^[0-9]+$ ]] || SITE_WAIT=480
+[[ "$SITE_POLL" =~ ^[1-9][0-9]*$ ]] || SITE_POLL=10
+site_state="none"   # none | live | old | unknown | skipped | nocurl
+site_now=""
+site_secs=0
+if [[ $frontend_in_push -eq 1 ]]; then
+  if (( SITE_WAIT == 0 )); then
+    site_state="skipped"
+  elif ! command -v curl >/dev/null 2>&1; then
+    site_state="nocurl"
+  else
+    echo
+    echo "[site] The push is done. Cloudflare is building the site now (usually 3-5 minutes)."
+    echo "[site] Waiting until $SITE_URL shows version $SHA ..."
+    site_t0=$SECONDS
+    site_note=60
+    while true; do
+      site_now="$(curl -fsS -m 15 "$SITE_URL/build-commit.txt?t=$(date +%s)" 2>/dev/null | head -c 64 | tr -d '[:space:]' || true)"
+      site_secs=$(( SECONDS - site_t0 ))
+      if [[ "$site_now" =~ ^[0-9a-f]{7,40}$ ]]; then
+        if [[ "$FULL_SHA" == "$site_now"* ]]; then
+          site_state="live"
+          break
+        fi
+        site_state="old"
+      else
+        site_state="unknown"
+      fi
+      if (( site_secs >= SITE_WAIT )); then
+        break
+      fi
+      if (( site_secs >= site_note )); then
+        echo "[site] $(( site_secs / 60 )) min - not yet"
+        site_note=$(( site_note + 60 ))
+      fi
+      sleep "$SITE_POLL"
+    done
+    if [[ "$site_state" == "live" ]]; then
+      echo "[site] LIVE after $(( site_secs / 60 )) min $(( site_secs % 60 )) s."
+    else
+      echo "[site] Still not live after $(( site_secs / 60 )) min $(( site_secs % 60 )) s - see the summary."
+    fi
+  fi
 fi
 
 echo
@@ -372,7 +487,7 @@ if [[ $backend_changed -eq 1 ]]; then
 else
   echo "   Backend  (backend/** .platform/**):  NO"
 fi
-if [[ $frontend_changed -eq 1 ]]; then
+if [[ $frontend_in_push -eq 1 ]]; then
   echo "   Frontend (frontend/**):              YES"
 else
   echo "   Frontend (frontend/**):              NO"
@@ -380,17 +495,39 @@ fi
 echo
 echo " Deploy status:"
 if [[ $backend_changed -eq 1 ]]; then
-  echo "   Backend  (GitHub Actions → EB):      EXPECTED (~2 min)"
+  echo "   Backend  (GitHub Actions → EB):      EXPECTED (~4 min)"
 else
   echo "   Backend  (GitHub Actions → EB):      NOT EXPECTED"
   echo "     → no changes under backend/** or .platform/** — path filter skips"
 fi
-if [[ $frontend_changed -eq 1 ]]; then
-  echo "   Frontend (Cloudflare Pages):         EXPECTED (~1 min)"
-else
-  echo "   Frontend (Cloudflare Pages):         NOT EXPECTED"
-  echo "     → no changes under frontend/**"
-fi
+case "$site_state" in
+  live)
+    echo "   Frontend (Cloudflare Pages):         LIVE - the site shows this version ($SHA)"
+    ;;
+  old|unknown)
+    if [[ "$site_state" == "old" ]]; then
+      echo "   Frontend (Cloudflare Pages):         NOT LIVE - the site still shows the previous version (${site_now:0:7})"
+    else
+      echo "   Frontend (Cloudflare Pages):         NOT CONFIRMED - the site does not show this version yet"
+    fi
+    echo "     → The push itself is fine. Do NOT run the deploy again."
+    echo "     → The build at Cloudflare may have failed. Open:"
+    echo "         https://dash.cloudflare.com/?to=/:account/workers-and-pages"
+    echo "       then brikops-new, and look at the top row under \"All deployments\"."
+    echo "       If it says \"failure\": Manage deployment → Retry deployment."
+    echo "       If it is still building: wait a few minutes, then refresh the site."
+    ;;
+  skipped)
+    echo "   Frontend (Cloudflare Pages):         EXPECTED (~4 min) - not checked (SITE_WAIT=0)"
+    ;;
+  nocurl)
+    echo "   Frontend (Cloudflare Pages):         EXPECTED (~4 min) - not checked (no curl in this Shell)"
+    ;;
+  *)
+    echo "   Frontend (Cloudflare Pages):         NOT EXPECTED"
+    echo "     → no changes under frontend/**"
+    ;;
+esac
 echo
 echo " Where to check:"
 echo "   Backend:   https://github.com/zahis10/brikops-new/actions"
@@ -404,17 +541,18 @@ fi
 echo
 echo "═══════════════════════════════════════════════════"
 summary_line="✓ Push completed ($SHA)"
-if [[ $frontend_changed -eq 1 ]]; then
-  summary_line="$summary_line · Frontend → Cloudflare Pages"
-else
-  summary_line="$summary_line · Frontend → no deploy needed"
-fi
+case "$site_state" in
+  live)           summary_line="$summary_line · Frontend → LIVE" ;;
+  old|unknown)    summary_line="$summary_line · Frontend → NOT LIVE YET (see above)" ;;
+  skipped|nocurl) summary_line="$summary_line · Frontend → Cloudflare Pages" ;;
+  *)              summary_line="$summary_line · Frontend → no deploy needed" ;;
+esac
 if [[ $backend_changed -eq 1 ]]; then
   summary_line="$summary_line · Backend → GitHub Actions"
 else
   summary_line="$summary_line · Backend → no deploy needed"
 fi
-if [[ $frontend_changed -eq 0 && $backend_changed -eq 0 ]]; then
+if [[ $frontend_in_push -eq 0 && $backend_changed -eq 0 ]]; then
   summary_line="✓ Push completed ($SHA) — no deploys expected (config/docs only)"
 fi
 echo " $summary_line"

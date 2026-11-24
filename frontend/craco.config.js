@@ -31,6 +31,25 @@ if (!isDevServer) {
   }
 }
 
+// Cloudflare Pages build only: leave the commit that is being built inside the site
+// (public/build-commit.txt -> https://<site>/build-commit.txt). deploy.sh reads it to
+// know that a deploy is really live. CF_PAGES_COMMIT_SHA is set by Cloudflare Pages
+// only, so a build in the workspace or on a laptop never creates the file. Nothing in
+// the app reads it, and a failure here must never fail the build.
+if (!isDevServer) {
+  const cfCommit = (process.env.CF_PAGES_COMMIT_SHA || "").trim();
+  if (/^[0-9a-f]{7,40}$/.test(cfCommit)) {
+    try {
+      require("fs").writeFileSync(
+        path.resolve(__dirname, "public", "build-commit.txt"),
+        cfCommit + "\n"
+      );
+    } catch (err) {
+      console.warn("[build] could not write public/build-commit.txt: " + err.message);
+    }
+  }
+}
+
 // Environment variable overrides
 const config = {
   enableHealthCheck: process.env.ENABLE_HEALTH_CHECK === "true",

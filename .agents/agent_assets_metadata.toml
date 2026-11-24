@@ -1565,3 +1565,17 @@ mtime_ms = 1795506883212
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/82392c1f-c07f-4c57-aade-0bb95e78b04f/cfdfd5f7-ce13-4e00-913b-a8e326898994"
 storage_version_token = "1795506891548900"
 content_type = "text/plain"
+
+[[outputs]]
+id = "vx2P8xgwY_N0xf3j2ARMw"
+uri = "file://attached_assets/batch630-review-section.txt"
+type = "text"
+title = "#630 (24.11) — דוח בדיקות"
+description = "F1 אומת לפני כתיבה; חתימות, תחביר, 59 ספירות, בדיקת סמן ובניית CI עברו. הסמן הזמני הוסר; ללא deploy."
+logical_id = "76f385d5-cadd-40e5-b591-426453bf0717"
+content_hash = "sha256:b183996e776bc10e43a746659e474849021baeaaa8fb1f8939c5eca810058a44"
+size = 11579
+mtime_ms = 1795545345521
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:1cee46ff-369f-4827-bc32-71cdcce76566/76f385d5-cadd-40e5-b591-426453bf0717/7a173fdd-e63f-4c0e-974a-f1944e4d76a8"
+storage_version_token = "1795545358822324"
+content_type = "text/plain"

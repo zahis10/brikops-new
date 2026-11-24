@@ -30,6 +30,9 @@ public/pdf.worker.min.mjs
 # the installed pdfjs-dist version automatically
 public/cmaps/
 public/standard_fonts/
+# the commit a Cloudflare Pages build was made from — written by craco.config.js
+# during that build only (deploy.sh reads it from the live site)
+public/build-commit.txt
 
 # Capacitor Android build artifacts
 android/app/build/
